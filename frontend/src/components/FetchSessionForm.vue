@@ -57,7 +57,6 @@ function setSource(source) {
       <div v-else class="oauth-connected-card">
         <div class="oauth-connected-info">
           <div class="oauth-user-badge">
-            <span class="oauth-user-badge-dot" aria-hidden="true"></span>
             <span>{{ connectedBadgeLabel }}</span>
           </div>
           <div class="oauth-connected-title">Connected with Livestorm</div>
