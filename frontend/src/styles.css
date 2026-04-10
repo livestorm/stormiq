@@ -962,7 +962,7 @@ textarea:focus,
 
 .oauth-user-badge {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--spacing-space-2);
   font-size: 14px;
   font-weight: 600;
@@ -975,6 +975,7 @@ textarea:focus,
   flex: 0 0 auto;
   border-radius: 999px;
   background: var(--color-green-500);
+  margin-top: 4px;
 }
 
 .oauth-disconnect-button {
