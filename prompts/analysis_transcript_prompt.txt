@@ -1,0 +1,6 @@
+Focus on the spoken content of the session.
+
+When the transcript is included:
+- Summarize the main discussion points, decisions, process reminders, and operational instructions.
+- Distinguish presenter guidance from attendee interaction when possible.
+- Note repetition, confusion, or policy/process reminders that seem especially important.

@@ -1,0 +1,6 @@
+Focus on chat behavior and attendee interaction patterns.
+
+When chat is included:
+- Identify notable conversation spikes, repeated concerns, and participation patterns.
+- Comment on sentiment carefully, using chat wording and cadence as evidence.
+- Highlight engagement quality, not just message count.

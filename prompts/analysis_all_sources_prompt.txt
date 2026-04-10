@@ -1,0 +1,8 @@
+Multiple sources are included. Produce a deeper synthesis than a single-source summary.
+
+When session, chat, questions, and transcript are included:
+- Use session metadata and participant context to ground the analysis in audience composition, attendance patterns, and session framing.
+- Cross-check what presenters said against what attendees asked and discussed.
+- Surface gaps between the intended message and audience understanding.
+- Explain where transcript themes, chat signals, and question patterns reinforce each other.
+- End with recommendations that prioritize both messaging clarity and operational follow-through.

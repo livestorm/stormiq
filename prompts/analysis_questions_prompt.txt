@@ -1,0 +1,6 @@
+Focus on explicit attendee questions and answer coverage.
+
+When questions are included:
+- Identify the most common question topics.
+- Note whether questions were answered, partially answered, or left open.
+- Call out the most useful unanswered follow-ups for the team.
