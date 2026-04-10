@@ -21,10 +21,10 @@ const chartHeight = 250;
 const margin = { top: 20, right: 16, bottom: 40, left: 44 };
 
 const pauseColors = {
-  "Strong silence": "#8eddf0",
-  "Thinking pause": "#ffc857",
-  Hesitation: "#ff7d8a",
-  "Natural flow": "#5ed1a8",
+  "Strong silence": "var(--color-data-red)",
+  "Thinking pause": "var(--color-data-yellow)",
+  Hesitation: "var(--color-data-grey)",
+  "Natural flow": "var(--color-data-green)",
 };
 
 const normalizedRows = computed(() => {
@@ -43,7 +43,7 @@ const normalizedRows = computed(() => {
       x: margin.left + (time / maxTime) * plotWidth,
       y: margin.top + (plotHeight - (pause / maxPause) * plotHeight),
       lineY2: margin.top + plotHeight,
-      color: pauseColors[String(row?.pause_type || "")] || "#8eddf0",
+      color: pauseColors[String(row?.pause_type || "")] || "var(--color-data-blue)",
     };
   });
 });
@@ -81,7 +81,7 @@ const legendItems = computed(() => {
     })
     .map((type) => ({
       label: type,
-      color: pauseColors[type] || "#8eddf0",
+      color: pauseColors[type] || "var(--color-data-blue)",
     }));
 });
 </script>

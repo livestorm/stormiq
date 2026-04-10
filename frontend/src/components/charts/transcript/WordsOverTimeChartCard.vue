@@ -82,9 +82,9 @@ const yTicks = computed(() => {
       <svg :viewBox="`0 0 ${chartWidth} ${chartHeight}`" class="svg-chart" role="img" :aria-label="title">
         <defs>
           <linearGradient id="words-line-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stop-color="#8eddf0" />
-            <stop offset="55%" stop-color="#6ec5d9" />
-            <stop offset="100%" stop-color="#ffffff" />
+            <stop offset="0%" stop-color="var(--color-data-blue)" />
+            <stop offset="55%" stop-color="var(--color-brand-300)" />
+            <stop offset="100%" stop-color="var(--color-text-neutral-base)" />
           </linearGradient>
         </defs>
 

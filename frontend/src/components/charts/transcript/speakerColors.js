@@ -1,4 +1,12 @@
-const SPEAKER_PALETTE = ["#8eddf0", "#ffc247", "#f46a6f", "#63d084", "#8b9bff", "#d989ff", "#5fd5bb"];
+const SPEAKER_PALETTE = [
+  "var(--color-data-blue)",
+  "var(--color-data-green)",
+  "var(--color-data-peach)",
+  "var(--color-data-grey)",
+  "var(--color-data-red)",
+  "var(--color-brand-100)",
+  "var(--color-nimbus-400)",
+];
 
 export function buildSpeakerColorMap(speakers) {
   const orderedSpeakers = Array.from(

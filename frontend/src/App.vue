@@ -160,6 +160,7 @@ function handleNavClick(navigate) {
 <template>
   <div
     class="layout"
+    data-colors-semantic="dark"
     :class="{
       'layout-sidebar-collapsed': sidebarCollapsed,
       'layout-compact': isCompactViewport,

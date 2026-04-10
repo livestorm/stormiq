@@ -40,7 +40,20 @@ const stats = computed(() => state.workspace?.stats?.sessionOverview || {});
 const overviewRows = computed(() => state.workspace?.tables?.overview || []);
 const peopleRows = computed(() => state.workspace?.tables?.people || []);
 const countryRows = computed(() => state.workspace?.tables?.country || []);
-const roleRows = computed(() => state.workspace?.tables?.role || []);
+const roleLabels = {
+  team_member: "Team Members",
+  participant: "Participants",
+  guest_speaker: "Guest Speakers",
+  owner: "Owner",
+  viewer: "Viewers",
+  moderator: "Moderators",
+};
+const roleRows = computed(() =>
+  (state.workspace?.tables?.role || []).map((row) => ({
+    ...row,
+    role: roleLabels[row.role] ?? row.role,
+  }))
+);
 const attendanceRows = computed(() => state.workspace?.tables?.attendanceDistribution || []);
 const engagementRows = computed(() => state.workspace?.tables?.engagementTop || []);
 

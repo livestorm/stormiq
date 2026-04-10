@@ -15,8 +15,8 @@ const props = defineProps({
 const chartWidth = 980;
 const chartHeight = 320;
 const margin = { top: 18, right: 22, bottom: 56, left: 52 };
-const messageColor = "#8eddf0";
-const questionColor = "#ffc247";
+const messageColor = "var(--color-data-blue)";
+const questionColor = "var(--color-data-peach)";
 
 const normalizedRows = computed(() => {
   const plotWidth = chartWidth - margin.left - margin.right;

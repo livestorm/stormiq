@@ -616,9 +616,8 @@ watch(
           </div>
           <div v-if="showSpeakerEditor">
             <div class="speaker-grid">
-              <label v-for="speaker in speakerKeys" :key="speaker">
-                {{ speaker }}
-                <input v-model="speakerNames[speaker]" type="text" />
+              <label v-for="(speaker, index) in speakerKeys" :key="speaker">
+                <input v-model="speakerNames[speaker]" type="text" :placeholder="`Speaker ${index + 1}`" />
               </label>
             </div>
             <div class="action-row">

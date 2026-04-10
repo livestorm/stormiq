@@ -24,11 +24,11 @@ const HEALTHY_MIN = 130;
 const HEALTHY_MAX = 160;
 
 function getPaceColor(wpm) {
-  if (wpm < 120) return "#ff9f5a";
-  if (wpm < 130) return "#ffd166";
-  if (wpm <= 160) return "#63d084";
-  if (wpm <= 180) return "#9bd85d";
-  return "#ff6b6f";
+  if (wpm < 120) return "var(--color-data-peach)";
+  if (wpm < 130) return "var(--color-data-yellow)";
+  if (wpm <= 160) return "var(--color-data-green)";
+  if (wpm <= 180) return "var(--color-data-blue)";
+  return "var(--color-data-red)";
 }
 
 function roundUpTo(value, step) {
@@ -210,19 +210,19 @@ const healthyBand = computed(() => {
 
     <div class="svg-chart-legend">
       <div class="svg-chart-legend-item">
-        <span class="svg-chart-legend-swatch" style="background: #63d084"></span>
+        <span class="svg-chart-legend-swatch" style="background: var(--color-data-green)"></span>
         <span>Healthy pace</span>
       </div>
       <div class="svg-chart-legend-item">
-        <span class="svg-chart-legend-swatch" style="background: #ffd166"></span>
+        <span class="svg-chart-legend-swatch" style="background: var(--color-data-yellow)"></span>
         <span>Slightly energetic</span>
       </div>
       <div class="svg-chart-legend-item">
-        <span class="svg-chart-legend-swatch" style="background: #ff9f5a"></span>
+        <span class="svg-chart-legend-swatch" style="background: var(--color-data-peach)"></span>
         <span>Too slow</span>
       </div>
       <div class="svg-chart-legend-item">
-        <span class="svg-chart-legend-swatch" style="background: #ff6b6f"></span>
+        <span class="svg-chart-legend-swatch" style="background: var(--color-data-red)"></span>
         <span>Too fast</span>
       </div>
     </div>

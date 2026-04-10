@@ -185,7 +185,7 @@ const chartText = computed(() =>
             :width="row.barWidth"
             :height="row.barHeight"
             rx="2"
-            fill="rgba(206, 167, 77, 0.62)"
+            fill="var(--color-surface-warning-alpha-300)"
           >
             <title>{{ `${row.label}: ${row.chatMessages} ${chartText.chatMessages.toLowerCase()}` }}</title>
           </rect>
@@ -234,15 +234,15 @@ const chartText = computed(() =>
 
     <div class="svg-chart-legend">
       <div class="svg-chart-legend-item">
-        <span class="svg-chart-legend-swatch" style="background: rgba(206, 167, 77, 0.62)"></span>
+        <span class="svg-chart-legend-swatch" style="background: var(--color-surface-warning-alpha-300)"></span>
         <span>{{ chartText.chatMessages }}</span>
       </div>
       <div class="svg-chart-legend-item">
-        <span class="svg-chart-legend-swatch" style="background: #8eddf0"></span>
+        <span class="svg-chart-legend-swatch" style="background: var(--color-data-blue)"></span>
         <span>{{ chartText.transcriptPace }}</span>
       </div>
       <div class="svg-chart-legend-item">
-        <span class="svg-chart-legend-swatch" style="background: #ff7d8a"></span>
+        <span class="svg-chart-legend-swatch" style="background: var(--color-data-peach)"></span>
         <span>{{ chartText.questions }}</span>
       </div>
     </div>

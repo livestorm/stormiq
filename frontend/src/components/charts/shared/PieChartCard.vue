@@ -24,7 +24,15 @@ const props = defineProps({
   },
 });
 
-const palette = ["#8eddf0", "#ffc247", "#f46a6f", "#63d084", "#8b9bff", "#d989ff", "#5fd5bb"];
+const palette = [
+  "var(--color-data-blue)",
+  "var(--color-data-green)",
+  "var(--color-data-peach)",
+  "var(--color-data-grey)",
+  "var(--color-data-red)",
+  "var(--color-brand-100)",
+  "var(--color-nimbus-400)",
+];
 
 function polarToCartesian(cx, cy, r, angleDeg) {
   const angleRad = ((angleDeg - 90) * Math.PI) / 180;

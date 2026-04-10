@@ -55,11 +55,7 @@ const recapDescriptions = {
 };
 
 const activeDescription = computed(() => recapDescriptions[activeTone.value] || "");
-const activeButtonLabel = computed(() => {
-  if (activeTone.value === "professional") return "Generate Professional Recap";
-  if (activeTone.value === "hype") return "Generate Hype Recap";
-  return "Generate Surprise Me! Recap";
-});
+const activeButtonLabel = "Generate";
 </script>
 
 <template>
@@ -81,8 +77,6 @@ const activeButtonLabel = computed(() => {
         </button>
       </div>
 
-      <p class="analysis-subcopy">{{ activeDescription }}</p>
-
       <div class="action-row" v-if="!hasActiveBody">
         <button class="primary" :disabled="state.loading.smartRecap" @click="runSmartRecap(activeTone)">
           {{ state.loading.smartRecap ? "Generating..." : activeButtonLabel }}
@@ -97,7 +91,7 @@ const activeButtonLabel = computed(() => {
         <div v-if="activeTone === 'surprise'" class="smart-recap-result-art">
           <img :src="'/brand-assets/icons/gc.png'" alt="Surprise Me artwork" class="smart-recap-result-art-image" />
         </div>
-        <RichMarkdownCard :body="displayBody" empty-message="No recap available yet." />
+        <RichMarkdownCard :body="displayBody" :empty-message="activeDescription" />
       </div>
     </template>
     <section v-else-if="isTranscriptLoading" class="panel loading-panel">

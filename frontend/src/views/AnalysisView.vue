@@ -47,14 +47,12 @@ const uiText = computed(() =>
           overall: "Analyse globale",
           deep: "Analyse approfondie",
         },
-        overallDescription: "Utilise la transcription pour générer l’analyse globale.",
-        deepDescription:
-          "Utilise la transcription, la session, le chat et les questions pour générer une analyse approfondie orientée hôte.",
-        overallButton: "Générer l’analyse globale en français",
-        deepButton: "Générer l’analyse approfondie en français",
+        overallButton: "Générer",
+        deepButton: "Générer",
         running: "Génération...",
         downloadPdf: "Télécharger le PDF",
-        empty: "Aucun contenu disponible pour le moment.",
+        empty: "Utilise la transcription pour générer l’analyse globale.",
+        emptyDeep: "Utilise la transcription, la session, le chat et les questions pour générer une analyse approfondie orientée hôte.",
         contentPaceTitle: "Rythme du contenu et activité de l’audience",
         reactionMomentsTitle: "Segments avec le plus de réactions",
         reactionColumns: {
@@ -71,14 +69,12 @@ const uiText = computed(() =>
           overall: "Overall Analysis",
           deep: "Deep Analysis",
         },
-        overallDescription: "Uses the transcript to generate the overall analysis.",
-        deepDescription:
-          "Uses transcript, session, chat, and question signals to generate the deeper host-facing diagnostic analysis.",
-        overallButton: "Generate English Overall Analysis",
-        deepButton: "Generate English Deep Analysis",
+        overallButton: "Generate",
+        deepButton: "Generate",
         running: "Running...",
         downloadPdf: "Download PDF",
-        empty: "No content available yet.",
+        empty: "Uses the transcript to generate the overall analysis.",
+        emptyDeep: "Uses transcript, session, chat, and question signals to generate the deeper host-facing diagnostic analysis.",
         contentPaceTitle: "Content Pace And Audience Activity",
         reactionMomentsTitle: "Segments With The Most Reactions",
         reactionColumns: {
@@ -341,7 +337,6 @@ async function runDeepFor(language) {
       </div>
 
       <template v-if="activeCategory === 'overall'">
-        <p class="analysis-subcopy">{{ uiText.overallDescription }}</p>
         <div class="action-row" v-if="!hasOverallBody">
           <button class="primary" :disabled="state.loading.analysis" @click="runOverallFor(activeOverallLanguage)">
             {{ state.loading.analysis ? uiText.running : uiText.overallButton }}
@@ -354,7 +349,6 @@ async function runDeepFor(language) {
       </template>
 
       <template v-else>
-        <p class="analysis-subcopy">{{ uiText.deepDescription }}</p>
         <div class="action-row" v-if="!hasDeepBody">
           <button class="primary" :disabled="state.loading.deepAnalysis" @click="runDeepFor(activeDeepLanguage)">
             {{ state.loading.deepAnalysis ? uiText.running : uiText.deepButton }}
@@ -375,7 +369,7 @@ async function runDeepFor(language) {
             {{ section.label }}
           </button>
         </div>
-        <RichMarkdownCard :body="activeDeepSectionBody" :empty-message="uiText.empty" />
+        <RichMarkdownCard :body="activeDeepSectionBody" :empty-message="uiText.emptyDeep" />
         <template v-if="hasDeepBody && activeDeepSection === 'cross_source_synthesis'">
           <ContentPaceAudienceActivityChartCard
             v-if="deepTimelineRows.length"

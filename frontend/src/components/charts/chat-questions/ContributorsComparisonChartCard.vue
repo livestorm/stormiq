@@ -16,8 +16,8 @@ const chartWidth = 980;
 const chartHeight = 340;
 const margin = { top: 18, right: 22, bottom: 92, left: 52 };
 const seriesColors = {
-  Messages: "#8eddf0",
-  Questions: "#ffc247",
+  Messages: "var(--color-data-blue)",
+  Questions: "var(--color-data-peach)",
 };
 
 function formatContributorLabel(value) {
@@ -51,7 +51,7 @@ const normalizedRows = computed(() => {
       y,
       width: barWidth,
       height,
-      color: seriesColors[String(row?.kind || "Messages")] || "#8eddf0",
+      color: seriesColors[String(row?.kind || "Messages")] || "var(--color-data-blue)",
       labelX: x + barWidth / 2,
     };
   });
