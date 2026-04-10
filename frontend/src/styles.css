@@ -259,8 +259,8 @@ a:focus-visible {
 }
 
 .brand-logo {
-  width: 40px;
-  height: 40px;
+  width: 32px;
+  height: 32px;
   object-fit: contain;
   flex: 0 0 auto;
 }
@@ -296,7 +296,6 @@ a:focus-visible {
 .metric-card,
 .table-shell,
 .event-card,
-.oauth-connected-card,
 .landing-loader,
 .beta-model-row {
   background: var(--color-surface-neutral-alpha-100);
@@ -537,8 +536,7 @@ textarea:focus,
 .metric-label,
 .transcript-download-label,
 .beta-notice-kicker,
-.beta-model-row-head span,
-.oauth-connected-title {
+.beta-model-row-head span {
   margin: 0;
   font-size: var(--text-content-legends-bold-md);
   line-height: var(--text-content-legends-bold-md--line-height);
@@ -944,35 +942,56 @@ textarea:focus,
 }
 
 .oauth-connected-card {
-  display: grid;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: var(--spacing-space-3);
   padding: var(--spacing-space-3);
 }
 
+.oauth-connected-info {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-space-1);
+}
+
+.oauth-connected-title {
+  font-size: 12px;
+  color: var(--color-text-neutral-tertiary);
+}
+
 .oauth-user-badge {
-  justify-self: start;
-  padding: 4px var(--spacing-space-2);
-  border-radius: var(--spacing-rounded-lg);
-  background: var(--color-surface-success-alpha-200);
-  border: 1px solid var(--color-surface-success-alpha-300);
-  color: var(--color-green-alpha-light-800);
-  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-space-2);
+  font-size: 14px;
   font-weight: 600;
+  color: var(--color-text-neutral-base);
 }
 
 .oauth-user-badge-dot {
   width: 8px;
   height: 8px;
+  flex: 0 0 auto;
   border-radius: 999px;
   background: var(--color-green-500);
 }
 
 .oauth-disconnect-button {
+  flex: 0 0 auto;
   min-height: auto;
-  padding: 0;
-  border: 0;
+  padding: 4px var(--spacing-space-2);
+  border: 1px solid var(--color-borders-neutral-light);
+  border-radius: var(--spacing-rounded-lg);
   background: transparent;
   color: var(--color-text-danger-base);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.oauth-disconnect-button:hover {
+  border-color: var(--color-text-danger-base);
+  background: transparent;
 }
 
 .events-meta {

@@ -182,14 +182,7 @@ function handleNavClick(navigate) {
 
     <aside class="sidebar" :class="{ collapsed: sidebarCollapsed, compact: isCompactViewport }">
       <div class="sidebar-brand" :class="{ collapsed: sidebarCollapsed }">
-        <button
-          type="button"
-          class="brand-logo-button"
-          :aria-label="sidebarCollapsed ? 'Open navigation and controls' : 'Close navigation and controls'"
-          @click="toggleSidebar()"
-        >
-          <img :src="logoUrl" alt="Livestorm" class="brand-logo" />
-        </button>
+        <img :src="logoUrl" alt="Livestorm" class="brand-logo" />
         <div v-if="!sidebarCollapsed" class="brand-copy">
           <h1>StormIQ</h1>
         </div>
