@@ -22,6 +22,7 @@ const state = reactive({
   outputLanguage: "English",
   workspace: null,
   transcriptUnavailableReason: "",
+  transcriptJobProgress: null,
   loading: {
     workspaceEvents: false,
     eventSessions: false,
@@ -60,6 +61,37 @@ function getFriendlyTranscriptUnavailableMessage(message) {
     return "Transcript isn’t available for this session because Livestorm does not expose a usable MP4 recording for it. Session Overview and Chat & Questions can still work, but Transcript, Analysis, Repurposing, and Smart Recap require a video recording.";
   }
   return String(message || "").trim();
+}
+
+async function pollTranscriptJob(sessionId) {
+  const POLL_INTERVAL_MS = 6000;
+  const POLL_TIMEOUT_MS = 90 * 60 * 1000; // 90 minutes — enough for very long recordings
+  const deadline = Date.now() + POLL_TIMEOUT_MS;
+
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+    const status = await api.getTranscriptJobStatus(sessionId);
+    // When the job finishes the backend returns the full workspace payload
+    // (no jobStatus field), so we can use it directly.
+    if (!status?.jobStatus) {
+      state.transcriptJobProgress = null;
+      return status;
+    }
+    if (status.progress) {
+      state.transcriptJobProgress = status.progress;
+    }
+    if (status.jobStatus === "completed") {
+      state.transcriptJobProgress = null;
+      const cached = await api.getCachedSession(sessionId);
+      if (cached) return cached;
+    }
+    if (status.jobStatus === "error") {
+      state.transcriptJobProgress = null;
+      throw new Error(status.error || "Transcript generation failed.");
+    }
+  }
+  state.transcriptJobProgress = null;
+  throw new Error("Transcript generation timed out. Please try refreshing the page later.");
 }
 
 async function wrapCall(flag, fn) {
@@ -180,6 +212,7 @@ async function loadSessionsForSelectedWorkspaceEvent() {
 async function fetchSessionData(forceRefresh = false) {
   return wrapCall("sessionFetch", async () => {
     state.transcriptUnavailableReason = "";
+    state.transcriptJobProgress = null;
 
     if (state.inputMode === "event") {
       const normalizedEventId = state.eventId.trim();
@@ -215,10 +248,14 @@ async function fetchSessionData(forceRefresh = false) {
     state.workspace = baseData;
 
     try {
-      const transcriptData = await api.fetchSessionTranscript(activeSessionId.value, {
+      const transcriptResponse = await api.fetchSessionTranscript(activeSessionId.value, {
         apiKey: state.apiKey,
         forceRefresh,
       });
+      // Async job started (large recording) — poll until the background worker finishes.
+      const transcriptData = transcriptResponse?.jobStatus
+        ? await pollTranscriptJob(activeSessionId.value)
+        : transcriptResponse;
       state.workspace = transcriptData;
       state.transcriptUnavailableReason = "";
       return transcriptData;

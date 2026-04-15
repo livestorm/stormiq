@@ -2,6 +2,7 @@
 import { computed, ref } from "vue";
 import ContentPaceAudienceActivityChartCard from "../components/charts/analysis/ContentPaceAudienceActivityChartCard.vue";
 import DataTable from "../components/DataTable.vue";
+import KeyMomentsTimeline from "../components/KeyMomentsTimeline.vue";
 import RichMarkdownCard from "../components/RichMarkdownCard.vue";
 import { api } from "../api";
 import { useWorkspace } from "../store/workspace";
@@ -369,7 +370,12 @@ async function runDeepFor(language) {
             {{ section.label }}
           </button>
         </div>
-        <RichMarkdownCard :body="activeDeepSectionBody" :empty-message="uiText.emptyDeep" />
+        <KeyMomentsTimeline
+          v-if="activeDeepSection === 'key_moments'"
+          :body="activeDeepSectionBody"
+          :empty-message="isFrenchUi ? 'Aucun moment clé disponible.' : 'No key moments available yet.'"
+        />
+        <RichMarkdownCard v-else :body="activeDeepSectionBody" :empty-message="uiText.emptyDeep" />
         <template v-if="hasDeepBody && activeDeepSection === 'cross_source_synthesis'">
           <ContentPaceAudienceActivityChartCard
             v-if="deepTimelineRows.length"
@@ -407,7 +413,7 @@ async function runDeepFor(language) {
     </template>
     <section v-else-if="isTranscriptLoading" class="panel loading-panel">
       <h3>Transcript still loading</h3>
-      <p>Analysis will become available as soon as the transcript finishes processing.</p>
+      <p>{{ state.transcriptJobProgress?.message || 'Analysis will become available as soon as the transcript finishes processing.' }}</p>
     </section>
     <section v-else-if="isTranscriptUnavailable" class="panel helper-panel">
       <h3>Analysis unavailable for this session</h3>

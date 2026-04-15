@@ -90,6 +90,9 @@ export const api = {
   getCachedSession(sessionId) {
     return request(`/api/sessions/${sessionId}/cached`);
   },
+  getTranscriptJobStatus(sessionId) {
+    return request(`/api/sessions/${sessionId}/transcript-job`);
+  },
   getSession(sessionId) {
     return request(`/api/sessions/${sessionId}`);
   },

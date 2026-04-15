@@ -2841,12 +2841,20 @@ def build_derived_stats(
     return stats
 
 
+def _sample_evenly(items: list, max_items: int) -> list:
+    """Return at most max_items elements sampled evenly across the full list."""
+    if max_items <= 0 or len(items) <= max_items:
+        return items
+    step = len(items) / max_items
+    return [items[int(i * step)] for i in range(max_items)]
+
+
 def build_compact_transcript_payload_for_llm(transcript_payload: Dict[str, Any], max_segments: int = 120) -> Dict[str, Any]:
     transcript = _extract_transcript_object(transcript_payload)
     segments = _extract_transcript_segments(transcript)
     compact_segments: List[Dict[str, Any]] = []
 
-    for segment in segments[:max_segments] if max_segments > 0 else segments:
+    for segment in _sample_evenly(segments, max_segments):
         if not isinstance(segment, dict):
             continue
         text = str(segment.get("text") or "").strip()
@@ -2865,7 +2873,7 @@ def build_compact_transcript_payload_for_llm(transcript_payload: Dict[str, Any],
 
     if not compact_segments:
         sentence_items = _extract_sentence_items(transcript_payload, transcript)
-        for sentence in sentence_items[:max_segments] if max_segments > 0 else sentence_items:
+        for sentence in _sample_evenly(sentence_items, max_segments):
             if not isinstance(sentence, dict):
                 continue
             text = str(sentence.get("sentence") or sentence.get("text") or "").strip()

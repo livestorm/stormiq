@@ -978,7 +978,7 @@ watch(
       <div class="loading-indicator" aria-hidden="true"></div>
       <div>
         <h3 class="loading-title">Transcript is still loading</h3>
-        <p class="loading-copy">Session Overview and Chat &amp; Questions are ready. Transcript data will appear here as soon as processing finishes.</p>
+        <p class="loading-copy">{{ state.transcriptJobProgress?.message || 'Session Overview and Chat &amp; Questions are ready. Transcript data will appear here as soon as processing finishes.' }}</p>
       </div>
     </section>
     <section v-else-if="isTranscriptUnavailable" class="panel helper-panel">

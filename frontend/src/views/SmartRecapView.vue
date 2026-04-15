@@ -96,7 +96,7 @@ const activeButtonLabel = "Generate";
     </template>
     <section v-else-if="isTranscriptLoading" class="panel loading-panel">
       <h3>Transcript still loading</h3>
-      <p>Smart Recap will become available once the transcript is ready.</p>
+      <p>{{ state.transcriptJobProgress?.message || 'Smart Recap will become available once the transcript is ready.' }}</p>
     </section>
     <section v-else-if="isTranscriptUnavailable" class="panel helper-panel">
       <h3>Smart Recap unavailable for this session</h3>

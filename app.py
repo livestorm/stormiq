@@ -22,6 +22,7 @@ from livestorm_app.api_logic import (
     fetch_event_sessions,
     format_service_error,
     get_cached_workspace,
+    get_transcript_job_status_data,
     run_content_repurposing,
     run_deep_analysis,
     run_overall_analysis,
@@ -338,6 +339,16 @@ def fetch_session_transcript_workspace(session_id: str, request: FetchSessionReq
         )
     except Exception as exc:
         _raise_http_error("Transcript", exc)
+        raise
+
+
+@app.get("/api/sessions/{session_id}/transcript-job")
+def get_transcript_job_status(session_id: str, http_request: Request) -> Dict[str, Any]:
+    try:
+        api_key = _resolve_livestorm_auth("", http_request)
+        return get_transcript_job_status_data(api_key, session_id)
+    except Exception as exc:
+        _raise_http_error("Transcript job", exc)
         raise
 
 

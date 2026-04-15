@@ -14,7 +14,7 @@ import urllib.request
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 try:
     import imageio_ffmpeg
@@ -23,17 +23,23 @@ except ModuleNotFoundError:
 from dotenv import load_dotenv
 
 DEFAULT_MODEL = "gladia-v2-pre-recorded"
-DEFAULT_AUDIO_BITRATE = "32k"
 DEFAULT_AUDIO_SAMPLE_RATE = 16000
 GLADIA_API_BASE = "https://api.gladia.io"
 GLADIA_UPLOAD_PATH = "/v2/upload"
 GLADIA_PRE_RECORDED_PATH = "/v2/pre-recorded"
 GLADIA_POLL_INTERVAL_SECONDS = 3
 GLADIA_POLL_TIMEOUT_SECONDS = 30 * 60
-GLADIA_MAX_AUDIO_CHUNK_SECONDS = 60 * 60
+# Gladia standard plan supports up to 135 min per request; enterprise up to 255 min.
+GLADIA_MAX_AUDIO_CHUNK_SECONDS = 135 * 60
 LIVESTORM_API_BASE = "https://api.livestorm.co/v1"
 DEFAULT_GLADIA_OPTIONS: dict[str, Any] = {
     "diarization": True,
+    "diarization_config": {
+        # Gladia recommendation for meeting/webinar recorders: supply a speaker
+        # range so the model adapts instead of having to auto-detect from scratch.
+        "min_speakers": 1,
+        "max_speakers": 20,
+    },
     "named_entity_recognition": True,
     "sentences": True,
     "subtitles": True,
@@ -81,6 +87,8 @@ def _ffmpeg_executable() -> str:
 
 
 def _extract_audio(video_path: Path, audio_path: Path) -> None:
+    # WAV PCM (pcm_s16le) at 16 kHz mono — Gladia's recommended format for
+    # reliable uploads. Larger than MP3 but avoids decode overhead on Gladia's side.
     ffmpeg_path = _ffmpeg_executable()
     command = [
         ffmpeg_path,
@@ -92,8 +100,8 @@ def _extract_audio(video_path: Path, audio_path: Path) -> None:
         "1",
         "-ar",
         str(DEFAULT_AUDIO_SAMPLE_RATE),
-        "-b:a",
-        DEFAULT_AUDIO_BITRATE,
+        "-c:a",
+        "pcm_s16le",
         str(audio_path),
     ]
 
@@ -308,7 +316,18 @@ def _transcribe_audio_file(
     *,
     api_key: str,
     gladia_options: dict[str, Any] | None = None,
+    on_progress: Callable[[dict[str, Any]], None] | None = None,
+    chunk_index: int = 1,
+    chunk_total: int = 1,
 ) -> dict[str, Any]:
+    if on_progress:
+        chunk_label = f"chunk {chunk_index} of {chunk_total}" if chunk_total > 1 else "recording"
+        on_progress({
+            "step": "uploading",
+            "message": f"Uploading {chunk_label} to Gladia…",
+            "chunk": chunk_index,
+            "total": chunk_total,
+        })
     upload_payload = _upload_audio_file(audio_path, api_key)
     audio_url = upload_payload.get("audio_url")
     if not isinstance(audio_url, str) or not audio_url.strip():
@@ -320,7 +339,12 @@ def _transcribe_audio_file(
     if not isinstance(job_id, str) or not job_id.strip():
         raise RuntimeError("Gladia transcription request succeeded but no job id was returned.")
 
-    gladia_result = _poll_gladia_transcription(job_id, api_key)
+    gladia_result = _poll_gladia_transcription(
+        job_id, api_key,
+        on_progress=on_progress,
+        chunk_index=chunk_index,
+        chunk_total=chunk_total,
+    )
     return {
         "upload_payload": upload_payload,
         "gladia_request": gladia_request,
@@ -339,9 +363,17 @@ def _start_gladia_transcription(audio_url: str, api_key: str, gladia_options: di
     )
 
 
-def _poll_gladia_transcription(job_id: str, api_key: str) -> dict[str, Any]:
+def _poll_gladia_transcription(
+    job_id: str,
+    api_key: str,
+    *,
+    on_progress: Callable[[dict[str, Any]], None] | None = None,
+    chunk_index: int = 1,
+    chunk_total: int = 1,
+) -> dict[str, Any]:
     deadline = time.monotonic() + GLADIA_POLL_TIMEOUT_SECONDS
     last_payload: dict[str, Any] | None = None
+    last_gladia_status: str | None = None
 
     while time.monotonic() < deadline:
         payload = _json_request(
@@ -351,6 +383,18 @@ def _poll_gladia_transcription(job_id: str, api_key: str) -> dict[str, Any]:
         )
         last_payload = payload
         status = str(payload.get("status") or "").strip().lower()
+
+        if on_progress and status != last_gladia_status:
+            last_gladia_status = status
+            chunk_label = f"chunk {chunk_index} of {chunk_total}" if chunk_total > 1 else "recording"
+            on_progress({
+                "step": "transcribing",
+                "message": f"Transcribing {chunk_label} ({status})…",
+                "chunk": chunk_index,
+                "total": chunk_total,
+                "gladia_status": status,
+            })
+
         if status == "done":
             return payload
         if status == "error":
@@ -791,8 +835,10 @@ def _download_recording(recording: dict[str, Any], destination: Path) -> None:
 
     request = urllib.request.Request(url=url, method="GET")
     try:
-        with urllib.request.urlopen(request) as response, destination.open("wb") as output_handle:
-            shutil.copyfileobj(response, output_handle)
+        # timeout=60 is a per-read socket timeout, not a total-download limit,
+        # so it detects stalled connections without cutting off legitimate large files.
+        with urllib.request.urlopen(request, timeout=60) as response, destination.open("wb") as output_handle:
+            shutil.copyfileobj(response, output_handle, length=1024 * 1024)
     except urllib.error.HTTPError as exc:
         details = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"Recording download failed with HTTP {exc.code}: {details}") from exc
@@ -808,6 +854,7 @@ def transcribe_video(
     keep_audio: bool = False,
     gladia_options: dict[str, Any] | None = None,
     gladia_api_key: str | None = None,
+    on_progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> Path:
     source_video = Path(input_path).expanduser().resolve()
     if not source_video.exists():
@@ -826,22 +873,34 @@ def transcribe_video(
 
     with tempfile.TemporaryDirectory(prefix="video-transcript-") as temp_dir:
         temp_dir_path = Path(temp_dir)
-        temp_audio = temp_dir_path / f"{source_video.stem}.mp3"
+        temp_audio = temp_dir_path / f"{source_video.stem}.wav"
+        if on_progress:
+            on_progress({"step": "extracting", "message": "Extracting audio track…"})
         _extract_audio(source_video, temp_audio)
         chunk_specs = _split_audio_file(temp_audio, temp_dir_path / "audio-chunks")
+        chunk_total = len(chunk_specs)
 
         chunk_results: list[dict[str, Any]] = []
-        for chunk_path, offset_seconds in chunk_specs:
-            chunk_result = _transcribe_audio_file(chunk_path, api_key=api_key, gladia_options=gladia_options)
+        for chunk_index, (chunk_path, offset_seconds) in enumerate(chunk_specs, start=1):
+            chunk_result = _transcribe_audio_file(
+                chunk_path,
+                api_key=api_key,
+                gladia_options=gladia_options,
+                on_progress=on_progress,
+                chunk_index=chunk_index,
+                chunk_total=chunk_total,
+            )
             chunk_result["offset_seconds"] = offset_seconds
             chunk_result["audio_path"] = str(chunk_path)
             chunk_results.append(chunk_result)
 
+        if chunk_total > 1 and on_progress:
+            on_progress({"step": "merging", "message": f"Merging {chunk_total} transcript chunks…"})
         gladia_result = _merge_chunk_results(chunk_results)
 
         extracted_audio: Path | None = None
         if keep_audio:
-            extracted_audio = output_file.with_suffix(".audio.mp3")
+            extracted_audio = output_file.with_suffix(".audio.wav")
             shutil.copy2(temp_audio, extracted_audio)
 
         normalized = _normalize_transcription(
@@ -869,6 +928,7 @@ def transcribe_livestorm_session(
     gladia_options: dict[str, Any] | None = None,
     gladia_api_key: str | None = None,
     livestorm_api_key: str | None = None,
+    on_progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> Path:
     payload = _fetch_livestorm_recordings(session_id, livestorm_api_key=livestorm_api_key)
     recording = _select_recording(payload)
@@ -885,6 +945,8 @@ def transcribe_livestorm_session(
     with tempfile.TemporaryDirectory(prefix="video-transcript-") as temp_dir:
         temp_dir_path = Path(temp_dir)
         downloaded_video = temp_dir_path / file_name
+        if on_progress:
+            on_progress({"step": "downloading", "message": "Downloading recording…"})
         _download_recording(recording, downloaded_video)
 
         final_video_path: Path | None = None
@@ -899,6 +961,7 @@ def transcribe_livestorm_session(
             keep_audio=keep_audio,
             gladia_options=gladia_options,
             gladia_api_key=gladia_api_key,
+            on_progress=on_progress,
         )
 
         transcript_payload = json.loads(transcript_path.read_text())
@@ -932,6 +995,7 @@ def transcribe_livestorm_session_data(
     gladia_options: dict[str, Any] | None = None,
     gladia_api_key: str | None = None,
     livestorm_api_key: str | None = None,
+    on_progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     transcript_path = transcribe_livestorm_session(
         session_id=session_id,
@@ -942,6 +1006,7 @@ def transcribe_livestorm_session_data(
         gladia_options=gladia_options,
         gladia_api_key=gladia_api_key,
         livestorm_api_key=livestorm_api_key,
+        on_progress=on_progress,
     )
     transcript_payload = json.loads(transcript_path.read_text())
     transcript_payload["output_path"] = str(transcript_path.resolve())

@@ -2,8 +2,10 @@ import hashlib
 import json
 import os
 import logging
+import uuid
 from contextlib import contextmanager
-from typing import Any, Dict, Iterator, Optional
+from datetime import datetime, timezone
+from typing import Any, Dict, Iterator, Optional, Union
 
 from psycopg import connect
 from psycopg.rows import dict_row
@@ -149,6 +151,12 @@ def ensure_database_schema() -> None:
                 """
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_session_cache_session_id_unique
                 ON session_cache (session_id)
+                """
+            )
+            cursor.execute(
+                """
+                ALTER TABLE transcript_jobs
+                ADD COLUMN IF NOT EXISTS progress TEXT
                 """
             )
         connection.commit()
@@ -389,6 +397,90 @@ def update_oauth_connection_tokens(
             connection.commit()
     except Exception:
         logger.exception("Failed to update oauth tokens for connection_id=%s", str(connection_id).strip())
+
+
+def create_transcript_job(session_id: str) -> str:
+    """Insert a new transcript job record and return its job_id."""
+    job_id = uuid.uuid4().hex
+    now = datetime.now(timezone.utc).isoformat()
+    with get_db_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO transcript_jobs (job_id, session_id, timestamped, status, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (job_id, str(session_id).strip(), True, "pending", now, now),
+            )
+        connection.commit()
+    return job_id
+
+
+def update_transcript_job_status(job_id: str, status: str, error: Optional[str] = None) -> None:
+    """Update the status (and optional error) of a transcript job."""
+    if not database_enabled() or not str(job_id or "").strip():
+        return
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        with get_db_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE transcript_jobs
+                    SET status = %s, error = %s, updated_at = %s
+                    WHERE job_id = %s
+                    """,
+                    (status, error, now, str(job_id).strip()),
+                )
+            connection.commit()
+    except Exception:
+        logger.exception("Failed to update transcript job status for job_id=%s", str(job_id).strip())
+
+
+def update_transcript_job_progress(job_id: str, progress: Union[Dict[str, Any], None]) -> None:
+    """Store a progress snapshot (dict → JSON) on a transcript job."""
+    if not database_enabled() or not str(job_id or "").strip():
+        return
+    now = datetime.now(timezone.utc).isoformat()
+    progress_json = json.dumps(progress, ensure_ascii=False) if progress is not None else None
+    try:
+        with get_db_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE transcript_jobs
+                    SET progress = %s, updated_at = %s
+                    WHERE job_id = %s
+                    """,
+                    (progress_json, now, str(job_id).strip()),
+                )
+            connection.commit()
+    except Exception:
+        logger.exception("Failed to update transcript job progress for job_id=%s", str(job_id).strip())
+
+
+def get_transcript_job_for_session(session_id: str) -> Optional[Dict[str, Any]]:
+    """Return the most recent transcript job for a session, or None."""
+    if not database_enabled() or not str(session_id or "").strip():
+        return None
+    try:
+        with get_db_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT job_id, session_id, status, created_at, updated_at, error, progress
+                    FROM transcript_jobs
+                    WHERE session_id = %s
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (str(session_id).strip(),),
+                )
+                row = cursor.fetchone()
+        return dict(row) if isinstance(row, dict) else None
+    except Exception:
+        logger.exception("Failed to get transcript job for session_id=%s", str(session_id).strip())
+        return None
 
 
 def delete_oauth_connection(connection_id: str) -> None:

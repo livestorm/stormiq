@@ -1,13 +1,23 @@
 from __future__ import annotations
 
+import json
+import logging
 import math
+import threading
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 import requests
 
 from livestorm_app.config import DEFAULT_OPENAI_MODEL, DEEP_ANALYSIS_OPENAI_MODEL, OUTPUT_LANGUAGE_MAP, SMART_RECAP_OPENAI_MODEL
-from livestorm_app.db import fetch_cached_session, upsert_cached_session
+from livestorm_app.db import (
+    create_transcript_job,
+    fetch_cached_session,
+    get_transcript_job_for_session,
+    update_transcript_job_progress,
+    update_transcript_job_status,
+    upsert_cached_session,
+)
 from livestorm_app.services import (
     analyze_with_openai,
     analysis_markdown_to_pdf_bytes,
@@ -43,6 +53,8 @@ from livestorm_app.services import (
 )
 from livestorm_app.session_overview import build_compact_session_payload_for_llm, build_session_overview_data
 from livestorm_app.transcript_client import fetch_session_transcript
+
+logger = logging.getLogger(__name__)
 
 
 def _sanitize_json_value(value: Any) -> Any:
@@ -294,8 +306,30 @@ def fetch_session_base_data(api_key: str, session_id: str, force_refresh: bool =
     return _serialize_cached_session(session_id, cached)
 
 
+def _run_transcript_job_worker(job_id: str, api_key: str, session_id: str, transcript_api_key: str) -> None:
+    """Background thread: runs Gladia transcription and updates job status + progress in DB."""
+    def on_progress(progress: Dict[str, Any]) -> None:
+        update_transcript_job_progress(job_id, progress)
+
+    try:
+        update_transcript_job_status(job_id, "running")
+        transcript_payload = fetch_session_transcript(
+            transcript_api_key,
+            session_id,
+            livestorm_api_key=api_key,
+            on_progress=on_progress,
+        )
+        upsert_cached_session(api_key, session_id, transcript_payload=transcript_payload)
+        update_transcript_job_status(job_id, "completed")
+    except Exception as exc:
+        logger.exception("Transcript job %s failed for session %s", job_id, session_id)
+        update_transcript_job_status(job_id, "error", error=str(exc))
+
+
 def fetch_session_transcript_data(api_key: str, transcript_api_key: str, session_id: str, force_refresh: bool = False) -> Dict[str, Any]:
     session_id = str(session_id or "").strip()
+
+    # Return immediately when transcript is already cached (skip job machinery).
     cached = None if force_refresh else fetch_cached_session(api_key, session_id)
     if isinstance(cached, dict) and isinstance(cached.get("transcript_payload"), dict):
         return _serialize_cached_session(session_id, cached)
@@ -304,20 +338,50 @@ def fetch_session_transcript_data(api_key: str, transcript_api_key: str, session
     if not transcript_api_key:
         raise RuntimeError("Gladia API key is not configured on the server. Set GLADIA_KEY before fetching uncached sessions.")
 
-    transcript_payload = fetch_session_transcript(
-        transcript_api_key,
-        session_id,
-        livestorm_api_key=api_key,
+    # Re-attach to an already-running job instead of spawning a duplicate.
+    if not force_refresh:
+        existing_job = get_transcript_job_for_session(session_id)
+        if isinstance(existing_job, dict) and existing_job.get("status") in ("pending", "running"):
+            return {"jobId": existing_job["job_id"], "jobStatus": existing_job["status"]}
+
+    # Start a new background job and return immediately.
+    job_id = create_transcript_job(session_id)
+    thread = threading.Thread(
+        target=_run_transcript_job_worker,
+        args=(job_id, api_key, session_id, transcript_api_key),
+        daemon=True,
     )
-    upsert_cached_session(
-        api_key,
-        session_id,
-        transcript_payload=transcript_payload,
-    )
+    thread.start()
+    return {"jobId": job_id, "jobStatus": "pending"}
+
+
+def get_transcript_job_status_data(api_key: str, session_id: str) -> Dict[str, Any]:
+    """Polling endpoint payload: returns full workspace data once done, else job status."""
+    session_id = str(session_id or "").strip()
+
+    # Transcript may have finished between polls — return full data if so.
     cached = fetch_cached_session(api_key, session_id)
-    if not isinstance(cached, dict):
-        raise RuntimeError("Fetched transcript data but failed to reload it from the cache.")
-    return _serialize_cached_session(session_id, cached)
+    if isinstance(cached, dict) and isinstance(cached.get("transcript_payload"), dict):
+        return _serialize_cached_session(session_id, cached)
+
+    job = get_transcript_job_for_session(session_id)
+    if not isinstance(job, dict):
+        return {"jobStatus": "not_found"}
+
+    progress: Optional[Dict[str, Any]] = None
+    raw_progress = job.get("progress")
+    if raw_progress:
+        try:
+            progress = json.loads(raw_progress)
+        except Exception:
+            pass
+
+    return {
+        "jobId": job["job_id"],
+        "jobStatus": job["status"],
+        "error": job.get("error"),
+        "progress": progress,
+    }
 
 
 def save_speaker_labels(api_key: str, session_id: str, speaker_names: Dict[str, str]) -> Dict[str, Any]:
@@ -427,7 +491,7 @@ def run_deep_analysis(api_analysis_key: str, session_id: str, output_language: s
             ),
             raw_payload=build_deep_analysis_chat_payload_for_llm(chat_payload, max_rows=0),
             questions_payload=build_deep_analysis_questions_payload_for_llm(questions_payload, max_rows=0),
-            transcript_payload=build_compact_transcript_payload_for_llm(transcript_payload, max_segments=0),
+            transcript_payload=build_compact_transcript_payload_for_llm(transcript_payload, max_segments=800),
             session_payload=build_compact_session_payload_for_llm(session_payload) if isinstance(session_payload, dict) else None,
             max_tokens=5000,
         )
