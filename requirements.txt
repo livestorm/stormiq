@@ -6,3 +6,5 @@ fastapi>=0.115.12
 uvicorn[standard]>=0.34.0
 python-dotenv>=1.0.1
 imageio-ffmpeg>=0.5.1
+arq>=0.26.1
+redis>=5.0.7

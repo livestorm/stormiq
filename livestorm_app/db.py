@@ -155,8 +155,34 @@ def ensure_database_schema() -> None:
             )
             cursor.execute(
                 """
+                CREATE TABLE IF NOT EXISTS transcript_jobs (
+                    job_id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    timestamped BOOLEAN DEFAULT TRUE,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    error TEXT,
+                    progress TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+            cursor.execute(
+                """
                 ALTER TABLE transcript_jobs
                 ADD COLUMN IF NOT EXISTS progress TEXT
+                """
+            )
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_transcript_jobs_session_id
+                ON transcript_jobs (session_id, created_at DESC)
+                """
+            )
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_transcript_jobs_status_updated_at
+                ON transcript_jobs (status, updated_at)
                 """
             )
         connection.commit()

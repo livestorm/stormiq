@@ -1,0 +1,30 @@
+# StormIQ background worker image.
+#
+# Runs the arq worker process. Consumes the same Python codebase as the
+# web image (lib/livestorm_app/*) but does NOT serve HTTP and does NOT
+# bundle the frontend. Smaller, faster to build.
+#
+# Build:   docker build -f docker/Dockerfile.worker -t stormiq-worker .
+# Run:     docker run --rm --env-file .env stormiq-worker
+
+FROM python:3.13-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Backend code only. No app.py (worker doesn't serve HTTP), no
+# frontend/dist, no assets/. The worker reads Postgres and Redis,
+# calls OpenAI + Gladia, and writes results back.
+COPY livestorm_app ./livestorm_app
+COPY prompts ./prompts
+
+CMD ["arq", "livestorm_app.worker.WorkerSettings"]

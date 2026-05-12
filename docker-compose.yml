@@ -1,0 +1,52 @@
+# Local development stack for StormIQ.
+#
+# Three services match the production deployment shape:
+#   - web    : FastAPI + built Vue frontend (Dockerfile)
+#   - worker : arq worker consuming the job queue (docker/Dockerfile.worker)
+#   - redis  : BullMQ-style queue + progress cache
+#
+# Postgres is intentionally NOT in this compose file. Local development
+# uses the same managed Postgres referenced by DATABASE_URL in .env so
+# devs see real cached data. Add a `postgres` service here only if you
+# want a fully isolated local DB.
+#
+# Usage:
+#   docker compose up --build
+#   docker compose up worker        # rebuild just the worker
+#   docker compose logs -f worker   # follow worker logs
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    ports:
+      - "10000:10000"
+    depends_on:
+      - redis
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    env_file:
+      - .env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+volumes:
+  redis-data:
