@@ -129,7 +129,12 @@ onMounted(async () => {
     const bootstrap = await api.bootstrap();
     applyBootstrap(bootstrap);
     if (route.path === "/auth/callback") {
-      await router.replace("/single-analysis");
+      // Full page navigation (not router.replace) so the browser fetches
+      // fresh index.html. Otherwise a session that started on an old
+      // cached bundle keeps running it after OAuth, leaving the user on
+      // a pre-restructure UI with broken hashed-asset references.
+      window.location.replace("/single-analysis");
+      return;
     }
   } catch (_error) {
     // Ignore bootstrap failures so manual entry still works.

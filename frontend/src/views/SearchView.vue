@@ -106,6 +106,18 @@ async function fetchSessionsForWorkspaceEvent(eventId) {
   }
   await loadSessionsForSelectedWorkspaceEvent();
 }
+
+// "Open event" on a workspace card jumps the user into the "By event
+// ID" tab with the event pre-filled and the session list already
+// loading. Same destination as the legacy expand-inline flow, just
+// surfaced as a real tab so the URL/state matches what the user sees.
+function openWorkspaceEvent(eventId) {
+  if (!eventId) return;
+  state.eventId = eventId;
+  state.selectedEventSessionId = "";
+  selectMode("event");
+  fetchSessionsForEvent().catch(() => {});
+}
 </script>
 
 <template>
@@ -253,14 +265,10 @@ async function fetchSessionsForWorkspaceEvent(eventId) {
                 <button
                   class="ghost-link-button"
                   type="button"
-                  :disabled="state.loading.eventSessions || !canUseLivestormAuth"
-                  @click="fetchSessionsForWorkspaceEvent(event.id)"
+                  :disabled="!canUseLivestormAuth"
+                  @click="openWorkspaceEvent(event.id)"
                 >
-                  {{
-                    state.loading.eventSessions && state.selectedWorkspaceEventId === event.id
-                      ? "Fetching sessions…"
-                      : "Open event"
-                  }}
+                  Open event
                 </button>
               </div>
             </article>
@@ -283,10 +291,26 @@ async function fetchSessionsForWorkspaceEvent(eventId) {
 </template>
 
 <style scoped>
+/* Panels in the search view stack a heading, a description, one or
+   two input rows, and (for the workspace browser) a grid of cards.
+   The default .panel uses padding + margin between panels but has no
+   gap between its own children, so each child relied on ad-hoc
+   margins for breathing room — the result was an uneven vertical
+   rhythm. Driving spacing from a single flex-column gap on the panel
+   keeps every form section the same distance apart. */
+.search-view .panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.search-view .panel > h3 {
+  margin: 0;
+}
+
 .search-mode-copy {
-  margin-top: 0;
-  margin-bottom: 12px;
-  color: #5d6d79;
+  margin: 0;
+  color: var(--color-text-neutral-secondary);
   font-size: 14px;
 }
 
@@ -328,7 +352,7 @@ async function fetchSessionsForWorkspaceEvent(eventId) {
 .field-label {
   font-size: 13px;
   font-weight: 500;
-  color: #4d5b66;
+  color: var(--color-text-neutral-secondary);
   margin-bottom: 4px;
 }
 </style>

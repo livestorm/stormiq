@@ -613,42 +613,56 @@ async function loadSessionById(sessionId) {
   state.transcriptUnavailableReason = "";
   state.transcriptJobProgress = null;
 
+  // Flip the loading flag up-front so the destination view renders its
+  // loader from the moment the user clicks a card. Without this, the
+  // cache lookup below (an HTTP round-trip on the first hit) runs with
+  // no loading state and the page reads as blank/broken. We also stamp
+  // sessionId immediately so views that key off it (SessionHero, the
+  // route-aware loaders) can show their per-session shell straight
+  // away. Released in finally — the fetch-path wrapCall inside will
+  // toggle it again, which is harmless.
+  state.loading.sessionFetch = true;
+  state.sessionId = id;
   try {
-    const cached = await api.getCachedSession(id);
-    if (cached) {
-      state.workspace = cached;
-      return cached;
-    }
-  } catch (error) {
-    // 4xx/5xx from the cache lookup falls through to a fresh fetch.
-  }
-
-  // No cache yet for this session — fetch the base data. The user's
-  // OAuth token must have access to the underlying Livestorm session;
-  // otherwise the backend returns 4xx and the view shows an error.
-  await wrapCall("sessionFetch", async () => {
-    state.sessionId = id;
-    state.inputMode = "session";
-    const baseData = await api.fetchSessionBase(id, {
-      apiKey: state.apiKey,
-      forceRefresh: false,
-    });
-    state.workspace = baseData;
     try {
-      const transcriptResponse = await api.fetchSessionTranscript(id, {
+      const cached = await api.getCachedSession(id);
+      if (cached) {
+        state.workspace = cached;
+        return cached;
+      }
+    } catch (error) {
+      // 4xx/5xx from the cache lookup falls through to a fresh fetch.
+    }
+
+    // No cache yet for this session — fetch the base data. The user's
+    // OAuth token must have access to the underlying Livestorm session;
+    // otherwise the backend returns 4xx and the view shows an error.
+    await wrapCall("sessionFetch", async () => {
+      state.sessionId = id;
+      state.inputMode = "session";
+      const baseData = await api.fetchSessionBase(id, {
         apiKey: state.apiKey,
         forceRefresh: false,
       });
-      const transcriptData = transcriptResponse?.jobStatus
-        ? await pollTranscriptJob(id)
-        : transcriptResponse;
-      state.workspace = transcriptData;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      state.transcriptUnavailableReason = getFriendlyTranscriptUnavailableMessage(message);
-    }
-  });
-  return state.workspace;
+      state.workspace = baseData;
+      try {
+        const transcriptResponse = await api.fetchSessionTranscript(id, {
+          apiKey: state.apiKey,
+          forceRefresh: false,
+        });
+        const transcriptData = transcriptResponse?.jobStatus
+          ? await pollTranscriptJob(id)
+          : transcriptResponse;
+        state.workspace = transcriptData;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        state.transcriptUnavailableReason = getFriendlyTranscriptUnavailableMessage(message);
+      }
+    });
+    return state.workspace;
+  } finally {
+    state.loading.sessionFetch = false;
+  }
 }
 
 export function useWorkspace() {
