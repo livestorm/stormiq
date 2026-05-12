@@ -168,10 +168,53 @@ def _serialize_cached_session(session_id: str, cached_session: Dict[str, Any]) -
         transcript_payload=transcript_payload if isinstance(transcript_payload, dict) else None,
     )
 
+    # ── Hero metadata (Phase 4 follow-up) ──────────────────────────────
+    # Surface the same card-level info the workspace grid uses so the
+    # session-detail header can render a hero matching the card the
+    # user clicked. Cheap to compute (it's already in the row) and
+    # avoids the frontend re-deriving event titles and durations from
+    # raw session_payload attributes.
+    session_attributes = (
+        extract_session_attributes(cached_session.get("session_payload"))
+        if isinstance(cached_session.get("session_payload"), dict)
+        else {}
+    )
+    started_at_unix_meta = (
+        session_attributes.get("started_at") or session_attributes.get("estimated_started_at")
+    )
+    duration_seconds_meta = session_attributes.get("duration")
+    event_title_meta = _extract_event_title(
+        cached_session.get("event_payload"),
+        fallback=str(session_attributes.get("name") or "").strip() or "Untitled event",
+    )
+    created_at_meta = cached_session.get("created_at")
+    cover_generated_at_meta = cached_session.get("cover_image_generated_at")
+    meta = {
+        "eventTitle": event_title_meta,
+        "sessionName": str(session_attributes.get("name") or "").strip(),
+        "startedAtUnix": started_at_unix_meta,
+        "startedAtLabel": _format_started_at_label(started_at_unix_meta),
+        "durationSeconds": duration_seconds_meta,
+        "durationLabel": _format_duration_label(duration_seconds_meta),
+        "attendeesCount": session_attributes.get("attendees_count"),
+        "registrantsCount": session_attributes.get("registrants_count"),
+        "generatedByUserId": str(cached_session.get("created_by_user_id") or "").strip(),
+        "generatedByEmail": str(cached_session.get("created_by_email") or "").strip(),
+        "generatedByName": str(cached_session.get("created_by_name") or "").strip(),
+        "generatedAtIso": created_at_meta.isoformat() if created_at_meta else "",
+        "generatedAtLabel": _format_iso_date_label(created_at_meta),
+        "hasCoverImage": bool(cached_session.get("cover_image_bytes")),
+        "coverImageMime": str(cached_session.get("cover_image_mime") or "image/png"),
+        "coverImageGeneratedAt": (
+            cover_generated_at_meta.isoformat() if cover_generated_at_meta else ""
+        ),
+    }
+
     serialized = {
         "sessionId": session_id,
         "updatedAt": cached_session.get("updated_at"),
         "speakerNames": speaker_names,
+        "meta": meta,
         "payloads": {
             "session": session_payload,
             "chat": chat_payload,
@@ -227,7 +270,92 @@ def get_cached_workspace(session_id: str, *, organization_id: Optional[str] = No
     cached = fetch_cached_session("", session_id, organization_id=organization_id)
     if not isinstance(cached, dict):
         return None
+    # Opportunistically kick off the default Professional recap + cover
+    # image when they're missing. The worker auto-enqueue only fires
+    # after a fresh transcription — sessions already cached by a
+    # teammate (or fetched before the chain shipped) never trigger it.
+    # This catches them up the next time anyone opens the session.
+    _maybe_enqueue_default_outputs(cached, session_id)
     return _serialize_cached_session(session_id, cached)
+
+
+def _maybe_enqueue_default_outputs(cached: Dict[str, Any], session_id: str) -> None:
+    """Web-side fallback for the worker's auto-enqueue chain.
+
+    The worker runs `_enqueue_default_smart_recap` after every successful
+    transcription, which in turn auto-enqueues the cover image once the
+    recap completes. That chain doesn't fire when a session is loaded
+    from cache (no transcription job runs) — common when a teammate has
+    already fetched the session, or when the row predates the auto-
+    enqueue logic. Calling this helper at cache-hit read time keeps the
+    Single Analysis grid "always has recap + cover" promise honoured
+    without surprising the user with a manual Generate button.
+
+    Logic:
+      - Skip everything if there's no transcript yet (recap needs it).
+      - If Professional recap is missing AND no in-flight job exists,
+        enqueue `run_smart_recap_job` + record the in-flight marker.
+      - If recap exists but cover doesn't, enqueue `run_cover_image_job`
+        directly (cover_image_generation is idempotent — re-running with
+        an existing cover no-ops, so we don't need a dedupe marker).
+
+    Fire-and-forget. Failures logged and swallowed — must not break the
+    cached-workspace read path that callers rely on.
+    """
+    if not isinstance(cached, dict):
+        return
+    if not cached.get("transcript_payload"):
+        # No transcript → no recap possible. Worker will start the chain
+        # when transcription completes.
+        return
+
+    sid = str(session_id or "").strip()
+    if not sid:
+        return
+
+    smart_bundle = cached.get("smart_recap_bundle") or {}
+    has_recap = (
+        isinstance(smart_bundle, dict)
+        and str(smart_bundle.get("professional") or "").strip() != ""
+    )
+
+    if not has_recap:
+        try:
+            existing = get_in_flight_ai_job_id("smart_recap", sid, "professional")
+            if existing:
+                status = read_job_status_sync(existing)
+                if status.get("jobStatus") in ("pending", "running"):
+                    return
+                # Stale marker — clear and re-enqueue.
+                clear_in_flight_ai_job_id("smart_recap", sid, "professional")
+            job_id = enqueue_job_sync("run_smart_recap_job", sid, "professional")
+            if job_id:
+                set_in_flight_ai_job_id("smart_recap", sid, "professional", job_id)
+                logger.info(
+                    "[get_cached_workspace] auto-enqueued smart_recap professional for session_id=%s",
+                    sid,
+                )
+        except Exception:
+            logger.warning(
+                "Failed to auto-enqueue smart_recap for %s", sid, exc_info=True,
+            )
+        # Cover follows recap via the worker chain — no need to enqueue
+        # it here yet.
+        return
+
+    # Recap is present. Check for missing cover and trigger it directly.
+    if not cached.get("cover_image_bytes"):
+        try:
+            job_id = enqueue_job_sync("run_cover_image_job", sid)
+            if job_id:
+                logger.info(
+                    "[get_cached_workspace] auto-enqueued cover_image for session_id=%s",
+                    sid,
+                )
+        except Exception:
+            logger.warning(
+                "Failed to auto-enqueue cover_image for %s", sid, exc_info=True,
+            )
 
 
 # ── Workspace sessions list (Phase 4) ──────────────────────────────────────
@@ -637,6 +765,10 @@ def fetch_session_transcript_data(
         else fetch_cached_session(api_key, session_id, organization_id=organization_id)
     )
     if isinstance(cached, dict) and isinstance(cached.get("transcript_payload"), dict):
+        # Same self-healing trigger as get_cached_workspace — kick off
+        # the default recap / cover image if either is missing on this
+        # cache-hit fetch.
+        _maybe_enqueue_default_outputs(cached, session_id)
         return _serialize_cached_session(session_id, cached)
 
     transcript_api_key = str(transcript_api_key or "").strip()

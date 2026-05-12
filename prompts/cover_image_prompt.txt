@@ -1,6 +1,6 @@
-Create a wide 3:2 webinar cover image for Livestorm. Calm, premium,
-minimalistic corporate aesthetic. The cover should feel like an
-executive weekly-update or internal presentation cover.
+Create a wide 3:2 cover image for an executive weekly-update or
+internal-presentation slide. Calm, premium, minimalistic corporate
+aesthetic.
 
 Main title (RENDER THIS TEXT clearly and legibly on the cover):
 {title}
@@ -29,6 +29,8 @@ Composition:
   generous negative space.
 - Soft neutral cream background. Refined teal, sage, cream, and
   warm beige accent palette.
+- Tell the story visually; do NOT clutter the right side with too
+  many objects.
 
 Mood: confident, elegant, calm. Editorial-quality, polished.
 
@@ -37,6 +39,8 @@ Strict rules:
   shorten, or add words.
 - No subtitles, captions, footers, watermarks, or any text other than
   the main title.
-- No logos, no brand marks.
+- ABSOLUTELY NO LOGOS, brand marks, mascots, or company emblems of
+  any kind — no Livestorm logo, no fictional logos, no abstract
+  marks that read as a logo. The cover is unbranded.
 - Avoid faces or identifiable people.
 - Avoid charts, numbers, dashboards.

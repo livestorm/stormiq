@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
 import { api } from "./api";
+import SessionHero from "./components/SessionHero.vue";
 import { useWorkspace } from "./store/workspace";
 
 // Phase 4 layout.
@@ -326,6 +327,10 @@ function toggleSidebar() {
         </button>
       </div>
 
+      <!-- Hero header for every per-session route. Self-hides when the
+           workspace hasn't loaded yet, so the existing per-tab loaders
+           still take the screen on the first paint. -->
+      <SessionHero v-if="isOnSessionDetail" />
       <RouterView />
     </main>
   </div>
