@@ -601,6 +601,15 @@ async function loadSessionById(sessionId) {
     return state.workspace;
   }
 
+  // Re-entry guard. SearchView's "Fetch session" action kicks off this
+  // function explicitly so the loader on the destination page is visible
+  // immediately; App.vue's route-param watcher would also call it the
+  // moment the URL changes. Without the guard, both calls race a fresh
+  // fetchSessionBase + transcript poll in parallel.
+  if (state.loading.sessionFetch && state.sessionId === id) {
+    return null;
+  }
+
   state.transcriptUnavailableReason = "";
   state.transcriptJobProgress = null;
 

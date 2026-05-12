@@ -14,8 +14,8 @@ import { useWorkspace } from "../store/workspace";
 
 const {
   state,
-  fetchSessionData,
   loadEventSessions,
+  loadSessionById,
   loadWorkspaceEvents,
   loadMoreWorkspaceEvents,
   loadSessionsForSelectedWorkspaceEvent,
@@ -38,18 +38,24 @@ function selectMode(mode) {
   }
 }
 
-async function fetchBySessionId() {
-  if (!state.sessionId.trim()) return;
+// Navigate-first pattern. The user wants the destination page (with
+// its built-in loader) to appear immediately on click — not after the
+// whole fetch resolves. The route's watcher in App.vue would also kick
+// off loadSessionById, but doing it here as well means state.loading
+// .sessionFetch flips to true *before* the navigation completes, so
+// SessionOverviewView never renders an empty frame between mount and
+// the watcher firing. The re-entry guard inside loadSessionById stops
+// the two callers from double-fetching.
+function fetchBySessionId() {
+  const sessionId = state.sessionId.trim();
+  if (!sessionId) return;
+  state.sessionId = sessionId;
   state.inputMode = "session";
-  await fetchSessionData(false);
-  // On success the store has state.workspace populated. Navigate to
-  // the per-session overview page — Phase 4 sub-commit 3 wires the
-  // parameterized route, but the canonical URL is built here so the
-  // address bar is shareable from this commit.
-  const sessionId = state.workspace?.sessionId || state.sessionId.trim();
-  if (sessionId) {
-    router.push(`/single-analysis/${sessionId}/session-overview`);
-  }
+  loadSessionById(sessionId).catch(() => {
+    // Errors surface via state.error; the destination page already
+    // renders the error banner.
+  });
+  router.push(`/single-analysis/${sessionId}/session-overview`);
 }
 
 async function fetchSessionsForEvent() {
@@ -58,14 +64,14 @@ async function fetchSessionsForEvent() {
   await loadEventSessions();
 }
 
-async function openEventSession() {
-  if (!state.selectedEventSessionId.trim()) return;
+function openEventSession() {
+  const sessionId = state.selectedEventSessionId.trim();
+  if (!sessionId) return;
   state.inputMode = "event";
-  await fetchSessionData(false);
-  const sessionId = state.workspace?.sessionId || state.selectedEventSessionId.trim();
-  if (sessionId) {
-    router.push(`/single-analysis/${sessionId}/session-overview`);
-  }
+  loadSessionById(sessionId).catch(() => {
+    // Same fallback as fetchBySessionId — error banner on the page.
+  });
+  router.push(`/single-analysis/${sessionId}/session-overview`);
 }
 
 const filteredWorkspaceEvents = computed(() => {
