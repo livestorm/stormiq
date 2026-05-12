@@ -189,10 +189,12 @@ async function loadEventSessions() {
 
 async function loadWorkspaceSessions({ silent = false } = {}) {
   if (!state.auth.connectedUser && !state.auth.allowLocalApiKeyFallback) {
-    // No OAuth and no local fallback — the backend will return an
-    // empty list anyway, but skip the network round-trip.
+    // No OAuth and no local fallback — skip the network round-trip,
+    // but DON'T stamp workspaceSessionsLoadedAt. Otherwise the view's
+    // staleness check thinks the data is fresh and never re-triggers
+    // when auth lands a moment later. We only mark "loaded" once we've
+    // actually heard back from the server.
     state.workspaceSessions = [];
-    state.workspaceSessionsLoadedAt = Date.now();
     return [];
   }
 

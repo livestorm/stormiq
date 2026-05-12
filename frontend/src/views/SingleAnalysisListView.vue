@@ -1,20 +1,34 @@
 <script setup>
-import { computed, onMounted } from "vue";
+import { computed, onMounted, watch } from "vue";
 import { useRouter } from "vue-router";
 import { useWorkspace } from "../store/workspace";
 
 const { state, loadWorkspaceSessions } = useWorkspace();
 const router = useRouter();
 
-onMounted(() => {
-  // Load once on mount. Subsequent visits to /single-analysis reuse
-  // whatever's in state.workspaceSessions; new sessions appear via the
-  // silent refresh in fetchSessionData. If the user wants a manual
-  // refresh, they hit the "Refresh" affordance.
+function maybeLoad() {
+  // Only fire when we actually have an auth context. Without it,
+  // loadWorkspaceSessions short-circuits to an empty list without
+  // touching the server, and we'd never re-trigger when auth lands.
+  if (!state.auth.connectedUser && !state.auth.allowLocalApiKeyFallback) {
+    return;
+  }
   if (!state.workspaceSessions.length || isStale.value) {
     loadWorkspaceSessions().catch(() => {});
   }
-});
+}
+
+onMounted(maybeLoad);
+
+// Bootstrap (App.vue → api.bootstrap → applyBootstrap) resolves async,
+// so on a cold page load this view's onMounted fires *before*
+// state.auth.connectedUser is set. Watch the auth fields and retry
+// once they land — without this the user had to click "Refresh" on
+// every fresh visit to /single-analysis.
+watch(
+  () => [state.auth.connectedUser, state.auth.allowLocalApiKeyFallback],
+  () => maybeLoad(),
+);
 
 const STALE_AFTER_MS = 60 * 1000;
 const isStale = computed(
