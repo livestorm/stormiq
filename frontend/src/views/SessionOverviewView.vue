@@ -125,13 +125,14 @@ const hasOverviewData = computed(
     Object.keys(stats.value || {}).length > 0,
 );
 
+// The session-fetch flag stays true through the transcript polling
+// stage (~30-90s), but fetchSessionBase populates session_payload +
+// chat + questions long before that. Once hasOverviewData becomes
+// true, the data this view actually needs is already in the
+// workspace — show it immediately instead of keeping the loader up
+// until the transcript lands.
 const isOverviewLoading = computed(
-  () =>
-    state.loading.sessionFetch &&
-    (
-      (state.inputMode === "session" && Boolean(state.sessionId.trim())) ||
-      (state.inputMode === "event" && Boolean(state.selectedEventSessionId.trim()))
-    )
+  () => state.loading.sessionFetch && !hasOverviewData.value,
 );
 </script>
 
