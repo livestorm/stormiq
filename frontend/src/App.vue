@@ -241,51 +241,56 @@ function toggleSidebar() {
           </RouterLink>
         </nav>
 
-        <!-- Auth / account block sits at the bottom of the sidebar. -->
-        <div class="sidebar-account">
-          <div v-if="isLocalApiKeyMode" class="sidebar-account-mode">
-            <p class="sidebar-account-title">Local mode</p>
-            <p class="sidebar-account-copy">Using <code>LS_API_KEY</code> fallback.</p>
-          </div>
-          <template v-else-if="isOAuthMode">
-            <button
-              v-if="!isConnected"
-              class="primary fetch-button"
-              type="button"
-              @click="handleConnectClick"
-            >
-              Connect with Livestorm
-            </button>
-            <div v-else class="oauth-connected-card">
-              <div class="oauth-connected-info">
-                <div class="oauth-user-badge">
-                  <span>{{ connectedBadgeLabel }}</span>
-                </div>
-                <div class="oauth-connected-title">Connected with Livestorm</div>
-              </div>
-              <button
-                type="button"
-                class="oauth-disconnect-button"
-                aria-label="Disconnect from Livestorm"
-                @click="handleLogoutClick"
-              >
-                Disconnect
-              </button>
+        <!-- Bottom block: auth + beta notice live together in a footer
+             so they don't drift apart visually. Without the wrapper,
+             `margin-top: auto` only pinned one of them and the other
+             floated in the middle of the sidebar. -->
+        <div class="sidebar-footer">
+          <div class="sidebar-account">
+            <div v-if="isLocalApiKeyMode" class="sidebar-account-mode">
+              <p class="sidebar-account-title">Local mode</p>
+              <p class="sidebar-account-copy">Using <code>LS_API_KEY</code> fallback.</p>
             </div>
-          </template>
-          <div v-else class="field-group">
-            <input v-model="state.apiKey" type="password" placeholder="Livestorm API Key" />
+            <template v-else-if="isOAuthMode">
+              <button
+                v-if="!isConnected"
+                class="primary fetch-button"
+                type="button"
+                @click="handleConnectClick"
+              >
+                Connect with Livestorm
+              </button>
+              <div v-else class="oauth-connected-card">
+                <div class="oauth-connected-info">
+                  <div class="oauth-user-badge">
+                    <span>{{ connectedBadgeLabel }}</span>
+                  </div>
+                  <div class="oauth-connected-title">Connected with Livestorm</div>
+                </div>
+                <button
+                  type="button"
+                  class="oauth-disconnect-button"
+                  aria-label="Disconnect from Livestorm"
+                  @click="handleLogoutClick"
+                >
+                  Disconnect
+                </button>
+              </div>
+            </template>
+            <div v-else class="field-group">
+              <input v-model="state.apiKey" type="password" placeholder="Livestorm API Key" />
+            </div>
+
+            <p v-if="state.error" class="error-text sidebar-error">{{ state.error }}</p>
           </div>
 
-          <p v-if="state.error" class="error-text sidebar-error">{{ state.error }}</p>
-        </div>
-
-        <div class="sidebar-beta-notice">
-          <p class="sidebar-beta-title">Beta notice</p>
-          <p class="sidebar-beta-copy">
-            Early-access helper, not an official Livestorm product. Review outputs before relying on them.
-          </p>
-          <RouterLink to="/beta-info" class="sidebar-beta-link">Read more</RouterLink>
+          <div class="sidebar-beta-notice">
+            <p class="sidebar-beta-title">Beta notice</p>
+            <p class="sidebar-beta-copy">
+              Early-access helper, not an official Livestorm product. Review outputs before relying on them.
+            </p>
+            <RouterLink to="/beta-info" class="sidebar-beta-link">Read more</RouterLink>
+          </div>
         </div>
       </template>
     </aside>
@@ -398,9 +403,15 @@ function toggleSidebar() {
   pointer-events: none;
 }
 
-.sidebar-account {
+.sidebar-footer {
   margin-top: auto;
-  padding: 16px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sidebar-account {
+  padding-top: 12px;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 

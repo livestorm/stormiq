@@ -112,6 +112,24 @@ def ensure_database_schema() -> None:
             )
             cursor.execute(
                 """
+                ALTER TABLE session_cache
+                ADD COLUMN IF NOT EXISTS created_by_user_id TEXT
+                """
+            )
+            cursor.execute(
+                """
+                ALTER TABLE session_cache
+                ADD COLUMN IF NOT EXISTS created_by_email TEXT
+                """
+            )
+            cursor.execute(
+                """
+                ALTER TABLE session_cache
+                ADD COLUMN IF NOT EXISTS created_by_name TEXT
+                """
+            )
+            cursor.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_session_cache_account_hash
                 ON session_cache (account_key_hash)
                 """
@@ -253,6 +271,9 @@ def fetch_cached_session(
                             deep_analysis_bundle,
                             content_repurpose_bundle,
                             smart_recap_bundle,
+                            created_by_user_id,
+                            created_by_email,
+                            created_by_name,
                             created_at,
                             updated_at
                         FROM session_cache
@@ -281,6 +302,9 @@ def fetch_cached_session(
                             deep_analysis_bundle,
                             content_repurpose_bundle,
                             smart_recap_bundle,
+                            created_by_user_id,
+                            created_by_email,
+                            created_by_name,
                             created_at,
                             updated_at
                         FROM session_cache
@@ -315,7 +339,16 @@ def upsert_cached_session(api_key: str, session_id: str, **fields: Any) -> None:
         "smart_recap_bundle",
         "organization_id",
         "event_payload",
+        "created_by_user_id",
+        "created_by_email",
+        "created_by_name",
     }
+
+    # Fields that should be set only on the *first* insert. On subsequent
+    # upserts the existing value is preserved via COALESCE — this keeps
+    # the original generator attribution stable even when a different
+    # user later refetches the same session.
+    preserve_on_update = {"created_by_user_id", "created_by_email", "created_by_name"}
     persisted_fields = {key: value for key, value in fields.items() if key in allowed_fields}
     if not persisted_fields:
         return
@@ -334,7 +367,14 @@ def upsert_cached_session(api_key: str, session_id: str, **fields: Any) -> None:
         else:
             insert_values.append(value)
             placeholders.append("%s")
-        update_clauses.append(f"{key} = EXCLUDED.{key}")
+        if key in preserve_on_update:
+            # First-insert wins. On UPDATE, only fill the column when
+            # it was NULL or empty before.
+            update_clauses.append(
+                f"{key} = COALESCE(NULLIF(session_cache.{key}, ''), EXCLUDED.{key})"
+            )
+        else:
+            update_clauses.append(f"{key} = EXCLUDED.{key}")
 
     update_clauses.append("updated_at = NOW()")
 
@@ -385,6 +425,9 @@ def list_workspace_sessions(organization_id: str) -> List[Dict[str, Any]]:
                         deep_analysis_bundle,
                         smart_recap_bundle,
                         content_repurpose_bundle,
+                        created_by_user_id,
+                        created_by_email,
+                        created_by_name,
                         created_at,
                         updated_at
                     FROM session_cache
