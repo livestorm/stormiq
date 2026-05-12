@@ -1,28 +1,40 @@
-Create a wide 16:9 webinar cover image for Livestorm. Calm, premium,
+Create a wide 3:2 webinar cover image for Livestorm. Calm, premium,
 minimalistic corporate aesthetic. The cover should feel like an
 executive weekly-update or internal presentation cover.
 
-Main title (RENDER THIS TEXT clearly and legibly on the left of the cover):
+Main title (RENDER THIS TEXT clearly and legibly on the cover):
 {title}
 
 Visual narrative (story to convey through imagery — do NOT render as text):
 {summary}
 
+CANVAS SAFE ZONE (most important rule — get this wrong and the
+cover is unusable):
+- Treat the outer 10% of every edge as a SAFE MARGIN. No part of any
+  letter may touch or extend into this margin.
+- The main title must sit fully inside the inner 80% of the canvas.
+- If the title is long, REDUCE the font size or wrap onto multiple
+  lines so EVERY letter stays inside the safe zone. Never crop or
+  truncate the title to make it fit — resize it.
+- Specifically: NO letter of the first or last word may be cut off
+  by the left or right edge of the image.
+
 Composition:
-- Main title on the LEFT in elegant, refined typography (crisp,
-  readable, no decorative flourishes). Generous breathing room.
-- Visual narrative on the RIGHT and lower-right: clean story pillars
-  or staged elements — rounded platforms, gentle shadows, modern
-  corporate illustration. Keep it tasteful and integrated.
+- Main title in the LEFT HALF of the canvas, vertically centred,
+  inside the safe zone. Elegant, refined typography. Crisp, readable,
+  no decorative flourishes.
+- Visual narrative in the RIGHT HALF: clean story pillars or staged
+  elements — rounded platforms, gentle shadows, modern corporate
+  illustration. Tasteful and integrated. Do NOT clutter; keep
+  generous negative space.
 - Soft neutral cream background. Refined teal, sage, cream, and
   warm beige accent palette.
-- Tell the story visually; do NOT clutter the right side with too
-  many objects.
 
 Mood: confident, elegant, calm. Editorial-quality, polished.
 
 Strict rules:
-- Render the main title text exactly as provided, crisp and legible.
+- Render the main title text EXACTLY as provided. Do not paraphrase,
+  shorten, or add words.
 - No subtitles, captions, footers, watermarks, or any text other than
   the main title.
 - No logos, no brand marks.
