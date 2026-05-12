@@ -17,11 +17,23 @@ const workspace = computed(() => state.workspace);
 const sessionId = computed(() => String(state.workspace?.sessionId || "").trim());
 const meta = computed(() => state.workspace?.meta || {});
 
-// Don't render the hero until we have something meaningful — avoids
-// a tall empty banner above the loading spinner.
-const isReady = computed(
-  () => Boolean(sessionId.value && (meta.value?.eventTitle || meta.value?.sessionName)),
-);
+// Don't render the hero until both of these are true:
+//   1. The workspace has fully landed (state.loading.sessionFetch is
+//      false — otherwise we'd flash a half-built header above the
+//      per-tab loader).
+//   2. The session has an actual AI-generated cover image. The
+//      gradient + initials placeholder is fine on the workspace card
+//      grid (where it disambiguates many sessions at a glance) but
+//      reads as broken when it's the single tall artwork on a detail
+//      page. If the cover isn't ready yet, the worker's auto-enqueue
+//      chain is filling it in the background; the hero appears on
+//      the next visit / refresh.
+const isReady = computed(() => {
+  if (!sessionId.value) return false;
+  if (state.loading?.sessionFetch) return false;
+  if (!meta.value?.hasCoverImage) return false;
+  return Boolean(meta.value?.eventTitle || meta.value?.sessionName);
+});
 
 const eventTitle = computed(
   () => String(meta.value?.eventTitle || "").trim() || String(meta.value?.sessionName || "").trim() || "Untitled session",
