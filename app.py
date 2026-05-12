@@ -27,6 +27,7 @@ from livestorm_app.api_logic import (
     get_overall_analysis_job_data,
     get_smart_recap_job_data,
     get_transcript_job_status_data,
+    list_workspace_sessions_data,
     save_speaker_labels,
     start_content_repurposing,
     start_deep_analysis,
@@ -103,6 +104,25 @@ def _raise_http_error(resource_label: str, exc: Exception, status_code: int = 40
             "details": error_payload["details"],
         },
     )
+
+
+def _resolve_organization_id(request: Request) -> str:
+    """Resolve the requesting user's `organization_id` (or '' when unknown).
+
+    Used to scope session_cache reads + initial upserts so teammates in
+    the same Livestorm organization share cached results, but cross-org
+    callers don't see them. When the user authenticated with the local
+    LS_API_KEY fallback (no OAuth connection), this returns "" — those
+    callers read the cache without an org filter, matching legacy
+    behaviour for local development.
+    """
+    connection_id = str(request.cookies.get(LIVESTORM_OAUTH_COOKIE) or "").strip()
+    if not connection_id:
+        return ""
+    connection = refresh_connection_if_needed(connection_id)
+    if not isinstance(connection, dict):
+        return ""
+    return str(connection.get("organization_id") or "").strip()
 
 
 def _resolve_livestorm_auth(raw_api_key: str, request: Request) -> str:
@@ -254,6 +274,25 @@ def logout_livestorm_oauth(request: Request) -> Response:
     return response
 
 
+@app.get("/api/workspace-sessions")
+def workspace_sessions(http_request: Request) -> Dict[str, Any]:
+    """Phase 4: list every cached session the calling user's org can see.
+
+    Powers the Single Analysis card grid. Filters by `organization_id`
+    from the OAuth connection. Returns `{ sessions: [] }` when:
+      - the caller has no OAuth connection (local LS_API_KEY mode)
+      - the org has no cached sessions yet
+    The frontend treats empty list as the empty-state for the page.
+    """
+    org_id = _resolve_organization_id(http_request)
+    if not org_id:
+        # No OAuth org → no workspace view to show. Return empty rather
+        # than 401 so the page can render a "connect with Livestorm to
+        # see your workspace sessions" CTA.
+        return {"sessions": []}
+    return list_workspace_sessions_data(org_id)
+
+
 @app.post("/api/event-sessions")
 def event_sessions(request: EventSessionsRequest, http_request: Request) -> Dict[str, Any]:
     try:
@@ -281,17 +320,19 @@ def workspace_events(request: WorkspaceEventsRequest, http_request: Request) -> 
 
 
 @app.get("/api/sessions/{session_id}")
-def get_session_workspace(session_id: str) -> Dict[str, Any]:
-    cached = get_cached_workspace(session_id)
+def get_session_workspace(session_id: str, http_request: Request) -> Dict[str, Any]:
+    org_id = _resolve_organization_id(http_request)
+    cached = get_cached_workspace(session_id, organization_id=org_id)
     if not isinstance(cached, dict):
         raise HTTPException(status_code=404, detail={"resource": "Session cache", "message": "No cached session found."})
     return cached
 
 
 @app.get("/api/sessions/{session_id}/cached")
-def get_cached_session_workspace(session_id: str) -> Response:
+def get_cached_session_workspace(session_id: str, http_request: Request) -> Response:
     try:
-        cached = get_cached_workspace(session_id)
+        org_id = _resolve_organization_id(http_request)
+        cached = get_cached_workspace(session_id, organization_id=org_id)
         if not isinstance(cached, dict):
             return Response(status_code=204)
         return JSONResponse(content=jsonable_encoder(cached))
@@ -304,12 +345,14 @@ def get_cached_session_workspace(session_id: str) -> Response:
 def fetch_session_workspace(session_id: str, request: FetchSessionRequest, http_request: Request) -> Dict[str, Any]:
     try:
         api_key = _resolve_livestorm_auth(request.api_key, http_request)
+        org_id = _resolve_organization_id(http_request)
         transcript_api_key = str(request.transcript_api_key or "").strip() or get_runtime_secret("GLADIA_KEY", "")
         return fetch_all_session_data(
             api_key=api_key,
             transcript_api_key=transcript_api_key,
             session_id=session_id,
             force_refresh=request.force_refresh,
+            organization_id=org_id,
         )
     except Exception as exc:
         _raise_http_error("Session data", exc)
@@ -320,10 +363,12 @@ def fetch_session_workspace(session_id: str, request: FetchSessionRequest, http_
 def fetch_session_base_workspace(session_id: str, request: FetchSessionRequest, http_request: Request) -> Dict[str, Any]:
     try:
         api_key = _resolve_livestorm_auth(request.api_key, http_request)
+        org_id = _resolve_organization_id(http_request)
         return fetch_session_base_data(
             api_key=api_key,
             session_id=session_id,
             force_refresh=request.force_refresh,
+            organization_id=org_id,
         )
     except Exception as exc:
         _raise_http_error("Session overview", exc)
@@ -334,12 +379,14 @@ def fetch_session_base_workspace(session_id: str, request: FetchSessionRequest, 
 def fetch_session_transcript_workspace(session_id: str, request: FetchSessionRequest, http_request: Request) -> Dict[str, Any]:
     try:
         api_key = _resolve_livestorm_auth(request.api_key, http_request)
+        org_id = _resolve_organization_id(http_request)
         transcript_api_key = str(request.transcript_api_key or "").strip() or get_runtime_secret("GLADIA_KEY", "")
         return fetch_session_transcript_data(
             api_key=api_key,
             transcript_api_key=transcript_api_key,
             session_id=session_id,
             force_refresh=request.force_refresh,
+            organization_id=org_id,
         )
     except Exception as exc:
         _raise_http_error("Transcript", exc)
@@ -350,7 +397,8 @@ def fetch_session_transcript_workspace(session_id: str, request: FetchSessionReq
 def get_transcript_job_status(session_id: str, http_request: Request) -> Dict[str, Any]:
     try:
         api_key = _resolve_livestorm_auth("", http_request)
-        return get_transcript_job_status_data(api_key, session_id)
+        org_id = _resolve_organization_id(http_request)
+        return get_transcript_job_status_data(api_key, session_id, organization_id=org_id)
     except Exception as exc:
         _raise_http_error("Transcript job", exc)
         raise
@@ -360,14 +408,15 @@ def get_transcript_job_status(session_id: str, http_request: Request) -> Dict[st
 def update_speaker_labels(session_id: str, request: SpeakerLabelsRequest, http_request: Request) -> Dict[str, Any]:
     try:
         api_key = _resolve_livestorm_auth(request.api_key, http_request)
-        return save_speaker_labels(api_key, session_id, request.speaker_names)
+        org_id = _resolve_organization_id(http_request)
+        return save_speaker_labels(api_key, session_id, request.speaker_names, organization_id=org_id)
     except Exception as exc:
         _raise_http_error("Speaker labels", exc)
         raise
 
 
 @app.post("/api/sessions/{session_id}/analysis")
-def overall_analysis(session_id: str, request: AnalysisRequest) -> Dict[str, Any]:
+def overall_analysis(session_id: str, request: AnalysisRequest, http_request: Request) -> Dict[str, Any]:
     """Start an Overall Analysis job.
 
     Phase 2 contract change: this no longer returns the analysis body
@@ -376,35 +425,39 @@ def overall_analysis(session_id: str, request: AnalysisRequest) -> Dict[str, Any
     language } so the frontend can poll `/analysis/job`.
     """
     try:
-        return start_overall_analysis(session_id, request.output_language)
+        org_id = _resolve_organization_id(http_request)
+        return start_overall_analysis(session_id, request.output_language, organization_id=org_id)
     except Exception as exc:
         _raise_http_error("Analysis", exc)
         raise
 
 
 @app.get("/api/sessions/{session_id}/analysis/job")
-def overall_analysis_job(session_id: str, jobId: str = Query(""), language: str = Query("English")) -> Dict[str, Any]:
+def overall_analysis_job(session_id: str, http_request: Request, jobId: str = Query(""), language: str = Query("English")) -> Dict[str, Any]:
     try:
-        return get_overall_analysis_job_data(session_id, jobId, language)
+        org_id = _resolve_organization_id(http_request)
+        return get_overall_analysis_job_data(session_id, jobId, language, organization_id=org_id)
     except Exception as exc:
         _raise_http_error("Analysis", exc)
         raise
 
 
 @app.post("/api/sessions/{session_id}/deep-analysis")
-def deep_analysis(session_id: str, request: AnalysisRequest) -> Dict[str, Any]:
+def deep_analysis(session_id: str, request: AnalysisRequest, http_request: Request) -> Dict[str, Any]:
     """Start a Deep Analysis job. See `overall_analysis` for the contract."""
     try:
-        return start_deep_analysis(session_id, request.output_language)
+        org_id = _resolve_organization_id(http_request)
+        return start_deep_analysis(session_id, request.output_language, organization_id=org_id)
     except Exception as exc:
         _raise_http_error("Deep analysis", exc)
         raise
 
 
 @app.get("/api/sessions/{session_id}/deep-analysis/job")
-def deep_analysis_job(session_id: str, jobId: str = Query(""), language: str = Query("English")) -> Dict[str, Any]:
+def deep_analysis_job(session_id: str, http_request: Request, jobId: str = Query(""), language: str = Query("English")) -> Dict[str, Any]:
     try:
-        return get_deep_analysis_job_data(session_id, jobId, language)
+        org_id = _resolve_organization_id(http_request)
+        return get_deep_analysis_job_data(session_id, jobId, language, organization_id=org_id)
     except Exception as exc:
         _raise_http_error("Deep analysis", exc)
         raise
@@ -424,19 +477,21 @@ def analysis_pdf(session_id: str, kind: str = Query(...), language: str = Query(
 
 
 @app.post("/api/sessions/{session_id}/smart-recap")
-def smart_recap(session_id: str, request: SmartRecapRequest) -> Dict[str, Any]:
+def smart_recap(session_id: str, request: SmartRecapRequest, http_request: Request) -> Dict[str, Any]:
     """Start a Smart Recap job. Same contract as overall_analysis, keyed by tone."""
     try:
-        return start_smart_recap(session_id, request.tone)
+        org_id = _resolve_organization_id(http_request)
+        return start_smart_recap(session_id, request.tone, organization_id=org_id)
     except Exception as exc:
         _raise_http_error("Smart Recap", exc)
         raise
 
 
 @app.get("/api/sessions/{session_id}/smart-recap/job")
-def smart_recap_job(session_id: str, jobId: str = Query(""), tone: str = Query("professional")) -> Dict[str, Any]:
+def smart_recap_job(session_id: str, http_request: Request, jobId: str = Query(""), tone: str = Query("professional")) -> Dict[str, Any]:
     try:
-        return get_smart_recap_job_data(session_id, jobId, tone)
+        org_id = _resolve_organization_id(http_request)
+        return get_smart_recap_job_data(session_id, jobId, tone, organization_id=org_id)
     except Exception as exc:
         _raise_http_error("Smart Recap", exc)
         raise
@@ -456,19 +511,21 @@ def smart_recap_pdf(session_id: str, tone: str = Query(...)) -> Response:
 
 
 @app.post("/api/sessions/{session_id}/content-repurposing")
-def content_repurposing(session_id: str, request: AnalysisRequest) -> Dict[str, Any]:
+def content_repurposing(session_id: str, request: AnalysisRequest, http_request: Request) -> Dict[str, Any]:
     """Start a Content Repurposing job. Same contract as overall_analysis."""
     try:
-        return start_content_repurposing(session_id, request.output_language)
+        org_id = _resolve_organization_id(http_request)
+        return start_content_repurposing(session_id, request.output_language, organization_id=org_id)
     except Exception as exc:
         _raise_http_error("Content Repurposing", exc)
         raise
 
 
 @app.get("/api/sessions/{session_id}/content-repurposing/job")
-def content_repurposing_job(session_id: str, jobId: str = Query(""), language: str = Query("English")) -> Dict[str, Any]:
+def content_repurposing_job(session_id: str, http_request: Request, jobId: str = Query(""), language: str = Query("English")) -> Dict[str, Any]:
     try:
-        return get_content_repurposing_job_data(session_id, jobId, language)
+        org_id = _resolve_organization_id(http_request)
+        return get_content_repurposing_job_data(session_id, jobId, language, organization_id=org_id)
     except Exception as exc:
         _raise_http_error("Content Repurposing", exc)
         raise

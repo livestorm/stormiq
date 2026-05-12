@@ -296,6 +296,7 @@ Stores everything we know about a session, keyed by session_id.
 session_cache (
   account_key_hash         TEXT NOT NULL,        -- sha256 of the Livestorm API key
   session_id               TEXT NOT NULL,
+  organization_id          TEXT,                 -- Phase 4: Livestorm org that owns the session
   session_payload          JSONB,                -- raw Livestorm session API response
   chat_payload             JSONB,                -- raw chat messages payload
   questions_payload        JSONB,                -- raw questions payload
@@ -311,9 +312,12 @@ session_cache (
   updated_at               TIMESTAMPTZ DEFAULT NOW(),
   PRIMARY KEY (account_key_hash, session_id)
 )
--- Plus a UNIQUE index on session_id alone — collapses duplicate rows
--- if a session is fetched from multiple accounts.
+-- Indexes:
+--   idx_session_cache_session_id_unique    UNIQUE (session_id)
+--   idx_session_cache_organization_id      (organization_id, updated_at DESC)
 ```
+
+**`organization_id` (Phase 4)** — populated from the requesting user's OAuth connection on first fetch. All read paths from web routes filter by org_id so teammates inside one Livestorm organization share cached results, but cross-org callers cannot read each other's cache. Worker job reads don't filter (they're trusted internal code; the row's org_id is preserved on subsequent upserts). Legacy rows (pre-Phase-4) have NULL org_id and are invisible to the new Single Analysis listing until refetched — refetching is instant on cache hit and stamps org_id.
 
 ### `oauth_connections`
 
@@ -373,6 +377,7 @@ All routes are FastAPI handlers in [app.py](app.py). Frontend wrapper in [fronte
 | `/api/auth/livestorm/callback` | GET | OAuth callback: exchange code, fetch /me, set session cookie |
 | `/api/auth/logout` | POST | Delete connection row, clear session cookie |
 | `/api/workspace-events` | POST | Paginated list of events with title/status filters |
+| `/api/workspace-sessions` | GET | (Phase 4) Cached session cards for the calling user's Livestorm org |
 | `/api/event-sessions` | POST | List sessions inside an event |
 | `/api/sessions/{id}` | GET | Read cached workspace (404 if not cached) |
 | `/api/sessions/{id}/cached` | GET | Same, but returns 204 instead of 404 when missing |

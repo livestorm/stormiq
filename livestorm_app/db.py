@@ -5,7 +5,7 @@ import logging
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterator, Optional, Union
+from typing import Any, Dict, Iterator, List, Optional, Union
 
 from psycopg import connect
 from psycopg.rows import dict_row
@@ -90,6 +90,18 @@ def ensure_database_schema() -> None:
                 """
                 ALTER TABLE session_cache
                 ADD COLUMN IF NOT EXISTS transcript_speaker_names JSONB
+                """
+            )
+            cursor.execute(
+                """
+                ALTER TABLE session_cache
+                ADD COLUMN IF NOT EXISTS organization_id TEXT
+                """
+            )
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_session_cache_organization_id
+                ON session_cache (organization_id, updated_at DESC)
                 """
             )
             cursor.execute(
@@ -188,37 +200,90 @@ def ensure_database_schema() -> None:
         connection.commit()
 
 
-def fetch_cached_session(api_key: str, session_id: str) -> Optional[Dict[str, Any]]:
+def fetch_cached_session(
+    api_key: str,
+    session_id: str,
+    *,
+    organization_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Read a cached session row.
+
+    `organization_id`:
+        - None (default) → no filter. Used by trusted internal code (worker
+          jobs reading cached payloads, polling endpoints that have already
+          authorized the caller). Returns the session regardless of which
+          org owns it.
+        - non-empty str → filter `organization_id = ...`. Used by web routes
+          that need to enforce org-scoped visibility — teammates in the
+          same org see the cache, cross-org callers don't.
+        - empty str ""  → treated like None (no filter). Lets callers pass
+          a freshly-resolved org_id without explicit null-checking; if the
+          user has no OAuth connection, fall back to legacy behaviour.
+
+    `api_key` is kept in the signature for back-compat — it's no longer
+    used in the lookup.
+    """
     if not database_enabled() or not str(session_id or "").strip():
         return None
+    org_filter = str(organization_id or "").strip() if organization_id is not None else None
     try:
         with get_db_connection() as connection:
             with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT
-                        account_key_hash,
-                        session_id,
-                        session_payload,
-                        chat_payload,
-                        questions_payload,
-                        transcript_payload,
-                        transcript_speaker_names,
-                        analysis_md,
-                        analysis_bundle,
-                        deep_analysis_md,
-                        deep_analysis_bundle,
-                        content_repurpose_bundle,
-                        smart_recap_bundle,
-                        created_at,
-                        updated_at
-                    FROM session_cache
-                    WHERE session_id = %s
-                    ORDER BY updated_at DESC
-                    LIMIT 1
-                    """,
-                    (str(session_id).strip(),),
-                )
+                if org_filter:
+                    cursor.execute(
+                        """
+                        SELECT
+                            account_key_hash,
+                            session_id,
+                            organization_id,
+                            session_payload,
+                            chat_payload,
+                            questions_payload,
+                            transcript_payload,
+                            transcript_speaker_names,
+                            analysis_md,
+                            analysis_bundle,
+                            deep_analysis_md,
+                            deep_analysis_bundle,
+                            content_repurpose_bundle,
+                            smart_recap_bundle,
+                            created_at,
+                            updated_at
+                        FROM session_cache
+                        WHERE session_id = %s
+                          AND organization_id = %s
+                        ORDER BY updated_at DESC
+                        LIMIT 1
+                        """,
+                        (str(session_id).strip(), org_filter),
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        SELECT
+                            account_key_hash,
+                            session_id,
+                            organization_id,
+                            session_payload,
+                            chat_payload,
+                            questions_payload,
+                            transcript_payload,
+                            transcript_speaker_names,
+                            analysis_md,
+                            analysis_bundle,
+                            deep_analysis_md,
+                            deep_analysis_bundle,
+                            content_repurpose_bundle,
+                            smart_recap_bundle,
+                            created_at,
+                            updated_at
+                        FROM session_cache
+                        WHERE session_id = %s
+                        ORDER BY updated_at DESC
+                        LIMIT 1
+                        """,
+                        (str(session_id).strip(),),
+                    )
                 row = cursor.fetchone()
         return dict(row) if isinstance(row, dict) else None
     except Exception:
@@ -242,6 +307,7 @@ def upsert_cached_session(api_key: str, session_id: str, **fields: Any) -> None:
         "deep_analysis_bundle",
         "content_repurpose_bundle",
         "smart_recap_bundle",
+        "organization_id",
     }
     persisted_fields = {key: value for key, value in fields.items() if key in allowed_fields}
     if not persisted_fields:
@@ -280,6 +346,50 @@ def upsert_cached_session(api_key: str, session_id: str, **fields: Any) -> None:
             connection.commit()
     except Exception:
         logger.exception("Failed to upsert cached session for session_id=%s", session_id_value)
+
+
+def list_workspace_sessions(organization_id: str) -> List[Dict[str, Any]]:
+    """Return cached session rows belonging to the given organization.
+
+    Reverse-chronological by `updated_at`. The session_payload column
+    carries enough Livestorm attribute data for the card list; chat /
+    questions / transcript / bundles are NOT loaded here — those are
+    only fetched when the user opens a specific session.
+
+    Returns [] when the database is disabled, the organization_id is
+    blank, or the SELECT fails. Empty list ≠ error so the new frontend
+    can treat both as "no sessions yet."
+    """
+    org_filter = str(organization_id or "").strip()
+    if not database_enabled() or not org_filter:
+        return []
+    try:
+        with get_db_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT
+                        session_id,
+                        organization_id,
+                        session_payload,
+                        transcript_payload IS NOT NULL AS has_transcript,
+                        analysis_bundle,
+                        deep_analysis_bundle,
+                        smart_recap_bundle,
+                        content_repurpose_bundle,
+                        created_at,
+                        updated_at
+                    FROM session_cache
+                    WHERE organization_id = %s
+                    ORDER BY updated_at DESC
+                    """,
+                    (org_filter,),
+                )
+                rows = cursor.fetchall()
+        return [dict(row) for row in rows] if rows else []
+    except Exception:
+        logger.exception("Failed to list workspace sessions for organization_id=%s", org_filter)
+        return []
 
 
 def fetch_oauth_connection(connection_id: str) -> Optional[Dict[str, Any]]:

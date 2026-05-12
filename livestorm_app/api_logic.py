@@ -13,6 +13,7 @@ from livestorm_app.db import (
     create_transcript_job,
     fetch_cached_session,
     get_transcript_job_for_session,
+    list_workspace_sessions,
     update_transcript_job_status,
     upsert_cached_session,
 )
@@ -58,7 +59,11 @@ from livestorm_app.services import (
     translate_content_repurpose_bundle_with_openai,
     translate_markdown_with_openai,
 )
-from livestorm_app.session_overview import build_compact_session_payload_for_llm, build_session_overview_data
+from livestorm_app.session_overview import (
+    build_compact_session_payload_for_llm,
+    build_session_overview_data,
+    extract_session_attributes,
+)
 from livestorm_app.transcript_client import fetch_session_transcript
 
 logger = logging.getLogger(__name__)
@@ -215,11 +220,87 @@ def _serialize_cached_session(session_id: str, cached_session: Dict[str, Any]) -
     return _sanitize_json_value(serialized)
 
 
-def get_cached_workspace(session_id: str) -> Optional[Dict[str, Any]]:
-    cached = fetch_cached_session("", session_id)
+def get_cached_workspace(session_id: str, *, organization_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    cached = fetch_cached_session("", session_id, organization_id=organization_id)
     if not isinstance(cached, dict):
         return None
     return _serialize_cached_session(session_id, cached)
+
+
+# ── Workspace sessions list (Phase 4) ──────────────────────────────────────
+#
+# Powers the new Single Analysis card grid. Returns every cached session
+# the requesting organization can see, in reverse-chronological order.
+# Lightweight by design — we surface only what a card needs to render,
+# never the full transcript/chat/analysis bundles. The user clicks a card
+# and the existing /api/sessions/{id} flow loads the full workspace.
+
+
+def _format_started_at_label(value: Any) -> str:
+    """Render a Livestorm Unix timestamp as 'Jan 15, 2026 14:00 UTC'."""
+    try:
+        if value in (None, "", 0):
+            return ""
+        timestamp = pd.to_datetime(value, unit="s", utc=True, errors="coerce")
+        if pd.isna(timestamp):
+            return ""
+        return timestamp.strftime("%b %d, %Y %H:%M UTC")
+    except (TypeError, ValueError):
+        return ""
+
+
+def _has_non_empty_bundle(bundle: Any) -> bool:
+    """True when a JSON bundle holds at least one non-empty string value."""
+    if not isinstance(bundle, dict):
+        return False
+    for value in bundle.values():
+        if isinstance(value, str) and value.strip():
+            return True
+        if isinstance(value, dict) and any(str(inner or "").strip() for inner in value.values()):
+            return True
+    return False
+
+
+def list_workspace_sessions_data(organization_id: str) -> Dict[str, Any]:
+    """Return the card list for the Single Analysis page.
+
+    The shape is intentionally flat — frontend renders one card per entry
+    without further normalisation. `hasTranscript` / `hasOverallAnalysis`
+    etc. let the card show small status pills without loading bundles.
+    """
+    rows = list_workspace_sessions(organization_id)
+    sessions: List[Dict[str, Any]] = []
+    for row in rows:
+        session_payload = row.get("session_payload")
+        attributes = (
+            extract_session_attributes(session_payload)
+            if isinstance(session_payload, dict)
+            else {}
+        )
+        started_at_unix = attributes.get("started_at") or attributes.get("estimated_started_at")
+        sessions.append(
+            {
+                "sessionId": row.get("session_id"),
+                "organizationId": row.get("organization_id"),
+                "sessionName": str(attributes.get("name") or "").strip() or "Untitled session",
+                "eventId": attributes.get("event_id"),
+                "startedAtUnix": started_at_unix,
+                "startedAtLabel": _format_started_at_label(started_at_unix),
+                "durationSeconds": attributes.get("duration"),
+                "attendeesCount": attributes.get("attendees_count"),
+                "registrantsCount": attributes.get("registrants_count"),
+                "schedulingStatus": attributes.get("status") or attributes.get("scheduling_status"),
+                "language": attributes.get("language"),
+                "hasTranscript": bool(row.get("has_transcript")),
+                "hasOverallAnalysis": _has_non_empty_bundle(row.get("analysis_bundle")),
+                "hasDeepAnalysis": _has_non_empty_bundle(row.get("deep_analysis_bundle")),
+                "hasSmartRecap": _has_non_empty_bundle(row.get("smart_recap_bundle")),
+                "hasContentRepurposing": _has_non_empty_bundle(row.get("content_repurpose_bundle")),
+                "updatedAt": row.get("updated_at").isoformat() if row.get("updated_at") else "",
+                "createdAt": row.get("created_at").isoformat() if row.get("created_at") else "",
+            }
+        )
+    return {"sessions": sessions}
 
 
 def fetch_event_sessions(api_key: str, event_id: str) -> Dict[str, Any]:
@@ -257,9 +338,30 @@ def fetch_available_events(
     }
 
 
-def fetch_all_session_data(api_key: str, transcript_api_key: str, session_id: str, force_refresh: bool = False) -> Dict[str, Any]:
+def _org_kwarg(organization_id: str) -> Dict[str, Any]:
+    """Return `{'organization_id': org}` when org is non-empty, else `{}`.
+
+    Lets us spread into `upsert_cached_session(..., **_org_kwarg(org))`
+    without overwriting an existing org_id with an empty string for callers
+    that don't have one (e.g. local API-key fallback mode).
+    """
+    cleaned = str(organization_id or "").strip()
+    return {"organization_id": cleaned} if cleaned else {}
+
+
+def fetch_all_session_data(
+    api_key: str,
+    transcript_api_key: str,
+    session_id: str,
+    force_refresh: bool = False,
+    *,
+    organization_id: str = "",
+) -> Dict[str, Any]:
     session_id = str(session_id or "").strip()
-    cached = None if force_refresh else fetch_cached_session(api_key, session_id)
+    cached = (
+        None if force_refresh
+        else fetch_cached_session(api_key, session_id, organization_id=organization_id)
+    )
     if isinstance(cached, dict):
         has_all_payloads = all(isinstance(cached.get(key), dict) for key in ("session_payload", "chat_payload", "questions_payload", "transcript_payload"))
         if has_all_payloads:
@@ -283,16 +385,26 @@ def fetch_all_session_data(api_key: str, transcript_api_key: str, session_id: st
         chat_payload=chat_bundle.get("chat_payload"),
         questions_payload=chat_bundle.get("questions_payload"),
         transcript_payload=transcript_payload,
+        **_org_kwarg(organization_id),
     )
-    cached = fetch_cached_session(api_key, session_id)
+    cached = fetch_cached_session(api_key, session_id, organization_id=organization_id)
     if not isinstance(cached, dict):
         raise RuntimeError("Fetched session data but failed to reload it from the cache.")
     return _serialize_cached_session(session_id, cached)
 
 
-def fetch_session_base_data(api_key: str, session_id: str, force_refresh: bool = False) -> Dict[str, Any]:
+def fetch_session_base_data(
+    api_key: str,
+    session_id: str,
+    force_refresh: bool = False,
+    *,
+    organization_id: str = "",
+) -> Dict[str, Any]:
     session_id = str(session_id or "").strip()
-    cached = None if force_refresh else fetch_cached_session(api_key, session_id)
+    cached = (
+        None if force_refresh
+        else fetch_cached_session(api_key, session_id, organization_id=organization_id)
+    )
     if isinstance(cached, dict):
         has_base_payloads = all(isinstance(cached.get(key), dict) for key in ("session_payload", "chat_payload", "questions_payload"))
         if has_base_payloads:
@@ -306,14 +418,22 @@ def fetch_session_base_data(api_key: str, session_id: str, force_refresh: bool =
         session_payload=session_payload,
         chat_payload=chat_bundle.get("chat_payload"),
         questions_payload=chat_bundle.get("questions_payload"),
+        **_org_kwarg(organization_id),
     )
-    cached = fetch_cached_session(api_key, session_id)
+    cached = fetch_cached_session(api_key, session_id, organization_id=organization_id)
     if not isinstance(cached, dict):
         raise RuntimeError("Fetched session overview/chat data but failed to reload it from the cache.")
     return _serialize_cached_session(session_id, cached)
 
 
-def fetch_session_transcript_data(api_key: str, transcript_api_key: str, session_id: str, force_refresh: bool = False) -> Dict[str, Any]:
+def fetch_session_transcript_data(
+    api_key: str,
+    transcript_api_key: str,
+    session_id: str,
+    force_refresh: bool = False,
+    *,
+    organization_id: str = "",
+) -> Dict[str, Any]:
     """Start a transcription job (or attach to a running one).
 
     Returns the cached workspace immediately if the transcript already
@@ -325,11 +445,21 @@ def fetch_session_transcript_data(api_key: str, transcript_api_key: str, session
     job runs in the arq worker process — app restarts no longer kill
     in-flight transcriptions, and the stuck-job sweeper can recover any
     orphans.
+
+    Phase 4 addition: pre-stamps `organization_id` on the session_cache
+    row before enqueuing the job, so the worker's later `transcript_payload`
+    upsert lands on a row that's already org-scoped. Without this, a
+    transcript-only fetch (without a prior fetch_session_base_data call)
+    would create a row with NULL organization_id, invisible to the
+    Single Analysis list view.
     """
     session_id = str(session_id or "").strip()
 
     # Return immediately when transcript is already cached (skip job machinery).
-    cached = None if force_refresh else fetch_cached_session(api_key, session_id)
+    cached = (
+        None if force_refresh
+        else fetch_cached_session(api_key, session_id, organization_id=organization_id)
+    )
     if isinstance(cached, dict) and isinstance(cached.get("transcript_payload"), dict):
         return _serialize_cached_session(session_id, cached)
 
@@ -342,6 +472,12 @@ def fetch_session_transcript_data(api_key: str, transcript_api_key: str, session
         existing_job = get_transcript_job_for_session(session_id)
         if isinstance(existing_job, dict) and existing_job.get("status") in ("pending", "running"):
             return {"jobId": existing_job["job_id"], "jobStatus": existing_job["status"]}
+
+    # Pre-stamp organization_id on the cache row. Safe if the row doesn't
+    # exist yet — the upsert creates it with just (session_id, org_id);
+    # the worker fills in transcript_payload later.
+    if organization_id:
+        upsert_cached_session(api_key, session_id, **_org_kwarg(organization_id))
 
     # Create the DB row first so the polling endpoint can find the job
     # even if enqueue races the first poll.
@@ -367,7 +503,12 @@ def fetch_session_transcript_data(api_key: str, transcript_api_key: str, session
     return {"jobId": job_id, "jobStatus": "pending"}
 
 
-def get_transcript_job_status_data(api_key: str, session_id: str) -> Dict[str, Any]:
+def get_transcript_job_status_data(
+    api_key: str,
+    session_id: str,
+    *,
+    organization_id: str = "",
+) -> Dict[str, Any]:
     """Polling endpoint payload: returns full workspace data once done, else job status.
 
     Progress comes from two sources, merged:
@@ -379,7 +520,7 @@ def get_transcript_job_status_data(api_key: str, session_id: str) -> Dict[str, A
     session_id = str(session_id or "").strip()
 
     # Transcript may have finished between polls — return full data if so.
-    cached = fetch_cached_session(api_key, session_id)
+    cached = fetch_cached_session(api_key, session_id, organization_id=organization_id)
     if isinstance(cached, dict) and isinstance(cached.get("transcript_payload"), dict):
         return _serialize_cached_session(session_id, cached)
 
@@ -414,14 +555,25 @@ def get_transcript_job_status_data(api_key: str, session_id: str) -> Dict[str, A
     }
 
 
-def save_speaker_labels(api_key: str, session_id: str, speaker_names: Dict[str, str]) -> Dict[str, Any]:
+def save_speaker_labels(
+    api_key: str,
+    session_id: str,
+    speaker_names: Dict[str, str],
+    *,
+    organization_id: str = "",
+) -> Dict[str, Any]:
     normalized = {
         str(speaker): str(label).strip()
         for speaker, label in (speaker_names or {}).items()
         if str(label).strip()
     }
-    upsert_cached_session(api_key, session_id, transcript_speaker_names=normalized)
-    cached = fetch_cached_session(api_key, session_id)
+    upsert_cached_session(
+        api_key,
+        session_id,
+        transcript_speaker_names=normalized,
+        **_org_kwarg(organization_id),
+    )
+    cached = fetch_cached_session(api_key, session_id, organization_id=organization_id)
     if not isinstance(cached, dict):
         raise RuntimeError("Speaker labels were saved, but the updated session could not be reloaded.")
     return _serialize_cached_session(session_id, cached)
@@ -713,6 +865,7 @@ def _start_ai_job(
     *,
     language: str = "",
     tone: str = "",
+    organization_id: str = "",
 ) -> Dict[str, Any]:
     """Start an AI job (or return the cached result if already complete).
 
@@ -724,7 +877,7 @@ def _start_ai_job(
         raise RuntimeError(f"Unknown AI job kind: {kind!r}")
 
     session_id = str(session_id or "").strip()
-    cached = fetch_cached_session("", session_id)
+    cached = fetch_cached_session("", session_id, organization_id=organization_id)
     if not isinstance(cached, dict):
         raise RuntimeError("No cached session was found. Fetch the session data first.")
 
@@ -786,6 +939,7 @@ def _get_ai_job_data(
     *,
     language: str = "",
     tone: str = "",
+    organization_id: str = "",
 ) -> Dict[str, Any]:
     """Poll an AI job.
 
@@ -797,7 +951,7 @@ def _get_ai_job_data(
         raise RuntimeError(f"Unknown AI job kind: {kind!r}")
 
     session_id = str(session_id or "").strip()
-    cached = fetch_cached_session("", session_id)
+    cached = fetch_cached_session("", session_id, organization_id=organization_id)
 
     # Cache hit — the worker already finished and persisted. Return the full
     # workspace so the frontend can replace its state in one step.
@@ -829,36 +983,36 @@ def _get_ai_job_data(
 # kept thin to make the per-flow contract obvious from app.py.
 
 
-def start_overall_analysis(session_id: str, output_language: str) -> Dict[str, Any]:
-    return _start_ai_job("overall_analysis", session_id, language=output_language)
+def start_overall_analysis(session_id: str, output_language: str, *, organization_id: str = "") -> Dict[str, Any]:
+    return _start_ai_job("overall_analysis", session_id, language=output_language, organization_id=organization_id)
 
 
-def get_overall_analysis_job_data(session_id: str, job_id: str, language: str) -> Dict[str, Any]:
-    return _get_ai_job_data("overall_analysis", session_id, job_id, language=language)
+def get_overall_analysis_job_data(session_id: str, job_id: str, language: str, *, organization_id: str = "") -> Dict[str, Any]:
+    return _get_ai_job_data("overall_analysis", session_id, job_id, language=language, organization_id=organization_id)
 
 
-def start_deep_analysis(session_id: str, output_language: str) -> Dict[str, Any]:
-    return _start_ai_job("deep_analysis", session_id, language=output_language)
+def start_deep_analysis(session_id: str, output_language: str, *, organization_id: str = "") -> Dict[str, Any]:
+    return _start_ai_job("deep_analysis", session_id, language=output_language, organization_id=organization_id)
 
 
-def get_deep_analysis_job_data(session_id: str, job_id: str, language: str) -> Dict[str, Any]:
-    return _get_ai_job_data("deep_analysis", session_id, job_id, language=language)
+def get_deep_analysis_job_data(session_id: str, job_id: str, language: str, *, organization_id: str = "") -> Dict[str, Any]:
+    return _get_ai_job_data("deep_analysis", session_id, job_id, language=language, organization_id=organization_id)
 
 
-def start_smart_recap(session_id: str, tone: str) -> Dict[str, Any]:
-    return _start_ai_job("smart_recap", session_id, tone=tone)
+def start_smart_recap(session_id: str, tone: str, *, organization_id: str = "") -> Dict[str, Any]:
+    return _start_ai_job("smart_recap", session_id, tone=tone, organization_id=organization_id)
 
 
-def get_smart_recap_job_data(session_id: str, job_id: str, tone: str) -> Dict[str, Any]:
-    return _get_ai_job_data("smart_recap", session_id, job_id, tone=tone)
+def get_smart_recap_job_data(session_id: str, job_id: str, tone: str, *, organization_id: str = "") -> Dict[str, Any]:
+    return _get_ai_job_data("smart_recap", session_id, job_id, tone=tone, organization_id=organization_id)
 
 
-def start_content_repurposing(session_id: str, output_language: str) -> Dict[str, Any]:
-    return _start_ai_job("content_repurposing", session_id, language=output_language)
+def start_content_repurposing(session_id: str, output_language: str, *, organization_id: str = "") -> Dict[str, Any]:
+    return _start_ai_job("content_repurposing", session_id, language=output_language, organization_id=organization_id)
 
 
-def get_content_repurposing_job_data(session_id: str, job_id: str, language: str) -> Dict[str, Any]:
-    return _get_ai_job_data("content_repurposing", session_id, job_id, language=language)
+def get_content_repurposing_job_data(session_id: str, job_id: str, language: str, *, organization_id: str = "") -> Dict[str, Any]:
+    return _get_ai_job_data("content_repurposing", session_id, job_id, language=language, organization_id=organization_id)
 
 
 def format_service_error(exc: Exception, resource_label: str) -> Dict[str, Any]:
