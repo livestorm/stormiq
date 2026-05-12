@@ -302,6 +302,7 @@ session_cache (
   session_id               TEXT NOT NULL,
   organization_id          TEXT,                 -- Phase 4: Livestorm org that owns the session
   session_payload          JSONB,                -- raw Livestorm session API response
+  event_payload            JSONB,                -- raw Livestorm event API response (parent of the session) — used for card titles
   chat_payload             JSONB,                -- raw chat messages payload
   questions_payload        JSONB,                -- raw questions payload
   transcript_payload       JSONB,                -- Gladia transcript JSON (full)
@@ -662,6 +663,7 @@ The product shape that replaces the single-active-session flow with a workspace-
 - ✅ **Commit 1 (backend)**: `session_cache.organization_id` column + index. All web read paths filter by org_id; teammates in one Livestorm org share cached results (this was already true in practice; the lookup just wasn't filtered) while cross-org callers can no longer read each other's cache. New `GET /api/workspace-sessions` returns the card list for the current user's org. Worker reads remain org-agnostic (trusted internal code). Legacy rows pre-Phase-4 have NULL `organization_id` and are invisible to the new list view until refetched — refetching is instant on cache hit and stamps the org_id.
 - ✅ **Commit 2 (frontend)**: sidebar restructured to three top-level items (Search / Single Analysis / Cross Analysis). New `SingleAnalysisListView` renders a card grid with placeholder gradient covers (final cover-image logic TBD by product). New `SearchView` consolidates the three fetch modes (by session ID, by event ID, browse workspace) in one redesigned page. New `CrossAnalysisView` placeholder for Phase 3. Routes parameterised by `:sessionId` so any `/single-analysis/:sessionId/...` URL is shareable; the store's `loadSessionById` watches the route param and materialises the workspace from cache (instant) or fetches it (when a teammate hasn't loaded the session in this browser yet). Legacy routes redirect to the new equivalents.
 - Orphaned components removed: `FetchSessionForm.vue` and `EventsView.vue` (their logic moved into `SearchView`).
+- ✅ **Event title on cards**: added `session_cache.event_payload` (JSONB) so the card list can show the parent event's title (Livestorm sessions rarely have their own `name` set). `services.fetch_event_details` does the lookup; `fetch_session_base_data` and `fetch_all_session_data` call it alongside the session fetch and store both. `list_workspace_sessions_data` exposes `eventTitle` and a formatted `durationLabel` (e.g. `1h 30m`). Card shows event title, date, duration, and attendee count. Backfill in `scripts/backfill_event_payloads.py` — fetches each missing event once (deduped by event_id), writes to all sessions that reference it.
 
 ### Then — Phase 2: Card registry refactor
 - Introduce a Python-side card registry under `livestorm_app/cards/single/`

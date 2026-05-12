@@ -106,6 +106,12 @@ def ensure_database_schema() -> None:
             )
             cursor.execute(
                 """
+                ALTER TABLE session_cache
+                ADD COLUMN IF NOT EXISTS event_payload JSONB
+                """
+            )
+            cursor.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_session_cache_account_hash
                 ON session_cache (account_key_hash)
                 """
@@ -308,6 +314,7 @@ def upsert_cached_session(api_key: str, session_id: str, **fields: Any) -> None:
         "content_repurpose_bundle",
         "smart_recap_bundle",
         "organization_id",
+        "event_payload",
     }
     persisted_fields = {key: value for key, value in fields.items() if key in allowed_fields}
     if not persisted_fields:
@@ -372,6 +379,7 @@ def list_workspace_sessions(organization_id: str) -> List[Dict[str, Any]]:
                         session_id,
                         organization_id,
                         session_payload,
+                        event_payload,
                         transcript_payload IS NOT NULL AS has_transcript,
                         analysis_bundle,
                         deep_analysis_bundle,

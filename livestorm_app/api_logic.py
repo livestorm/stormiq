@@ -50,6 +50,7 @@ from livestorm_app.services import (
     build_transcript_insights,
     build_transcript_plain_text,
     fetch_chat_and_questions_bundle,
+    fetch_event_details,
     fetch_event_past_sessions,
     fetch_workspace_events_page,
     fetch_session_details,
@@ -249,6 +250,47 @@ def _format_started_at_label(value: Any) -> str:
         return ""
 
 
+def _format_duration_label(value: Any) -> str:
+    """Render a duration in seconds as 'Hh Mm' or 'Mm Ss'.
+
+    Livestorm sessions vary from a few minutes (test sessions) to multi-hour
+    webinars. The format picks a sensible unit for each range:
+        > 1 hour     -> 'Hh Mm'
+        > 1 minute   -> 'Mm Ss'  (drops seconds when zero)
+        < 1 minute   -> 'Ss'
+        invalid      -> ''
+    """
+    try:
+        if value in (None, "", 0):
+            return ""
+        total_seconds = int(float(value))
+    except (TypeError, ValueError):
+        return ""
+    if total_seconds <= 0:
+        return ""
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours}h {minutes}m" if minutes else f"{hours}h"
+    if minutes:
+        return f"{minutes}m {seconds}s" if seconds else f"{minutes}m"
+    return f"{seconds}s"
+
+
+def _extract_event_title(event_payload: Any, fallback: str = "Untitled event") -> str:
+    """Pull `data.attributes.title` out of a Livestorm event payload."""
+    if not isinstance(event_payload, dict):
+        return fallback
+    data = event_payload.get("data")
+    if not isinstance(data, dict):
+        return fallback
+    attributes = data.get("attributes")
+    if not isinstance(attributes, dict):
+        return fallback
+    title = str(attributes.get("title") or "").strip()
+    return title or fallback
+
+
 def _has_non_empty_bundle(bundle: Any) -> bool:
     """True when a JSON bundle holds at least one non-empty string value."""
     if not isinstance(bundle, dict):
@@ -278,15 +320,25 @@ def list_workspace_sessions_data(organization_id: str) -> Dict[str, Any]:
             else {}
         )
         started_at_unix = attributes.get("started_at") or attributes.get("estimated_started_at")
+        duration_seconds = attributes.get("duration")
+        event_payload = row.get("event_payload")
+        # Falls back to session name (if any), then to "Untitled event"
+        # when the event payload hasn't been backfilled yet.
+        event_title = _extract_event_title(
+            event_payload,
+            fallback=str(attributes.get("name") or "").strip() or "Untitled event",
+        )
         sessions.append(
             {
                 "sessionId": row.get("session_id"),
                 "organizationId": row.get("organization_id"),
                 "sessionName": str(attributes.get("name") or "").strip() or "Untitled session",
                 "eventId": attributes.get("event_id"),
+                "eventTitle": event_title,
                 "startedAtUnix": started_at_unix,
                 "startedAtLabel": _format_started_at_label(started_at_unix),
-                "durationSeconds": attributes.get("duration"),
+                "durationSeconds": duration_seconds,
+                "durationLabel": _format_duration_label(duration_seconds),
                 "attendeesCount": attributes.get("attendees_count"),
                 "registrantsCount": attributes.get("registrants_count"),
                 "schedulingStatus": attributes.get("status") or attributes.get("scheduling_status"),
@@ -349,6 +401,33 @@ def _org_kwarg(organization_id: str) -> Dict[str, Any]:
     return {"organization_id": cleaned} if cleaned else {}
 
 
+def _extract_event_id_from_session(session_payload: Dict[str, Any]) -> str:
+    """Pull `event_id` out of a Livestorm session payload. Empty string when
+    the payload is malformed or the field is missing."""
+    if not isinstance(session_payload, dict):
+        return ""
+    attributes = extract_session_attributes(session_payload)
+    return str(attributes.get("event_id") or "").strip()
+
+
+def _fetch_event_payload_safe(api_key: str, event_id: str) -> Optional[Dict[str, Any]]:
+    """Wrap `fetch_event_details` so a missing/forbidden event doesn't kill
+    the parent session fetch.
+
+    Returns the event payload on success, or None when the request fails
+    (network error, 403, 404, etc.). The caller proceeds with the session
+    fetch and the card will fall back to its un-titled display.
+    """
+    cleaned = str(event_id or "").strip()
+    if not cleaned or not str(api_key or "").strip():
+        return None
+    try:
+        return fetch_event_details(api_key, cleaned)
+    except Exception:
+        logger.warning("fetch_event_details failed for event_id=%s", cleaned, exc_info=True)
+        return None
+
+
 def fetch_all_session_data(
     api_key: str,
     transcript_api_key: str,
@@ -378,13 +457,23 @@ def fetch_all_session_data(
         session_id,
         livestorm_api_key=api_key,
     )
+    # Fetch the parent event's payload so the workspace card can show the
+    # event title (sessions rarely have their own `name` set).
+    event_payload = _fetch_event_payload_safe(
+        api_key, _extract_event_id_from_session(session_payload)
+    )
+    upsert_kwargs = {
+        "session_payload": session_payload,
+        "chat_payload": chat_bundle.get("chat_payload"),
+        "questions_payload": chat_bundle.get("questions_payload"),
+        "transcript_payload": transcript_payload,
+    }
+    if event_payload is not None:
+        upsert_kwargs["event_payload"] = event_payload
     upsert_cached_session(
         api_key,
         session_id,
-        session_payload=session_payload,
-        chat_payload=chat_bundle.get("chat_payload"),
-        questions_payload=chat_bundle.get("questions_payload"),
-        transcript_payload=transcript_payload,
+        **upsert_kwargs,
         **_org_kwarg(organization_id),
     )
     cached = fetch_cached_session(api_key, session_id, organization_id=organization_id)
@@ -412,12 +501,20 @@ def fetch_session_base_data(
 
     session_payload = fetch_session_details(api_key, session_id)
     chat_bundle = fetch_chat_and_questions_bundle(api_key, session_id)
+    event_payload = _fetch_event_payload_safe(
+        api_key, _extract_event_id_from_session(session_payload)
+    )
+    upsert_kwargs = {
+        "session_payload": session_payload,
+        "chat_payload": chat_bundle.get("chat_payload"),
+        "questions_payload": chat_bundle.get("questions_payload"),
+    }
+    if event_payload is not None:
+        upsert_kwargs["event_payload"] = event_payload
     upsert_cached_session(
         api_key,
         session_id,
-        session_payload=session_payload,
-        chat_payload=chat_bundle.get("chat_payload"),
-        questions_payload=chat_bundle.get("questions_payload"),
+        **upsert_kwargs,
         **_org_kwarg(organization_id),
     )
     cached = fetch_cached_session(api_key, session_id, organization_id=organization_id)

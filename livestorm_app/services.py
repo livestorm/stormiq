@@ -578,6 +578,23 @@ def fetch_session_details(key: str, session: str) -> Dict[str, Any]:
     return payload if isinstance(payload, dict) else {"data": payload}
 
 
+def fetch_event_details(key: str, event_id: str) -> Dict[str, Any]:
+    """GET /events/{event_id}. Returns the raw JSON:API payload.
+
+    Used to populate `session_cache.event_payload` so the Single Analysis
+    list view can show the event title (sessions themselves rarely have
+    a `name` set — they're identified by their parent event).
+    """
+    resp = requests.get(
+        f"{API_BASE}/events/{event_id}",
+        headers=build_headers(key),
+        timeout=30,
+    )
+    resp.raise_for_status()
+    payload = resp.json()
+    return payload if isinstance(payload, dict) else {"data": payload}
+
+
 def fetch_event_past_sessions(key: str, event: str, page_size: int = DEFAULT_PAGE_SIZE) -> Dict[str, Any]:
     url = f"{API_BASE}/events/{event}/sessions"
     headers = build_headers(key)

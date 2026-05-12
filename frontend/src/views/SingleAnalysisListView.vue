@@ -53,11 +53,22 @@ function gradientFor(sessionId) {
   return `linear-gradient(135deg, hsl(${hueA}, 62%, 48%) 0%, hsl(${hueB}, 58%, 38%) 100%)`;
 }
 
-function initialsFor(sessionName) {
-  const cleaned = String(sessionName || "").trim();
+function initialsFor(label) {
+  const cleaned = String(label || "").trim();
   if (!cleaned) return "—";
   const words = cleaned.split(/\s+/).slice(0, 2);
   return words.map((w) => w[0]).join("").toUpperCase();
+}
+
+function cardTitle(card) {
+  // Phase 4 follow-up: prefer the event title. Sessions rarely have
+  // their own name set — the user-meaningful label is the event the
+  // session belongs to.
+  return (
+    String(card.eventTitle || "").trim() ||
+    String(card.sessionName || "").trim() ||
+    "Untitled session"
+  );
 }
 
 function openSession(sessionId) {
@@ -144,14 +155,14 @@ async function refresh() {
         @keydown.space.prevent="openSession(card.sessionId)"
       >
         <div class="single-analysis-card-cover" :style="{ background: gradientFor(card.sessionId) }">
-          <span class="single-analysis-card-initials">{{ initialsFor(card.sessionName) }}</span>
+          <span class="single-analysis-card-initials">{{ initialsFor(cardTitle(card)) }}</span>
         </div>
         <div class="single-analysis-card-body">
-          <h3 class="single-analysis-card-title">{{ card.sessionName }}</h3>
+          <h3 class="single-analysis-card-title">{{ cardTitle(card) }}</h3>
           <p class="single-analysis-card-meta">
             <span>{{ formattedDate(card) }}</span>
+            <span v-if="card.durationLabel"> · {{ card.durationLabel }}</span>
             <span v-if="card.attendeesCount != null"> · {{ card.attendeesCount }} attendees</span>
-            <span v-if="card.schedulingStatus"> · {{ statusLabel(card) }}</span>
           </p>
           <ul class="single-analysis-card-pills">
             <li
