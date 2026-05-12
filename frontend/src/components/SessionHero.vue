@@ -75,6 +75,28 @@ const coverImageUrl = computed(() => {
   return `/api/sessions/${sessionId.value}/cover.png${query}`;
 });
 
+// Browser `download` attribute does the rest — same-origin URL with a
+// suggested filename triggers Save instead of inline display. We
+// slugify the event title so the file is recognisable in Downloads,
+// and append the first 8 chars of the session id as a disambiguator
+// when the user has multiple covers from sessions sharing an event
+// (e.g. weekly recurring webinars).
+function slugify(label) {
+  return String(label || "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
+}
+
+const downloadFilename = computed(() => {
+  const slug = slugify(eventTitle.value) || "session";
+  const idShort = sessionId.value ? `-${sessionId.value.slice(0, 8)}` : "";
+  return `stormiq-cover-${slug}${idShort}.png`;
+});
+
 const initialsForCover = computed(() => {
   const label = String(eventTitle.value || "").trim();
   if (!label) return "—";
@@ -94,6 +116,25 @@ const initialsForCover = computed(() => {
         loading="lazy"
       />
       <span v-else class="session-hero-cover-initials" aria-hidden="true">{{ initialsForCover }}</span>
+      <!-- Floating download affordance. Same-origin <a download="...">
+           lets the browser save the PNG with a recognisable filename;
+           no extra backend route needed. Only renders when there's an
+           actual cover (the placeholder gradient isn't worth saving). -->
+      <a
+        v-if="meta.hasCoverImage"
+        class="session-hero-cover-download"
+        :href="coverImageUrl"
+        :download="downloadFilename"
+        :aria-label="`Download cover image for ${eventTitle}`"
+        title="Download cover image"
+      >
+        <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+          <path
+            fill="currentColor"
+            d="M10 3a1 1 0 0 1 1 1v7.586l2.293-2.293a1 1 0 1 1 1.414 1.414l-4 4a1 1 0 0 1-1.414 0l-4-4a1 1 0 1 1 1.414-1.414L9 11.586V4a1 1 0 0 1 1-1Zm-6 13a1 1 0 0 1 1-1h10a1 1 0 1 1 0 2H5a1 1 0 0 1-1-1Z"
+          />
+        </svg>
+      </a>
     </div>
     <div class="session-hero-body">
       <h1 class="session-hero-title">{{ eventTitle }}</h1>
@@ -128,11 +169,44 @@ const initialsForCover = computed(() => {
 }
 
 .session-hero-cover {
+  position: relative;
   aspect-ratio: 3 / 2;
   border-radius: 10px;
   overflow: hidden;
   display: grid;
   place-items: center;
+}
+
+.session-hero-cover-download {
+  /* Quiet floating affordance in the top-right of the cover. Always
+     visible but tasteful — winter-green tint over the cream image
+     keeps it discoverable without competing with the artwork. */
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: rgba(18, 38, 43, 0.7); /* winter green, translucent */
+  color: #ffffff;
+  text-decoration: none;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  transition: background 120ms ease-out, transform 120ms ease-out;
+}
+
+.session-hero-cover-download svg {
+  width: 18px;
+  height: 18px;
+}
+
+.session-hero-cover-download:hover,
+.session-hero-cover-download:focus-visible {
+  background: rgba(11, 66, 195, 0.95); /* brand blue on hover */
+  transform: translateY(-1px);
+  outline: none;
 }
 
 .session-hero-cover-image {

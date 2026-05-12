@@ -203,7 +203,11 @@ def _serialize_cached_session(session_id: str, cached_session: Dict[str, Any]) -
         "generatedByName": str(cached_session.get("created_by_name") or "").strip(),
         "generatedAtIso": created_at_meta.isoformat() if created_at_meta else "",
         "generatedAtLabel": _format_iso_date_label(created_at_meta),
-        "hasCoverImage": bool(cached_session.get("cover_image_bytes")),
+        # `has_cover_image` is the IS NOT NULL alias from
+        # fetch_cached_session's SELECT — the actual BYTEA stays out
+        # of every cache read because it's 1-2 MB and served by its
+        # own /cover.png endpoint.
+        "hasCoverImage": bool(cached_session.get("has_cover_image")),
         "coverImageMime": str(cached_session.get("cover_image_mime") or "image/png"),
         "coverImageGeneratedAt": (
             cover_generated_at_meta.isoformat() if cover_generated_at_meta else ""
@@ -344,7 +348,10 @@ def _maybe_enqueue_default_outputs(cached: Dict[str, Any], session_id: str) -> N
         return
 
     # Recap is present. Check for missing cover and trigger it directly.
-    if not cached.get("cover_image_bytes"):
+    # `has_cover_image` comes from the BYTEA IS NOT NULL projection in
+    # fetch_cached_session's SELECT; the bytes themselves stay out of
+    # the cache read.
+    if not cached.get("has_cover_image"):
         try:
             job_id = enqueue_job_sync("run_cover_image_job", sid)
             if job_id:
@@ -1054,7 +1061,9 @@ def run_cover_image_generation(
         )
 
     # Idempotency: skip when a cover already exists, unless forced.
-    if not force_regenerate and cached.get("cover_image_bytes"):
+    # fetch_cached_session keeps the BYTEA out of its SELECT (heavy);
+    # has_cover_image is the IS NOT NULL projection we read instead.
+    if not force_regenerate and cached.get("has_cover_image"):
         return {"status": "exists", "mime": cached.get("cover_image_mime")}
 
     prompt = build_cover_image_prompt(recap_markdown)

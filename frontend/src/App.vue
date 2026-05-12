@@ -68,6 +68,12 @@ const isOnSessionDetail = computed(() => Boolean(routeSessionId.value));
 const isOnSingleAnalysis = computed(
   () => route.path === "/single-analysis" || route.path.startsWith("/single-analysis/"),
 );
+// Hero only renders on the overview tab — keeps the Transcript /
+// Analysis / Recap tabs focused on their own content without a tall
+// banner pushing it below the fold.
+const isOnSessionOverview = computed(
+  () => Boolean(routeSessionId.value) && route.path.endsWith("/session-overview"),
+);
 
 const tabsState = computed(() => {
   const transcriptReady = hasTranscriptData.value;
@@ -327,10 +333,10 @@ function toggleSidebar() {
         </button>
       </div>
 
-      <!-- Hero header for every per-session route. Self-hides when the
-           workspace hasn't loaded yet, so the existing per-tab loaders
-           still take the screen on the first paint. -->
-      <SessionHero v-if="isOnSessionDetail" />
+      <!-- Hero header for the Session Overview tab only. Self-hides
+           when the workspace hasn't loaded yet, so the existing per-tab
+           loaders still take the screen on the first paint. -->
+      <SessionHero v-if="isOnSessionOverview" />
       <RouterView />
     </main>
   </div>
