@@ -174,6 +174,17 @@ function gradientFor(sessionId) {
   return `linear-gradient(135deg, hsl(${hueA}, 62%, 48%) 0%, hsl(${hueB}, 58%, 38%) 100%)`;
 }
 
+function coverImageUrl(card) {
+  // Phase 4: real AI cover, generated from the Professional Smart
+  // Recap. Falls back to the gradient placeholder when the row
+  // doesn't have one yet (legacy rows + brand-new fetches whose
+  // cover job hasn't completed). Adds a `?v=<iso>` cache-buster only
+  // when we have a generated_at timestamp so subsequent regenerations
+  // bypass the browser's max-age=86400 cache for this URL.
+  if (!card?.hasCoverImage || !card?.sessionId) return "";
+  return `/api/sessions/${card.sessionId}/cover.png`;
+}
+
 function initialsFor(label) {
   const cleaned = String(label || "").trim();
   if (!cleaned) return "—";
@@ -341,7 +352,14 @@ function clearFilters() {
           @keydown.space.prevent="openSession(card.sessionId)"
         >
           <div class="single-analysis-card-cover" :style="{ background: gradientFor(card.sessionId) }">
-            <span class="single-analysis-card-initials">{{ initialsFor(cardTitle(card)) }}</span>
+            <img
+              v-if="card.hasCoverImage"
+              class="single-analysis-card-cover-image"
+              :src="coverImageUrl(card)"
+              :alt="`Cover image for ${cardTitle(card)}`"
+              loading="lazy"
+            />
+            <span v-else class="single-analysis-card-initials">{{ initialsFor(cardTitle(card)) }}</span>
           </div>
           <div class="single-analysis-card-body">
             <h3 class="single-analysis-card-title">{{ cardTitle(card) }}</h3>
@@ -369,7 +387,14 @@ function clearFilters() {
           @keydown.space.prevent="openSession(card.sessionId)"
         >
           <div class="single-analysis-row-cover" :style="{ background: gradientFor(card.sessionId) }">
-            <span class="single-analysis-row-initials">{{ initialsFor(cardTitle(card)) }}</span>
+            <img
+              v-if="card.hasCoverImage"
+              class="single-analysis-row-cover-image"
+              :src="coverImageUrl(card)"
+              :alt="`Cover image for ${cardTitle(card)}`"
+              loading="lazy"
+            />
+            <span v-else class="single-analysis-row-initials">{{ initialsFor(cardTitle(card)) }}</span>
           </div>
           <div class="single-analysis-row-body">
             <h3 class="single-analysis-row-title">{{ cardTitle(card) }}</h3>
@@ -500,6 +525,14 @@ function clearFilters() {
   aspect-ratio: 16 / 9;
   display: grid;
   place-items: center;
+  overflow: hidden;
+}
+
+.single-analysis-card-cover-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .single-analysis-card-initials {
@@ -572,6 +605,14 @@ function clearFilters() {
   border-radius: 6px;
   display: grid;
   place-items: center;
+  overflow: hidden;
+}
+
+.single-analysis-row-cover-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .single-analysis-row-initials {

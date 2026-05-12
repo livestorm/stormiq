@@ -1,3 +1,4 @@
+import base64
 import json
 import logging
 import math
@@ -23,9 +24,14 @@ from livestorm_app.config import (
     CONTENT_REPURPOSE_EMAIL_PROMPT_PATH,
     CONTENT_REPURPOSE_SOCIAL_MEDIA_PROMPT_PATH,
     CONTENT_REPURPOSE_SUMMARY_PROMPT_PATH,
+    COVER_IMAGE_MODEL,
+    COVER_IMAGE_PROMPT_PATH,
+    COVER_IMAGE_QUALITY,
+    COVER_IMAGE_SIZE,
     DEFAULT_PAGE_SIZE,
     MAX_PAGES,
     OPENAI_CHAT_COMPLETIONS_URL,
+    OPENAI_IMAGES_URL,
     SMART_RECAP_HYPE_PROMPT_PATH,
     SMART_RECAP_PROFESSIONAL_PROMPT_PATH,
     SMART_RECAP_SURPRISE_PROMPT_PATH,
@@ -1102,6 +1108,75 @@ def build_smart_recap_prompt(tone: str) -> str:
         "You create short transcript-only session recaps. Return markdown with exactly `# Title` and "
         "`# Description`. Use only the transcript text, avoid outside facts, and match the requested tone."
     )
+
+
+def build_cover_image_prompt(summary_markdown: str) -> str:
+    """Render the cover-image prompt template with the recap summary
+    interpolated into the `{summary}` placeholder.
+
+    The template lives in prompts/cover_image_prompt.txt — editable
+    without redeploying — and produces a single brand-aligned prompt
+    for the OpenAI Images API. Keeps text overlays / logos / faces
+    excluded so the output is a clean editorial cover rather than a
+    fake screenshot with broken AI-generated text.
+    """
+    template = load_analysis_prompt(COVER_IMAGE_PROMPT_PATH)
+    summary = str(summary_markdown or "").strip() or "(No summary available.)"
+    return template.replace("{summary}", summary)
+
+
+def generate_cover_image_with_openai(
+    api_key: str,
+    *,
+    prompt: str,
+    model: str = COVER_IMAGE_MODEL,
+    size: str = COVER_IMAGE_SIZE,
+    quality: str = COVER_IMAGE_QUALITY,
+    timeout: int = 180,
+) -> Dict[str, Any]:
+    """Call the OpenAI Images API and return the raw image bytes + mime.
+
+    Uses the same `requests` pattern as the chat-completion helpers
+    above. Returns `{ "bytes": <raw png>, "mime": "image/png" }`. The
+    bytes are decoded from the API's base64 response so the caller can
+    push them straight into a Postgres BYTEA column.
+
+    Raises a clear RuntimeError when the API key is missing, the
+    response payload doesn't contain image data, or the upstream
+    request fails — caller decides whether to log+skip or surface to
+    the user.
+    """
+    key = str(api_key or "").strip()
+    if not key:
+        raise RuntimeError("OPENAI_API_KEY is required for cover image generation.")
+
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "size": size,
+        "quality": quality,
+        "n": 1,
+    }
+    headers = {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+    }
+    response = requests.post(OPENAI_IMAGES_URL, headers=headers, json=payload, timeout=timeout)
+    response.raise_for_status()
+    body = response.json()
+    data = body.get("data") if isinstance(body, dict) else None
+    first = data[0] if isinstance(data, list) and data else None
+    b64 = str((first or {}).get("b64_json") or "").strip()
+    if not b64:
+        raise RuntimeError(
+            "OpenAI Images response did not include `b64_json` (model="
+            f"{model!r}). Inspect the raw response for upstream errors."
+        )
+    image_bytes = base64.b64decode(b64)
+    # The OpenAI Images API returns PNG by default. The endpoint accepts
+    # an `output_format` flag for jpeg/webp but we don't pass one — keep
+    # the mime consistent with what's in the bytes.
+    return {"bytes": image_bytes, "mime": "image/png"}
 
 
 def analysis_markdown_to_pdf_bytes(markdown_text: str, title: str) -> bytes:

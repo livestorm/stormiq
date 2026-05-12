@@ -15,6 +15,16 @@ DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 DEEP_ANALYSIS_OPENAI_MODEL = "gpt-4o-mini"
 SMART_RECAP_OPENAI_MODEL = "gpt-5.4-mini"
 
+# Cover image generation (Phase 4 follow-up). The cover is built from
+# the session's Professional Smart Recap and rendered with the OpenAI
+# Images API. Defaults to gpt-image-1 at 1536x1024 (closest wide
+# format the model offers — almost 16:9) and high quality. Override
+# via env if budget pressure changes the calculus.
+OPENAI_IMAGES_URL = "https://api.openai.com/v1/images/generations"
+COVER_IMAGE_MODEL = "gpt-image-1"
+COVER_IMAGE_SIZE = "1536x1024"
+COVER_IMAGE_QUALITY = "high"
+
 PROMPTS_DIR = Path("prompts")
 ANALYSIS_BASE_PROMPT_PATH = PROMPTS_DIR / "analysis_base_prompt.txt"
 ANALYSIS_CHAT_PROMPT_PATH = PROMPTS_DIR / "analysis_chat_prompt.txt"
@@ -29,6 +39,7 @@ CONTENT_REPURPOSE_SOCIAL_MEDIA_PROMPT_PATH = PROMPTS_DIR / "content_repurpose_so
 SMART_RECAP_PROFESSIONAL_PROMPT_PATH = PROMPTS_DIR / "smart_recap_professional_prompt.txt"
 SMART_RECAP_HYPE_PROMPT_PATH = PROMPTS_DIR / "smart_recap_hype_prompt.txt"
 SMART_RECAP_SURPRISE_PROMPT_PATH = PROMPTS_DIR / "smart_recap_surprise_prompt.txt"
+COVER_IMAGE_PROMPT_PATH = PROMPTS_DIR / "cover_image_prompt.txt"
 
 ENV_PATH = Path(".env")
 BASE_DIR = Path(__file__).resolve().parent.parent

@@ -1,0 +1,20 @@
+Create a premium 16:9 cover image for a Livestorm session.
+
+Style:
+- Modern editorial design, minimalist and polished
+- Soft pastel background with deep teal and Livestorm-blue accents
+- Generous negative space; uncluttered composition
+- Professional, corporate, magazine-cover feel
+- Subtle texture or grain is fine; flat illustration acceptable
+
+Capture the essence of this session:
+{summary}
+
+Composition guidance:
+- One clear focal point on the right; breathable space on the left
+- Story-driven imagery that reflects the session's main themes
+- Use shapes, abstract motifs, or stylised icons rather than literal photos
+- Absolutely NO text overlays, NO logos, NO charts, NO numbers
+- Avoid faces and identifiable people
+- The output should look ready to drop into a Notion cover or a
+  LinkedIn share without further editing

@@ -35,7 +35,7 @@ from livestorm_app.api_logic import (
     start_smart_recap,
 )
 from livestorm_app.config import ENV_PATH, get_runtime_secret, load_env_file
-from livestorm_app.db import ensure_database_schema
+from livestorm_app.db import ensure_database_schema, fetch_cover_image
 from livestorm_app.oauth_client import (
     LIVESTORM_OAUTH_COOKIE,
     LIVESTORM_OAUTH_HANDSHAKE_COOKIE,
@@ -347,6 +347,37 @@ def workspace_events(request: WorkspaceEventsRequest, http_request: Request) -> 
     except Exception as exc:
         _raise_http_error("Workspace events", exc)
         raise
+
+
+@app.get("/api/sessions/{session_id}/cover.png")
+def get_session_cover_image(session_id: str, http_request: Request) -> Response:
+    """Serve the OpenAI-generated cover image for the workspace card grid.
+
+    BYTEA columns stay out of `/api/workspace-sessions` so that endpoint
+    is small (no 50× 2 MB payloads). The card looks up `hasCoverImage`
+    there and renders `<img src=".../cover.png">` only when true.
+
+    Org-scoped via `_resolve_organization_id` — same access rule as
+    everything else. Returns 404 with a small JSON body when the row
+    has no cover yet (the frontend falls back to the placeholder
+    gradient on a network error).
+    """
+    try:
+        org_id = _resolve_organization_id(http_request)
+        cover = fetch_cover_image(session_id, organization_id=org_id)
+        if not isinstance(cover, dict) or not cover.get("bytes"):
+            return JSONResponse({"message": "Cover image not available."}, status_code=404)
+        # Cache aggressively in the browser — the bytes don't change
+        # until the worker rewrites the row, and the URL itself isn't
+        # versioned (yet). Once we regenerate, the user can hard-refresh.
+        headers = {
+            "Cache-Control": "public, max-age=86400",
+            "Content-Type": cover.get("mime", "image/png"),
+        }
+        return Response(content=cover["bytes"], media_type=headers["Content-Type"], headers=headers)
+    except Exception:
+        logger.exception("Cover image route failed for session_id=%s", session_id)
+        return JSONResponse({"message": "Cover image lookup failed."}, status_code=500)
 
 
 @app.get("/api/sessions/{session_id}")

@@ -130,6 +130,24 @@ def ensure_database_schema() -> None:
             )
             cursor.execute(
                 """
+                ALTER TABLE session_cache
+                ADD COLUMN IF NOT EXISTS cover_image_bytes BYTEA
+                """
+            )
+            cursor.execute(
+                """
+                ALTER TABLE session_cache
+                ADD COLUMN IF NOT EXISTS cover_image_mime TEXT
+                """
+            )
+            cursor.execute(
+                """
+                ALTER TABLE session_cache
+                ADD COLUMN IF NOT EXISTS cover_image_generated_at TIMESTAMPTZ
+                """
+            )
+            cursor.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_session_cache_account_hash
                 ON session_cache (account_key_hash)
                 """
@@ -342,6 +360,9 @@ def upsert_cached_session(api_key: str, session_id: str, **fields: Any) -> None:
         "created_by_user_id",
         "created_by_email",
         "created_by_name",
+        "cover_image_bytes",
+        "cover_image_mime",
+        "cover_image_generated_at",
     }
 
     # Fields that should be set only on the *first* insert. On subsequent
@@ -425,6 +446,9 @@ def list_workspace_sessions(organization_id: str) -> List[Dict[str, Any]]:
                         deep_analysis_bundle,
                         smart_recap_bundle,
                         content_repurpose_bundle,
+                        cover_image_bytes IS NOT NULL AS has_cover_image,
+                        cover_image_mime,
+                        cover_image_generated_at,
                         created_by_user_id,
                         created_by_email,
                         created_by_name,
@@ -441,6 +465,60 @@ def list_workspace_sessions(organization_id: str) -> List[Dict[str, Any]]:
     except Exception:
         logger.exception("Failed to list workspace sessions for organization_id=%s", org_filter)
         return []
+
+
+def fetch_cover_image(
+    session_id: str,
+    *,
+    organization_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Return the cover image bytes for a session, scoped by org.
+
+    Heavy column (BYTEA, often >1 MB), kept out of the list_workspace_sessions
+    query so the card endpoint stays light. Served via its own
+    GET /api/sessions/{id}/cover.png route. Returns `{ bytes, mime,
+    generated_at }` when present, or None.
+    """
+    if not database_enabled() or not str(session_id or "").strip():
+        return None
+    org_filter = str(organization_id or "").strip() if organization_id is not None else None
+    try:
+        with get_db_connection() as connection:
+            with connection.cursor() as cursor:
+                if org_filter:
+                    cursor.execute(
+                        """
+                        SELECT cover_image_bytes, cover_image_mime, cover_image_generated_at
+                        FROM session_cache
+                        WHERE session_id = %s AND organization_id = %s
+                        LIMIT 1
+                        """,
+                        (str(session_id).strip(), org_filter),
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        SELECT cover_image_bytes, cover_image_mime, cover_image_generated_at
+                        FROM session_cache
+                        WHERE session_id = %s
+                        LIMIT 1
+                        """,
+                        (str(session_id).strip(),),
+                    )
+                row = cursor.fetchone()
+        if not isinstance(row, dict):
+            return None
+        image_bytes = row.get("cover_image_bytes")
+        if not image_bytes:
+            return None
+        return {
+            "bytes": bytes(image_bytes),
+            "mime": str(row.get("cover_image_mime") or "image/png"),
+            "generated_at": row.get("cover_image_generated_at"),
+        }
+    except Exception:
+        logger.exception("Failed to read cover image for session_id=%s", str(session_id).strip())
+        return None
 
 
 def fetch_oauth_connection(connection_id: str) -> Optional[Dict[str, Any]]:

@@ -395,12 +395,20 @@ async def run_smart_recap_job(
     from livestorm_app.api_logic import run_smart_recap
 
     openai_key = _read_openai_key_or_raise()
-    return await _run_ai_job(
+    result = await _run_ai_job(
         "smart_recap",
         session_id,
         run_smart_recap,
         openai_key, session_id, tone,
     )
+    # After the Professional recap lands, kick off the cover image
+    # generator so workspace cards can render the AI cover next time
+    # /api/workspace-sessions is loaded. Skipped for other tones
+    # (Hype / Surprise) — the Professional recap is the canonical
+    # input for the cover prompt.
+    if str(tone or "").strip().lower() == "professional":
+        await _enqueue_default_cover_image(ctx, session_id)
+    return result
 
 
 async def run_content_repurposing_job(
@@ -417,6 +425,81 @@ async def run_content_repurposing_job(
         run_content_repurposing,
         openai_key, session_id, output_language,
     )
+
+
+# ── Cover image job ─────────────────────────────────────────────────────────
+#
+# Renders the workspace card cover from the Professional Smart Recap.
+# Auto-enqueued after run_smart_recap_job(professional) completes —
+# stays out of the AI flow registry (run_*_job names) because it has
+# no UI-triggered entry point. Users never call this directly.
+#
+# OpenAI Images calls are slower (~15-45s) than chat completions, so
+# the job runs at lower concurrency in practice via arq's natural
+# queuing. Failures are caught at the auto-enqueue site so a broken
+# image generator never blocks recap or transcription completion.
+
+
+async def run_cover_image_job(
+    ctx: Dict[str, Any],
+    session_id: str,
+    force_regenerate: bool = False,
+) -> Dict[str, Any]:
+    from livestorm_app.api_logic import run_cover_image_generation
+
+    openai_key = _read_openai_key_or_raise()
+    logger.info("[run_cover_image_job] session_id=%s start", session_id)
+    try:
+        result = await asyncio.to_thread(
+            run_cover_image_generation,
+            openai_key,
+            session_id,
+            force_regenerate=force_regenerate,
+        )
+        logger.info(
+            "[run_cover_image_job] session_id=%s done status=%s",
+            session_id,
+            (result or {}).get("status"),
+        )
+        return result if isinstance(result, dict) else {"status": "ok"}
+    except Exception:
+        logger.exception("[run_cover_image_job] session_id=%s failed", session_id)
+        raise
+
+
+async def _enqueue_default_cover_image(ctx: Dict[str, Any], session_id: str) -> None:
+    """Fire-and-forget enqueue of the cover image after a Professional recap.
+
+    Skips when a cover already exists in the cache. Mirrors the
+    `_enqueue_default_smart_recap` pattern: failures are logged and
+    swallowed so a broken image generator never bubbles into the
+    recap or transcription path.
+    """
+    try:
+        cached = await asyncio.to_thread(fetch_cached_session, "", session_id)
+        if (cached or {}).get("cover_image_bytes"):
+            logger.info(
+                "[run_smart_recap_job] session_id=%s already has cover image; skipping",
+                session_id,
+            )
+            return
+        redis_pool = ctx.get("redis") if isinstance(ctx, dict) else None
+        if redis_pool is None:
+            logger.warning(
+                "[run_smart_recap_job] session_id=%s ctx missing redis pool; cannot auto-enqueue cover",
+                session_id,
+            )
+            return
+        await redis_pool.enqueue_job("run_cover_image_job", session_id)
+        logger.info(
+            "[run_smart_recap_job] session_id=%s auto-enqueued run_cover_image_job",
+            session_id,
+        )
+    except Exception:
+        logger.exception(
+            "[run_smart_recap_job] session_id=%s failed to auto-enqueue cover image",
+            session_id,
+        )
 
 
 # ── Worker lifecycle ───────────────────────────────────────────────────────
@@ -468,6 +551,7 @@ class WorkerSettings:
         run_deep_analysis_job,
         run_smart_recap_job,
         run_content_repurposing_job,
+        run_cover_image_job,
     ]
 
     cron_jobs = [
