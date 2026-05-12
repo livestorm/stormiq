@@ -249,6 +249,132 @@ async def run_transcription(
         raise
 
 
+# ── AI flow jobs (overall / deep / smart recap / content repurposing) ──────
+#
+# Four flows, same shape: load cached payloads → build prompt → OpenAI →
+# persist to session_cache. Each is a thin wrapper around the existing
+# sync function in api_logic.py, with stage-floor progress around it.
+#
+# The OpenAI API key is read from the worker's own env (OPENAI_API_KEY)
+# rather than passed through the queue. Two reasons: (1) avoids putting
+# secrets into Redis, (2) one source of truth for the key on the worker
+# host.
+#
+# Progress mapping is coarse: we publish 'loading_sources' → 'building_prompt'
+# → 'analyzing' before the (single, blocking) OpenAI call, then 'persisting'
+# → 'done' after it. The bar will sit at "analyzing" (floor 40) for the
+# bulk of the wait — same UX as the transcription job. Phase 2 refactor
+# (cards) will give us natural inflection points to publish more stages.
+
+
+def _read_openai_key_or_raise() -> str:
+    from livestorm_app.config import get_runtime_secret
+
+    key = str(get_runtime_secret("OPENAI_API_KEY", "") or "").strip()
+    if not key:
+        raise RuntimeError("OPENAI_API_KEY not configured on worker process.")
+    return key
+
+
+async def _run_ai_job(
+    kind: str,
+    session_id: str,
+    sync_runner,
+    *runner_args,
+) -> Dict[str, Any]:
+    """Shared scaffolding for all four AI jobs.
+
+    `sync_runner` is the existing sync function in api_logic.py
+    (run_overall_analysis / run_deep_analysis / etc.). Called inside
+    `asyncio.to_thread` so the worker's event loop stays responsive.
+
+    Always clears Redis progress on completion or failure. On success,
+    holds the 'done' marker for 2 seconds so slow pollers see the 100%
+    state before it disappears.
+    """
+    logger.info("[%s] session_id=%s start", kind, session_id)
+    publish_progress_sync(kind, session_id, "queued")
+    try:
+        publish_progress_sync(kind, session_id, "loading_sources")
+        publish_progress_sync(kind, session_id, "building_prompt")
+        publish_progress_sync(kind, session_id, "analyzing")
+        result = await asyncio.to_thread(sync_runner, *runner_args)
+        publish_progress_sync(kind, session_id, "persisting")
+        publish_progress_sync(kind, session_id, "done")
+        await asyncio.sleep(2)
+        clear_progress_sync(kind, session_id)
+        logger.info("[%s] session_id=%s done", kind, session_id)
+        return result if isinstance(result, dict) else {"status": "ok"}
+    except Exception:
+        logger.exception("[%s] session_id=%s failed", kind, session_id)
+        clear_progress_sync(kind, session_id)
+        raise
+
+
+async def run_overall_analysis_job(
+    ctx: Dict[str, Any],
+    session_id: str,
+    output_language: str,
+) -> Dict[str, Any]:
+    from livestorm_app.api_logic import run_overall_analysis
+
+    openai_key = _read_openai_key_or_raise()
+    return await _run_ai_job(
+        "overall_analysis",
+        session_id,
+        run_overall_analysis,
+        openai_key, session_id, output_language,
+    )
+
+
+async def run_deep_analysis_job(
+    ctx: Dict[str, Any],
+    session_id: str,
+    output_language: str,
+) -> Dict[str, Any]:
+    from livestorm_app.api_logic import run_deep_analysis
+
+    openai_key = _read_openai_key_or_raise()
+    return await _run_ai_job(
+        "deep_analysis",
+        session_id,
+        run_deep_analysis,
+        openai_key, session_id, output_language,
+    )
+
+
+async def run_smart_recap_job(
+    ctx: Dict[str, Any],
+    session_id: str,
+    tone: str,
+) -> Dict[str, Any]:
+    from livestorm_app.api_logic import run_smart_recap
+
+    openai_key = _read_openai_key_or_raise()
+    return await _run_ai_job(
+        "smart_recap",
+        session_id,
+        run_smart_recap,
+        openai_key, session_id, tone,
+    )
+
+
+async def run_content_repurposing_job(
+    ctx: Dict[str, Any],
+    session_id: str,
+    output_language: str,
+) -> Dict[str, Any]:
+    from livestorm_app.api_logic import run_content_repurposing
+
+    openai_key = _read_openai_key_or_raise()
+    return await _run_ai_job(
+        "content_repurposing",
+        session_id,
+        run_content_repurposing,
+        openai_key, session_id, output_language,
+    )
+
+
 # ── Worker lifecycle ───────────────────────────────────────────────────────
 
 
@@ -291,7 +417,14 @@ class WorkerSettings:
 
     redis_settings = get_redis_settings()
 
-    functions = [ping, run_transcription]
+    functions = [
+        ping,
+        run_transcription,
+        run_overall_analysis_job,
+        run_deep_analysis_job,
+        run_smart_recap_job,
+        run_content_repurposing_job,
+    ]
 
     cron_jobs = [
         cron(sweep_stuck_jobs, minute={0, 10, 20, 30, 40, 50}, run_at_startup=False),

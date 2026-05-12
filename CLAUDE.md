@@ -136,24 +136,49 @@ wires the frontend to prefer `progressRedis`.
 
 **Migration status (Phase 2 commit 1):** the legacy `threading.Thread` path has been deleted. The arq worker is now the **only** transcription path. App restarts no longer drop in-flight jobs — they survive in Redis, and the stuck-job sweeper (every 10 minutes, see [worker.py](livestorm_app/worker.py)) marks any genuinely stalled `transcript_jobs` row as `error` so the UI can surface it.
 
-### AI generation (currently synchronous)
+### AI generation (queue-backed — overall / deep / smart recap / content repurposing)
 
 ```
-POST /api/sessions/{id}/analysis
-POST /api/sessions/{id}/deep-analysis
-POST /api/sessions/{id}/smart-recap
-POST /api/sessions/{id}/content-repurposing
+POST /api/sessions/{id}/analysis            -> enqueue overall analysis job
+POST /api/sessions/{id}/deep-analysis       -> enqueue deep analysis job
+POST /api/sessions/{id}/smart-recap         -> enqueue smart recap job
+POST /api/sessions/{id}/content-repurposing -> enqueue content repurposing job
 
-Backend:
-  1. Require cached transcript (otherwise 400)
-  2. Build prompt(s) from prompts/*.txt + cached payloads
-  3. Call OpenAI Chat Completions synchronously (blocks the request)
-  4. Persist result into session_cache.{analysis_bundle, deep_analysis_bundle,
-     smart_recap_bundle, content_repurpose_bundle}
-  5. Return the markdown / JSON bundle
+Each POST response is one of:
+  - the full serialised workspace (cache hit — the requested bundle is
+    already present for the requested language/tone), OR
+  - { jobId, jobKind, jobStatus: 'pending', language|tone } (job enqueued).
+
+Frontend polls every 4-6s:
+  GET /api/sessions/{id}/analysis/job?jobId=...&language=English
+  GET /api/sessions/{id}/deep-analysis/job?jobId=...&language=English
+  GET /api/sessions/{id}/smart-recap/job?jobId=...&tone=professional
+  GET /api/sessions/{id}/content-repurposing/job?jobId=...&language=English
+
+Each GET response is one of:
+  - the full serialised workspace (job finished, cache now has the bundle), OR
+  - { jobId, jobKind, jobStatus, progress, error? } where:
+      jobStatus ∈ {pending, running, completed, error, not_found}
+      progress  = Redis stage-floor payload (or null)
+
+Worker side (livestorm_app.worker):
+  - run_overall_analysis_job(ctx, session_id, output_language)
+  - run_deep_analysis_job(ctx, session_id, output_language)
+  - run_smart_recap_job(ctx, session_id, tone)
+  - run_content_repurposing_job(ctx, session_id, output_language)
+Each reads OPENAI_API_KEY from its own env, publishes stage-floor progress
+to Redis ('queued' → 'loading_sources' → 'building_prompt' → 'analyzing'
+→ 'persisting' → 'done'), and wraps the existing sync runner in
+asyncio.to_thread so the worker event loop stays responsive.
+
+Sources of truth:
+  - "is this done?"  → session_cache (durable)
+  - "what stage?"    → Redis stage-floor key (30m TTL)
+  - "did it fail?"   → arq job state (1h TTL by default) — surfaces the
+                       worker's exception message
 ```
 
-The synchronous flow is the source of the timeout issues fixed in commit `1141728`. Long deep-analysis runs on large transcripts approach the proxy timeout. Phase 1 of the roadmap moves these into a worker.
+**Migration status (Phase 2 commit 2):** all four AI flows now run on the worker. POST routes return immediately with a job id instead of blocking on OpenAI. Long deep-analysis runs on large transcripts no longer hit the proxy timeout (the issue fixed in commit `1141728`). The existing sync `run_overall_analysis` / `run_deep_analysis` / `run_smart_recap` / `run_content_repurposing` functions in api_logic.py are kept — they're now the *worker's* sync payload, called via `asyncio.to_thread` inside each arq job.
 
 ### Caching rules
 
@@ -613,8 +638,8 @@ Branch: `feature/worker-redis-infra`.
 **Phase 2 — Migrate flows onto the queue** (branch `feature/queue-flows`):
 
 - ✅ **Commit 1**: Gladia transcription migrated from `threading.Thread` to arq job. Stage-floor progress in Redis runs in parallel with the legacy DB progress column. App restarts no longer kill in-flight transcriptions. See §5 for the new flow.
-- Pending: Migrate overall analysis / deep analysis / smart recap / content repurposing into arq jobs.
-- Pending: Frontend — surface `progressRedis` stage-floor progress in the transcript polling view; add progress polling + UI to analysis / recap / repurposing views (today they show a binary "Generating...").
+- ✅ **Commit 2** (backend): all four AI flows (overall, deep, recap, repurposing) migrated to arq jobs. New polling routes `GET /api/sessions/{id}/{flow}/job`. POST routes return immediately with a job id; cache hits short-circuit to the full workspace. See §5 for the new contract.
+- Pending **Commit 3** (frontend): wire `runAnalysis` / `runDeepAnalysis` / `runSmartRecap` / `runContentRepurposing` in the store to use polling instead of awaiting an inline result. Show stage-floor progress in each view. Surface `progressRedis` in the transcript view.
 
 ### Then — Phase 2: Card registry refactor
 - Introduce a Python-side card registry under `livestorm_app/cards/single/`

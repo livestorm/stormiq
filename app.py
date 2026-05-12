@@ -22,12 +22,16 @@ from livestorm_app.api_logic import (
     fetch_event_sessions,
     format_service_error,
     get_cached_workspace,
+    get_content_repurposing_job_data,
+    get_deep_analysis_job_data,
+    get_overall_analysis_job_data,
+    get_smart_recap_job_data,
     get_transcript_job_status_data,
-    run_content_repurposing,
-    run_deep_analysis,
-    run_overall_analysis,
-    run_smart_recap,
     save_speaker_labels,
+    start_content_repurposing,
+    start_deep_analysis,
+    start_overall_analysis,
+    start_smart_recap,
 )
 from livestorm_app.config import ENV_PATH, get_runtime_secret, load_env_file
 from livestorm_app.db import ensure_database_schema
@@ -364,9 +368,24 @@ def update_speaker_labels(session_id: str, request: SpeakerLabelsRequest, http_r
 
 @app.post("/api/sessions/{session_id}/analysis")
 def overall_analysis(session_id: str, request: AnalysisRequest) -> Dict[str, Any]:
+    """Start an Overall Analysis job.
+
+    Phase 2 contract change: this no longer returns the analysis body
+    inline. Returns either the full serialised workspace (if already
+    cached for the requested language) or { jobId, jobKind, jobStatus,
+    language } so the frontend can poll `/analysis/job`.
+    """
     try:
-        openai_api_key = get_runtime_secret("OPENAI_API_KEY", "")
-        return run_overall_analysis(openai_api_key, session_id, request.output_language)
+        return start_overall_analysis(session_id, request.output_language)
+    except Exception as exc:
+        _raise_http_error("Analysis", exc)
+        raise
+
+
+@app.get("/api/sessions/{session_id}/analysis/job")
+def overall_analysis_job(session_id: str, jobId: str = Query(""), language: str = Query("English")) -> Dict[str, Any]:
+    try:
+        return get_overall_analysis_job_data(session_id, jobId, language)
     except Exception as exc:
         _raise_http_error("Analysis", exc)
         raise
@@ -374,9 +393,18 @@ def overall_analysis(session_id: str, request: AnalysisRequest) -> Dict[str, Any
 
 @app.post("/api/sessions/{session_id}/deep-analysis")
 def deep_analysis(session_id: str, request: AnalysisRequest) -> Dict[str, Any]:
+    """Start a Deep Analysis job. See `overall_analysis` for the contract."""
     try:
-        openai_api_key = get_runtime_secret("OPENAI_API_KEY", "")
-        return run_deep_analysis(openai_api_key, session_id, request.output_language)
+        return start_deep_analysis(session_id, request.output_language)
+    except Exception as exc:
+        _raise_http_error("Deep analysis", exc)
+        raise
+
+
+@app.get("/api/sessions/{session_id}/deep-analysis/job")
+def deep_analysis_job(session_id: str, jobId: str = Query(""), language: str = Query("English")) -> Dict[str, Any]:
+    try:
+        return get_deep_analysis_job_data(session_id, jobId, language)
     except Exception as exc:
         _raise_http_error("Deep analysis", exc)
         raise
@@ -397,9 +425,18 @@ def analysis_pdf(session_id: str, kind: str = Query(...), language: str = Query(
 
 @app.post("/api/sessions/{session_id}/smart-recap")
 def smart_recap(session_id: str, request: SmartRecapRequest) -> Dict[str, Any]:
+    """Start a Smart Recap job. Same contract as overall_analysis, keyed by tone."""
     try:
-        openai_api_key = get_runtime_secret("OPENAI_API_KEY", "")
-        return run_smart_recap(openai_api_key, session_id, request.tone)
+        return start_smart_recap(session_id, request.tone)
+    except Exception as exc:
+        _raise_http_error("Smart Recap", exc)
+        raise
+
+
+@app.get("/api/sessions/{session_id}/smart-recap/job")
+def smart_recap_job(session_id: str, jobId: str = Query(""), tone: str = Query("professional")) -> Dict[str, Any]:
+    try:
+        return get_smart_recap_job_data(session_id, jobId, tone)
     except Exception as exc:
         _raise_http_error("Smart Recap", exc)
         raise
@@ -420,9 +457,18 @@ def smart_recap_pdf(session_id: str, tone: str = Query(...)) -> Response:
 
 @app.post("/api/sessions/{session_id}/content-repurposing")
 def content_repurposing(session_id: str, request: AnalysisRequest) -> Dict[str, Any]:
+    """Start a Content Repurposing job. Same contract as overall_analysis."""
     try:
-        openai_api_key = get_runtime_secret("OPENAI_API_KEY", "")
-        return run_content_repurposing(openai_api_key, session_id, request.output_language)
+        return start_content_repurposing(session_id, request.output_language)
+    except Exception as exc:
+        _raise_http_error("Content Repurposing", exc)
+        raise
+
+
+@app.get("/api/sessions/{session_id}/content-repurposing/job")
+def content_repurposing_job(session_id: str, jobId: str = Query(""), language: str = Query("English")) -> Dict[str, Any]:
+    try:
+        return get_content_repurposing_job_data(session_id, jobId, language)
     except Exception as exc:
         _raise_http_error("Content Repurposing", exc)
         raise

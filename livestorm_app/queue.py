@@ -144,3 +144,75 @@ async def _enqueue_one_shot(function_name: str, *args: Any, **kwargs: Any) -> Op
         return job.job_id if job is not None else None
     finally:
         await pool.close()
+
+
+# ── Job status lookup (sync) ───────────────────────────────────────────────
+#
+# Sync wrapper around arq's `Job.status()`. Used by the AI-flow polling
+# endpoints. The status enum is normalised to the same vocabulary the
+# transcription flow already uses, so the frontend handles all four AI
+# polls + the transcript poll with one shape:
+#
+#     'pending'    — enqueued but not yet picked up (arq: deferred|queued)
+#     'running'    — worker has picked it up (arq: in_progress)
+#     'completed'  — worker finished successfully (arq: complete, no error)
+#     'error'      — worker raised; `error` field carries the message
+#     'not_found'  — job_id unknown or expired (arq keeps results for 1h
+#                    by default; after that, status falls back to not_found
+#                    and the polling endpoint should consult session_cache
+#                    for the durable result instead)
+
+
+def read_job_status_sync(job_id: str) -> Dict[str, Any]:
+    """Read an arq job's status from sync code. Never raises.
+
+    Returns: `{ jobStatus: str, error?: str }`. See module docstring for
+    the normalised status vocabulary.
+    """
+    if not str(job_id or "").strip():
+        return {"jobStatus": "not_found"}
+    try:
+        return asyncio.run(_read_job_status_async(str(job_id).strip()))
+    except Exception:
+        logger.warning("read_job_status_sync failed for %s", job_id, exc_info=True)
+        return {"jobStatus": "unknown"}
+
+
+async def _read_job_status_async(job_id: str) -> Dict[str, Any]:
+    from arq.jobs import Job, JobStatus
+
+    pool = await create_pool(get_redis_settings())
+    try:
+        job = Job(job_id, pool)
+        status = await job.status()
+        if status == JobStatus.not_found:
+            return {"jobStatus": "not_found"}
+        if status == JobStatus.complete:
+            try:
+                # timeout=0 returns immediately. Raises ResultNotFound if the
+                # job is somehow complete-without-result; raises whatever the
+                # worker raised if the job errored.
+                await job.result(timeout=0)
+                return {"jobStatus": "completed"}
+            except Exception as exc:
+                return {"jobStatus": "error", "error": str(exc)}
+        if status == JobStatus.in_progress:
+            return {"jobStatus": "running"}
+        # deferred or queued — both surface as "pending" to the frontend.
+        return {"jobStatus": "pending"}
+    finally:
+        await pool.close()
+
+
+# ── Job kind registry ──────────────────────────────────────────────────────
+#
+# The four AI flows the worker exposes. Used by the polling endpoints to
+# validate the `kind` parameter and look up the matching arq function /
+# progress kind / session_cache field.
+
+AI_JOB_KINDS = frozenset({
+    "overall_analysis",
+    "deep_analysis",
+    "smart_recap",
+    "content_repurposing",
+})

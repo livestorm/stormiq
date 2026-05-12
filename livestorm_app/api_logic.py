@@ -17,7 +17,7 @@ from livestorm_app.db import (
     upsert_cached_session,
 )
 from livestorm_app.progress import read_progress
-from livestorm_app.queue import enqueue_job_sync
+from livestorm_app.queue import AI_JOB_KINDS, enqueue_job_sync, read_job_status_sync
 from livestorm_app.services import (
     analyze_with_openai,
     analysis_markdown_to_pdf_bytes,
@@ -641,6 +641,191 @@ def run_content_repurposing(api_analysis_key: str, session_id: str, output_langu
         all_bundles[output_language] = bundle
         upsert_cached_session(api_analysis_key, session_id, content_repurpose_bundle=all_bundles)
     return {"bundle": all_bundles, "currentLanguage": output_language, "current": all_bundles.get(output_language, {})}
+
+
+# ── AI flow polling (Phase 2 commit 2) ─────────────────────────────────────
+#
+# Each of the four AI flows (overall, deep, smart_recap, content_repurposing)
+# now follows the same shape:
+#
+#   POST .../{flow}                       enqueues a job; returns either
+#                                         { jobId, jobKind, language|tone }
+#                                         or — if the cache already has the
+#                                         requested bundle — the full
+#                                         serialised workspace.
+#
+#   GET  .../{flow}/job?jobId=...         polled by the frontend. Returns
+#                                         the full workspace once the bundle
+#                                         is in cache; otherwise the job's
+#                                         status + Redis progress.
+#
+# Source of truth for "is this done":  session_cache (durable).
+# Source of truth for "what stage":    Redis progress key (ephemeral, 30m TTL).
+# Source of truth for "did it fail":   arq job state (Redis, 1h TTL by default)
+#                                       — surfaces the exception message
+#                                       from the worker.
+
+
+# Map of kind → (session_cache field, sub-key extractor) for cache lookup.
+# Extractor returns the cached body if present and non-empty, or None.
+def _extract_cached_ai_body(cached: Dict[str, Any], kind: str, language: str = "", tone: str = "") -> Optional[str]:
+    language = str(language or "").strip()
+    tone = str(tone or "").strip().lower()
+
+    if kind == "overall_analysis":
+        bundle = _normalize_text_bundle(cached.get("analysis_bundle"), str(cached.get("analysis_md") or ""))
+        return bundle.get(language) if bundle.get(language) else None
+    if kind == "deep_analysis":
+        bundle = _normalize_text_bundle(cached.get("deep_analysis_bundle"), str(cached.get("deep_analysis_md") or ""))
+        return bundle.get(language) if bundle.get(language) else None
+    if kind == "smart_recap":
+        bundle = _normalize_smart_recap_bundle(cached.get("smart_recap_bundle"))
+        return bundle.get(tone) if bundle.get(tone) else None
+    if kind == "content_repurposing":
+        all_bundles = cached.get("content_repurpose_bundle") if isinstance(cached.get("content_repurpose_bundle"), dict) else {}
+        language_bundle = all_bundles.get(language) if isinstance(all_bundles.get(language), dict) else {}
+        # Repurposing has 4 sub-bundles; treat as complete when ALL four are present.
+        required = {"summary", "blog", "email", "social_media"}
+        if all(str(language_bundle.get(slot) or "").strip() for slot in required):
+            return "ready"  # sentinel — caller only needs truthiness
+        return None
+    return None
+
+
+_ARQ_JOB_FUNCTION_BY_KIND: Dict[str, str] = {
+    "overall_analysis": "run_overall_analysis_job",
+    "deep_analysis": "run_deep_analysis_job",
+    "smart_recap": "run_smart_recap_job",
+    "content_repurposing": "run_content_repurposing_job",
+}
+
+
+def _start_ai_job(
+    kind: str,
+    session_id: str,
+    *,
+    language: str = "",
+    tone: str = "",
+) -> Dict[str, Any]:
+    """Start an AI job (or return the cached result if already complete).
+
+    Returns either:
+        - the full serialised workspace (cache hit), or
+        - { jobId, jobKind, language?/tone? } (job enqueued).
+    """
+    if kind not in AI_JOB_KINDS:
+        raise RuntimeError(f"Unknown AI job kind: {kind!r}")
+
+    session_id = str(session_id or "").strip()
+    cached = fetch_cached_session("", session_id)
+    if not isinstance(cached, dict):
+        raise RuntimeError("No cached session was found. Fetch the session data first.")
+
+    # Cache hit — return the full workspace synchronously. The user will see
+    # the bundle without ever entering the polling loop.
+    if _extract_cached_ai_body(cached, kind, language=language, tone=tone):
+        return _serialize_cached_session(session_id, cached)
+
+    arq_function = _ARQ_JOB_FUNCTION_BY_KIND[kind]
+    if kind == "smart_recap":
+        job_id = enqueue_job_sync(arq_function, session_id, tone)
+    else:
+        job_id = enqueue_job_sync(arq_function, session_id, language)
+
+    if not job_id:
+        raise RuntimeError(
+            f"{kind.replace('_', ' ').title()} queue is unavailable. "
+            "Check the worker service and Redis connection."
+        )
+
+    payload: Dict[str, Any] = {"jobId": job_id, "jobKind": kind, "jobStatus": "pending"}
+    if kind == "smart_recap":
+        payload["tone"] = tone
+    else:
+        payload["language"] = language
+    return payload
+
+
+def _get_ai_job_data(
+    kind: str,
+    session_id: str,
+    job_id: str,
+    *,
+    language: str = "",
+    tone: str = "",
+) -> Dict[str, Any]:
+    """Poll an AI job.
+
+    Returns:
+        - full serialised workspace if the cache already has the requested bundle, OR
+        - { jobId, jobKind, jobStatus, progress, error } with the live status.
+    """
+    if kind not in AI_JOB_KINDS:
+        raise RuntimeError(f"Unknown AI job kind: {kind!r}")
+
+    session_id = str(session_id or "").strip()
+    cached = fetch_cached_session("", session_id)
+
+    # Cache hit — the worker already finished and persisted. Return the full
+    # workspace so the frontend can replace its state in one step.
+    if isinstance(cached, dict) and _extract_cached_ai_body(cached, kind, language=language, tone=tone):
+        return _serialize_cached_session(session_id, cached)
+
+    # Pull live status from arq + progress from Redis. Both are best-effort.
+    status_payload = read_job_status_sync(job_id) if job_id else {"jobStatus": "not_found"}
+    progress = read_progress(kind, session_id)
+
+    response: Dict[str, Any] = {
+        "jobId": job_id,
+        "jobKind": kind,
+        "jobStatus": status_payload.get("jobStatus", "unknown"),
+        "progress": progress,
+    }
+    if status_payload.get("error"):
+        response["error"] = status_payload["error"]
+    if kind == "smart_recap":
+        response["tone"] = tone
+    else:
+        response["language"] = language
+    return response
+
+
+# ── Thin per-flow start/poll wrappers ──────────────────────────────────────
+#
+# One pair per flow. Routes call these directly; the routes themselves are
+# kept thin to make the per-flow contract obvious from app.py.
+
+
+def start_overall_analysis(session_id: str, output_language: str) -> Dict[str, Any]:
+    return _start_ai_job("overall_analysis", session_id, language=output_language)
+
+
+def get_overall_analysis_job_data(session_id: str, job_id: str, language: str) -> Dict[str, Any]:
+    return _get_ai_job_data("overall_analysis", session_id, job_id, language=language)
+
+
+def start_deep_analysis(session_id: str, output_language: str) -> Dict[str, Any]:
+    return _start_ai_job("deep_analysis", session_id, language=output_language)
+
+
+def get_deep_analysis_job_data(session_id: str, job_id: str, language: str) -> Dict[str, Any]:
+    return _get_ai_job_data("deep_analysis", session_id, job_id, language=language)
+
+
+def start_smart_recap(session_id: str, tone: str) -> Dict[str, Any]:
+    return _start_ai_job("smart_recap", session_id, tone=tone)
+
+
+def get_smart_recap_job_data(session_id: str, job_id: str, tone: str) -> Dict[str, Any]:
+    return _get_ai_job_data("smart_recap", session_id, job_id, tone=tone)
+
+
+def start_content_repurposing(session_id: str, output_language: str) -> Dict[str, Any]:
+    return _start_ai_job("content_repurposing", session_id, language=output_language)
+
+
+def get_content_repurposing_job_data(session_id: str, job_id: str, language: str) -> Dict[str, Any]:
+    return _get_ai_job_data("content_repurposing", session_id, job_id, language=language)
 
 
 def format_service_error(exc: Exception, resource_label: str) -> Dict[str, Any]:
