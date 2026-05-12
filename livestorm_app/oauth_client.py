@@ -181,18 +181,62 @@ def fetch_me(access_token: str) -> Dict[str, Any]:
 
 
 def _extract_profile(me_payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Pull the fields we care about out of the Livestorm /me response.
+
+    Livestorm returns JSON:API. The organization id lives in
+    `data.relationships.organization.data.id`, and the organization name
+    appears in the top-level `included[]` array under the matching
+    `{type: "organizations", id}`. Earlier versions of this function
+    looked at `attributes.organization.id` — that path doesn't exist
+    in Livestorm's response, so every OAuth login since Phase 4 has been
+    persisting `organization_id = ''`. Fixed here.
+
+    Falls back to `attributes.organization.id` for any future endpoint
+    that might inline the org in attributes. The `relationships` path
+    wins when both are present.
+    """
     data = me_payload.get("data")
     data = data if isinstance(data, dict) else {}
     attributes = data.get("attributes")
     attributes = attributes if isinstance(attributes, dict) else {}
-    organization = attributes.get("organization")
-    organization = organization if isinstance(organization, dict) else {}
+    relationships = data.get("relationships")
+    relationships = relationships if isinstance(relationships, dict) else {}
     resource_type = str(data.get("type") or "").strip()
     first_name = str(attributes.get("first_name") or "").strip()
     last_name = str(attributes.get("last_name") or "").strip()
     full_name = f"{first_name} {last_name}".strip()
-    organization_id = str(organization.get("id") or "").strip()
-    organization_name = str(organization.get("name") or "").strip()
+
+    # Primary path: JSON:API relationship.
+    org_rel = relationships.get("organization")
+    org_rel_data = (org_rel or {}).get("data") if isinstance(org_rel, dict) else None
+    organization_id = ""
+    if isinstance(org_rel_data, dict):
+        organization_id = str(org_rel_data.get("id") or "").strip()
+
+    # Fallback path: org inlined in attributes (defensive, not currently
+    # the shape Livestorm returns).
+    if not organization_id:
+        inline_org = attributes.get("organization")
+        inline_org = inline_org if isinstance(inline_org, dict) else {}
+        organization_id = str(inline_org.get("id") or "").strip()
+    organization_name = str(
+        (attributes.get("organization") or {}).get("name") if isinstance(attributes.get("organization"), dict) else ""
+    ).strip()
+
+    # If the org id is present, try to resolve its name from `included`.
+    if organization_id and not organization_name:
+        included = me_payload.get("included")
+        if isinstance(included, list):
+            for item in included:
+                if (
+                    isinstance(item, dict)
+                    and str(item.get("type") or "") == "organizations"
+                    and str(item.get("id") or "") == organization_id
+                ):
+                    item_attrs = item.get("attributes") or {}
+                    if isinstance(item_attrs, dict):
+                        organization_name = str(item_attrs.get("name") or "").strip()
+                        break
 
     if resource_type == "organizations":
         organization_id = str(data.get("id") or "").strip()
