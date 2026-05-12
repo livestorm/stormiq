@@ -1,5 +1,6 @@
 <script setup>
 import { computed, ref } from "vue";
+import AiJobProgress from "../components/AiJobProgress.vue";
 import ContentPaceAudienceActivityChartCard from "../components/charts/analysis/ContentPaceAudienceActivityChartCard.vue";
 import DataTable from "../components/DataTable.vue";
 import KeyMomentsTimeline from "../components/KeyMomentsTimeline.vue";
@@ -346,6 +347,7 @@ async function runDeepFor(language) {
         <div class="action-row" v-else>
           <a class="ghost-link-button" :href="overallPdfUrl">{{ uiText.downloadPdf }}</a>
         </div>
+        <AiJobProgress :job="state.aiJobs.overall_analysis" flow="overall_analysis" :is-french="isFrenchUi" />
         <RichMarkdownCard :body="overallBody" :empty-message="uiText.empty" />
       </template>
 
@@ -358,6 +360,7 @@ async function runDeepFor(language) {
         <div class="action-row" v-else>
           <a class="ghost-link-button" :href="deepPdfUrl">{{ uiText.downloadPdf }}</a>
         </div>
+        <AiJobProgress :job="state.aiJobs.deep_analysis" flow="deep_analysis" :is-french="isFrenchUi" />
         <div class="section-tabs analysis-deep-section-tabs" v-if="hasDeepBody">
           <button
             v-for="section in deepSectionLabels"

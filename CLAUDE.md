@@ -639,7 +639,7 @@ Branch: `feature/worker-redis-infra`.
 
 - ✅ **Commit 1**: Gladia transcription migrated from `threading.Thread` to arq job. Stage-floor progress in Redis runs in parallel with the legacy DB progress column. App restarts no longer kill in-flight transcriptions. See §5 for the new flow.
 - ✅ **Commit 2** (backend): all four AI flows (overall, deep, recap, repurposing) migrated to arq jobs. New polling routes `GET /api/sessions/{id}/{flow}/job`. POST routes return immediately with a job id; cache hits short-circuit to the full workspace. See §5 for the new contract.
-- Pending **Commit 3** (frontend): wire `runAnalysis` / `runDeepAnalysis` / `runSmartRecap` / `runContentRepurposing` in the store to use polling instead of awaiting an inline result. Show stage-floor progress in each view. Surface `progressRedis` in the transcript view.
+- ✅ **Commit 3** (frontend): store rewritten to poll AI jobs via `pollAiJob` + `state.aiJobs[kind]`. New `<AiJobProgress>` component renders a stage-floor bar with EN/FR labels on AnalysisView, SmartRecapView, ContentRepurposingView. Cache hits short-circuit polling — the workspace is applied immediately. `runAnalysis` / `runDeepAnalysis` / `runSmartRecap` / `runContentRepurposing` keep the same public shape so views need no behaviour changes beyond rendering the new progress bar.
 
 ### Then — Phase 2: Card registry refactor
 - Introduce a Python-side card registry under `livestorm_app/cards/single/`

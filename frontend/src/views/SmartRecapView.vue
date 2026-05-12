@@ -1,5 +1,6 @@
 <script setup>
 import { computed, ref } from "vue";
+import AiJobProgress from "../components/AiJobProgress.vue";
 import RichMarkdownCard from "../components/RichMarkdownCard.vue";
 import { api } from "../api";
 import { useWorkspace } from "../store/workspace";
@@ -86,6 +87,8 @@ const activeButtonLabel = "Generate";
       <div class="action-row" v-else>
         <a class="ghost-link-button" :href="activePdfUrl">Download PDF</a>
       </div>
+
+      <AiJobProgress :job="state.aiJobs.smart_recap" flow="smart_recap" />
 
       <div class="smart-recap-result-shell">
         <div v-if="activeTone === 'surprise'" class="smart-recap-result-art">

@@ -1,5 +1,6 @@
 <script setup>
 import { computed, ref } from "vue";
+import AiJobProgress from "../components/AiJobProgress.vue";
 import RichMarkdownCard from "../components/RichMarkdownCard.vue";
 import { api } from "../api";
 import { useWorkspace } from "../store/workspace";
@@ -122,6 +123,8 @@ async function generateForLanguage(language) {
       <div class="action-row" v-else-if="hasActiveBody">
         <a class="ghost-link-button" :href="activePdfUrl">{{ uiText.downloadPdf }}</a>
       </div>
+
+      <AiJobProgress :job="state.aiJobs.content_repurposing" flow="content_repurposing" :is-french="isFrenchUi" />
 
       <RichMarkdownCard :body="activeBody" :empty-message="uiText.empty" />
     </template>

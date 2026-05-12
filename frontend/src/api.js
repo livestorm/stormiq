@@ -102,6 +102,14 @@ export const api = {
       body: JSON.stringify(payload),
     });
   },
+  // ── AI flow start (POST) ────────────────────────────────────────────────
+  //
+  // Phase 2 contract: each POST returns EITHER the full serialised
+  // workspace (cache hit — bundle already exists for the requested
+  // language/tone) OR { jobId, jobKind, jobStatus: 'pending', language|tone }
+  // when a worker job has been enqueued. The store decides which path to
+  // take by inspecting `result?.jobId` — present means "poll", absent
+  // means "apply immediately."
   runAnalysis(sessionId, payload) {
     return request(`/api/sessions/${sessionId}/analysis`, {
       method: "POST",
@@ -114,6 +122,40 @@ export const api = {
       body: JSON.stringify(payload),
     });
   },
+  runSmartRecap(sessionId, payload) {
+    return request(`/api/sessions/${sessionId}/smart-recap`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  runContentRepurposing(sessionId, payload) {
+    return request(`/api/sessions/${sessionId}/content-repurposing`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  // ── AI flow polling (GET) ───────────────────────────────────────────────
+  //
+  // Polled every 4-6s while a job is in flight. Returns the full
+  // serialised workspace when the bundle has landed in session_cache;
+  // otherwise { jobId, jobKind, jobStatus, progress, error? }.
+  getAnalysisJobStatus(sessionId, jobId, language) {
+    const params = new URLSearchParams({ jobId: jobId || "", language: language || "English" });
+    return request(`/api/sessions/${sessionId}/analysis/job?${params.toString()}`);
+  },
+  getDeepAnalysisJobStatus(sessionId, jobId, language) {
+    const params = new URLSearchParams({ jobId: jobId || "", language: language || "English" });
+    return request(`/api/sessions/${sessionId}/deep-analysis/job?${params.toString()}`);
+  },
+  getSmartRecapJobStatus(sessionId, jobId, tone) {
+    const params = new URLSearchParams({ jobId: jobId || "", tone: tone || "professional" });
+    return request(`/api/sessions/${sessionId}/smart-recap/job?${params.toString()}`);
+  },
+  getContentRepurposingJobStatus(sessionId, jobId, language) {
+    const params = new URLSearchParams({ jobId: jobId || "", language: language || "English" });
+    return request(`/api/sessions/${sessionId}/content-repurposing/job?${params.toString()}`);
+  },
+  // ── PDF download URLs (unchanged) ───────────────────────────────────────
   getAnalysisPdfUrl(sessionId, kind, language) {
     const params = new URLSearchParams({
       kind,
@@ -121,21 +163,9 @@ export const api = {
     });
     return `/api/sessions/${sessionId}/analysis-pdf?${params.toString()}`;
   },
-  runSmartRecap(sessionId, payload) {
-    return request(`/api/sessions/${sessionId}/smart-recap`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-  },
   getSmartRecapPdfUrl(sessionId, tone) {
     const params = new URLSearchParams({ tone });
     return `/api/sessions/${sessionId}/smart-recap-pdf?${params.toString()}`;
-  },
-  runContentRepurposing(sessionId, payload) {
-    return request(`/api/sessions/${sessionId}/content-repurposing`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
   },
   getContentRepurposingPdfUrl(sessionId, language, item) {
     const params = new URLSearchParams({

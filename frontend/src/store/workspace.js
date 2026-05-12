@@ -33,6 +33,18 @@ const state = reactive({
     contentRepurposing: false,
     speakerLabels: false,
   },
+  // Live progress for in-flight AI jobs. Keyed by jobKind so each view
+  // can render its own bar without coupling to the others. Each entry:
+  //   { jobId, jobStatus, progress: { stage, percent, label } | null,
+  //     language?, tone?, error? }
+  // Cleared to null when the job lands in the cache (the workspace
+  // refresh replaces state.workspace and the view's "done" check fires).
+  aiJobs: {
+    overall_analysis: null,
+    deep_analysis: null,
+    smart_recap: null,
+    content_repurposing: null,
+  },
   error: "",
 });
 
@@ -330,48 +342,163 @@ async function saveSpeakerLabels(speakerNames) {
   state.workspace = data;
 }
 
+// ── AI job polling ─────────────────────────────────────────────────────────
+//
+// Phase 2 contract: each AI-flow POST returns either the full serialised
+// workspace (cache hit) or { jobId, jobKind, jobStatus, language|tone }.
+// When we get a jobId, we poll the matching /job endpoint every 4s until
+// it returns the workspace (job done) or an error state.
+//
+// The polling shape is uniform across all four flows, so this helper
+// handles all of them. The caller passes a `pollFn` that already knows
+// how to call the right endpoint with the right params (language / tone).
+
+const AI_POLL_INTERVAL_MS = 4000;
+const AI_POLL_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes — well above any legitimate AI flow runtime
+
+async function pollAiJob(jobKind, pollFn) {
+  const deadline = Date.now() + AI_POLL_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, AI_POLL_INTERVAL_MS));
+    let response;
+    try {
+      response = await pollFn();
+    } catch (error) {
+      state.aiJobs[jobKind] = null;
+      throw error;
+    }
+
+    // Workspace shape — job is done and the bundle landed. The server
+    // returns the full serialised workspace; replace state in one step.
+    if (response && !response.jobStatus) {
+      state.aiJobs[jobKind] = null;
+      return response;
+    }
+
+    // Active job — update the progress slot so the view can render a bar.
+    if (response?.jobStatus === "pending" || response?.jobStatus === "running") {
+      const current = state.aiJobs[jobKind] || {};
+      state.aiJobs[jobKind] = {
+        ...current,
+        jobId: response.jobId || current.jobId,
+        jobStatus: response.jobStatus,
+        progress: response.progress || current.progress || null,
+        language: response.language || current.language,
+        tone: response.tone || current.tone,
+      };
+      continue;
+    }
+
+    // Terminal failure — surface the error and stop polling.
+    if (response?.jobStatus === "error") {
+      state.aiJobs[jobKind] = null;
+      throw new Error(response.error || `${jobKind} job failed.`);
+    }
+
+    // not_found / unknown / anything else — stop polling rather than
+    // burn cycles. The user can re-trigger from the UI.
+    if (response?.jobStatus === "not_found" || response?.jobStatus === "unknown") {
+      state.aiJobs[jobKind] = null;
+      throw new Error(`${jobKind} job not found. Try again.`);
+    }
+  }
+  state.aiJobs[jobKind] = null;
+  throw new Error(`${jobKind} job timed out. Try again.`);
+}
+
+function applyWorkspaceIfPresent(response) {
+  // Both POST and polling endpoints return the full serialised workspace
+  // when the result is in cache. Detect that shape (presence of `outputs`
+  // is a reliable marker — job-status responses have no `outputs` key).
+  if (response && typeof response === "object" && response.outputs) {
+    state.workspace = response;
+    return true;
+  }
+  return false;
+}
+
 async function runAnalysis(outputLanguage = state.outputLanguage) {
   if (!activeSessionId.value) return;
-  const result = await wrapCall("analysis", () =>
-    api.runAnalysis(activeSessionId.value, {
+  await wrapCall("analysis", async () => {
+    const start = await api.runAnalysis(activeSessionId.value, {
       apiKey: state.apiKey,
       outputLanguage,
-    })
-  );
-  state.workspace.outputs.analysisBundle = result.bundle;
+    });
+    if (applyWorkspaceIfPresent(start)) return;
+    state.aiJobs.overall_analysis = {
+      jobId: start.jobId,
+      jobStatus: start.jobStatus || "pending",
+      progress: null,
+      language: outputLanguage,
+    };
+    const final = await pollAiJob("overall_analysis", () =>
+      api.getAnalysisJobStatus(activeSessionId.value, start.jobId, outputLanguage),
+    );
+    applyWorkspaceIfPresent(final);
+  });
 }
 
 async function runDeepAnalysis(outputLanguage = state.outputLanguage) {
   if (!activeSessionId.value) return;
-  const result = await wrapCall("deepAnalysis", () =>
-    api.runDeepAnalysis(activeSessionId.value, {
+  await wrapCall("deepAnalysis", async () => {
+    const start = await api.runDeepAnalysis(activeSessionId.value, {
       apiKey: state.apiKey,
       outputLanguage,
-    })
-  );
-  state.workspace.outputs.deepAnalysisBundle = result.bundle;
+    });
+    if (applyWorkspaceIfPresent(start)) return;
+    state.aiJobs.deep_analysis = {
+      jobId: start.jobId,
+      jobStatus: start.jobStatus || "pending",
+      progress: null,
+      language: outputLanguage,
+    };
+    const final = await pollAiJob("deep_analysis", () =>
+      api.getDeepAnalysisJobStatus(activeSessionId.value, start.jobId, outputLanguage),
+    );
+    applyWorkspaceIfPresent(final);
+  });
 }
 
 async function runSmartRecap(tone) {
   if (!activeSessionId.value) return;
-  const result = await wrapCall("smartRecap", () =>
-    api.runSmartRecap(activeSessionId.value, {
+  await wrapCall("smartRecap", async () => {
+    const start = await api.runSmartRecap(activeSessionId.value, {
       apiKey: state.apiKey,
       tone,
-    })
-  );
-  state.workspace.outputs.smartRecapBundle = result.bundle;
+    });
+    if (applyWorkspaceIfPresent(start)) return;
+    state.aiJobs.smart_recap = {
+      jobId: start.jobId,
+      jobStatus: start.jobStatus || "pending",
+      progress: null,
+      tone,
+    };
+    const final = await pollAiJob("smart_recap", () =>
+      api.getSmartRecapJobStatus(activeSessionId.value, start.jobId, tone),
+    );
+    applyWorkspaceIfPresent(final);
+  });
 }
 
 async function runContentRepurposing(outputLanguage = state.outputLanguage) {
   if (!activeSessionId.value) return;
-  const result = await wrapCall("contentRepurposing", () =>
-    api.runContentRepurposing(activeSessionId.value, {
+  await wrapCall("contentRepurposing", async () => {
+    const start = await api.runContentRepurposing(activeSessionId.value, {
       apiKey: state.apiKey,
       outputLanguage,
-    })
-  );
-  state.workspace.outputs.contentRepurposeBundle = result.bundle;
+    });
+    if (applyWorkspaceIfPresent(start)) return;
+    state.aiJobs.content_repurposing = {
+      jobId: start.jobId,
+      jobStatus: start.jobStatus || "pending",
+      progress: null,
+      language: outputLanguage,
+    };
+    const final = await pollAiJob("content_repurposing", () =>
+      api.getContentRepurposingJobStatus(activeSessionId.value, start.jobId, outputLanguage),
+    );
+    applyWorkspaceIfPresent(final);
+  });
 }
 
 export function useWorkspace() {
