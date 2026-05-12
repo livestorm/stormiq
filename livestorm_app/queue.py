@@ -18,6 +18,7 @@ Hard rules:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from typing import Any, Optional, TypedDict
@@ -98,12 +99,11 @@ class JobMeta(TypedDict, total=False):
 
 
 async def enqueue_job(function_name: str, *args: Any, **kwargs: Any) -> Optional[str]:
-    """Enqueue a job by name. Returns the job id, or None on failure.
+    """Enqueue a job by name. Async — use from worker / async handlers.
 
-    Thin wrapper around `pool.enqueue_job` that swallows connection errors
-    so a Redis hiccup never bubbles up into a 500. Phase 2 will wrap this
-    in per-flow helpers (e.g. `enqueue_overall_analysis(session_id, lang)`)
-    so handlers don't pass raw function names around.
+    Returns the job id, or None on failure. Thin wrapper around
+    `pool.enqueue_job` that swallows connection errors so a Redis hiccup
+    never bubbles up into a 500.
     """
     try:
         pool = await get_arq_pool()
@@ -112,3 +112,35 @@ async def enqueue_job(function_name: str, *args: Any, **kwargs: Any) -> Optional
     except Exception:
         logger.exception("Failed to enqueue arq job %s", function_name)
         return None
+
+
+def enqueue_job_sync(function_name: str, *args: Any, **kwargs: Any) -> Optional[str]:
+    """Enqueue a job from sync code (e.g. a sync FastAPI handler).
+
+    FastAPI runs `def` handlers in a threadpool — there's no event loop
+    in those threads, so we can't `await` from them. This helper spins up
+    a short-lived event loop just to enqueue, then tears it down. The
+    overhead is a few ms per call; fine for our enqueue rate.
+
+    Returns the job id, or None on failure.
+
+    Do NOT call this from inside an `async def` handler — use `enqueue_job`
+    there, since asyncio.run() inside a running loop raises.
+    """
+    try:
+        return asyncio.run(_enqueue_one_shot(function_name, *args, **kwargs))
+    except Exception:
+        logger.exception("Failed to enqueue arq job %s (sync)", function_name)
+        return None
+
+
+async def _enqueue_one_shot(function_name: str, *args: Any, **kwargs: Any) -> Optional[str]:
+    # Create a fresh pool inside this event loop. The module-level cached
+    # pool (if any) belongs to a different loop and can't be reused; per-call
+    # connection setup is the price of a one-shot enqueue.
+    pool = await create_pool(get_redis_settings())
+    try:
+        job = await pool.enqueue_job(function_name, *args, **kwargs)
+        return job.job_id if job is not None else None
+    finally:
+        await pool.close()

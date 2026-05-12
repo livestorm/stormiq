@@ -134,7 +134,7 @@ async def publish_progress(
     label: Optional[str] = None,
     extra: Optional[Mapping[str, Any]] = None,
 ) -> None:
-    """Write a progress snapshot. Worker-side.
+    """Write a progress snapshot. Worker-side, async.
 
     Best-effort: a Redis blip never fails the underlying job. The job's
     eventual status row in Postgres is the system of record; this is the
@@ -155,6 +155,40 @@ async def clear_progress(kind: str, key: str) -> None:
         await client.delete(_key(kind, key))
     except Exception:
         logger.warning("clear_progress failed for %s:%s", kind, key, exc_info=True)
+
+
+# ── Sync write path ────────────────────────────────────────────────────────
+#
+# Some job handlers wrap blocking SDKs (Gladia, requests, reportlab) inside
+# `asyncio.to_thread`. The blocking SDK then calls back into us from that
+# worker thread, which has no running event loop — so it cannot await the
+# async writer above. These sync writers exist for that case: they use the
+# sync redis client and write to the exact same key shape, so async readers
+# see no difference.
+#
+# Don't use these from the worker's main event loop. Use the async versions
+# there to avoid blocking other concurrent jobs.
+
+
+def publish_progress_sync(
+    kind: str,
+    key: str,
+    stage: str,
+    label: Optional[str] = None,
+    extra: Optional[Mapping[str, Any]] = None,
+) -> None:
+    payload = _payload(kind, stage, label, extra)
+    try:
+        _get_sync_client().set(_key(kind, key), json.dumps(payload), ex=TTL_SECONDS)
+    except Exception:
+        logger.warning("publish_progress_sync failed for %s:%s/%s", kind, key, stage, exc_info=True)
+
+
+def clear_progress_sync(kind: str, key: str) -> None:
+    try:
+        _get_sync_client().delete(_key(kind, key))
+    except Exception:
+        logger.warning("clear_progress_sync failed for %s:%s", kind, key, exc_info=True)
 
 
 # ── Sync read path (web side) ──────────────────────────────────────────────

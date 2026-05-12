@@ -37,7 +37,18 @@ from typing import Any, Dict
 from arq import cron
 
 from livestorm_app.config import load_env_file
-from livestorm_app.db import database_enabled, ensure_database_schema, get_db_connection
+from livestorm_app.db import (
+    database_enabled,
+    ensure_database_schema,
+    get_db_connection,
+    update_transcript_job_progress,
+    update_transcript_job_status,
+    upsert_cached_session,
+)
+from livestorm_app.progress import (
+    clear_progress_sync,
+    publish_progress_sync,
+)
 from livestorm_app.queue import get_redis_settings
 
 
@@ -106,8 +117,8 @@ async def sweep_stuck_jobs(ctx: Dict[str, Any]) -> None:
 
 # ── Stub no-op job ─────────────────────────────────────────────────────────
 #
-# Replaced in Phase 2. Exists today so the worker has at least one
-# registered function and can be smoke-tested end-to-end:
+# Kept as a smoke-test handle. Useful for proving the web → Redis → worker
+# loop after deploys:
 #
 #     >>> pool = await create_pool(get_redis_settings())
 #     >>> job = await pool.enqueue_job('ping')
@@ -119,6 +130,123 @@ async def ping(ctx: Dict[str, Any]) -> str:
     job_id = ctx.get("job_id", "n/a")
     logger.info("[ping] job_id=%s", job_id)
     return "pong"
+
+
+# ── Transcription job ──────────────────────────────────────────────────────
+#
+# Replaces the legacy `threading.Thread` path in api_logic.py. The web
+# handler enqueues this job and returns immediately with a job_id; the
+# worker downloads the recording, uploads to Gladia, polls, persists, and
+# writes status back to `transcript_jobs`.
+#
+# Progress is written to two places:
+#   - `transcript_jobs.progress` (Postgres TEXT, JSON-encoded) — legacy path,
+#     kept for backward compat with the existing polling endpoint.
+#   - Redis via `publish_progress_sync('transcript', session_id, ...)` —
+#     new stage-floor progress; future-proof for the AI flows in commit 2.
+#
+# The Gladia transcriber is sync (uses `requests` under the hood) and may
+# take 30-45 minutes on a 2-hour recording. We push it into a thread via
+# `asyncio.to_thread` so the worker's event loop stays responsive for
+# other jobs. The callback runs INSIDE that thread, so it uses the sync
+# Redis writer — async would need a running loop the thread doesn't have.
+#
+# arq's default job_timeout is 300s — way too short for a long Gladia
+# call. The enqueue site passes `_job_try=1, _expires=...` etc.; this
+# function relies on the WorkerSettings.job_timeout override below.
+
+TRANSCRIPTION_JOB_TIMEOUT_SECONDS = 60 * 90  # 90 min — fits Gladia's 135-min chunk cap with margin
+
+
+def _map_gladia_step_to_stage(step: str) -> str:
+    """Translate Gladia's progress `step` to our stage-floor vocabulary.
+
+    See `progress.TRANSCRIPT_STAGE_FLOORS`. Unknown steps default to
+    'transcribing' (the broad middle stage) — the bar still moves forward,
+    just less precisely.
+    """
+    normalized = str(step or "").strip().lower()
+    if normalized in {"downloading", "extracting"}:
+        return "fetching_recording"
+    if normalized == "uploading":
+        return "uploading_to_gladia"
+    if normalized == "merging":
+        return "post_processing"
+    return "transcribing"
+
+
+async def run_transcription(
+    ctx: Dict[str, Any],
+    job_id: str,
+    api_key: str,
+    session_id: str,
+    gladia_api_key: str,
+) -> Dict[str, Any]:
+    """Fetch + transcribe a Livestorm recording, persist to session_cache.
+
+    Args:
+        job_id:          transcript_jobs.job_id created at enqueue time
+        api_key:         resolved Livestorm auth (raw key or "Bearer <token>")
+        session_id:      target Livestorm session
+        gladia_api_key:  Gladia transcription API key
+
+    Returns a small status payload (for arq's result cache); the real
+    result lives in `session_cache.transcript_payload`.
+
+    On error: marks transcript_jobs as 'error', clears Redis progress,
+    re-raises so arq logs the failure. arq's retry is intentionally NOT
+    configured for this job — see WorkerSettings note below.
+    """
+    # Import the sync Gladia client lazily so the worker can boot even
+    # when imageio_ffmpeg or other transcoding deps are missing on a
+    # given host (the import would otherwise fire at module load).
+    from livestorm_app.transcript_client import fetch_session_transcript
+
+    logger.info("[run_transcription] job_id=%s session_id=%s start", job_id, session_id)
+    update_transcript_job_status(job_id, "running")
+    publish_progress_sync("transcript", session_id, "queued")
+
+    def on_gladia_progress(progress: Dict[str, Any]) -> None:
+        # 1) Legacy DB write — keeps the existing /transcript-job endpoint
+        #    working unchanged.
+        update_transcript_job_progress(job_id, progress)
+        # 2) New Redis write — stage-floor progress for the new UI.
+        step = str(progress.get("step") or "").strip()
+        message = str(progress.get("message") or "").strip() or None
+        stage = _map_gladia_step_to_stage(step)
+        publish_progress_sync(
+            "transcript",
+            session_id,
+            stage,
+            label=message,
+            extra={"gladia_step": step} if step else None,
+        )
+
+    try:
+        publish_progress_sync("transcript", session_id, "fetching_recording")
+        transcript_payload = await asyncio.to_thread(
+            fetch_session_transcript,
+            gladia_api_key,
+            session_id,
+            livestorm_api_key=api_key,
+            on_progress=on_gladia_progress,
+        )
+        publish_progress_sync("transcript", session_id, "persisting")
+        upsert_cached_session(api_key, session_id, transcript_payload=transcript_payload)
+        update_transcript_job_status(job_id, "completed")
+        publish_progress_sync("transcript", session_id, "done")
+        # Hold the 'done' marker briefly so a slow poller can see the
+        # 100% before it disappears, then clear so the next run starts
+        # from a clean slate.
+        await asyncio.sleep(2)
+        clear_progress_sync("transcript", session_id)
+        logger.info("[run_transcription] job_id=%s session_id=%s done", job_id, session_id)
+        return {"jobId": job_id, "status": "completed"}
+    except Exception as exc:
+        logger.exception("[run_transcription] job_id=%s session_id=%s failed", job_id, session_id)
+        update_transcript_job_status(job_id, "error", error=str(exc))
+        clear_progress_sync("transcript", session_id)
+        raise
 
 
 # ── Worker lifecycle ───────────────────────────────────────────────────────
@@ -163,11 +291,28 @@ class WorkerSettings:
 
     redis_settings = get_redis_settings()
 
-    functions = [ping]
+    functions = [ping, run_transcription]
 
     cron_jobs = [
         cron(sweep_stuck_jobs, minute={0, 10, 20, 30, 40, 50}, run_at_startup=False),
     ]
+
+    # Global default. The transcription job's actual upper bound is set
+    # at enqueue time via `_job_try` / `_expires` kwargs to enqueue_job
+    # so other (faster) jobs don't inherit this ceiling. arq itself uses
+    # max(job_timeout, _timeout-at-enqueue) — we set the global to the
+    # transcription ceiling so the worker never SIGKILLs a long Gladia
+    # call mid-poll. AI flow jobs (Phase 2 commit 2) are bounded much
+    # tighter at their enqueue sites.
+    job_timeout = TRANSCRIPTION_JOB_TIMEOUT_SECONDS
+
+    # Transcription is NOT retried automatically:
+    # - It costs money on Gladia (audio uploaded again)
+    # - Most failures are deterministic (missing MP4 recording, expired
+    #   Livestorm token, audio too long) — retrying makes them worse
+    # The handler writes status='error' on failure and the user can
+    # re-trigger from the UI.
+    max_tries = 1
 
     on_startup = on_startup
     on_shutdown = on_shutdown

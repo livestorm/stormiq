@@ -103,19 +103,38 @@ Backend:
   6. When job completes: return full workspace payload
 ```
 
-### Transcript transcription (current — threaded, not queue-backed)
+### Transcript transcription (queue-backed)
 
 ```
-fetch_session_transcript_data → spawn threading.Thread:
-  → fetch_session_transcript (Gladia: upload audio → poll → JSON)
-  → upsert transcript_payload into session_cache
-  → update transcript_jobs row status (pending → running → completed | error)
-  → publish progress dicts to transcript_jobs.progress (TEXT-encoded JSON)
+POST /api/sessions/{id}/fetch-transcript
+→ fetch_session_transcript_data:
+   1. Return cached workspace if transcript_payload is already present.
+   2. Re-attach to an in-flight job (transcript_jobs.status in 'pending'/'running')
+      to dedupe concurrent fetches for the same session.
+   3. Otherwise: insert transcript_jobs row, enqueue `run_transcription` arq job,
+      return { jobId, jobStatus: 'pending' } immediately.
+
+Worker (livestorm_app.worker.run_transcription):
+   1. Mark transcript_jobs.status = 'running'.
+   2. Publish stage='fetching_recording' to Redis.
+   3. asyncio.to_thread(fetch_session_transcript, ...) — Gladia download +
+      upload + poll. The Gladia step→stage mapping inside on_progress
+      writes to both transcript_jobs.progress (legacy DB) and Redis
+      stage-floor progress.
+   4. Publish stage='persisting', upsert session_cache.transcript_payload.
+   5. Mark transcript_jobs.status = 'completed', publish stage='done', clear
+      Redis progress after a 2s hold so slow pollers still catch 100%.
+   6. On any exception: status='error', error_message persisted, Redis cleared.
+      arq retries are disabled for this job (max_tries=1) — failures are
+      mostly deterministic and re-runs cost Gladia money.
+
+Frontend polls GET /api/sessions/{id}/transcript-job every 6s. The response
+carries both `progress` (legacy DB shape — raw Gladia step payload) and
+`progressRedis` (new stage-floor shape with percent). Phase 2 commit 3
+wires the frontend to prefer `progressRedis`.
 ```
 
-**This is a single-process background thread, not a worker queue.** The transcription thread runs in the same Python process as the FastAPI app. If the app restarts mid-transcription, the job is lost.
-
-> **Phase 1 status** — the queue + worker scaffolding now exists ([queue.py](livestorm_app/queue.py), [worker.py](livestorm_app/worker.py), [progress.py](livestorm_app/progress.py), Redis service in [docker-compose.yml](docker-compose.yml) and [render.yaml](render.yaml)) and a stuck-job sweeper cron is registered. The transcription flow itself has **not** been migrated to the queue yet — that happens in Phase 2 alongside the AI flows. Until then, the threaded path above is still the live one, but app restarts can now be recovered: the sweeper will mark stalled rows as `error` so the UI can surface them.
+**Migration status (Phase 2 commit 1):** the legacy `threading.Thread` path has been deleted. The arq worker is now the **only** transcription path. App restarts no longer drop in-flight jobs — they survive in Redis, and the stuck-job sweeper (every 10 minutes, see [worker.py](livestorm_app/worker.py)) marks any genuinely stalled `transcript_jobs` row as `error` so the UI can surface it.
 
 ### AI generation (currently synchronous)
 
@@ -591,11 +610,11 @@ Branch: `feature/worker-redis-infra`.
 - ✅ `CREATE TABLE IF NOT EXISTS transcript_jobs` + indexes in `ensure_database_schema`
 - ✅ `REDIS_URL` env var documented
 
-**Still pending in Phase 1 (next commits on the same branch):**
-- Move Gladia transcription from `threading.Thread` to an arq job
-- Move overall analysis / deep analysis / smart recap / content repurposing into arq jobs
-- Wire progress reads into the existing `/api/sessions/{id}/transcript-job` polling endpoint, and add equivalent polling endpoints for the AI flows
-- Frontend: surface stage-floor progress in the analysis / recap / repurposing views (today they show a binary "Generating...")
+**Phase 2 — Migrate flows onto the queue** (branch `feature/queue-flows`):
+
+- ✅ **Commit 1**: Gladia transcription migrated from `threading.Thread` to arq job. Stage-floor progress in Redis runs in parallel with the legacy DB progress column. App restarts no longer kill in-flight transcriptions. See §5 for the new flow.
+- Pending: Migrate overall analysis / deep analysis / smart recap / content repurposing into arq jobs.
+- Pending: Frontend — surface `progressRedis` stage-floor progress in the transcript polling view; add progress polling + UI to analysis / recap / repurposing views (today they show a binary "Generating...").
 
 ### Then — Phase 2: Card registry refactor
 - Introduce a Python-side card registry under `livestorm_app/cards/single/`

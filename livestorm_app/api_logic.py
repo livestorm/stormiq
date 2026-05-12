@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import logging
 import math
-import threading
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -14,10 +13,11 @@ from livestorm_app.db import (
     create_transcript_job,
     fetch_cached_session,
     get_transcript_job_for_session,
-    update_transcript_job_progress,
     update_transcript_job_status,
     upsert_cached_session,
 )
+from livestorm_app.progress import read_progress
+from livestorm_app.queue import enqueue_job_sync
 from livestorm_app.services import (
     analyze_with_openai,
     analysis_markdown_to_pdf_bytes,
@@ -306,27 +306,19 @@ def fetch_session_base_data(api_key: str, session_id: str, force_refresh: bool =
     return _serialize_cached_session(session_id, cached)
 
 
-def _run_transcript_job_worker(job_id: str, api_key: str, session_id: str, transcript_api_key: str) -> None:
-    """Background thread: runs Gladia transcription and updates job status + progress in DB."""
-    def on_progress(progress: Dict[str, Any]) -> None:
-        update_transcript_job_progress(job_id, progress)
-
-    try:
-        update_transcript_job_status(job_id, "running")
-        transcript_payload = fetch_session_transcript(
-            transcript_api_key,
-            session_id,
-            livestorm_api_key=api_key,
-            on_progress=on_progress,
-        )
-        upsert_cached_session(api_key, session_id, transcript_payload=transcript_payload)
-        update_transcript_job_status(job_id, "completed")
-    except Exception as exc:
-        logger.exception("Transcript job %s failed for session %s", job_id, session_id)
-        update_transcript_job_status(job_id, "error", error=str(exc))
-
-
 def fetch_session_transcript_data(api_key: str, transcript_api_key: str, session_id: str, force_refresh: bool = False) -> Dict[str, Any]:
+    """Start a transcription job (or attach to a running one).
+
+    Returns the cached workspace immediately if the transcript already
+    exists. Otherwise enqueues a `run_transcription` arq job and returns
+    `{ jobId, jobStatus }` so the client can poll
+    `get_transcript_job_status_data` for updates.
+
+    Phase 2 migration: replaces the legacy `threading.Thread` path. The
+    job runs in the arq worker process — app restarts no longer kill
+    in-flight transcriptions, and the stuck-job sweeper can recover any
+    orphans.
+    """
     session_id = str(session_id or "").strip()
 
     # Return immediately when transcript is already cached (skip job machinery).
@@ -338,25 +330,45 @@ def fetch_session_transcript_data(api_key: str, transcript_api_key: str, session
     if not transcript_api_key:
         raise RuntimeError("Gladia API key is not configured on the server. Set GLADIA_KEY before fetching uncached sessions.")
 
-    # Re-attach to an already-running job instead of spawning a duplicate.
+    # Re-attach to an already-running job instead of enqueuing a duplicate.
     if not force_refresh:
         existing_job = get_transcript_job_for_session(session_id)
         if isinstance(existing_job, dict) and existing_job.get("status") in ("pending", "running"):
             return {"jobId": existing_job["job_id"], "jobStatus": existing_job["status"]}
 
-    # Start a new background job and return immediately.
+    # Create the DB row first so the polling endpoint can find the job
+    # even if enqueue races the first poll.
     job_id = create_transcript_job(session_id)
-    thread = threading.Thread(
-        target=_run_transcript_job_worker,
-        args=(job_id, api_key, session_id, transcript_api_key),
-        daemon=True,
+    enqueued = enqueue_job_sync(
+        "run_transcription",
+        job_id,
+        api_key,
+        session_id,
+        transcript_api_key,
     )
-    thread.start()
+    if not enqueued:
+        # Redis or arq was unreachable. Mark the DB row so the user
+        # sees a clean error instead of a job that polls forever.
+        update_transcript_job_status(
+            job_id,
+            "error",
+            error="Failed to enqueue transcription job (queue unavailable).",
+        )
+        raise RuntimeError(
+            "Transcription queue is unavailable. Check the worker service and Redis connection."
+        )
     return {"jobId": job_id, "jobStatus": "pending"}
 
 
 def get_transcript_job_status_data(api_key: str, session_id: str) -> Dict[str, Any]:
-    """Polling endpoint payload: returns full workspace data once done, else job status."""
+    """Polling endpoint payload: returns full workspace data once done, else job status.
+
+    Progress comes from two sources, merged:
+    - Postgres `transcript_jobs.progress` (legacy DB-backed progress —
+      raw Gladia step payloads). Kept for backward compat.
+    - Redis `stormiq:progress:transcript:{session_id}` (new stage-floor
+      progress with percent). Preferred when present.
+    """
     session_id = str(session_id or "").strip()
 
     # Transcript may have finished between polls — return full data if so.
@@ -368,19 +380,30 @@ def get_transcript_job_status_data(api_key: str, session_id: str) -> Dict[str, A
     if not isinstance(job, dict):
         return {"jobStatus": "not_found"}
 
-    progress: Optional[Dict[str, Any]] = None
+    # Legacy DB progress (raw Gladia payload).
+    db_progress: Optional[Dict[str, Any]] = None
     raw_progress = job.get("progress")
     if raw_progress:
         try:
-            progress = json.loads(raw_progress)
+            db_progress = json.loads(raw_progress)
         except Exception:
             pass
 
+    # New Redis stage-floor progress. Worker writes this in parallel; we
+    # surface it when available so the client can show a real percent
+    # bar instead of just a step label.
+    redis_progress = read_progress("transcript", session_id)
+
+    # The frontend currently reads `progress.message` from the DB shape.
+    # Keep that key working for back-compat by returning the DB payload
+    # as the primary, with the Redis payload alongside under
+    # `progressRedis` for the new UI to consume in Phase 2 commit 3.
     return {
         "jobId": job["job_id"],
         "jobStatus": job["status"],
         "error": job.get("error"),
-        "progress": progress,
+        "progress": db_progress,
+        "progressRedis": redis_progress,
     }
 
 
