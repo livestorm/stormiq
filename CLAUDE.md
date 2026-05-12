@@ -140,6 +140,8 @@ wires the frontend to prefer `progressRedis`.
 
 **Migration status (Phase 2 commit 1):** the legacy `threading.Thread` path has been deleted. The arq worker is now the **only** transcription path. App restarts no longer drop in-flight jobs — they survive in Redis, and the stuck-job sweeper (every 10 minutes, see [worker.py](livestorm_app/worker.py)) marks any genuinely stalled `transcript_jobs` row as `error` so the UI can surface it.
 
+**Auto-enqueue Professional Smart Recap (Phase 4 follow-up):** when `run_transcription` finishes successfully, it now reads the cache and — if `smart_recap_bundle.professional` is empty — enqueues `run_smart_recap_job(session_id, 'professional')` automatically. Every newly transcribed session ends up with a Professional recap in the cache without the user clicking Generate. The recap is the input for the planned card-cover-image generator. Failures to enqueue are logged and swallowed so a Redis hiccup never rolls back a successful transcription.
+
 ### AI generation (queue-backed — overall / deep / smart recap / content repurposing)
 
 ```
