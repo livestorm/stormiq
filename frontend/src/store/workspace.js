@@ -21,10 +21,17 @@ const state = reactive({
   selectedEventSessionId: "",
   outputLanguage: "English",
   workspace: null,
+  // Phase 4: list of cached sessions for the current user's Livestorm
+  // org. Powers the Single Analysis card grid. Loaded on demand via
+  // loadWorkspaceSessions(); refreshed after every successful fetch
+  // (new sessions appear in the list).
+  workspaceSessions: [],
+  workspaceSessionsLoadedAt: 0,
   transcriptUnavailableReason: "",
   transcriptJobProgress: null,
   loading: {
     workspaceEvents: false,
+    workspaceSessions: false,
     eventSessions: false,
     sessionFetch: false,
     analysis: false,
@@ -180,6 +187,35 @@ async function loadEventSessions() {
         : "";
 }
 
+async function loadWorkspaceSessions({ silent = false } = {}) {
+  if (!state.auth.connectedUser && !state.auth.allowLocalApiKeyFallback) {
+    // No OAuth and no local fallback — the backend will return an
+    // empty list anyway, but skip the network round-trip.
+    state.workspaceSessions = [];
+    state.workspaceSessionsLoadedAt = Date.now();
+    return [];
+  }
+
+  if (silent) {
+    // Background refresh after a fetch — keep the existing cards on
+    // screen while we update so the user doesn't see a flash.
+    try {
+      const data = await api.fetchWorkspaceSessions();
+      state.workspaceSessions = Array.isArray(data?.sessions) ? data.sessions : [];
+      state.workspaceSessionsLoadedAt = Date.now();
+      return state.workspaceSessions;
+    } catch (error) {
+      // Silent refresh failure is non-blocking.
+      return state.workspaceSessions;
+    }
+  }
+
+  const data = await wrapCall("workspaceSessions", () => api.fetchWorkspaceSessions());
+  state.workspaceSessions = Array.isArray(data?.sessions) ? data.sessions : [];
+  state.workspaceSessionsLoadedAt = Date.now();
+  return state.workspaceSessions;
+}
+
 async function loadWorkspaceEvents() {
   if (!state.apiKey && !state.auth.connectedUser) return;
   state.transcriptUnavailableReason = "";
@@ -287,11 +323,17 @@ async function fetchSessionData(forceRefresh = false) {
         : transcriptResponse;
       state.workspace = transcriptData;
       state.transcriptUnavailableReason = "";
+      // Refresh the workspace card list in the background so the new
+      // session appears in /single-analysis without a hard reload.
+      loadWorkspaceSessions({ silent: true }).catch(() => {});
       return transcriptData;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       state.transcriptUnavailableReason = getFriendlyTranscriptUnavailableMessage(message);
       state.error = state.transcriptUnavailableReason;
+      // Even on transcript failure, the base data was cached. Refresh
+      // the card list so the user sees the session in the grid.
+      loadWorkspaceSessions({ silent: true }).catch(() => {});
       return baseData;
     }
   });
@@ -518,6 +560,62 @@ async function runContentRepurposing(outputLanguage = state.outputLanguage) {
   });
 }
 
+async function loadSessionById(sessionId) {
+  // Phase 4: load a specific session's workspace by ID. Used by the
+  // parameterized session routes — the URL is the truth, not a singleton
+  // "active session" in the store. Sets state.workspace from cache when
+  // available; falls back to fetch_base_data when not (covers the case
+  // where a teammate clicks a shared link to a session their org has
+  // permission to read but hasn't been loaded into the browser yet).
+  const id = String(sessionId || "").trim();
+  if (!id) return null;
+
+  // Already loaded — short-circuit.
+  if (state.workspace?.sessionId === id) {
+    return state.workspace;
+  }
+
+  state.transcriptUnavailableReason = "";
+  state.transcriptJobProgress = null;
+
+  try {
+    const cached = await api.getCachedSession(id);
+    if (cached) {
+      state.workspace = cached;
+      return cached;
+    }
+  } catch (error) {
+    // 4xx/5xx from the cache lookup falls through to a fresh fetch.
+  }
+
+  // No cache yet for this session — fetch the base data. The user's
+  // OAuth token must have access to the underlying Livestorm session;
+  // otherwise the backend returns 4xx and the view shows an error.
+  await wrapCall("sessionFetch", async () => {
+    state.sessionId = id;
+    state.inputMode = "session";
+    const baseData = await api.fetchSessionBase(id, {
+      apiKey: state.apiKey,
+      forceRefresh: false,
+    });
+    state.workspace = baseData;
+    try {
+      const transcriptResponse = await api.fetchSessionTranscript(id, {
+        apiKey: state.apiKey,
+        forceRefresh: false,
+      });
+      const transcriptData = transcriptResponse?.jobStatus
+        ? await pollTranscriptJob(id)
+        : transcriptResponse;
+      state.workspace = transcriptData;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      state.transcriptUnavailableReason = getFriendlyTranscriptUnavailableMessage(message);
+    }
+  });
+  return state.workspace;
+}
+
 export function useWorkspace() {
   return {
     state,
@@ -530,6 +628,8 @@ export function useWorkspace() {
     loadMoreWorkspaceEvents,
     loadSessionsForSelectedWorkspaceEvent,
     loadEventSessions,
+    loadWorkspaceSessions,
+    loadSessionById,
     fetchSessionData,
     resetWorkspace,
     saveSpeakerLabels,

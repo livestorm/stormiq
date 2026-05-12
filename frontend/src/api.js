@@ -69,6 +69,13 @@ export const api = {
       body: JSON.stringify(payload),
     });
   },
+  // Phase 4: list all cached sessions for the current user's Livestorm
+  // organization. Powers the Single Analysis card grid. Returns
+  // { sessions: [] } when the user isn't OAuth-connected — the view
+  // shows a "connect with Livestorm" empty state in that case.
+  fetchWorkspaceSessions() {
+    return request("/api/workspace-sessions");
+  },
   fetchSession(sessionId, payload) {
     return request(`/api/sessions/${sessionId}/fetch`, {
       method: "POST",

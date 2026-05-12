@@ -1,0 +1,270 @@
+<script setup>
+import { computed, onMounted } from "vue";
+import { useRouter } from "vue-router";
+import { useWorkspace } from "../store/workspace";
+
+const { state, loadWorkspaceSessions } = useWorkspace();
+const router = useRouter();
+
+onMounted(() => {
+  // Load once on mount. Subsequent visits to /single-analysis reuse
+  // whatever's in state.workspaceSessions; new sessions appear via the
+  // silent refresh in fetchSessionData. If the user wants a manual
+  // refresh, they hit the "Refresh" affordance.
+  if (!state.workspaceSessions.length || isStale.value) {
+    loadWorkspaceSessions().catch(() => {});
+  }
+});
+
+const STALE_AFTER_MS = 60 * 1000;
+const isStale = computed(
+  () => Date.now() - (state.workspaceSessionsLoadedAt || 0) > STALE_AFTER_MS,
+);
+
+const isLoadingFirstTime = computed(
+  () => state.loading.workspaceSessions && !state.workspaceSessions.length,
+);
+
+const sessions = computed(() => state.workspaceSessions || []);
+const hasSessions = computed(() => sessions.value.length > 0);
+const isConnected = computed(
+  () => Boolean(state.auth?.connectedUser || state.auth?.allowLocalApiKeyFallback),
+);
+
+// Deterministic placeholder cover. Two HSL colors derived from the
+// session_id hash → a smooth gradient unique per card, no extra API
+// calls. Phase 4.1 will replace with real Livestorm event thumbnails
+// once the product team finalizes the cover-image logic.
+function hashString(input) {
+  const text = String(input || "");
+  let hash = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    hash = (hash * 31 + text.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash);
+}
+
+function gradientFor(sessionId) {
+  const hash = hashString(sessionId);
+  // Two distinct hues, both saturation/lightness tuned to look good
+  // against the Livestorm-blue UI without competing with the brand.
+  const hueA = hash % 360;
+  const hueB = (hash * 7 + 60) % 360;
+  return `linear-gradient(135deg, hsl(${hueA}, 62%, 48%) 0%, hsl(${hueB}, 58%, 38%) 100%)`;
+}
+
+function initialsFor(sessionName) {
+  const cleaned = String(sessionName || "").trim();
+  if (!cleaned) return "—";
+  const words = cleaned.split(/\s+/).slice(0, 2);
+  return words.map((w) => w[0]).join("").toUpperCase();
+}
+
+function openSession(sessionId) {
+  router.push(`/single-analysis/${sessionId}/session-overview`);
+}
+
+function formattedDate(card) {
+  return card.startedAtLabel || "—";
+}
+
+function statusLabel(card) {
+  const value = String(card.schedulingStatus || "").replaceAll("_", " ");
+  return value ? value.charAt(0).toUpperCase() + value.slice(1) : "Unknown";
+}
+
+function pillSet(card) {
+  // Tiny status indicators on the bottom of the card showing which
+  // outputs already exist in the cache. Lets the user see at a glance
+  // which sessions are fully analysed vs which still have work to do.
+  return [
+    { label: "Transcript", on: card.hasTranscript },
+    { label: "Overall", on: card.hasOverallAnalysis },
+    { label: "Deep", on: card.hasDeepAnalysis },
+    { label: "Recap", on: card.hasSmartRecap },
+    { label: "Content", on: card.hasContentRepurposing },
+  ];
+}
+
+async function refresh() {
+  await loadWorkspaceSessions().catch(() => {});
+}
+</script>
+
+<template>
+  <section class="page-section">
+    <header class="single-analysis-header">
+      <div>
+        <h2>Single Analysis</h2>
+        <p class="page-description">
+          Sessions your workspace has already fetched. Click a card to open it.
+        </p>
+      </div>
+      <button
+        type="button"
+        class="ghost-link-button"
+        :disabled="state.loading.workspaceSessions"
+        @click="refresh"
+      >
+        {{ state.loading.workspaceSessions ? "Refreshing…" : "Refresh" }}
+      </button>
+    </header>
+
+    <section v-if="isLoadingFirstTime" class="panel loading-panel">
+      <div class="loading-indicator" aria-hidden="true"></div>
+      <div>
+        <h3 class="loading-title">Loading workspace sessions</h3>
+        <p class="loading-copy">Fetching the sessions teammates have already analysed.</p>
+      </div>
+    </section>
+
+    <section v-else-if="!hasSessions && !isConnected" class="panel helper-panel">
+      <h3>Connect with Livestorm to see your workspace</h3>
+      <p>Once you're connected, every session your teammates fetch will appear here.</p>
+    </section>
+
+    <section v-else-if="!hasSessions" class="panel helper-panel">
+      <h3>No sessions yet</h3>
+      <p>
+        Use <RouterLink class="ghost-link-button" to="/search">Search</RouterLink>
+        to fetch your first session by ID, by event, or by browsing your workspace events.
+      </p>
+    </section>
+
+    <div v-else class="single-analysis-grid">
+      <article
+        v-for="card in sessions"
+        :key="card.sessionId"
+        class="single-analysis-card"
+        tabindex="0"
+        role="button"
+        :aria-label="`Open ${card.sessionName}`"
+        @click="openSession(card.sessionId)"
+        @keydown.enter="openSession(card.sessionId)"
+        @keydown.space.prevent="openSession(card.sessionId)"
+      >
+        <div class="single-analysis-card-cover" :style="{ background: gradientFor(card.sessionId) }">
+          <span class="single-analysis-card-initials">{{ initialsFor(card.sessionName) }}</span>
+        </div>
+        <div class="single-analysis-card-body">
+          <h3 class="single-analysis-card-title">{{ card.sessionName }}</h3>
+          <p class="single-analysis-card-meta">
+            <span>{{ formattedDate(card) }}</span>
+            <span v-if="card.attendeesCount != null"> · {{ card.attendeesCount }} attendees</span>
+            <span v-if="card.schedulingStatus"> · {{ statusLabel(card) }}</span>
+          </p>
+          <ul class="single-analysis-card-pills">
+            <li
+              v-for="pill in pillSet(card)"
+              :key="pill.label"
+              :class="['single-analysis-card-pill', pill.on ? 'on' : 'off']"
+            >
+              {{ pill.label }}
+            </li>
+          </ul>
+        </div>
+      </article>
+    </div>
+  </section>
+</template>
+
+<style scoped>
+.single-analysis-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.single-analysis-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.single-analysis-card {
+  background: #ffffff;
+  border: 1px solid #eaeef1; /* nimbus-100 */
+  border-radius: 12px;
+  overflow: hidden;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  transition: transform 120ms ease-out, box-shadow 120ms ease-out, border-color 120ms ease-out;
+}
+
+.single-analysis-card:hover,
+.single-analysis-card:focus-visible {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(11, 66, 195, 0.08);
+  border-color: #b3cafe; /* blue-200 */
+  outline: none;
+}
+
+.single-analysis-card-cover {
+  aspect-ratio: 16 / 9;
+  display: grid;
+  place-items: center;
+}
+
+.single-analysis-card-initials {
+  font-size: 36px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.92);
+  letter-spacing: 0.02em;
+}
+
+.single-analysis-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px 16px;
+}
+
+.single-analysis-card-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+  color: #232b2f; /* grey-900 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.single-analysis-card-meta {
+  font-size: 13px;
+  color: #5d6d79; /* grey-500 */
+  margin: 0;
+}
+
+.single-analysis-card-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  list-style: none;
+  padding: 0;
+  margin: 4px 0 0;
+}
+
+.single-analysis-card-pill {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  border-radius: 999px;
+  padding: 3px 8px;
+  border: 1px solid transparent;
+}
+
+.single-analysis-card-pill.on {
+  background: #dff7f3; /* green-100 */
+  color: #0c7c59; /* brand-green */
+  border-color: rgba(12, 124, 89, 0.12);
+}
+
+.single-analysis-card-pill.off {
+  background: #f6f7f9; /* grey-50 */
+  color: #8094a3; /* grey-400 */
+}
+</style>

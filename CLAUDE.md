@@ -44,18 +44,22 @@ Single SPA served by FastAPI. No auth-walled vs public split — once connected 
 
 | Route | View | Requires |
 |---|---|---|
-| `/` | Home (empty hero) | — |
-| `/events` | Events list with filters | Connected workspace |
-| `/session-overview` | Hero metrics, people, charts | Fetched session |
-| `/transcript` | 8-tab transcript diagnostics | Completed transcript |
-| `/chat-questions` | 5-tab audience analytics | Fetched session |
-| `/analysis` | Overall + Deep AI analysis | Completed transcript |
-| `/smart-recap` | 3-tone recap | Completed transcript |
-| `/content-repurposing` | Summary / blog / email / social | Completed transcript |
+| `/` | Redirect to `/single-analysis` | — |
+| `/search` | (Phase 4) Three modes — by session ID, by event ID, browse workspace | Connected workspace |
+| `/single-analysis` | (Phase 4) Card grid of every cached session in the user's org | Connected workspace |
+| `/single-analysis/:sessionId` | Redirect to `…/session-overview` | Session in workspace |
+| `/single-analysis/:sessionId/session-overview` | Hero metrics, people, charts | Fetched session |
+| `/single-analysis/:sessionId/transcript` | 8-tab transcript diagnostics | Completed transcript |
+| `/single-analysis/:sessionId/chat-questions` | 5-tab audience analytics | Fetched session |
+| `/single-analysis/:sessionId/analysis` | Overall + Deep AI analysis | Completed transcript |
+| `/single-analysis/:sessionId/smart-recap` | 3-tone recap | Completed transcript |
+| `/single-analysis/:sessionId/content-repurposing` | Summary / blog / email / social | Completed transcript |
+| `/cross-analysis` | (Phase 4) Placeholder for Phase 3 cross-session feature | — |
 | `/auth/callback` | OAuth landing | — |
 | `/beta-info` | Beta notice | — |
+| Legacy: `/events`, `/session-overview`, `/transcript`, … | Redirect to the new equivalent (uses `state.workspace.sessionId` to construct the target) | — |
 
-A session must be fetched before any view past `/events` becomes useful. Transcript-dependent views (transcript, analysis, recap, repurposing) gate themselves until the transcript job completes (or expose an unavailable-reason banner).
+`:sessionId` is the URL contract for sharing — teammates in the same Livestorm org can paste any `/single-analysis/:sessionId/...` link and land on the requested tab with the cached workspace pre-loaded. The store watches the route param and calls `loadSessionById` to materialise the workspace on URL change.
 
 ---
 
@@ -650,6 +654,14 @@ Branch: `feature/worker-redis-infra`.
 
 - ✅ **Server-side AI-job dedupe**: rapid double-clicks on Generate no longer enqueue duplicate jobs. `_start_ai_job` now writes an in-flight marker to Redis (`stormiq:ai-job:in-flight:{kind}:{session_id}:{dimension}`, TTL 1h) before enqueuing. Subsequent calls within the marker's lifetime that find the underlying arq job still pending/running get the existing job_id back. Stale markers (arq says complete/error/not_found) are self-healing — the lookup clears them and falls through to enqueue fresh.
 - ✅ **Transcript view → progressRedis**: transcript polling now populates `state.aiJobs.transcript` from the `progressRedis` field on each poll response. All four transcript-loading panels (TranscriptView + AnalysisView + SmartRecapView + ContentRepurposingView) render `<AiJobProgress flow="transcript">` instead of just the legacy Gladia step message. Stage labels (fetching_recording / uploading_to_gladia / transcribing / post_processing / persisting / done) added to `AiJobProgress` in EN and FR.
+
+### Phase 4 — Workspace UX + shareable session URLs (branch `feature/phase-4-workspace-ui`)
+
+The product shape that replaces the single-active-session flow with a workspace-aware list view and shareable per-session URLs.
+
+- ✅ **Commit 1 (backend)**: `session_cache.organization_id` column + index. All web read paths filter by org_id; teammates in one Livestorm org share cached results (this was already true in practice; the lookup just wasn't filtered) while cross-org callers can no longer read each other's cache. New `GET /api/workspace-sessions` returns the card list for the current user's org. Worker reads remain org-agnostic (trusted internal code). Legacy rows pre-Phase-4 have NULL `organization_id` and are invisible to the new list view until refetched — refetching is instant on cache hit and stamps the org_id.
+- ✅ **Commit 2 (frontend)**: sidebar restructured to three top-level items (Search / Single Analysis / Cross Analysis). New `SingleAnalysisListView` renders a card grid with placeholder gradient covers (final cover-image logic TBD by product). New `SearchView` consolidates the three fetch modes (by session ID, by event ID, browse workspace) in one redesigned page. New `CrossAnalysisView` placeholder for Phase 3. Routes parameterised by `:sessionId` so any `/single-analysis/:sessionId/...` URL is shareable; the store's `loadSessionById` watches the route param and materialises the workspace from cache (instant) or fetches it (when a teammate hasn't loaded the session in this browser yet). Legacy routes redirect to the new equivalents.
+- Orphaned components removed: `FetchSessionForm.vue` and `EventsView.vue` (their logic moved into `SearchView`).
 
 ### Then — Phase 2: Card registry refactor
 - Introduce a Python-side card registry under `livestorm_app/cards/single/`
