@@ -178,11 +178,14 @@ function coverImageUrl(card) {
   // Phase 4: real AI cover, generated from the Professional Smart
   // Recap. Falls back to the gradient placeholder when the row
   // doesn't have one yet (legacy rows + brand-new fetches whose
-  // cover job hasn't completed). Adds a `?v=<iso>` cache-buster only
-  // when we have a generated_at timestamp so subsequent regenerations
-  // bypass the browser's max-age=86400 cache for this URL.
+  // cover job hasn't completed). The `?v=<isodate>` query param
+  // changes whenever the worker regenerates the cover, busting the
+  // browser's 24h cache so the user sees the new cover on the next
+  // page load rather than waiting for max-age to expire.
   if (!card?.hasCoverImage || !card?.sessionId) return "";
-  return `/api/sessions/${card.sessionId}/cover.png`;
+  const version = String(card.coverImageGeneratedAt || "").trim();
+  const query = version ? `?v=${encodeURIComponent(version)}` : "";
+  return `/api/sessions/${card.sessionId}/cover.png${query}`;
 }
 
 function initialsFor(label) {

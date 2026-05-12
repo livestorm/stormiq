@@ -1,20 +1,30 @@
-Create a premium 16:9 cover image for a Livestorm session.
+Create a wide 16:9 webinar cover image for Livestorm. Calm, premium,
+minimalistic corporate aesthetic. The cover should feel like an
+executive weekly-update or internal presentation cover.
 
-Style:
-- Modern editorial design, minimalist and polished
-- Soft pastel background with deep teal and Livestorm-blue accents
-- Generous negative space; uncluttered composition
-- Professional, corporate, magazine-cover feel
-- Subtle texture or grain is fine; flat illustration acceptable
+Main title (RENDER THIS TEXT clearly and legibly on the left of the cover):
+{title}
 
-Capture the essence of this session:
+Visual narrative (story to convey through imagery — do NOT render as text):
 {summary}
 
-Composition guidance:
-- One clear focal point on the right; breathable space on the left
-- Story-driven imagery that reflects the session's main themes
-- Use shapes, abstract motifs, or stylised icons rather than literal photos
-- Absolutely NO text overlays, NO logos, NO charts, NO numbers
-- Avoid faces and identifiable people
-- The output should look ready to drop into a Notion cover or a
-  LinkedIn share without further editing
+Composition:
+- Main title on the LEFT in elegant, refined typography (crisp,
+  readable, no decorative flourishes). Generous breathing room.
+- Visual narrative on the RIGHT and lower-right: clean story pillars
+  or staged elements — rounded platforms, gentle shadows, modern
+  corporate illustration. Keep it tasteful and integrated.
+- Soft neutral cream background. Refined teal, sage, cream, and
+  warm beige accent palette.
+- Tell the story visually; do NOT clutter the right side with too
+  many objects.
+
+Mood: confident, elegant, calm. Editorial-quality, polished.
+
+Strict rules:
+- Render the main title text exactly as provided, crisp and legible.
+- No subtitles, captions, footers, watermarks, or any text other than
+  the main title.
+- No logos, no brand marks.
+- Avoid faces or identifiable people.
+- Avoid charts, numbers, dashboards.

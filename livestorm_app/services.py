@@ -1110,19 +1110,62 @@ def build_smart_recap_prompt(tone: str) -> str:
     )
 
 
-def build_cover_image_prompt(summary_markdown: str) -> str:
-    """Render the cover-image prompt template with the recap summary
-    interpolated into the `{summary}` placeholder.
+def _extract_recap_title(recap_markdown: str) -> str:
+    """Pull the title line out of a Professional Smart Recap.
 
-    The template lives in prompts/cover_image_prompt.txt — editable
-    without redeploying — and produces a single brand-aligned prompt
-    for the OpenAI Images API. Keeps text overlays / logos / faces
-    excluded so the output is a clean editorial cover rather than a
-    fake screenshot with broken AI-generated text.
+    The recap prompt locks the output format to:
+
+        # Title
+        <actual title goes here>
+        # Description
+        <body...>
+
+    This helper finds the first non-empty line *after* a `# Title`
+    header. Falls back to the first H1 line whose content isn't the
+    literal word "title" / "description". Returns "" when nothing
+    sensible is found — caller falls back to a generic placeholder
+    so the image prompt always has something to render.
+    """
+    text = str(recap_markdown or "").strip()
+    if not text:
+        return ""
+    lines = text.replace("\r\n", "\n").split("\n")
+    # Pass 1: find the line right after a `# Title` (or `## Title`) marker.
+    for index, raw in enumerate(lines):
+        line = raw.strip()
+        if not line:
+            continue
+        if re.match(r"^#+\s*title\s*$", line, re.IGNORECASE):
+            for follower in lines[index + 1:]:
+                follower = follower.strip()
+                if not follower:
+                    continue
+                if follower.startswith("#"):
+                    break
+                return follower
+    # Pass 2: first H1 whose content isn't a section marker.
+    for raw in lines:
+        match = re.match(r"^#\s+(.+?)\s*$", raw.strip())
+        if match:
+            candidate = match.group(1).strip()
+            if candidate.lower() not in {"title", "description", "summary"}:
+                return candidate
+    return ""
+
+
+def build_cover_image_prompt(summary_markdown: str) -> str:
+    """Render the cover-image prompt template with the recap title +
+    summary interpolated into the `{title}` and `{summary}` placeholders.
+
+    The template lives in `prompts/cover_image_prompt.txt` — editable
+    without redeploying. The recap's own title is forwarded so the
+    image model has a concrete phrase to render, instead of falling
+    back to a generic "Session Recap" overlay.
     """
     template = load_analysis_prompt(COVER_IMAGE_PROMPT_PATH)
     summary = str(summary_markdown or "").strip() or "(No summary available.)"
-    return template.replace("{summary}", summary)
+    title = _extract_recap_title(summary_markdown) or "Session Cover"
+    return template.replace("{title}", title).replace("{summary}", summary)
 
 
 def generate_cover_image_with_openai(
