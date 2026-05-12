@@ -160,9 +160,33 @@ function applyBootstrap(payload) {
 }
 
 function resetWorkspace() {
+  // Wipe every per-org/per-user slice. Called when the user disconnects
+  // so the in-memory state never outlives the auth context. Without
+  // this, the Single Analysis grid keeps rendering the previous org's
+  // cards after Disconnect — confusing at best, leaky at worst.
   state.workspace = null;
+  state.workspaceSessions = [];
+  state.workspaceSessionsLoadedAt = 0;
   state.error = "";
   state.transcriptUnavailableReason = "";
+  state.transcriptJobProgress = null;
+  state.aiJobs = {
+    transcript: null,
+    overall_analysis: null,
+    deep_analysis: null,
+    smart_recap: null,
+    content_repurposing: null,
+  };
+  // Browser-side fetch state too — otherwise old event/session inputs
+  // get carried across logins.
+  state.sessionId = "";
+  state.eventId = "";
+  state.eventSessions = [];
+  state.selectedEventSessionId = "";
+  state.selectedWorkspaceEventId = "";
+  state.loadedEventId = "";
+  state.workspaceEvents = [];
+  state.workspaceEventsNextPage = null;
 }
 
 async function loadEventSessions() {

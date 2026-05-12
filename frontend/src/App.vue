@@ -34,11 +34,19 @@ const isCompactViewport = ref(false);
 const COMPACT_BREAKPOINT = 1100;
 
 // Top-level destinations. Order matches the product taxonomy.
+// No icons — the user found the emoji decorations noisy.
 const topNavItems = [
-  { to: "/search", label: "Search", icon: "🔎" },
-  { to: "/single-analysis", label: "Single Analysis", icon: "■" },
-  { to: "/cross-analysis", label: "Cross Analysis", icon: "⇆" },
+  { to: "/search", label: "Search" },
+  { to: "/single-analysis", label: "Single Analysis" },
+  { to: "/cross-analysis", label: "Cross Analysis" },
 ];
+
+// Treated as "logged in" for nav-enable purposes. Local API-key mode
+// counts (development convenience); blank state shows the Connect
+// flow as the only interactive control.
+const isAuthed = computed(
+  () => Boolean(state.auth?.connectedUser || state.auth?.allowLocalApiKeyFallback),
+);
 
 // Per-session sub-nav. Rendered only on /single-analysis/:sessionId/*.
 const sessionTabs = [
@@ -212,9 +220,12 @@ function toggleSidebar() {
               'sidebar-nav-item-active':
                 route.path === item.to ||
                 (item.to === '/single-analysis' && isOnSingleAnalysis),
+              'sidebar-nav-item-disabled': !isAuthed,
             }"
+            :aria-disabled="!isAuthed"
+            :tabindex="isAuthed ? 0 : -1"
+            @click.capture="!isAuthed && $event.preventDefault()"
           >
-            <span class="sidebar-nav-icon" aria-hidden="true">{{ item.icon }}</span>
             <span class="sidebar-nav-label">{{ item.label }}</span>
           </RouterLink>
         </nav>
@@ -351,10 +362,12 @@ function toggleSidebar() {
   color: #ffffff;
 }
 
-.sidebar-nav-icon {
-  font-size: 16px;
-  width: 18px;
-  text-align: center;
+/* Disabled state: rendered when the user hasn't connected yet. Visually
+   muted; the @click.capture handler in the template stops navigation. */
+.sidebar-nav-item-disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
 }
 
 .sidebar-subnav {

@@ -108,9 +108,6 @@ async function fetchSessionsForWorkspaceEvent(eventId) {
       <h2>Search</h2>
       <p class="page-description">
         Fetch a session by ID, list sessions in an event, or browse every event in your workspace.
-        Anything you fetch lands in
-        <RouterLink class="ghost-link-button" to="/single-analysis">Single Analysis</RouterLink>
-        so your teammates can see it too.
       </p>
     </header>
 
@@ -291,11 +288,18 @@ async function fetchSessionsForWorkspaceEvent(eventId) {
   display: flex;
   gap: 8px;
   align-items: stretch;
+  flex-wrap: nowrap;
 }
 
 .search-inline-row > input,
 .search-inline-row > select {
   flex: 1 1 auto;
+  min-width: 0;
+}
+
+.search-inline-row > button {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .search-filters-row {

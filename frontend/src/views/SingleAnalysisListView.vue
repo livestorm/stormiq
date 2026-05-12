@@ -412,6 +412,11 @@ function clearFilters() {
 </template>
 
 <style scoped>
+/* Cards + controls use the global dark-theme tokens defined in
+   styles.css (--color-surface-neutral-*, --color-text-neutral-*,
+   --color-borders-neutral-*) so this view stays consistent with the
+   rest of the app and automatically picks up brand-token changes. */
+
 .single-analysis-header {
   display: flex;
   justify-content: space-between;
@@ -441,21 +446,17 @@ function clearFilters() {
   }
 }
 
-.single-analysis-search {
-  min-width: 0;
-}
-
+.single-analysis-search,
 .single-analysis-select {
   min-width: 0;
 }
 
 .single-analysis-viewmode {
   display: flex;
-  gap: 0;
-  border: 1px solid #c8d3da; /* nimbus-200 */
+  border: 1px solid var(--color-borders-neutral-light);
   border-radius: 8px;
   overflow: hidden;
-  background: #ffffff;
+  background: var(--color-surface-neutral-alpha-100);
 }
 
 .single-analysis-viewmode-button {
@@ -467,22 +468,23 @@ function clearFilters() {
   border: 0;
   cursor: pointer;
   font-size: 13px;
-  color: #4d5b66; /* grey-600 */
+  color: var(--color-text-neutral-secondary);
+}
+
+.single-analysis-viewmode-button:hover {
+  color: var(--color-text-neutral-base);
 }
 
 .single-analysis-viewmode-button + .single-analysis-viewmode-button {
-  border-left: 1px solid #eaeef1; /* nimbus-100 */
+  border-left: 1px solid var(--color-borders-neutral-light);
 }
 
 .single-analysis-viewmode-button.active {
-  background: #f0f4ff; /* blue-50 */
-  color: #0b42c3;     /* brand-blue */
+  background: var(--color-surface-primary-alpha-100);
+  color: var(--color-text-primary-base);
   font-weight: 600;
 }
 
-.single-analysis-viewmode-label {
-  /* Hide label on narrow screens; keep icon. */
-}
 @media (max-width: 720px) {
   .single-analysis-viewmode-label { display: none; }
 }
@@ -492,10 +494,10 @@ function clearFilters() {
   align-items: center;
   gap: 12px;
   font-size: 13px;
-  color: #5d6d79; /* grey-500 */
+  color: var(--color-text-neutral-secondary);
 }
 
-/* ── Grid view (existing) ───────────────────────────────────────── */
+/* ── Grid view ──────────────────────────────────────────────────── */
 .single-analysis-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -503,9 +505,9 @@ function clearFilters() {
 }
 
 .single-analysis-card {
-  background: #ffffff;
-  border: 1px solid #eaeef1;
-  border-radius: 12px;
+  background: var(--color-surface-neutral-alpha-100);
+  border: 1px solid var(--color-borders-neutral-light);
+  border-radius: var(--spacing-rounded-lg);
   overflow: hidden;
   cursor: pointer;
   display: flex;
@@ -516,8 +518,8 @@ function clearFilters() {
 .single-analysis-card:hover,
 .single-analysis-card:focus-visible {
   transform: translateY(-2px);
-  box-shadow: 0 6px 16px rgba(11, 66, 195, 0.08);
-  border-color: #b3cafe;
+  box-shadow: 0 6px 16px rgba(11, 66, 195, 0.18);
+  border-color: var(--color-borders-primary-default);
   outline: none;
 }
 
@@ -553,7 +555,7 @@ function clearFilters() {
   font-size: 16px;
   font-weight: 600;
   margin: 0;
-  color: #232b2f;
+  color: var(--color-text-neutral-base);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -562,13 +564,13 @@ function clearFilters() {
 
 .single-analysis-card-meta {
   font-size: 13px;
-  color: #5d6d79;
+  color: var(--color-text-neutral-secondary);
   margin: 0;
 }
 
 .single-analysis-card-generator {
   font-size: 12px;
-  color: #8094a3;
+  color: var(--color-text-neutral-tertiary);
   margin: 4px 0 0;
   font-style: italic;
 }
@@ -585,8 +587,8 @@ function clearFilters() {
   grid-template-columns: 88px 1fr;
   gap: 14px;
   align-items: center;
-  background: #ffffff;
-  border: 1px solid #eaeef1;
+  background: var(--color-surface-neutral-alpha-100);
+  border: 1px solid var(--color-borders-neutral-light);
   border-radius: 10px;
   padding: 8px 14px 8px 8px;
   cursor: pointer;
@@ -595,8 +597,8 @@ function clearFilters() {
 
 .single-analysis-row:hover,
 .single-analysis-row:focus-visible {
-  border-color: #b3cafe;
-  box-shadow: 0 4px 10px rgba(11, 66, 195, 0.06);
+  border-color: var(--color-borders-primary-default);
+  box-shadow: 0 4px 10px rgba(11, 66, 195, 0.16);
   outline: none;
 }
 
@@ -632,7 +634,7 @@ function clearFilters() {
   font-size: 15px;
   font-weight: 600;
   margin: 0;
-  color: #232b2f;
+  color: var(--color-text-neutral-base);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -640,7 +642,7 @@ function clearFilters() {
 
 .single-analysis-row-meta {
   font-size: 13px;
-  color: #5d6d79;
+  color: var(--color-text-neutral-secondary);
   margin: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -649,6 +651,6 @@ function clearFilters() {
 
 .single-analysis-row-generator {
   font-style: italic;
-  color: #8094a3;
+  color: var(--color-text-neutral-tertiary);
 }
 </style>

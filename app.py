@@ -616,6 +616,22 @@ if FRONTEND_DIST_DIR.exists():
     if assets_dir.exists():
         app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
+    # Vite ships hashed asset filenames (index-abc123.js) but the
+    # HTML that references them is unhashed and SHOULD NEVER be cached.
+    # Without these headers, a Render deploy that ships a fresh hash
+    # leaves users with browsers/CDNs holding the OLD index.html
+    # pointing at the OLD asset — the new asset 404s because the old
+    # file no longer exists in /assets. Forcing no-cache on the HTML
+    # entry-point makes every navigation re-fetch the index, while
+    # asset files are still served fresh by the StaticFiles mount above
+    # (the hashed filenames make them inherently cache-safe — a
+    # different bundle has a different URL).
+    _INDEX_HTML_HEADERS = {
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        "Pragma": "no-cache",
+        "Expires": "0",
+    }
+
     @app.get("/{full_path:path}")
     def serve_frontend(full_path: str) -> Any:
         requested_path = FRONTEND_DIST_DIR / full_path
@@ -623,5 +639,5 @@ if FRONTEND_DIST_DIR.exists():
             return FileResponse(requested_path)
         index_path = FRONTEND_DIST_DIR / "index.html"
         if index_path.exists():
-            return FileResponse(index_path)
+            return FileResponse(index_path, headers=_INDEX_HTML_HEADERS)
         return JSONResponse({"message": "Frontend build not found."}, status_code=404)
