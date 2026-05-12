@@ -17,7 +17,14 @@ from livestorm_app.db import (
     upsert_cached_session,
 )
 from livestorm_app.progress import read_progress
-from livestorm_app.queue import AI_JOB_KINDS, enqueue_job_sync, read_job_status_sync
+from livestorm_app.queue import (
+    AI_JOB_KINDS,
+    clear_in_flight_ai_job_id,
+    enqueue_job_sync,
+    get_in_flight_ai_job_id,
+    read_job_status_sync,
+    set_in_flight_ai_job_id,
+)
 from livestorm_app.services import (
     analyze_with_openai,
     analysis_markdown_to_pdf_bytes,
@@ -726,6 +733,30 @@ def _start_ai_job(
     if _extract_cached_ai_body(cached, kind, language=language, tone=tone):
         return _serialize_cached_session(session_id, cached)
 
+    # Dedupe: rapid double-clicks on the Generate button can fire multiple
+    # POSTs before the frontend `loading` flag races into the disabled
+    # state. The Redis in-flight marker lets us short-circuit duplicates
+    # back to the original job_id so all of them poll the same outcome.
+    dimension = str(tone or language or "").strip()
+    existing_job_id = get_in_flight_ai_job_id(kind, session_id, dimension)
+    if existing_job_id:
+        existing_status = read_job_status_sync(existing_job_id)
+        if existing_status.get("jobStatus") in ("pending", "running"):
+            payload: Dict[str, Any] = {
+                "jobId": existing_job_id,
+                "jobKind": kind,
+                "jobStatus": existing_status["jobStatus"],
+            }
+            if kind == "smart_recap":
+                payload["tone"] = tone
+            else:
+                payload["language"] = language
+            return payload
+        # Stale marker (arq says complete / error / not_found). Drop it
+        # and fall through to enqueue a fresh job. Worth doing — the
+        # caller has explicitly requested a re-run.
+        clear_in_flight_ai_job_id(kind, session_id, dimension)
+
     arq_function = _ARQ_JOB_FUNCTION_BY_KIND[kind]
     if kind == "smart_recap":
         job_id = enqueue_job_sync(arq_function, session_id, tone)
@@ -738,7 +769,9 @@ def _start_ai_job(
             "Check the worker service and Redis connection."
         )
 
-    payload: Dict[str, Any] = {"jobId": job_id, "jobKind": kind, "jobStatus": "pending"}
+    set_in_flight_ai_job_id(kind, session_id, dimension, job_id)
+
+    payload = {"jobId": job_id, "jobKind": kind, "jobStatus": "pending"}
     if kind == "smart_recap":
         payload["tone"] = tone
     else:

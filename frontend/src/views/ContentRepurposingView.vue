@@ -130,7 +130,8 @@ async function generateForLanguage(language) {
     </template>
     <section v-else-if="isTranscriptLoading" class="panel loading-panel">
       <h3>{{ uiText.transcriptLoadingTitle }}</h3>
-      <p>{{ state.transcriptJobProgress?.message || uiText.transcriptLoadingBody }}</p>
+      <p>{{ uiText.transcriptLoadingBody }}</p>
+      <AiJobProgress :job="state.aiJobs.transcript" flow="transcript" :is-french="isFrenchUi" />
     </section>
     <section v-else-if="isTranscriptUnavailable" class="panel helper-panel">
       <h3>{{ uiText.transcriptUnavailableTitle || "Content Repurposing unavailable for this session" }}</h3>

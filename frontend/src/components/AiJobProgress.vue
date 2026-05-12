@@ -21,6 +21,7 @@ const props = defineProps({
 
 const STAGE_LABELS_EN = {
   queued: "Queued",
+  // Shared AI-flow stages
   loading_sources: "Loading session data",
   building_prompt: "Preparing prompt",
   analyzing: {
@@ -32,6 +33,11 @@ const STAGE_LABELS_EN = {
   },
   persisting: "Saving result",
   done: "Done",
+  // Transcript-specific stages — mirror progress.TRANSCRIPT_STAGE_FLOORS
+  fetching_recording: "Downloading recording",
+  uploading_to_gladia: "Uploading to transcription engine",
+  transcribing: "Transcribing audio",
+  post_processing: "Processing transcript",
 };
 
 const STAGE_LABELS_FR = {
@@ -47,6 +53,10 @@ const STAGE_LABELS_FR = {
   },
   persisting: "Sauvegarde du résultat",
   done: "Terminé",
+  fetching_recording: "Téléchargement de l'enregistrement",
+  uploading_to_gladia: "Envoi au moteur de transcription",
+  transcribing: "Transcription en cours",
+  post_processing: "Traitement de la transcription",
 };
 
 const stageLabel = computed(() => {

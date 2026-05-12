@@ -416,7 +416,8 @@ async function runDeepFor(language) {
     </template>
     <section v-else-if="isTranscriptLoading" class="panel loading-panel">
       <h3>Transcript still loading</h3>
-      <p>{{ state.transcriptJobProgress?.message || 'Analysis will become available as soon as the transcript finishes processing.' }}</p>
+      <p>Analysis will become available as soon as the transcript finishes processing.</p>
+      <AiJobProgress :job="state.aiJobs.transcript" flow="transcript" :is-french="isFrenchUi" />
     </section>
     <section v-else-if="isTranscriptUnavailable" class="panel helper-panel">
       <h3>Analysis unavailable for this session</h3>

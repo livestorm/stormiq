@@ -1,5 +1,6 @@
 <script setup>
 import { computed, reactive, ref, watch } from "vue";
+import AiJobProgress from "../components/AiJobProgress.vue";
 import BarChartCard from "../components/charts/shared/BarChartCard.vue";
 import DataTable from "../components/DataTable.vue";
 import HistogramChartCard from "../components/charts/transcript/HistogramChartCard.vue";
@@ -976,9 +977,10 @@ watch(
 
     <section v-else-if="isTranscriptLoading" class="panel loading-panel">
       <div class="loading-indicator" aria-hidden="true"></div>
-      <div>
+      <div class="loading-panel-body">
         <h3 class="loading-title">Transcript is still loading</h3>
-        <p class="loading-copy">{{ state.transcriptJobProgress?.message || 'Session Overview and Chat &amp; Questions are ready. Transcript data will appear here as soon as processing finishes.' }}</p>
+        <p class="loading-copy">Session Overview and Chat &amp; Questions are ready. Transcript data will appear here as soon as processing finishes.</p>
+        <AiJobProgress :job="state.aiJobs.transcript" flow="transcript" />
       </div>
     </section>
     <section v-else-if="isTranscriptUnavailable" class="panel helper-panel">

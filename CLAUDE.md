@@ -641,6 +641,11 @@ Branch: `feature/worker-redis-infra`.
 - ✅ **Commit 2** (backend): all four AI flows (overall, deep, recap, repurposing) migrated to arq jobs. New polling routes `GET /api/sessions/{id}/{flow}/job`. POST routes return immediately with a job id; cache hits short-circuit to the full workspace. See §5 for the new contract.
 - ✅ **Commit 3** (frontend): store rewritten to poll AI jobs via `pollAiJob` + `state.aiJobs[kind]`. New `<AiJobProgress>` component renders a stage-floor bar with EN/FR labels on AnalysisView, SmartRecapView, ContentRepurposingView. Cache hits short-circuit polling — the workspace is applied immediately. `runAnalysis` / `runDeepAnalysis` / `runSmartRecap` / `runContentRepurposing` keep the same public shape so views need no behaviour changes beyond rendering the new progress bar.
 
+**Phase 2 cleanup** (branch `feature/phase-2-cleanup`):
+
+- ✅ **Server-side AI-job dedupe**: rapid double-clicks on Generate no longer enqueue duplicate jobs. `_start_ai_job` now writes an in-flight marker to Redis (`stormiq:ai-job:in-flight:{kind}:{session_id}:{dimension}`, TTL 1h) before enqueuing. Subsequent calls within the marker's lifetime that find the underlying arq job still pending/running get the existing job_id back. Stale markers (arq says complete/error/not_found) are self-healing — the lookup clears them and falls through to enqueue fresh.
+- ✅ **Transcript view → progressRedis**: transcript polling now populates `state.aiJobs.transcript` from the `progressRedis` field on each poll response. All four transcript-loading panels (TranscriptView + AnalysisView + SmartRecapView + ContentRepurposingView) render `<AiJobProgress flow="transcript">` instead of just the legacy Gladia step message. Stage labels (fetching_recording / uploading_to_gladia / transcribing / post_processing / persisting / done) added to `AiJobProgress` in EN and FR.
+
 ### Then — Phase 2: Card registry refactor
 - Introduce a Python-side card registry under `livestorm_app/cards/single/`
 - Each card declares: `id`, `tab`, `order`, `title`, optional LLM prompt fragment, `build()`, `View` component reference

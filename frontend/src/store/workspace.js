@@ -33,13 +33,16 @@ const state = reactive({
     contentRepurposing: false,
     speakerLabels: false,
   },
-  // Live progress for in-flight AI jobs. Keyed by jobKind so each view
+  // Live progress for in-flight jobs. Keyed by jobKind so each view
   // can render its own bar without coupling to the others. Each entry:
   //   { jobId, jobStatus, progress: { stage, percent, label } | null,
   //     language?, tone?, error? }
   // Cleared to null when the job lands in the cache (the workspace
   // refresh replaces state.workspace and the view's "done" check fires).
+  // `transcript` slot mirrors the AI flows so all loading-state UIs use
+  // the same <AiJobProgress> component.
   aiJobs: {
+    transcript: null,
     overall_analysis: null,
     deep_analysis: null,
     smart_recap: null,
@@ -87,22 +90,36 @@ async function pollTranscriptJob(sessionId) {
     // (no jobStatus field), so we can use it directly.
     if (!status?.jobStatus) {
       state.transcriptJobProgress = null;
+      state.aiJobs.transcript = null;
       return status;
     }
+    // Legacy DB shape (Gladia step + message) — kept for the existing
+    // "Transcript still loading" copy in the AI views.
     if (status.progress) {
       state.transcriptJobProgress = status.progress;
     }
+    // New Redis stage-floor shape — feeds <AiJobProgress>.
+    if (status.progressRedis) {
+      state.aiJobs.transcript = {
+        jobId: status.jobId,
+        jobStatus: status.jobStatus,
+        progress: status.progressRedis,
+      };
+    }
     if (status.jobStatus === "completed") {
       state.transcriptJobProgress = null;
+      state.aiJobs.transcript = null;
       const cached = await api.getCachedSession(sessionId);
       if (cached) return cached;
     }
     if (status.jobStatus === "error") {
       state.transcriptJobProgress = null;
+      state.aiJobs.transcript = null;
       throw new Error(status.error || "Transcript generation failed.");
     }
   }
   state.transcriptJobProgress = null;
+  state.aiJobs.transcript = null;
   throw new Error("Transcript generation timed out. Please try refreshing the page later.");
 }
 

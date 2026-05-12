@@ -23,6 +23,8 @@ import logging
 import os
 from typing import Any, Optional, TypedDict
 
+import redis as redis_sync
+
 from arq import create_pool
 from arq.connections import ArqRedis, RedisSettings
 
@@ -216,3 +218,87 @@ AI_JOB_KINDS = frozenset({
     "smart_recap",
     "content_repurposing",
 })
+
+
+# ── In-flight job dedupe ───────────────────────────────────────────────────
+#
+# Server-side guard against rapid double-clicks on the Generate button.
+# Without this, each click enqueues a fresh job (worker logs after the
+# Phase 2 deploy showed 3 identical run_overall_analysis_job invocations
+# from a single page session — the frontend disable flag races the user).
+#
+# Key shape: stormiq:ai-job:in-flight:{kind}:{session_id}:{dimension}
+# Value:     the arq job_id
+# TTL:       1 hour — covers the longest plausible job runtime; arq's
+#            default keep_result is also 1 hour, so the two lifetimes are
+#            naturally aligned.
+#
+# Used by _start_ai_job in api_logic.py: before enqueuing, look up an
+# existing job id for the same (kind, session, dimension). If found AND
+# the arq job is still pending/running, return that job_id instead of
+# enqueuing a duplicate. The worker doesn't have to clean the key up
+# explicitly — the lookup path verifies arq state and self-heals on
+# stale keys.
+
+IN_FLIGHT_TTL_SECONDS = 60 * 60
+
+
+def _in_flight_key(kind: str, session_id: str, dimension: str) -> str:
+    safe_kind = str(kind or "").strip()
+    safe_session = str(session_id or "").strip()
+    safe_dim = str(dimension or "").strip() or "_"
+    return f"stormiq:ai-job:in-flight:{safe_kind}:{safe_session}:{safe_dim}"
+
+
+_sync_redis_client: Optional[redis_sync.Redis] = None
+
+
+def _get_sync_redis() -> redis_sync.Redis:
+    global _sync_redis_client
+    if _sync_redis_client is None:
+        _sync_redis_client = redis_sync.Redis.from_url(get_redis_url(), decode_responses=True)
+    return _sync_redis_client
+
+
+def get_in_flight_ai_job_id(kind: str, session_id: str, dimension: str) -> Optional[str]:
+    """Look up the in-flight arq job id for this (kind, session, dimension).
+
+    Returns None when there's no marker, the marker has expired, or Redis
+    is unreachable. Callers should treat any non-None return as "maybe
+    in flight" and verify via `read_job_status_sync` before reusing.
+    """
+    try:
+        value = _get_sync_redis().get(_in_flight_key(kind, session_id, dimension))
+        return str(value).strip() if value else None
+    except Exception:
+        logger.warning(
+            "get_in_flight_ai_job_id failed for %s/%s/%s", kind, session_id, dimension, exc_info=True,
+        )
+        return None
+
+
+def set_in_flight_ai_job_id(kind: str, session_id: str, dimension: str, job_id: str) -> None:
+    """Record an in-flight arq job. Overwrites any previous marker for the
+    same key (the new job has effectively superseded it)."""
+    try:
+        _get_sync_redis().set(
+            _in_flight_key(kind, session_id, dimension),
+            str(job_id).strip(),
+            ex=IN_FLIGHT_TTL_SECONDS,
+        )
+    except Exception:
+        logger.warning(
+            "set_in_flight_ai_job_id failed for %s/%s/%s", kind, session_id, dimension, exc_info=True,
+        )
+
+
+def clear_in_flight_ai_job_id(kind: str, session_id: str, dimension: str) -> None:
+    """Drop the in-flight marker. Called by callers that detect a stale
+    marker (arq says completed/error/not_found). Safe to call when the
+    key doesn't exist."""
+    try:
+        _get_sync_redis().delete(_in_flight_key(kind, session_id, dimension))
+    except Exception:
+        logger.warning(
+            "clear_in_flight_ai_job_id failed for %s/%s/%s", kind, session_id, dimension, exc_info=True,
+        )
