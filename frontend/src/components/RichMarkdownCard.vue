@@ -108,7 +108,7 @@ const renderedHtml = computed(() => {
 
   for (const rawLine of lines) {
     const line = rawLine.trim();
-    if (!line) {
+    if (!line || /^[-*_]{3,}$/.test(line)) {
       flushList();
       flushOrderedList();
       flushParagraph();

@@ -227,6 +227,23 @@ const parsedDeepSections = computed(() => {
 });
 
 const activeDeepSectionBody = computed(() => parsedDeepSections.value?.[activeDeepSection.value] || "");
+const parsedScores = computed(() => {
+  const body = parsedDeepSections.value?.session_scores || "";
+  const scores = [];
+  for (const line of body.split("\n")) {
+    const m = line.match(/^[-*•]?\s*\**([^:*\n]+?)\**\s*:\s*(\d+)\s*[—–-]+\s*(.+)$/);
+    if (!m) continue;
+    const value = Math.min(100, Math.max(0, parseInt(m[2], 10)));
+    scores.push({
+      name: m[1].trim(),
+      value,
+      rationale: m[3].trim(),
+      level: value >= 75 ? "good" : value >= 50 ? "medium" : "low",
+    });
+  }
+  return scores;
+});
+
 const deepTimelineRows = computed(() => state.workspace?.tables?.chatQuestionsTimeline || []);
 const transcriptSegmentRows = computed(() => state.workspace?.tables?.transcriptSegments || []);
 const deepReactionRows = computed(() => {
@@ -378,6 +395,21 @@ async function runDeepFor(language) {
           :body="activeDeepSectionBody"
           :empty-message="isFrenchUi ? 'Aucun moment clé disponible.' : 'No key moments available yet.'"
         />
+        <section v-else-if="activeDeepSection === 'session_scores'" class="panel score-cards-panel">
+          <p v-if="!parsedScores.length" class="score-cards-empty">{{ uiText.emptyDeep }}</p>
+          <div v-else class="score-cards">
+            <div v-for="score in parsedScores" :key="score.name" class="score-card" :data-level="score.level">
+              <div class="score-card-header">
+                <span class="score-card-name">{{ score.name }}</span>
+                <span class="score-card-value">{{ score.value }}</span>
+              </div>
+              <div class="score-bar-track">
+                <div class="score-bar-fill" :style="{ width: score.value + '%' }"></div>
+              </div>
+              <p class="score-card-rationale">{{ score.rationale }}</p>
+            </div>
+          </div>
+        </section>
         <RichMarkdownCard v-else :body="activeDeepSectionBody" :empty-message="uiText.emptyDeep" />
         <template v-if="hasDeepBody && activeDeepSection === 'cross_source_synthesis'">
           <ContentPaceAudienceActivityChartCard
@@ -425,3 +457,95 @@ async function runDeepFor(language) {
     </section>
   </section>
 </template>
+
+<style scoped>
+.score-cards-panel {
+  padding: var(--spacing-space-6);
+}
+
+.score-cards-empty {
+  color: var(--color-text-neutral-tertiary);
+  margin: 0;
+}
+
+.score-cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-space-5);
+}
+
+.score-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-space-2);
+}
+
+.score-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.score-card-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-neutral-base);
+}
+
+.score-card-value {
+  font-size: 14px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 10px;
+  border-radius: 99px;
+  min-width: 44px;
+  text-align: center;
+}
+
+[data-level="good"] .score-card-value {
+  background: var(--color-surface-success-alpha-200);
+  color: var(--color-text-success-base);
+}
+
+[data-level="medium"] .score-card-value {
+  background: var(--color-surface-warning-alpha-200);
+  color: var(--color-text-warning-base);
+}
+
+[data-level="low"] .score-card-value {
+  background: var(--color-surface-danger-alpha-200);
+  color: var(--color-text-danger-base);
+}
+
+.score-bar-track {
+  height: 6px;
+  border-radius: 99px;
+  background: var(--color-surface-neutral-alpha-200);
+  overflow: hidden;
+}
+
+.score-bar-fill {
+  height: 100%;
+  border-radius: 99px;
+  transition: width 0.4s ease;
+}
+
+[data-level="good"] .score-bar-fill {
+  background: var(--color-text-success-base);
+}
+
+[data-level="medium"] .score-bar-fill {
+  background: var(--color-text-warning-base);
+}
+
+[data-level="low"] .score-bar-fill {
+  background: var(--color-text-danger-base);
+}
+
+.score-card-rationale {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-neutral-secondary);
+  line-height: 18px;
+}
+</style>
