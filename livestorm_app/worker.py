@@ -242,55 +242,12 @@ async def run_transcription(
         await asyncio.sleep(2)
         clear_progress_sync("transcript", session_id)
         logger.info("[run_transcription] job_id=%s session_id=%s done", job_id, session_id)
-        # Auto-trigger the Professional Smart Recap so every fetched
-        # session has one in the cache without the user having to click
-        # Generate. The recap powers the workspace card cover-image
-        # logic downstream. Skip when a Professional recap is already
-        # cached (re-running would burn an OpenAI call for no benefit).
-        await _enqueue_default_smart_recap(ctx, session_id)
         return {"jobId": job_id, "status": "completed"}
     except Exception as exc:
         logger.exception("[run_transcription] job_id=%s session_id=%s failed", job_id, session_id)
         update_transcript_job_status(job_id, "error", error=str(exc))
         clear_progress_sync("transcript", session_id)
         raise
-
-
-async def _enqueue_default_smart_recap(ctx: Dict[str, Any], session_id: str) -> None:
-    """Fire-and-forget enqueue for the default Professional recap.
-
-    Safe to call from any successful transcription. Reads the cache
-    on a worker thread (db.py is sync psycopg) and skips when the
-    Professional tone is already present. Failures are logged and
-    swallowed — we don't want a recap-enqueue hiccup to roll back a
-    successful transcription.
-    """
-    try:
-        cached = await asyncio.to_thread(fetch_cached_session, "", session_id)
-        smart_bundle = (cached or {}).get("smart_recap_bundle") or {}
-        if isinstance(smart_bundle, dict) and str(smart_bundle.get("professional") or "").strip():
-            logger.info(
-                "[run_transcription] session_id=%s already has Professional recap; skipping auto-enqueue",
-                session_id,
-            )
-            return
-        redis_pool = ctx.get("redis") if isinstance(ctx, dict) else None
-        if redis_pool is None:
-            logger.warning(
-                "[run_transcription] session_id=%s ctx missing redis pool; cannot auto-enqueue recap",
-                session_id,
-            )
-            return
-        await redis_pool.enqueue_job("run_smart_recap_job", session_id, "professional")
-        logger.info(
-            "[run_transcription] session_id=%s auto-enqueued smart_recap professional",
-            session_id,
-        )
-    except Exception:
-        logger.exception(
-            "[run_transcription] session_id=%s failed to auto-enqueue smart_recap",
-            session_id,
-        )
 
 
 # ── AI flow jobs (overall / deep / smart recap / content repurposing) ──────

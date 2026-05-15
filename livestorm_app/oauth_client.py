@@ -28,6 +28,7 @@ from livestorm_app.db import (
 
 LIVESTORM_OAUTH_COOKIE = "livestorm_oauth_connection"
 LIVESTORM_OAUTH_HANDSHAKE_COOKIE = "livestorm_oauth_handshake"
+DEV_CONNECTION_ID = "dev-auto-login"
 
 
 def oauth_enabled() -> bool:
@@ -338,3 +339,36 @@ def get_connection_identity(connection: Optional[Dict[str, Any]]) -> Optional[Di
         "resourceType": str(profile.get("resource_type") or "").strip(),
         "userId": str(connection.get("user_id") or profile.get("user_id") or "").strip(),
     }
+
+
+def seed_dev_connection(api_key: str) -> str:
+    """Seed a stable dev OAuth connection from a raw Livestorm API key.
+
+    Hits /me with the key (Livestorm accepts raw API keys on this endpoint),
+    extracts the real user/org identity, and upserts it under the fixed
+    DEV_CONNECTION_ID so the connection survives server restarts.
+
+    Returns DEV_CONNECTION_ID so the caller can set the session cookie.
+    Only call this from a localhost-gated route.
+    """
+    me_response = requests.get(
+        LIVESTORM_OAUTH_ME_URL,
+        headers={"Authorization": api_key, "accept": "application/vnd.api+json"},
+        timeout=60,
+    )
+    me_response.raise_for_status()
+    profile = _extract_profile(me_response.json())
+    upsert_oauth_connection(
+        connection_id=DEV_CONNECTION_ID,
+        provider="livestorm",
+        user_id=profile["user_id"],
+        email=profile["email"],
+        organization_id=profile["organization_id"],
+        access_token=api_key,
+        refresh_token="",
+        token_type="Bearer",
+        scope="",
+        expires_at=None,
+        profile=profile,
+    )
+    return DEV_CONNECTION_ID

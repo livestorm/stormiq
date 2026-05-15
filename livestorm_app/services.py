@@ -4,6 +4,7 @@ import logging
 import math
 import re
 import sys
+import time
 from collections import Counter
 from io import BytesIO
 from pathlib import Path
@@ -3166,18 +3167,35 @@ def analyze_with_openai(
     if has_structured_context:
         messages.append({"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)})
 
-    resp = requests.post(
-        OPENAI_CHAT_COMPLETIONS_URL,
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json=_build_chat_completions_payload(
-            model=model,
-            messages=messages,
-            temperature=0.2,
-            max_tokens=max_tokens,
-        ),
-        timeout=120,
+    request_body = _build_chat_completions_payload(
+        model=model,
+        messages=messages,
+        temperature=0.2,
+        max_tokens=max_tokens,
     )
-    resp.raise_for_status()
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+
+    max_attempts = 3
+    for attempt in range(max_attempts):
+        resp = requests.post(
+            OPENAI_CHAT_COMPLETIONS_URL,
+            headers=headers,
+            json=request_body,
+            timeout=120,
+        )
+        if resp.status_code == 429 and attempt < max_attempts - 1:
+            try:
+                # Retry-After is seconds; cap at 30s so a bad header
+                # can't block the worker thread for minutes.
+                wait = min(float(resp.headers.get("Retry-After") or 0), 30.0) or (10.0 * (attempt + 1))
+            except (TypeError, ValueError):
+                wait = 10.0 * (attempt + 1)
+            logger.warning("OpenAI 429 on attempt %d/%d — waiting %.0fs", attempt + 1, max_attempts, wait)
+            time.sleep(wait)
+            continue
+        resp.raise_for_status()
+        break
+
     payload = resp.json()
     extracted_text = _extract_chat_completion_text(payload)
     return extracted_text if extracted_text else "No analysis text returned by model."

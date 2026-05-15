@@ -136,6 +136,14 @@ onMounted(async () => {
       window.location.replace("/single-analysis");
       return;
     }
+    // Local dev: LS_API_KEY is set but no OAuth session exists yet.
+    // Auto-seed the identity from /me so the user lands logged in
+    // without having to manually visit /api/dev/auto-login or go
+    // through an OAuth flow that redirects to production.
+    if (bootstrap?.auth?.allowLocalApiKeyFallback && !bootstrap?.auth?.connectedUser) {
+      window.location.replace("/api/dev/auto-login");
+      return;
+    }
   } catch (_error) {
     // Ignore bootstrap failures so manual entry still works.
   }

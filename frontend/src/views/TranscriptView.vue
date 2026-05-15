@@ -12,7 +12,7 @@ import TimelinePauseChartCard from "../components/charts/transcript/TimelinePaus
 import WordsOverTimeChartCard from "../components/charts/transcript/WordsOverTimeChartCard.vue";
 import { useWorkspace } from "../store/workspace";
 
-const { state, saveSpeakerLabels, isTranscriptUnavailable } = useWorkspace();
+const { state, saveSpeakerLabels, isTranscriptUnavailable, retryTranscript } = useWorkspace();
 const speakerNames = reactive({});
 const activeTab = ref("transcript");
 const showSpeakerEditor = ref(false);
@@ -571,6 +571,10 @@ const isTranscriptLoading = computed(
   () => Boolean(state.workspace) && state.loading.sessionFetch && !hasTranscriptData.value,
 );
 
+const isTranscriptNotStarted = computed(
+  () => Boolean(state.workspace) && !hasTranscriptData.value && !isTranscriptLoading.value && !isTranscriptUnavailable.value
+);
+
 watch(
   availableSubtitles,
   (subtitles) => {
@@ -986,6 +990,27 @@ watch(
     <section v-else-if="isTranscriptUnavailable" class="panel helper-panel">
       <h3 class="loading-title">Transcript unavailable for this session</h3>
       <p class="loading-copy">{{ state.transcriptUnavailableReason }}</p>
+      <button
+        class="primary"
+        :disabled="state.loading.sessionFetch"
+        @click="retryTranscript()"
+      >
+        {{ state.loading.sessionFetch ? "Retrying…" : "Retry Transcript" }}
+      </button>
+    </section>
+    <section v-else-if="isTranscriptNotStarted" class="panel helper-panel">
+      <h3 class="loading-title">No transcript yet for this session</h3>
+      <p class="loading-copy">
+        A video recording is required to generate a transcript. If this session has a replay,
+        click below to start transcription. Session Overview and Chat &amp; Questions remain available in the meantime.
+      </p>
+      <button
+        class="primary"
+        :disabled="state.loading.sessionFetch"
+        @click="retryTranscript()"
+      >
+        {{ state.loading.sessionFetch ? "Starting…" : "Generate Transcript" }}
+      </button>
     </section>
   </section>
 </template>

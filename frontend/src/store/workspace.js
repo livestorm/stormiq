@@ -563,6 +563,41 @@ async function runSmartRecap(tone) {
     );
     applyWorkspaceIfPresent(final);
   });
+  // Professional recap triggers cover image generation on the worker.
+  // Poll quietly in the background so the cover appears automatically
+  // in SessionHero and the card list without a manual refresh.
+  if (String(tone || "").toLowerCase() === "professional") {
+    pollForCoverImage(activeSessionId.value);
+  }
+}
+
+function pollForCoverImage(sessionId) {
+  const INTERVAL_MS = 10_000;
+  const TIMEOUT_MS = 3 * 60 * 1000;
+  const deadline = Date.now() + TIMEOUT_MS;
+
+  async function tick() {
+    if (Date.now() >= deadline) return;
+    try {
+      const cached = await api.getCachedSession(sessionId);
+      if (cached?.meta?.hasCoverImage) {
+        // Patch the live workspace so SessionHero re-renders immediately.
+        if (state.workspace?.sessionId === sessionId && state.workspace.meta) {
+          state.workspace.meta.hasCoverImage = true;
+          state.workspace.meta.coverImageGeneratedAt = cached.meta.coverImageGeneratedAt;
+          state.workspace.meta.coverImageMime = cached.meta.coverImageMime;
+        }
+        // Refresh the card list so the grid cover updates too.
+        loadWorkspaceSessions({ silent: true }).catch(() => {});
+        return;
+      }
+    } catch {
+      // Network hiccup — keep polling.
+    }
+    setTimeout(tick, INTERVAL_MS);
+  }
+
+  setTimeout(tick, INTERVAL_MS);
 }
 
 async function runContentRepurposing(outputLanguage = state.outputLanguage) {
@@ -628,6 +663,37 @@ async function loadSessionById(sessionId) {
       const cached = await api.getCachedSession(id);
       if (cached) {
         state.workspace = cached;
+        // If the cached workspace has no transcript, check whether a job
+        // is in-flight (resume polling) or errored (surface the reason).
+        // Without this, landing directly on /transcript with a cache-hit
+        // shows a completely blank view with no message or retry option.
+        const cachedHasTranscript =
+          Boolean(cached?.payloads?.transcript) ||
+          (cached?.tables?.transcriptSegments?.length > 0) ||
+          Boolean(String(cached?.text?.transcriptDisplay || "").trim());
+        if (!cachedHasTranscript) {
+          try {
+            const jobStatus = await api.getTranscriptJobStatus(id);
+            if (jobStatus?.jobStatus === "pending" || jobStatus?.jobStatus === "running") {
+              // Resume polling — loading.sessionFetch stays true while we wait.
+              try {
+                const transcriptData = await pollTranscriptJob(id);
+                if (transcriptData) state.workspace = transcriptData;
+              } catch (pollError) {
+                const message = pollError instanceof Error ? pollError.message : String(pollError);
+                state.transcriptUnavailableReason = getFriendlyTranscriptUnavailableMessage(message);
+              }
+            } else if (jobStatus?.jobStatus === "error") {
+              state.transcriptUnavailableReason = getFriendlyTranscriptUnavailableMessage(
+                jobStatus.error || "Transcript generation failed."
+              );
+            }
+            // not_found → transcript was never started → leave reason empty
+            // so the "Generate Transcript" panel renders in TranscriptView.
+          } catch {
+            // Job status check failed — silently leave reason empty.
+          }
+        }
         return cached;
       }
     } catch (error) {
@@ -665,6 +731,24 @@ async function loadSessionById(sessionId) {
   }
 }
 
+async function retryTranscript() {
+  const id = String(state.workspace?.sessionId || state.sessionId || "").trim();
+  if (!id) return;
+  return wrapCall("sessionFetch", async () => {
+    state.transcriptUnavailableReason = "";
+    state.error = "";
+    const transcriptResponse = await api.fetchSessionTranscript(id, {
+      apiKey: state.apiKey,
+      forceRefresh: true,
+    });
+    const transcriptData = transcriptResponse?.jobStatus
+      ? await pollTranscriptJob(id)
+      : transcriptResponse;
+    if (transcriptData) state.workspace = transcriptData;
+    state.transcriptUnavailableReason = "";
+  });
+}
+
 export function useWorkspace() {
   return {
     state,
@@ -680,6 +764,7 @@ export function useWorkspace() {
     loadWorkspaceSessions,
     loadSessionById,
     fetchSessionData,
+    retryTranscript,
     resetWorkspace,
     saveSpeakerLabels,
     runAnalysis,

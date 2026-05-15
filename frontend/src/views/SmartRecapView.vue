@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, ref } from "vue";
 import AiJobProgress from "../components/AiJobProgress.vue";
 import RichMarkdownCard from "../components/RichMarkdownCard.vue";
 import { api } from "../api";
@@ -58,34 +58,6 @@ const recapDescriptions = {
 const activeDescription = computed(() => recapDescriptions[activeTone.value] || "");
 const activeButtonLabel = "Generate";
 
-// Auto-generate the Professional recap when missing.
-//
-// The worker auto-enqueues a Professional recap after every successful
-// transcription, and the cached-workspace endpoint also catches up
-// missed cases. But neither populates state.aiJobs.smart_recap on the
-// frontend — so when the user lands here with an in-flight backend
-// job they'd otherwise see the static "Generate" button while the bar
-// is silent. Calling runSmartRecap('professional') here either hits
-// the backend dedupe and attaches to the running job, or starts a
-// fresh one. Polling kicks in either way and AiJobProgress takes over.
-//
-// Hype and Surprise stay opt-in — only Professional is the default.
-function maybeAutoGenerateProfessional() {
-  if (activeTone.value !== "professional") return;
-  if (hasActiveBody.value) return;
-  if (state.loading.smartRecap) return;
-  if (!state.workspace?.sessionId) return;
-  if (!hasTranscriptData.value) return;
-  runSmartRecap("professional").catch(() => {
-    // Errors surface via state.error.
-  });
-}
-
-onMounted(maybeAutoGenerateProfessional);
-watch(
-  () => [state.workspace?.sessionId, activeTone.value, hasActiveBody.value, hasTranscriptData.value],
-  () => maybeAutoGenerateProfessional(),
-);
 </script>
 
 <template>

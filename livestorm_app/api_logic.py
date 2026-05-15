@@ -274,43 +274,25 @@ def get_cached_workspace(session_id: str, *, organization_id: Optional[str] = No
     cached = fetch_cached_session("", session_id, organization_id=organization_id)
     if not isinstance(cached, dict):
         return None
-    # Opportunistically kick off the default Professional recap + cover
-    # image when they're missing. The worker auto-enqueue only fires
-    # after a fresh transcription — sessions already cached by a
-    # teammate (or fetched before the chain shipped) never trigger it.
-    # This catches them up the next time anyone opens the session.
+    # Backfill cover image when recap is present but image is missing.
+    # Smart Recap is on-demand only — this never auto-enqueues recap.
     _maybe_enqueue_default_outputs(cached, session_id)
     return _serialize_cached_session(session_id, cached)
 
 
 def _maybe_enqueue_default_outputs(cached: Dict[str, Any], session_id: str) -> None:
-    """Web-side fallback for the worker's auto-enqueue chain.
+    """Backfill cover image on cache-hit reads when recap is present but cover is missing.
 
-    The worker runs `_enqueue_default_smart_recap` after every successful
-    transcription, which in turn auto-enqueues the cover image once the
-    recap completes. That chain doesn't fire when a session is loaded
-    from cache (no transcription job runs) — common when a teammate has
-    already fetched the session, or when the row predates the auto-
-    enqueue logic. Calling this helper at cache-hit read time keeps the
-    Single Analysis grid "always has recap + cover" promise honoured
-    without surprising the user with a manual Generate button.
+    Smart Recap is now on-demand only — this helper no longer auto-enqueues
+    it. The cover image is still triggered automatically after the user
+    generates the Professional recap (via the worker's run_smart_recap_job
+    chain). This function handles the backfill case: sessions where the recap
+    already exists but the cover was never generated (e.g. pre-cover-image
+    rows, or worker failures on the image step).
 
-    Logic:
-      - Skip everything if there's no transcript yet (recap needs it).
-      - If Professional recap is missing AND no in-flight job exists,
-        enqueue `run_smart_recap_job` + record the in-flight marker.
-      - If recap exists but cover doesn't, enqueue `run_cover_image_job`
-        directly (cover_image_generation is idempotent — re-running with
-        an existing cover no-ops, so we don't need a dedupe marker).
-
-    Fire-and-forget. Failures logged and swallowed — must not break the
-    cached-workspace read path that callers rely on.
+    Fire-and-forget. Failures logged and swallowed.
     """
     if not isinstance(cached, dict):
-        return
-    if not cached.get("transcript_payload"):
-        # No transcript → no recap possible. Worker will start the chain
-        # when transcription completes.
         return
 
     sid = str(session_id or "").strip()
@@ -322,35 +304,9 @@ def _maybe_enqueue_default_outputs(cached: Dict[str, Any], session_id: str) -> N
         isinstance(smart_bundle, dict)
         and str(smart_bundle.get("professional") or "").strip() != ""
     )
-
     if not has_recap:
-        try:
-            existing = get_in_flight_ai_job_id("smart_recap", sid, "professional")
-            if existing:
-                status = read_job_status_sync(existing)
-                if status.get("jobStatus") in ("pending", "running"):
-                    return
-                # Stale marker — clear and re-enqueue.
-                clear_in_flight_ai_job_id("smart_recap", sid, "professional")
-            job_id = enqueue_job_sync("run_smart_recap_job", sid, "professional")
-            if job_id:
-                set_in_flight_ai_job_id("smart_recap", sid, "professional", job_id)
-                logger.info(
-                    "[get_cached_workspace] auto-enqueued smart_recap professional for session_id=%s",
-                    sid,
-                )
-        except Exception:
-            logger.warning(
-                "Failed to auto-enqueue smart_recap for %s", sid, exc_info=True,
-            )
-        # Cover follows recap via the worker chain — no need to enqueue
-        # it here yet.
         return
 
-    # Recap is present. Check for missing cover and trigger it directly.
-    # `has_cover_image` comes from the BYTEA IS NOT NULL projection in
-    # fetch_cached_session's SELECT; the bytes themselves stay out of
-    # the cache read.
     if not cached.get("has_cover_image"):
         try:
             job_id = enqueue_job_sync("run_cover_image_job", sid)
