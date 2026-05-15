@@ -16,5 +16,7 @@ Output:
 - Use exactly:
   1. `# Title`
   2. `# Description`
-- Keep the title punchy.
-- Keep the description concise, energetic, and highly readable.
+- Keep the title punchy and short (5–8 words max).
+- Keep the description to 3–5 short punchy lines or bullet points.
+- Do not use bold (`**`) on any paragraph or bullet text.
+- No long paragraphs. Each point should hit fast and move on.
