@@ -11,6 +11,7 @@ import SmartRecapView from "./views/SmartRecapView.vue";
 import ContentRepurposingView from "./views/ContentRepurposingView.vue";
 import AuthCallbackView from "./views/AuthCallbackView.vue";
 import BetaNoticeView from "./views/BetaNoticeView.vue";
+import AdminView from "./views/AdminView.vue";
 import { useWorkspace } from "./store/workspace";
 
 // Phase 4 routing.
@@ -88,6 +89,7 @@ const routes = [
   { path: "/home", component: HomeView },           // available but not linked
   { path: "/beta-info", component: BetaNoticeView },
   { path: "/auth/callback", component: AuthCallbackView },
+  { path: "/admin", component: AdminView },
 ];
 
 export default createRouter({

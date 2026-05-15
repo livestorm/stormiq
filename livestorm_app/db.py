@@ -239,6 +239,16 @@ def ensure_database_schema() -> None:
                 ON transcript_jobs (status, updated_at)
                 """
             )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS admin_users (
+                    email TEXT PRIMARY KEY,
+                    user_id TEXT,
+                    promoted_by_email TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
         connection.commit()
 
 
@@ -772,3 +782,165 @@ def delete_oauth_connection(connection_id: str) -> None:
             connection.commit()
     except Exception:
         logger.exception("Failed to delete oauth connection for connection_id=%s", str(connection_id).strip())
+
+
+# ── Admin CRUD ──────────────────────────────────────────────────────────────
+
+def is_admin_email(email: str) -> bool:
+    email = str(email or "").strip().lower()
+    if not email or not database_enabled():
+        return False
+    try:
+        with get_db_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT 1 FROM admin_users WHERE LOWER(email) = %s LIMIT 1",
+                    (email,),
+                )
+                return cursor.fetchone() is not None
+    except Exception:
+        logger.exception("Failed to check admin status for email=%s", email)
+        return False
+
+
+def promote_admin(email: str, user_id: str, promoted_by_email: str) -> None:
+    if not database_enabled():
+        return
+    try:
+        with get_db_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO admin_users (email, user_id, promoted_by_email)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (email) DO UPDATE SET
+                        user_id = EXCLUDED.user_id,
+                        promoted_by_email = EXCLUDED.promoted_by_email
+                    """,
+                    (str(email).strip().lower(), str(user_id or "").strip(), str(promoted_by_email or "").strip().lower()),
+                )
+            connection.commit()
+    except Exception:
+        logger.exception("Failed to promote admin email=%s", email)
+
+
+def demote_admin(email: str) -> None:
+    if not database_enabled():
+        return
+    try:
+        with get_db_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "DELETE FROM admin_users WHERE LOWER(email) = %s",
+                    (str(email).strip().lower(),),
+                )
+            connection.commit()
+    except Exception:
+        logger.exception("Failed to demote admin email=%s", email)
+
+
+def admin_list_users() -> List[Dict[str, Any]]:
+    if not database_enabled():
+        return []
+    try:
+        with get_db_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT DISTINCT ON (oc.user_id)
+                        oc.user_id,
+                        oc.email,
+                        oc.organization_id,
+                        oc.created_at,
+                        oc.updated_at,
+                        (au.email IS NOT NULL) AS is_admin
+                    FROM oauth_connections oc
+                    LEFT JOIN admin_users au ON LOWER(oc.email) = au.email
+                    WHERE oc.provider = 'livestorm' AND oc.user_id IS NOT NULL
+                    ORDER BY oc.user_id, oc.updated_at DESC
+                    """
+                )
+                users = [dict(row) for row in cursor.fetchall()]
+                # Attach session stats per organization
+                cursor.execute(
+                    """
+                    SELECT
+                        organization_id,
+                        COUNT(*) AS session_count,
+                        COUNT(CASE WHEN transcript_payload IS NOT NULL THEN 1 END) AS transcript_count,
+                        COUNT(CASE WHEN analysis_bundle IS NOT NULL THEN 1 END) AS overall_count,
+                        COUNT(CASE WHEN deep_analysis_bundle IS NOT NULL THEN 1 END) AS deep_count,
+                        COUNT(CASE WHEN smart_recap_bundle IS NOT NULL THEN 1 END) AS recap_count,
+                        COUNT(CASE WHEN content_repurpose_bundle IS NOT NULL THEN 1 END) AS repurposing_count
+                    FROM session_cache
+                    WHERE organization_id IS NOT NULL
+                    GROUP BY organization_id
+                    """
+                )
+                stats_by_org: Dict[str, Any] = {row["organization_id"]: dict(row) for row in cursor.fetchall()}
+                for user in users:
+                    org_id = user.get("organization_id") or ""
+                    stats = stats_by_org.get(org_id, {})
+                    user["session_count"] = stats.get("session_count", 0)
+                    user["transcript_count"] = stats.get("transcript_count", 0)
+                    user["overall_count"] = stats.get("overall_count", 0)
+                    user["deep_count"] = stats.get("deep_count", 0)
+                    user["recap_count"] = stats.get("recap_count", 0)
+                    user["repurposing_count"] = stats.get("repurposing_count", 0)
+        return users
+    except Exception:
+        logger.exception("Failed to list admin users")
+        return []
+
+
+def admin_list_sessions(limit: int = 500) -> List[Dict[str, Any]]:
+    if not database_enabled():
+        return []
+    try:
+        with get_db_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT
+                        session_id,
+                        organization_id,
+                        created_by_email,
+                        created_by_name,
+                        created_at,
+                        updated_at,
+                        (transcript_payload IS NOT NULL) AS has_transcript,
+                        (analysis_bundle IS NOT NULL) AS has_overall,
+                        (deep_analysis_bundle IS NOT NULL) AS has_deep,
+                        (smart_recap_bundle IS NOT NULL) AS has_recap,
+                        (content_repurpose_bundle IS NOT NULL) AS has_repurposing,
+                        (cover_image_bytes IS NOT NULL) AS has_cover,
+                        event_payload->'data'->'attributes'->>'title' AS event_title,
+                        session_payload->'data'->'attributes'->>'name' AS session_name
+                    FROM session_cache
+                    ORDER BY updated_at DESC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+                return [dict(row) for row in cursor.fetchall()]
+    except Exception:
+        logger.exception("Failed to list sessions for admin")
+        return []
+
+
+def admin_delete_session(session_id: str) -> bool:
+    if not database_enabled() or not str(session_id or "").strip():
+        return False
+    try:
+        with get_db_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "DELETE FROM session_cache WHERE session_id = %s",
+                    (str(session_id).strip(),),
+                )
+                deleted = cursor.rowcount > 0
+            connection.commit()
+        return deleted
+    except Exception:
+        logger.exception("Failed to delete session session_id=%s", session_id)
+        return False

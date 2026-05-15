@@ -181,4 +181,27 @@ export const api = {
     });
     return `/api/sessions/${sessionId}/content-repurposing-pdf?${params.toString()}`;
   },
+
+  // ── Admin ─────────────────────────────────────────────────────────────────
+  adminGetUsers() {
+    return request("/api/admin/users");
+  },
+  adminGetSessions() {
+    return request("/api/admin/sessions");
+  },
+  adminPromoteUser(email, user_id = "") {
+    return request("/api/admin/users/promote", {
+      method: "POST",
+      body: JSON.stringify({ email, user_id }),
+    });
+  },
+  adminDemoteUser(email) {
+    return request("/api/admin/users/demote", {
+      method: "POST",
+      body: JSON.stringify({ email, user_id: "" }),
+    });
+  },
+  adminDeleteSession(sessionId) {
+    return request(`/api/admin/sessions/${sessionId}`, { method: "DELETE" });
+  },
 };

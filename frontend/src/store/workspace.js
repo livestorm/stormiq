@@ -150,6 +150,7 @@ function applyBootstrap(payload) {
   state.auth.oauthEnabled = Boolean(payload?.auth?.oauthEnabled) || Boolean(connectedUser);
   state.auth.connectedUser = connectedUser;
   state.auth.allowLocalApiKeyFallback = allowLocalApiKeyFallback;
+  state.auth.isAdmin = Boolean(payload?.auth?.isAdmin);
   if (defaultApiKey && (!state.apiKey || allowLocalApiKeyFallback)) {
     state.apiKey = defaultApiKey;
   }

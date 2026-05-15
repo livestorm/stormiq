@@ -35,7 +35,16 @@ from livestorm_app.api_logic import (
     start_smart_recap,
 )
 from livestorm_app.config import ENV_PATH, get_runtime_secret, load_env_file
-from livestorm_app.db import ensure_database_schema, fetch_cover_image
+from livestorm_app.db import (
+    admin_delete_session,
+    admin_list_sessions,
+    admin_list_users,
+    demote_admin,
+    ensure_database_schema,
+    fetch_cover_image,
+    is_admin_email,
+    promote_admin,
+)
 from livestorm_app.oauth_client import (
     LIVESTORM_OAUTH_COOKIE,
     LIVESTORM_OAUTH_HANDSHAKE_COOKIE,
@@ -186,6 +195,38 @@ def _resolve_livestorm_auth(raw_api_key: str, request: Request) -> str:
     return f"{token_type} {access_token}"
 
 
+def _resolve_current_connection(request: Request) -> Optional[Dict[str, Any]]:
+    connection_id = str(request.cookies.get(LIVESTORM_OAUTH_COOKIE) or "").strip()
+    if not connection_id:
+        return None
+    connection = refresh_connection_if_needed(connection_id)
+    return connection if isinstance(connection, dict) else None
+
+
+def _is_admin_request(request: Request) -> bool:
+    connection = _resolve_current_connection(request)
+    if not connection:
+        return False
+    email = str(connection.get("email") or "").strip().lower()
+    if not email:
+        return False
+    env_admins = [e.strip().lower() for e in get_runtime_secret("ADMIN_EMAILS", "").split(",") if e.strip()]
+    if email in env_admins:
+        return True
+    return is_admin_email(email)
+
+
+def _check_admin_or_raise(request: Request) -> Dict[str, Any]:
+    connection = _resolve_current_connection(request)
+    if not connection:
+        raise HTTPException(status_code=401, detail={"resource": "Admin", "message": "Not authenticated."})
+    email = str(connection.get("email") or "").strip().lower()
+    env_admins = [e.strip().lower() for e in get_runtime_secret("ADMIN_EMAILS", "").split(",") if e.strip()]
+    if email not in env_admins and not is_admin_email(email):
+        raise HTTPException(status_code=403, detail={"resource": "Admin", "message": "Admin access required."})
+    return connection
+
+
 def _get_bootstrap_auth(request: Request) -> Dict[str, Any]:
     connection_id = str(request.cookies.get(LIVESTORM_OAUTH_COOKIE) or "").strip()
     connection = refresh_connection_if_needed(connection_id) if connection_id else None
@@ -193,6 +234,7 @@ def _get_bootstrap_auth(request: Request) -> Dict[str, Any]:
         "oauthEnabled": oauth_enabled(),
         "connectedUser": get_connection_identity(connection),
         "allowLocalApiKeyFallback": _allow_local_api_key_fallback(request),
+        "isAdmin": _is_admin_request(request),
     }
 
 
@@ -241,6 +283,60 @@ def bootstrap_defaults(request: Request) -> Dict[str, Any]:
         },
         "auth": auth,
     }
+
+
+class AdminPromoteRequest(BaseModel):
+    email: str
+    user_id: str = ""
+
+
+@app.get("/api/admin/check")
+def admin_check(request: Request) -> Dict[str, Any]:
+    connection = _check_admin_or_raise(request)
+    return {"isAdmin": True, "email": connection.get("email", "")}
+
+
+@app.get("/api/admin/users")
+def admin_get_users(request: Request) -> Dict[str, Any]:
+    _check_admin_or_raise(request)
+    return {"users": admin_list_users()}
+
+
+@app.post("/api/admin/users/promote")
+def admin_promote_user(body: AdminPromoteRequest, request: Request) -> Dict[str, Any]:
+    actor = _check_admin_or_raise(request)
+    actor_email = str(actor.get("email") or "").strip()
+    promote_admin(body.email.strip(), body.user_id.strip(), actor_email)
+    return {"ok": True}
+
+
+@app.post("/api/admin/users/demote")
+def admin_demote_user(body: AdminPromoteRequest, request: Request) -> Dict[str, Any]:
+    actor = _check_admin_or_raise(request)
+    actor_email = str(actor.get("email") or "").strip().lower()
+    target_email = str(body.email or "").strip().lower()
+    env_admins = [e.strip().lower() for e in get_runtime_secret("ADMIN_EMAILS", "").split(",") if e.strip()]
+    if target_email in env_admins:
+        raise HTTPException(status_code=400, detail={"resource": "Admin", "message": "Cannot demote a bootstrap admin set via ADMIN_EMAILS env var."})
+    if target_email == actor_email:
+        raise HTTPException(status_code=400, detail={"resource": "Admin", "message": "You cannot demote yourself."})
+    demote_admin(target_email)
+    return {"ok": True}
+
+
+@app.get("/api/admin/sessions")
+def admin_get_sessions(request: Request) -> Dict[str, Any]:
+    _check_admin_or_raise(request)
+    return {"sessions": admin_list_sessions()}
+
+
+@app.delete("/api/admin/sessions/{session_id}")
+def admin_remove_session(session_id: str, request: Request) -> Dict[str, Any]:
+    _check_admin_or_raise(request)
+    deleted = admin_delete_session(session_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail={"resource": "Session", "message": f"Session {session_id} not found."})
+    return {"ok": True, "sessionId": session_id}
 
 
 @app.get("/api/auth/livestorm/start")

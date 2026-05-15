@@ -272,6 +272,17 @@ function toggleSidebar() {
           </RouterLink>
         </nav>
 
+        <!-- Admin link — only visible to admin users -->
+        <nav v-if="state.auth?.isAdmin" class="sidebar-admin-nav" aria-label="Admin">
+          <RouterLink
+            to="/admin"
+            class="sidebar-nav-item sidebar-admin-item"
+            :class="{ 'sidebar-nav-item-active': route.path === '/admin' }"
+          >
+            <span class="sidebar-nav-label">Admin</span>
+          </RouterLink>
+        </nav>
+
         <!-- Bottom block: auth + beta notice live together in a footer
              so they don't drift apart visually. Without the wrapper,
              `margin-top: auto` only pinned one of them and the other
@@ -438,6 +449,18 @@ function toggleSidebar() {
 .sidebar-subnav-item.disabled {
   opacity: 0.45;
   pointer-events: none;
+}
+
+.sidebar-admin-nav {
+  margin-top: 12px;
+  padding: 8px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.sidebar-admin-item {
+  font-size: 13px;
+  opacity: 0.8;
+  letter-spacing: 0.02em;
 }
 
 .sidebar-footer {
