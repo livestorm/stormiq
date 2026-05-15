@@ -21,15 +21,16 @@ ANTHROPIC_API_VERSION = "2023-06-01"
 DEFAULT_CLAUDE_MODEL = "claude-haiku-4-5-20251001"
 SMART_RECAP_CLAUDE_MODEL = "claude-sonnet-4-6"
 
-# Cover image generation (Phase 4 follow-up). The cover is built from
-# the session's Professional Smart Recap and rendered with the OpenAI
-# Images API. Defaults to gpt-image-1 at 1536x1024 (closest wide
-# format the model offers — almost 16:9) and high quality. Override
-# via env if budget pressure changes the calculus.
+# Cover image generation. The cover is built from the session's
+# Professional Smart Recap and rendered with the OpenAI Images API.
+# All three parameters can be overridden via env vars:
+#   IMAGE_MODEL   — e.g. gpt-image-1, gpt-image-2 (default: gpt-image-2)
+#   IMAGE_SIZE    — e.g. 1536x1024, 1024x1024      (default: 1536x1024)
+#   IMAGE_QUALITY — e.g. high, medium, low          (default: high)
 OPENAI_IMAGES_URL = "https://api.openai.com/v1/images/generations"
-COVER_IMAGE_MODEL = "gpt-image-1"
-COVER_IMAGE_SIZE = "1536x1024"
-COVER_IMAGE_QUALITY = "high"
+COVER_IMAGE_MODEL = os.getenv("IMAGE_MODEL", "gpt-image-2")
+COVER_IMAGE_SIZE = os.getenv("IMAGE_SIZE", "1536x1024")
+COVER_IMAGE_QUALITY = os.getenv("IMAGE_QUALITY", "high")
 
 PROMPTS_DIR = Path("prompts")
 ANALYSIS_BASE_PROMPT_PATH = PROMPTS_DIR / "analysis_base_prompt.txt"
