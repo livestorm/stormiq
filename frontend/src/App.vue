@@ -248,6 +248,14 @@ function toggleSidebar() {
           >
             <span class="sidebar-nav-label">{{ item.label }}</span>
           </RouterLink>
+          <RouterLink
+            v-if="state.auth?.isAdmin"
+            to="/admin"
+            class="sidebar-nav-item sidebar-admin-item"
+            :class="{ 'sidebar-nav-item-active': route.path === '/admin' }"
+          >
+            <span class="sidebar-nav-label">Admin</span>
+          </RouterLink>
         </nav>
 
         <!-- Per-session sub-nav. Visible only when on a session detail
@@ -269,17 +277,6 @@ function toggleSidebar() {
             <span v-if="tabMeta(tab).loading" class="top-nav-status top-nav-status-loading" aria-hidden="true"></span>
             <span v-else-if="tabMeta(tab).unavailable" class="top-nav-status top-nav-status-unavailable" aria-hidden="true"></span>
             <span v-else-if="tabMeta(tab).ready" class="top-nav-status top-nav-status-ready" aria-hidden="true"></span>
-          </RouterLink>
-        </nav>
-
-        <!-- Admin link — only visible to admin users -->
-        <nav v-if="state.auth?.isAdmin" class="sidebar-admin-nav" aria-label="Admin">
-          <RouterLink
-            to="/admin"
-            class="sidebar-nav-item sidebar-admin-item"
-            :class="{ 'sidebar-nav-item-active': route.path === '/admin' }"
-          >
-            <span class="sidebar-nav-label">Admin</span>
           </RouterLink>
         </nav>
 
@@ -451,16 +448,9 @@ function toggleSidebar() {
   pointer-events: none;
 }
 
-.sidebar-admin-nav {
-  margin-top: 12px;
-  padding: 8px 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-}
-
 .sidebar-admin-item {
+  opacity: 0.75;
   font-size: 13px;
-  opacity: 0.8;
-  letter-spacing: 0.02em;
 }
 
 .sidebar-footer {

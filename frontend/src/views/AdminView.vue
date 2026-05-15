@@ -555,6 +555,10 @@ onMounted(() => {
 </template>
 
 <style scoped>
+/* ── Dark-theme palette ───────────────────────────────────────────────────── */
+/* All colors are explicit dark-mode values — the main layout uses
+   data-colors-semantic="dark" so CSS fallback light values would be wrong. */
+
 .admin-view {
   padding: 32px 40px;
   max-width: 1200px;
@@ -569,27 +573,27 @@ onMounted(() => {
   font-size: 22px;
   font-weight: 700;
   margin: 0 0 4px;
-  color: var(--color-text-primary, #1a1a2e);
+  color: rgba(255, 255, 255, 0.92);
 }
 
 .admin-subtitle {
   font-size: 14px;
-  color: var(--color-text-secondary, #666);
+  color: rgba(255, 255, 255, 0.5);
   margin: 0;
 }
 
 .admin-denied {
   padding: 40px;
   text-align: center;
-  color: var(--color-text-secondary, #666);
+  color: rgba(255, 255, 255, 0.5);
 }
 
+/* ── Tabs ── */
 .admin-tabs {
   display: flex;
   gap: 4px;
   margin-bottom: 24px;
-  border-bottom: 1px solid var(--color-border, #e5e7eb);
-  padding-bottom: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .admin-tab {
@@ -600,20 +604,19 @@ onMounted(() => {
   border: none;
   border-bottom: 2px solid transparent;
   cursor: pointer;
-  color: var(--color-text-secondary, #666);
+  color: rgba(255, 255, 255, 0.5);
   transition: color 120ms, border-color 120ms;
   margin-bottom: -1px;
 }
 
-.admin-tab:hover {
-  color: var(--color-text-primary, #1a1a2e);
-}
+.admin-tab:hover { color: rgba(255, 255, 255, 0.85); }
 
 .admin-tab.active {
-  color: #0b42c3;
-  border-bottom-color: #0b42c3;
+  color: #5b8af7;
+  border-bottom-color: #5b8af7;
 }
 
+/* ── Sections ── */
 .admin-section {
   display: flex;
   flex-direction: column;
@@ -624,11 +627,13 @@ onMounted(() => {
   font-size: 15px;
   font-weight: 600;
   margin: 0 0 12px;
+  color: rgba(255, 255, 255, 0.85);
 }
 
+/* ── Promote form ── */
 .admin-promote-form {
-  background: var(--color-surface, #f9fafb);
-  border: 1px solid var(--color-border, #e5e7eb);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 10px;
   padding: 20px;
 }
@@ -644,18 +649,22 @@ onMounted(() => {
   flex: 1;
   min-width: 200px;
   padding: 8px 12px;
-  border: 1px solid var(--color-border, #d1d5db);
+  border: 1px solid rgba(255, 255, 255, 0.15);
   border-radius: 6px;
   font-size: 14px;
   outline: none;
-  background: #fff;
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(255, 255, 255, 0.9);
 }
+
+.admin-input::placeholder { color: rgba(255, 255, 255, 0.3); }
 
 .admin-input:focus {
-  border-color: #0b42c3;
-  box-shadow: 0 0 0 2px rgba(11, 66, 195, 0.12);
+  border-color: #5b8af7;
+  box-shadow: 0 0 0 2px rgba(91, 138, 247, 0.2);
 }
 
+/* ── Toolbar ── */
 .admin-toolbar {
   display: flex;
   align-items: center;
@@ -668,27 +677,31 @@ onMounted(() => {
   min-width: 180px;
   max-width: 360px;
   padding: 8px 12px;
-  border: 1px solid var(--color-border, #d1d5db);
+  border: 1px solid rgba(255, 255, 255, 0.15);
   border-radius: 6px;
   font-size: 14px;
   outline: none;
-  background: #fff;
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(255, 255, 255, 0.9);
 }
 
+.admin-search::placeholder { color: rgba(255, 255, 255, 0.3); }
+
 .admin-search:focus {
-  border-color: #0b42c3;
-  box-shadow: 0 0 0 2px rgba(11, 66, 195, 0.12);
+  border-color: #5b8af7;
+  box-shadow: 0 0 0 2px rgba(91, 138, 247, 0.2);
 }
 
 .admin-count {
   font-size: 13px;
-  color: var(--color-text-secondary, #888);
+  color: rgba(255, 255, 255, 0.4);
   margin-left: auto;
 }
 
+/* ── Table ── */
 .admin-table-wrap {
   overflow-x: auto;
-  border: 1px solid var(--color-border, #e5e7eb);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 10px;
 }
 
@@ -701,39 +714,33 @@ onMounted(() => {
 .admin-table th {
   text-align: left;
   padding: 10px 14px;
-  background: var(--color-surface, #f9fafb);
-  color: var(--color-text-secondary, #888);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.45);
   font-weight: 600;
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  border-bottom: 1px solid var(--color-border, #e5e7eb);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   white-space: nowrap;
 }
 
 .admin-table td {
   padding: 10px 14px;
-  border-bottom: 1px solid var(--color-border, #f0f0f0);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   vertical-align: middle;
-  color: var(--color-text-primary, #1a1a2e);
+  color: rgba(255, 255, 255, 0.82);
 }
 
-.admin-table tr:last-child td {
-  border-bottom: none;
-}
+.admin-table tr:last-child td { border-bottom: none; }
 
-.admin-table tr:hover td {
-  background: var(--color-surface, #f9fafb);
-}
+.admin-table tr:hover td { background: rgba(255, 255, 255, 0.03); }
 
-.admin-table tr.row-deleting td {
-  opacity: 0.4;
-}
+.admin-table tr.row-deleting td { opacity: 0.35; }
 
 .cell-id {
   font-family: monospace;
   font-size: 12px;
-  color: var(--color-text-secondary, #666);
+  color: rgba(255, 255, 255, 0.45);
   max-width: 180px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -749,22 +756,19 @@ onMounted(() => {
 
 .cell-date {
   white-space: nowrap;
-  color: var(--color-text-secondary, #666);
+  color: rgba(255, 255, 255, 0.45);
 }
 
-.cell-num {
-  text-align: right;
-}
+.cell-num { text-align: right; }
 
 .session-link {
-  color: #0b42c3;
+  color: #5b8af7;
   text-decoration: none;
 }
 
-.session-link:hover {
-  text-decoration: underline;
-}
+.session-link:hover { text-decoration: underline; }
 
+/* ── Content badges ── */
 .content-flags {
   display: flex;
   flex-wrap: wrap;
@@ -781,25 +785,26 @@ onMounted(() => {
 }
 
 .badge-admin {
-  background: rgba(11, 66, 195, 0.12);
-  color: #0b42c3;
+  background: rgba(91, 138, 247, 0.2);
+  color: #7da4f9;
 }
 
 .badge-user {
-  background: rgba(0, 0, 0, 0.05);
-  color: #666;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.5);
 }
 
 .badge-content {
-  background: rgba(34, 197, 94, 0.12);
-  color: #15803d;
+  background: rgba(34, 197, 94, 0.18);
+  color: #4ade80;
 }
 
 .badge-empty {
-  background: rgba(0, 0, 0, 0.05);
-  color: #999;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.35);
 }
 
+/* ── Action buttons ── */
 .delete-cell {
   display: flex;
   gap: 6px;
@@ -819,68 +824,39 @@ onMounted(() => {
   white-space: nowrap;
 }
 
-.admin-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
+.admin-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-.admin-btn.primary {
-  background: #0b42c3;
-  color: #fff;
-}
-
-.admin-btn.primary:hover:not(:disabled) {
-  background: #0936a8;
-}
+.admin-btn.primary { background: #0b42c3; color: #fff; }
+.admin-btn.primary:hover:not(:disabled) { background: #0936a8; }
 
 .admin-btn.secondary {
-  background: var(--color-surface, #f0f0f0);
-  color: var(--color-text-primary, #333);
-  border: 1px solid var(--color-border, #d1d5db);
+  background: rgba(255, 255, 255, 0.09);
+  color: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.14);
 }
+.admin-btn.secondary:hover:not(:disabled) { background: rgba(255, 255, 255, 0.14); }
 
-.admin-btn.secondary:hover:not(:disabled) {
-  background: #e5e7eb;
-}
+.admin-btn.danger { background: #ef4444; color: #fff; }
+.admin-btn.danger:hover:not(:disabled) { background: #dc2626; }
 
-.admin-btn.danger {
-  background: #ef4444;
-  color: #fff;
-}
+.admin-btn.small { padding: 5px 10px; font-size: 12px; }
 
-.admin-btn.danger:hover:not(:disabled) {
-  background: #dc2626;
-}
-
-.admin-btn.small {
-  padding: 5px 10px;
-  font-size: 12px;
-}
-
+/* ── States ── */
 .admin-loading,
 .admin-empty {
   padding: 40px;
   text-align: center;
-  color: var(--color-text-secondary, #888);
+  color: rgba(255, 255, 255, 0.4);
   font-size: 14px;
 }
 
-.admin-error {
-  color: #dc2626;
-  font-size: 13px;
-  margin: 0;
-}
-
-.admin-success {
-  color: #15803d;
-  font-size: 13px;
-  margin: 0;
-}
+.admin-error { color: #f87171; font-size: 13px; margin: 0; }
+.admin-success { color: #4ade80; font-size: 13px; margin: 0; }
 
 /* ── Models tab ── */
 .model-card {
-  background: var(--color-surface, #f9fafb);
-  border: 1px solid var(--color-border, #e5e7eb);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 10px;
   padding: 20px 24px;
   display: flex;
@@ -897,19 +873,21 @@ onMounted(() => {
 .model-card-title {
   font-size: 15px;
   font-weight: 600;
-  color: var(--color-text-primary, #1a1a2e);
+  color: rgba(255, 255, 255, 0.9);
 }
 
 .model-card-desc {
   font-size: 13px;
-  color: var(--color-text-secondary, #666);
+  color: rgba(255, 255, 255, 0.5);
 }
 
 .model-card-current {
   font-size: 13px;
-  color: var(--color-text-secondary, #888);
+  color: rgba(255, 255, 255, 0.45);
   margin: 0;
 }
+
+.model-card-current strong { color: rgba(255, 255, 255, 0.75); }
 
 .model-options {
   display: flex;
@@ -924,8 +902,8 @@ onMounted(() => {
   gap: 2px;
   padding: 12px 16px;
   border-radius: 8px;
-  border: 2px solid var(--color-border, #e5e7eb);
-  background: #fff;
+  border: 2px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
   cursor: pointer;
   transition: border-color 120ms, background 120ms;
   min-width: 140px;
@@ -933,29 +911,26 @@ onMounted(() => {
 }
 
 .model-option:hover:not(:disabled) {
-  border-color: #0b42c3;
-  background: rgba(11, 66, 195, 0.04);
+  border-color: #5b8af7;
+  background: rgba(91, 138, 247, 0.08);
 }
 
 .model-option.selected {
-  border-color: #0b42c3;
-  background: rgba(11, 66, 195, 0.08);
+  border-color: #5b8af7;
+  background: rgba(91, 138, 247, 0.14);
 }
 
-.model-option:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
+.model-option:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .model-option-name {
   font-size: 14px;
   font-weight: 600;
-  color: var(--color-text-primary, #1a1a2e);
+  color: rgba(255, 255, 255, 0.88);
 }
 
 .model-option-hint {
   font-size: 12px;
-  color: var(--color-text-secondary, #888);
+  color: rgba(255, 255, 255, 0.45);
 }
 
 .model-select-row {
@@ -966,28 +941,31 @@ onMounted(() => {
 
 .model-select {
   padding: 8px 12px;
-  border: 1px solid var(--color-border, #d1d5db);
+  border: 1px solid rgba(255, 255, 255, 0.15);
   border-radius: 6px;
   font-size: 14px;
-  background: #fff;
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(255, 255, 255, 0.88);
   outline: none;
   min-width: 280px;
   cursor: pointer;
 }
 
-.model-select:focus {
-  border-color: #0b42c3;
-  box-shadow: 0 0 0 2px rgba(11, 66, 195, 0.12);
+.model-select option {
+  background: #1e2235;
+  color: rgba(255, 255, 255, 0.88);
 }
 
-.model-select:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.model-select:focus {
+  border-color: #5b8af7;
+  box-shadow: 0 0 0 2px rgba(91, 138, 247, 0.2);
 }
+
+.model-select:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .saving-indicator {
   font-size: 12px;
-  color: #0b42c3;
+  color: #5b8af7;
   font-style: italic;
 }
 </style>
