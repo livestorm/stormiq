@@ -1,6 +1,7 @@
-Create a wide 3:2 cover image for an executive weekly-update or
-internal-presentation slide. Calm, premium, minimalistic corporate
-aesthetic.
+Create a wide 3:2 cover image for a session recap cover. The session
+could be a webinar, training, product demo, marketing event, or internal
+meeting — infer the appropriate visual tone from the title and content.
+Calm, premium, minimalistic aesthetic that fits the session's context.
 
 Main title (RENDER THIS TEXT clearly and legibly on the cover):
 {title}
