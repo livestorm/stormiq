@@ -658,6 +658,13 @@ async function loadSessionById(sessionId) {
   // toggle it again, which is harmless.
   state.loading.sessionFetch = true;
   state.sessionId = id;
+  // Clear stale workspace immediately so views never render a different
+  // session's data while the new one is loading.
+  if (state.workspace && state.workspace.sessionId !== id) {
+    state.workspace = null;
+    state.transcriptUnavailableReason = "";
+    state.aiJobs = { transcript: null, overall_analysis: null, deep_analysis: null, smart_recap: null, content_repurposing: null };
+  }
   try {
     try {
       const cached = await api.getCachedSession(id);
