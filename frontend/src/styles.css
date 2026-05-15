@@ -238,7 +238,8 @@ a:focus-visible {
   position: relative;
   transition: padding 180ms ease;
   height: 100vh;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
   z-index: 30;
 }
 
