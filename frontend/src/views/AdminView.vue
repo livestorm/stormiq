@@ -378,7 +378,6 @@ onMounted(() => {
                 <th>Org ID</th>
                 <th>Created by</th>
                 <th>Updated</th>
-                <th>Content</th>
                 <th></th>
               </tr>
             </thead>
@@ -400,16 +399,6 @@ onMounted(() => {
                 <td class="cell-id">{{ session.organization_id || "—" }}</td>
                 <td class="cell-email">{{ session.created_by_email || "—" }}</td>
                 <td class="cell-date">{{ formatDate(session.updated_at) }}</td>
-                <td>
-                  <div class="content-flags">
-                    <span
-                      v-for="flag in contentFlags(session)"
-                      :key="flag"
-                      class="badge badge-content"
-                    >{{ flag }}</span>
-                    <span v-if="contentFlags(session).length === 0" class="badge badge-empty">Base only</span>
-                  </div>
-                </td>
                 <td>
                   <div class="delete-cell">
                     <button
