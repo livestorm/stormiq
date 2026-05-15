@@ -8,7 +8,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 import requests
 
-from livestorm_app.config import DEFAULT_OPENAI_MODEL, DEEP_ANALYSIS_OPENAI_MODEL, OUTPUT_LANGUAGE_MAP, SMART_RECAP_OPENAI_MODEL
+from livestorm_app.config import OUTPUT_LANGUAGE_MAP
+from livestorm_app.llm_client import get_llm_model
 from livestorm_app.db import (
     create_transcript_job,
     fetch_cached_session,
@@ -883,7 +884,7 @@ def run_overall_analysis(api_analysis_key: str, session_id: str, output_language
     if source_markdown:
         analysis_md = translate_markdown_with_openai(
             api_key=api_analysis_key,
-            model=DEFAULT_OPENAI_MODEL,
+            model=get_llm_model("default"),
             source_markdown=source_markdown,
             source_language=OUTPUT_LANGUAGE_MAP.get(source_language, source_language),
             target_language=OUTPUT_LANGUAGE_MAP.get(output_language, output_language),
@@ -891,7 +892,7 @@ def run_overall_analysis(api_analysis_key: str, session_id: str, output_language
     else:
         analysis_md = analyze_with_openai(
             api_key=api_analysis_key,
-            model=DEFAULT_OPENAI_MODEL,
+            model=get_llm_model("default"),
             system_prompt=build_analysis_prompt(selected_sources),
             output_language=OUTPUT_LANGUAGE_MAP.get(output_language, output_language),
             selected_sources=selected_sources,
@@ -929,7 +930,7 @@ def run_deep_analysis(api_analysis_key: str, session_id: str, output_language: s
     if source_markdown:
         deep_analysis_md = translate_markdown_with_openai(
             api_key=api_analysis_key,
-            model=DEFAULT_OPENAI_MODEL,
+            model=get_llm_model("default"),
             source_markdown=source_markdown,
             source_language=OUTPUT_LANGUAGE_MAP.get(source_language, source_language),
             target_language=OUTPUT_LANGUAGE_MAP.get(output_language, output_language),
@@ -938,7 +939,7 @@ def run_deep_analysis(api_analysis_key: str, session_id: str, output_language: s
     else:
         deep_analysis_md = analyze_with_openai(
             api_key=api_analysis_key,
-            model=DEEP_ANALYSIS_OPENAI_MODEL,
+            model=get_llm_model("deep"),
             system_prompt=build_deep_analysis_prompt(),
             output_language=OUTPUT_LANGUAGE_MAP.get(output_language, output_language),
             selected_sources=["session", "chat", "questions", "transcript"],
@@ -1049,7 +1050,7 @@ def run_smart_recap(api_analysis_key: str, session_id: str, tone: str) -> Dict[s
     smart_bundle = _normalize_smart_recap_bundle(cached.get("smart_recap_bundle"))
     markdown = analyze_with_openai(
         api_key=api_analysis_key,
-        model=SMART_RECAP_OPENAI_MODEL,
+        model=get_llm_model("smart_recap"),
         system_prompt=build_smart_recap_prompt(tone),
         output_language="English",
         selected_sources=["transcript"],
@@ -1117,7 +1118,7 @@ def run_content_repurposing(api_analysis_key: str, session_id: str, output_langu
     if source_bundle:
         bundle = translate_content_repurpose_bundle_with_openai(
             api_key=api_analysis_key,
-            model=DEFAULT_OPENAI_MODEL,
+            model=get_llm_model("default"),
             source_bundle=source_bundle,
             source_language=OUTPUT_LANGUAGE_MAP.get(source_language, source_language),
             target_language=OUTPUT_LANGUAGE_MAP.get(output_language, output_language),
@@ -1125,7 +1126,7 @@ def run_content_repurposing(api_analysis_key: str, session_id: str, output_langu
     else:
         bundle = generate_content_repurpose_bundle_with_openai(
             api_key=api_analysis_key,
-            model=DEFAULT_OPENAI_MODEL,
+            model=get_llm_model("default"),
             output_language=OUTPUT_LANGUAGE_MAP.get(output_language, output_language),
             transcript_text=build_transcript_plain_text(transcript_payload),
         )

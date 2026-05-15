@@ -482,21 +482,27 @@ External services accessed directly today (no provider abstraction layer yet —
 |---|---|---|---|
 | **Livestorm REST API** | session payload, chat, questions, events list | [services.py](livestorm_app/services.py) | OAuth token or `LS_API_KEY` |
 | **Gladia v2 pre-recorded** | audio transcription with diarization + NER + sentences + subtitles | [gladia/transcriber.py](livestorm_app/gladia/transcriber.py) | `GLADIA_KEY` |
-| **OpenAI Chat Completions** | overall, deep, recap, content generation, translation | [services.py](livestorm_app/services.py) — `analyze_with_openai` + bundle/translation variants | `OPENAI_API_KEY` |
+| **Anthropic Claude** *(default)* | overall, deep, recap, content generation, translation | [llm_client.py](livestorm_app/llm_client.py) via `services.py` | `CLAUDE_API_KEY` |
+| **OpenAI Chat Completions** *(optional)* | same flows — active when `LLM_PROVIDER=openai` | [llm_client.py](livestorm_app/llm_client.py) | `OPENAI_API_KEY` |
 
-### Model selection
+### Provider selection and model selection
 
-Hard-coded in [config.py](livestorm_app/config.py):
+The active text-generation provider is selected via the `LLM_PROVIDER` env var (defaults to `"anthropic"`). Switching providers requires only a redeploy with the matching key — no code change. Cover image generation always uses OpenAI Images API regardless of `LLM_PROVIDER`.
+
+The provider abstraction lives in [llm_client.py](livestorm_app/llm_client.py). Model names are configured in [config.py](livestorm_app/config.py):
 
 ```python
-DEFAULT_OPENAI_MODEL       = "gpt-4o-mini"   # overall analysis, content repurposing
-DEEP_ANALYSIS_OPENAI_MODEL = "gpt-4o-mini"   # deep analysis
-SMART_RECAP_OPENAI_MODEL   = "gpt-5.4-mini"  # smart recap only — intentional
+# Anthropic (LLM_PROVIDER=anthropic, the default)
+DEFAULT_CLAUDE_MODEL       = "claude-haiku-4-5-20251001"  # overall, deep, content, translation
+SMART_RECAP_CLAUDE_MODEL   = "claude-sonnet-4-6"          # smart recap — stronger intentionally
+
+# OpenAI (LLM_PROVIDER=openai)
+DEFAULT_OPENAI_MODEL       = "gpt-4o-mini"
+DEEP_ANALYSIS_OPENAI_MODEL = "gpt-4o-mini"
+SMART_RECAP_OPENAI_MODEL   = "gpt-5.4-mini"
 ```
 
-Smart Recap is the **only** flow that uses gpt-5.4-mini. Overall, Deep, and Content Repurposing all use gpt-4o-mini. If a future change moves another flow to gpt-5.4, document it here.
-
-There is **no DB-backed provider/model switcher** today. Changing model requires a code change and redeploy. Phase 2 introduces a provider/settings abstraction modelled on Crowdlens's `system_settings`.
+Smart Recap uses a stronger model than the other flows regardless of provider.
 
 ### Gladia configuration
 
@@ -514,8 +520,10 @@ Audio chunk hard cap: 135 minutes per request (Gladia standard plan).
 ## 13. Environment Variables
 
 ```bash
-# OpenAI
-OPENAI_API_KEY                # Required for analysis, recap, repurposing
+# LLM provider (text generation)
+LLM_PROVIDER                  # Optional; "anthropic" (default) or "openai"
+CLAUDE_API_KEY                # Required when LLM_PROVIDER=anthropic (or unset)
+OPENAI_API_KEY                # Required when LLM_PROVIDER=openai; always required for cover image generation
 
 # Livestorm
 LS_API_KEY                    # Optional; local-dev fallback only (see §4)

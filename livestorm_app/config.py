@@ -15,6 +15,12 @@ DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 DEEP_ANALYSIS_OPENAI_MODEL = "gpt-4o-mini"
 SMART_RECAP_OPENAI_MODEL = "gpt-5.4-mini"
 
+# Anthropic (Claude) — used when LLM_PROVIDER=anthropic (the default)
+ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
+ANTHROPIC_API_VERSION = "2023-06-01"
+DEFAULT_CLAUDE_MODEL = "claude-haiku-4-5-20251001"
+SMART_RECAP_CLAUDE_MODEL = "claude-sonnet-4-6"
+
 # Cover image generation (Phase 4 follow-up). The cover is built from
 # the session's Professional Smart Recap and rendered with the OpenAI
 # Images API. Defaults to gpt-image-1 at 1536x1024 (closest wide

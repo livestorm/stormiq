@@ -252,29 +252,26 @@ async def run_transcription(
 
 # ── AI flow jobs (overall / deep / smart recap / content repurposing) ──────
 #
-# Four flows, same shape: load cached payloads → build prompt → OpenAI →
+# Four flows, same shape: load cached payloads → build prompt → LLM →
 # persist to session_cache. Each is a thin wrapper around the existing
 # sync function in api_logic.py, with stage-floor progress around it.
 #
-# The OpenAI API key is read from the worker's own env (OPENAI_API_KEY)
-# rather than passed through the queue. Two reasons: (1) avoids putting
-# secrets into Redis, (2) one source of truth for the key on the worker
-# host.
+# The LLM API key is read from the worker's own env rather than passed
+# through the queue. Two reasons: (1) avoids putting secrets into Redis,
+# (2) one source of truth for the key on the worker host.
+# Active provider is selected via LLM_PROVIDER (defaults to "anthropic").
 #
 # Progress mapping is coarse: we publish 'loading_sources' → 'building_prompt'
-# → 'analyzing' before the (single, blocking) OpenAI call, then 'persisting'
+# → 'analyzing' before the (single, blocking) LLM call, then 'persisting'
 # → 'done' after it. The bar will sit at "analyzing" (floor 40) for the
 # bulk of the wait — same UX as the transcription job. Phase 2 refactor
 # (cards) will give us natural inflection points to publish more stages.
 
 
-def _read_openai_key_or_raise() -> str:
-    from livestorm_app.config import get_runtime_secret
+def _read_llm_key_or_raise() -> str:
+    from livestorm_app.llm_client import get_llm_key
 
-    key = str(get_runtime_secret("OPENAI_API_KEY", "") or "").strip()
-    if not key:
-        raise RuntimeError("OPENAI_API_KEY not configured on worker process.")
-    return key
+    return get_llm_key()
 
 
 async def _run_ai_job(
@@ -319,7 +316,7 @@ async def run_overall_analysis_job(
 ) -> Dict[str, Any]:
     from livestorm_app.api_logic import run_overall_analysis
 
-    openai_key = _read_openai_key_or_raise()
+    openai_key = _read_llm_key_or_raise()
     return await _run_ai_job(
         "overall_analysis",
         session_id,
@@ -335,7 +332,7 @@ async def run_deep_analysis_job(
 ) -> Dict[str, Any]:
     from livestorm_app.api_logic import run_deep_analysis
 
-    openai_key = _read_openai_key_or_raise()
+    openai_key = _read_llm_key_or_raise()
     return await _run_ai_job(
         "deep_analysis",
         session_id,
@@ -351,7 +348,7 @@ async def run_smart_recap_job(
 ) -> Dict[str, Any]:
     from livestorm_app.api_logic import run_smart_recap
 
-    openai_key = _read_openai_key_or_raise()
+    openai_key = _read_llm_key_or_raise()
     result = await _run_ai_job(
         "smart_recap",
         session_id,
@@ -375,7 +372,7 @@ async def run_content_repurposing_job(
 ) -> Dict[str, Any]:
     from livestorm_app.api_logic import run_content_repurposing
 
-    openai_key = _read_openai_key_or_raise()
+    openai_key = _read_llm_key_or_raise()
     return await _run_ai_job(
         "content_repurposing",
         session_id,
@@ -397,6 +394,16 @@ async def run_content_repurposing_job(
 # image generator never blocks recap or transcription completion.
 
 
+def _read_openai_images_key_or_raise() -> str:
+    """Cover image generation always uses the OpenAI Images API regardless of LLM_PROVIDER."""
+    from livestorm_app.config import get_runtime_secret
+
+    key = str(get_runtime_secret("OPENAI_API_KEY", "") or "").strip()
+    if not key:
+        raise RuntimeError("OPENAI_API_KEY not configured on worker process (required for cover image generation).")
+    return key
+
+
 async def run_cover_image_job(
     ctx: Dict[str, Any],
     session_id: str,
@@ -404,7 +411,7 @@ async def run_cover_image_job(
 ) -> Dict[str, Any]:
     from livestorm_app.api_logic import run_cover_image_generation
 
-    openai_key = _read_openai_key_or_raise()
+    openai_key = _read_openai_images_key_or_raise()
     logger.info("[run_cover_image_job] session_id=%s start", session_id)
     try:
         result = await asyncio.to_thread(

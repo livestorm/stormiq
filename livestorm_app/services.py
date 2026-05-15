@@ -31,13 +31,13 @@ from livestorm_app.config import (
     COVER_IMAGE_SIZE,
     DEFAULT_PAGE_SIZE,
     MAX_PAGES,
-    OPENAI_CHAT_COMPLETIONS_URL,
     OPENAI_IMAGES_URL,
     SMART_RECAP_HYPE_PROMPT_PATH,
     SMART_RECAP_PROFESSIONAL_PROMPT_PATH,
     SMART_RECAP_SURPRISE_PROMPT_PATH,
     START_PAGE_NUMBER,
 )
+from livestorm_app.llm_client import call_llm
 from livestorm_app.session_overview import build_session_stats
 
 
@@ -955,19 +955,7 @@ def translate_markdown_with_openai(
         {"role": "system", "content": f"Translate from {source_language} to {target_language}. Return only translated markdown."},
         {"role": "user", "content": source_markdown},
     ]
-    resp = requests.post(
-        OPENAI_CHAT_COMPLETIONS_URL,
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json=_build_chat_completions_payload(
-            model=model,
-            messages=messages,
-            temperature=0.1,
-            max_tokens=max_tokens,
-        ),
-        timeout=120,
-    )
-    resp.raise_for_status()
-    return _extract_chat_completion_text(resp.json())
+    return call_llm(api_key, model, messages, temperature=0.1, max_tokens=max_tokens)
 
 
 def translate_content_repurpose_bundle_with_openai(
@@ -1015,19 +1003,8 @@ def translate_content_repurpose_bundle_with_openai(
                     "content": f"The previous answer was not fully written in {target_language}. Rewrite all four sections entirely in {target_language}. Do not mix in the source language except unavoidable brand/platform names.",
                 }
             )
-        resp = requests.post(
-            OPENAI_CHAT_COMPLETIONS_URL,
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json=_build_chat_completions_payload(
-                model=model,
-                messages=messages + extra_messages,
-                temperature=0.1,
-                max_tokens=12000,
-            ),
-            timeout=120,
-        )
-        resp.raise_for_status()
-        bundle = parse_content_repurpose_bundle_response(_extract_chat_completion_text(resp.json()))
+        text = call_llm(api_key, model, messages + extra_messages, temperature=0.1, max_tokens=12000)
+        bundle = parse_content_repurpose_bundle_response(text)
         if _bundle_has_all_sections(bundle) and not _bundle_language_looks_wrong(bundle, target_language):
             return bundle
     return bundle
@@ -1070,20 +1047,8 @@ def generate_content_repurpose_bundle_with_openai(
                     "content": f"The previous answer was not fully written in {output_language}. Rewrite all four sections entirely in {output_language}. Do not mix in English except unavoidable brand/platform names.",
                 }
             )
-        resp = requests.post(
-            OPENAI_CHAT_COMPLETIONS_URL,
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json=_build_chat_completions_payload(
-                model=model,
-                messages=messages + extra_messages,
-                temperature=0.2,
-                max_tokens=12000,
-            ),
-            timeout=120,
-        )
-        resp.raise_for_status()
-        payload = resp.json()
-        bundle = parse_content_repurpose_bundle_response(_extract_chat_completion_text(payload))
+        text = call_llm(api_key, model, messages + extra_messages, temperature=0.2, max_tokens=12000)
+        bundle = parse_content_repurpose_bundle_response(text)
         if _bundle_has_all_sections(bundle) and not _bundle_language_looks_wrong(bundle, output_language):
             return bundle
         if attempt == 0:
@@ -3167,35 +3132,5 @@ def analyze_with_openai(
     if has_structured_context:
         messages.append({"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)})
 
-    request_body = _build_chat_completions_payload(
-        model=model,
-        messages=messages,
-        temperature=0.2,
-        max_tokens=max_tokens,
-    )
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-
-    max_attempts = 3
-    for attempt in range(max_attempts):
-        resp = requests.post(
-            OPENAI_CHAT_COMPLETIONS_URL,
-            headers=headers,
-            json=request_body,
-            timeout=120,
-        )
-        if resp.status_code == 429 and attempt < max_attempts - 1:
-            try:
-                # Retry-After is seconds; cap at 30s so a bad header
-                # can't block the worker thread for minutes.
-                wait = min(float(resp.headers.get("Retry-After") or 0), 30.0) or (10.0 * (attempt + 1))
-            except (TypeError, ValueError):
-                wait = 10.0 * (attempt + 1)
-            logger.warning("OpenAI 429 on attempt %d/%d — waiting %.0fs", attempt + 1, max_attempts, wait)
-            time.sleep(wait)
-            continue
-        resp.raise_for_status()
-        break
-
-    payload = resp.json()
-    extracted_text = _extract_chat_completion_text(payload)
-    return extracted_text if extracted_text else "No analysis text returned by model."
+    text = call_llm(api_key, model, messages, temperature=0.2, max_tokens=max_tokens)
+    return text if text else "No analysis text returned by model."
