@@ -5,7 +5,8 @@ aesthetic.
 Main title (RENDER THIS TEXT clearly and legibly on the cover):
 {title}
 
-Visual narrative (story to convey through imagery — do NOT render as text):
+Session content (2–4 paragraphs — each paragraph represents one topic
+that should get its own small icon or illustration on the right side):
 {summary}
 
 CANVAS SAFE ZONE (most important rule — get this wrong and the
@@ -23,14 +24,16 @@ Composition:
 - Main title in the LEFT HALF of the canvas, vertically centred,
   inside the safe zone. Elegant, refined typography. Crisp, readable,
   no decorative flourishes.
-- Visual narrative in the RIGHT HALF: clean story pillars or staged
-  elements — rounded platforms, gentle shadows, modern corporate
-  illustration. Tasteful and integrated. Do NOT clutter; keep
-  generous negative space.
+- RIGHT HALF: one small icon or minimal illustration per paragraph,
+  stacked vertically with equal spacing, each visually representing
+  the key theme of that paragraph. Icons should be clean, modern,
+  corporate-style — line art or flat illustration. Each icon sits
+  inside a subtle rounded card or neutral container. Generous negative
+  space between icons. Do NOT merge them into a single scene.
 - Soft neutral cream background. Refined teal, sage, cream, and
   warm beige accent palette.
-- Tell the story visually; do NOT clutter the right side with too
-  many objects.
+- Tell the story visually through the per-paragraph icons; keep each
+  one simple and immediately readable at a glance.
 
 Mood: confident, elegant, calm. Editorial-quality, polished.
 
