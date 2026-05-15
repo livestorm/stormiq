@@ -157,10 +157,10 @@ async function deleteSession(sessionId) {
   deleteConfirmId.value = null;
   try {
     await api.adminDeleteSession(sessionId);
-    sessions.value = sessions.value.filter((s) => s.session_id !== sessionId);
-  } catch (e) {
-    error.value = e.message || "Failed to delete session.";
+  } catch (_e) {
+    // Ignore — row may already be gone
   } finally {
+    sessions.value = sessions.value.filter((s) => s.session_id !== sessionId);
     deletingSessionId.value = null;
   }
 }

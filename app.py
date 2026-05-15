@@ -336,9 +336,7 @@ def admin_get_sessions(request: Request) -> Dict[str, Any]:
 @app.delete("/api/admin/sessions/{session_id}")
 def admin_remove_session(session_id: str, request: Request) -> Dict[str, Any]:
     _check_admin_or_raise(request)
-    deleted = admin_delete_session(session_id)
-    if not deleted:
-        raise HTTPException(status_code=404, detail={"resource": "Session", "message": f"Session {session_id} not found."})
+    admin_delete_session(session_id)
     return {"ok": True, "sessionId": session_id}
 
 
