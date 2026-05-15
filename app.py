@@ -42,8 +42,11 @@ from livestorm_app.db import (
     demote_admin,
     ensure_database_schema,
     fetch_cover_image,
+    get_all_settings,
+    get_setting,
     is_admin_email,
     promote_admin,
+    set_setting,
 )
 from livestorm_app.oauth_client import (
     LIVESTORM_OAUTH_COOKIE,
@@ -337,6 +340,36 @@ def admin_remove_session(session_id: str, request: Request) -> Dict[str, Any]:
     if not deleted:
         raise HTTPException(status_code=404, detail={"resource": "Session", "message": f"Session {session_id} not found."})
     return {"ok": True, "sessionId": session_id}
+
+
+class AdminSettingRequest(BaseModel):
+    key: str
+    value: str
+
+
+@app.get("/api/admin/settings")
+def admin_get_settings(request: Request) -> Dict[str, Any]:
+    _check_admin_or_raise(request)
+    return {"settings": get_all_settings()}
+
+
+@app.post("/api/admin/settings")
+def admin_update_setting(body: AdminSettingRequest, request: Request) -> Dict[str, Any]:
+    _check_admin_or_raise(request)
+    allowed_keys = {
+        "llm_provider",
+        "llm_default_model",
+        "llm_smart_recap_model",
+        "image_model",
+    }
+    key = str(body.key or "").strip()
+    if key not in allowed_keys:
+        raise HTTPException(status_code=400, detail={"resource": "Setting", "message": f"Unknown setting key: {key}"})
+    value = str(body.value or "").strip()
+    if not value:
+        raise HTTPException(status_code=400, detail={"resource": "Setting", "message": "Value cannot be empty."})
+    set_setting(key, value)
+    return {"ok": True, "key": key, "value": value}
 
 
 @app.get("/api/auth/livestorm/start")

@@ -1138,7 +1138,7 @@ def generate_cover_image_with_openai(
     api_key: str,
     *,
     prompt: str,
-    model: str = COVER_IMAGE_MODEL,
+    model: str = "",
     size: str = COVER_IMAGE_SIZE,
     quality: str = COVER_IMAGE_QUALITY,
     timeout: int = 180,
@@ -1158,6 +1158,13 @@ def generate_cover_image_with_openai(
     key = str(api_key or "").strip()
     if not key:
         raise RuntimeError("OPENAI_API_KEY is required for cover image generation.")
+
+    if not model:
+        try:
+            from livestorm_app.db import get_setting
+            model = get_setting("image_model") or COVER_IMAGE_MODEL
+        except Exception:
+            model = COVER_IMAGE_MODEL
 
     payload = {
         "model": model,

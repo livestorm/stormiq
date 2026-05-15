@@ -25,6 +25,18 @@ logger = logging.getLogger(__name__)
 
 
 def get_provider() -> str:
+    """Return the active LLM provider.
+
+    DB setting 'llm_provider' takes precedence; falls back to the
+    LLM_PROVIDER env var, then to "anthropic".
+    """
+    try:
+        from livestorm_app.db import get_setting
+        db_val = get_setting("llm_provider")
+        if db_val and db_val.strip().lower() in {"anthropic", "openai"}:
+            return db_val.strip().lower()
+    except Exception:
+        pass
     return (os.getenv("LLM_PROVIDER") or "anthropic").strip().lower()
 
 
@@ -53,24 +65,34 @@ def get_llm_model(role: str) -> str:
       "default"     — overall analysis, deep analysis, content repurposing,
                       translation (maps to the cheaper/faster model)
       "smart_recap" — Smart Recap only (intentionally uses a stronger model)
+
+    DB settings take precedence over config constants:
+      llm_default_model      — model for "default" and "deep" roles
+      llm_smart_recap_model  — model for "smart_recap" role
     """
     from livestorm_app.config import (
         DEFAULT_CLAUDE_MODEL,
         DEFAULT_OPENAI_MODEL,
-        DEEP_ANALYSIS_OPENAI_MODEL,
         SMART_RECAP_CLAUDE_MODEL,
         SMART_RECAP_OPENAI_MODEL,
     )
+    from livestorm_app.db import get_setting
 
     provider = get_provider()
+    is_recap = role == "smart_recap"
+    setting_key = "llm_smart_recap_model" if is_recap else "llm_default_model"
+
+    try:
+        db_model = get_setting(setting_key)
+        if db_model and db_model.strip():
+            return db_model.strip()
+    except Exception:
+        pass
+
+    # Config-constant fallback (env-var era defaults)
     if provider == "anthropic":
-        return SMART_RECAP_CLAUDE_MODEL if role == "smart_recap" else DEFAULT_CLAUDE_MODEL
-    # openai
-    if role == "smart_recap":
-        return SMART_RECAP_OPENAI_MODEL
-    if role == "deep":
-        return DEEP_ANALYSIS_OPENAI_MODEL
-    return DEFAULT_OPENAI_MODEL
+        return SMART_RECAP_CLAUDE_MODEL if is_recap else DEFAULT_CLAUDE_MODEL
+    return SMART_RECAP_OPENAI_MODEL if is_recap else DEFAULT_OPENAI_MODEL
 
 
 def call_llm(

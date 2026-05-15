@@ -204,4 +204,13 @@ export const api = {
   adminDeleteSession(sessionId) {
     return request(`/api/admin/sessions/${sessionId}`, { method: "DELETE" });
   },
+  adminGetSettings() {
+    return request("/api/admin/settings");
+  },
+  adminUpdateSetting(key, value) {
+    return request("/api/admin/settings", {
+      method: "POST",
+      body: JSON.stringify({ key, value }),
+    });
+  },
 };

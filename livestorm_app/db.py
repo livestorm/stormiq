@@ -249,6 +249,15 @@ def ensure_database_schema() -> None:
                 )
                 """
             )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS system_settings (
+                    key        TEXT PRIMARY KEY,
+                    value      TEXT NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
         connection.commit()
 
 
@@ -891,6 +900,60 @@ def admin_list_users() -> List[Dict[str, Any]]:
     except Exception:
         logger.exception("Failed to list admin users")
         return []
+
+
+# ── System settings ───────────────────────────────────────────────────────────
+
+def get_setting(key: str, default: Optional[str] = None) -> Optional[str]:
+    if not database_enabled():
+        return default
+    try:
+        with get_db_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT value FROM system_settings WHERE key = %s",
+                    (str(key).strip(),),
+                )
+                row = cursor.fetchone()
+                return str(row["value"]) if row else default
+    except Exception:
+        logger.exception("Failed to read system_setting key=%s", key)
+        return default
+
+
+def set_setting(key: str, value: str) -> None:
+    if not database_enabled():
+        return
+    try:
+        with get_db_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO system_settings (key, value, updated_at)
+                    VALUES (%s, %s, NOW())
+                    ON CONFLICT (key) DO UPDATE
+                        SET value = EXCLUDED.value,
+                            updated_at = NOW()
+                    """,
+                    (str(key).strip(), str(value)),
+                )
+            connection.commit()
+    except Exception:
+        logger.exception("Failed to set system_setting key=%s", key)
+        raise
+
+
+def get_all_settings() -> Dict[str, str]:
+    if not database_enabled():
+        return {}
+    try:
+        with get_db_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT key, value FROM system_settings ORDER BY key")
+                return {row["key"]: row["value"] for row in cursor.fetchall()}
+    except Exception:
+        logger.exception("Failed to load system_settings")
+        return {}
 
 
 def admin_list_sessions(limit: int = 500) -> List[Dict[str, Any]]:

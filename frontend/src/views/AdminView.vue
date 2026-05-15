@@ -21,6 +21,78 @@ const deleteConfirmId = ref(null);
 const sessionSearch = ref("");
 const userSearch = ref("");
 
+// ── Models tab ────────────────────────────────────────────────────────────────
+const settings = ref({});
+const loadingSettings = ref(false);
+const savingKey = ref(null);
+const settingsError = ref("");
+const settingsSuccess = ref("");
+
+const ANTHROPIC_TEXT_MODELS = [
+  { value: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5 — fast & cheap" },
+  { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6 — balanced" },
+  { value: "claude-opus-4-7", label: "Claude Opus 4.7 — most capable" },
+];
+
+const OPENAI_TEXT_MODELS = [
+  { value: "gpt-4o-mini", label: "GPT-4o mini — fast & cheap" },
+  { value: "gpt-4o", label: "GPT-4o — balanced" },
+  { value: "gpt-4.1-mini", label: "GPT-4.1 mini — fast, newer" },
+  { value: "gpt-4.1", label: "GPT-4.1 — capable, newer" },
+];
+
+const IMAGE_MODELS = [
+  { value: "gpt-image-1", label: "gpt-image-1" },
+  { value: "gpt-image-2", label: "gpt-image-2 (recommended)" },
+];
+
+const activeProvider = computed(() => settings.value.llm_provider || "anthropic");
+const textModels = computed(() =>
+  activeProvider.value === "openai" ? OPENAI_TEXT_MODELS : ANTHROPIC_TEXT_MODELS
+);
+
+async function loadSettings() {
+  loadingSettings.value = true;
+  settingsError.value = "";
+  try {
+    const data = await api.adminGetSettings();
+    settings.value = data?.settings || {};
+  } catch (e) {
+    settingsError.value = e.message || "Failed to load settings.";
+  } finally {
+    loadingSettings.value = false;
+  }
+}
+
+async function saveSetting(key, value) {
+  savingKey.value = key;
+  settingsError.value = "";
+  settingsSuccess.value = "";
+  try {
+    await api.adminUpdateSetting(key, value);
+    settings.value = { ...settings.value, [key]: value };
+    settingsSuccess.value = "Saved.";
+    setTimeout(() => { settingsSuccess.value = ""; }, 2500);
+  } catch (e) {
+    settingsError.value = e.message || "Failed to save setting.";
+  } finally {
+    savingKey.value = null;
+  }
+}
+
+async function handleProviderChange(newProvider) {
+  await saveSetting("llm_provider", newProvider);
+  // Reset model selections to sensible defaults for the new provider
+  const defaultModel = newProvider === "openai" ? "gpt-4o-mini" : "claude-haiku-4-5-20251001";
+  const recapModel = newProvider === "openai" ? "gpt-4o" : "claude-sonnet-4-6";
+  await saveSetting("llm_default_model", defaultModel);
+  await saveSetting("llm_smart_recap_model", recapModel);
+}
+
+function getModelLabel(value, list) {
+  return list.find((m) => m.value === value)?.label || value || "—";
+}
+
 async function loadUsers() {
   loadingUsers.value = true;
   error.value = "";
@@ -124,8 +196,10 @@ const filteredUsers = computed(() => {
 function switchTab(tab) {
   activeTab.value = tab;
   error.value = "";
+  settingsError.value = "";
   if (tab === "users" && users.value.length === 0) loadUsers();
   if (tab === "sessions" && sessions.value.length === 0) loadSessions();
+  if (tab === "models" && Object.keys(settings.value).length === 0) loadSettings();
 }
 
 function formatDate(ts) {
@@ -150,6 +224,7 @@ function contentFlags(session) {
 
 onMounted(() => {
   loadUsers();
+  loadSettings();
 });
 </script>
 
@@ -179,6 +254,13 @@ onMounted(() => {
           @click="switchTab('sessions')"
         >
           Sessions
+        </button>
+        <button
+          class="admin-tab"
+          :class="{ active: activeTab === 'models' }"
+          @click="switchTab('models')"
+        >
+          Models
         </button>
       </div>
 
@@ -349,6 +431,125 @@ onMounted(() => {
           </table>
         </div>
       </div>
+      <!-- ── Models tab ── -->
+      <div v-if="activeTab === 'models'" class="admin-section">
+        <div v-if="loadingSettings" class="admin-loading">Loading settings…</div>
+        <template v-else>
+          <p v-if="settingsError" class="admin-error">{{ settingsError }}</p>
+          <p v-if="settingsSuccess" class="admin-success">{{ settingsSuccess }}</p>
+
+          <!-- Provider -->
+          <div class="model-card">
+            <div class="model-card-header">
+              <div class="model-card-title">LLM Provider</div>
+              <div class="model-card-desc">Which AI company to use for analysis, deep analysis, smart recap, and content repurposing.</div>
+            </div>
+            <div class="model-options">
+              <button
+                class="model-option"
+                :class="{ selected: activeProvider === 'anthropic' }"
+                :disabled="savingKey !== null"
+                @click="handleProviderChange('anthropic')"
+              >
+                <span class="model-option-name">Anthropic</span>
+                <span class="model-option-hint">Claude models</span>
+              </button>
+              <button
+                class="model-option"
+                :class="{ selected: activeProvider === 'openai' }"
+                :disabled="savingKey !== null"
+                @click="handleProviderChange('openai')"
+              >
+                <span class="model-option-name">OpenAI</span>
+                <span class="model-option-hint">GPT models</span>
+              </button>
+            </div>
+            <p class="model-card-current">
+              Active: <strong>{{ activeProvider === "openai" ? "OpenAI" : "Anthropic" }}</strong>
+              <span v-if="savingKey === 'llm_provider'" class="saving-indicator"> — saving…</span>
+            </p>
+          </div>
+
+          <!-- Default model -->
+          <div class="model-card">
+            <div class="model-card-header">
+              <div class="model-card-title">Default Model</div>
+              <div class="model-card-desc">Used for Overall Analysis, Deep Analysis, Content Repurposing, and translation.</div>
+            </div>
+            <div class="model-select-row">
+              <select
+                class="model-select"
+                :value="settings.llm_default_model || ''"
+                :disabled="savingKey !== null"
+                @change="saveSetting('llm_default_model', $event.target.value)"
+              >
+                <option value="" disabled>Select a model…</option>
+                <option
+                  v-for="m in textModels"
+                  :key="m.value"
+                  :value="m.value"
+                >{{ m.label }}</option>
+              </select>
+              <span v-if="savingKey === 'llm_default_model'" class="saving-indicator">saving…</span>
+            </div>
+            <p class="model-card-current">
+              Active: <strong>{{ getModelLabel(settings.llm_default_model, textModels) }}</strong>
+            </p>
+          </div>
+
+          <!-- Smart Recap model -->
+          <div class="model-card">
+            <div class="model-card-header">
+              <div class="model-card-title">Smart Recap Model</div>
+              <div class="model-card-desc">Used for Smart Recap only — intentionally a stronger model for better narrative output.</div>
+            </div>
+            <div class="model-select-row">
+              <select
+                class="model-select"
+                :value="settings.llm_smart_recap_model || ''"
+                :disabled="savingKey !== null"
+                @change="saveSetting('llm_smart_recap_model', $event.target.value)"
+              >
+                <option value="" disabled>Select a model…</option>
+                <option
+                  v-for="m in textModels"
+                  :key="m.value"
+                  :value="m.value"
+                >{{ m.label }}</option>
+              </select>
+              <span v-if="savingKey === 'llm_smart_recap_model'" class="saving-indicator">saving…</span>
+            </div>
+            <p class="model-card-current">
+              Active: <strong>{{ getModelLabel(settings.llm_smart_recap_model, textModels) }}</strong>
+            </p>
+          </div>
+
+          <!-- Image model -->
+          <div class="model-card">
+            <div class="model-card-header">
+              <div class="model-card-title">Cover Image Model</div>
+              <div class="model-card-desc">OpenAI Images API model used to generate session cover images. Always uses OpenAI regardless of LLM provider.</div>
+            </div>
+            <div class="model-options">
+              <button
+                v-for="m in IMAGE_MODELS"
+                :key="m.value"
+                class="model-option"
+                :class="{ selected: (settings.image_model || 'gpt-image-2') === m.value }"
+                :disabled="savingKey !== null"
+                @click="saveSetting('image_model', m.value)"
+              >
+                <span class="model-option-name">{{ m.label }}</span>
+              </button>
+            </div>
+            <p class="model-card-current">
+              Active: <strong>{{ settings.image_model || "gpt-image-2" }}</strong>
+              <span v-if="savingKey === 'image_model'" class="saving-indicator"> — saving…</span>
+            </p>
+          </div>
+        </template>
+      </div>
+
     </template>
   </div>
 </template>
@@ -674,5 +875,119 @@ onMounted(() => {
   color: #15803d;
   font-size: 13px;
   margin: 0;
+}
+
+/* ── Models tab ── */
+.model-card {
+  background: var(--color-surface, #f9fafb);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 10px;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.model-card-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.model-card-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text-primary, #1a1a2e);
+}
+
+.model-card-desc {
+  font-size: 13px;
+  color: var(--color-text-secondary, #666);
+}
+
+.model-card-current {
+  font-size: 13px;
+  color: var(--color-text-secondary, #888);
+  margin: 0;
+}
+
+.model-options {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.model-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  border: 2px solid var(--color-border, #e5e7eb);
+  background: #fff;
+  cursor: pointer;
+  transition: border-color 120ms, background 120ms;
+  min-width: 140px;
+  text-align: left;
+}
+
+.model-option:hover:not(:disabled) {
+  border-color: #0b42c3;
+  background: rgba(11, 66, 195, 0.04);
+}
+
+.model-option.selected {
+  border-color: #0b42c3;
+  background: rgba(11, 66, 195, 0.08);
+}
+
+.model-option:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.model-option-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-primary, #1a1a2e);
+}
+
+.model-option-hint {
+  font-size: 12px;
+  color: var(--color-text-secondary, #888);
+}
+
+.model-select-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.model-select {
+  padding: 8px 12px;
+  border: 1px solid var(--color-border, #d1d5db);
+  border-radius: 6px;
+  font-size: 14px;
+  background: #fff;
+  outline: none;
+  min-width: 280px;
+  cursor: pointer;
+}
+
+.model-select:focus {
+  border-color: #0b42c3;
+  box-shadow: 0 0 0 2px rgba(11, 66, 195, 0.12);
+}
+
+.model-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.saving-indicator {
+  font-size: 12px;
+  color: #0b42c3;
+  font-style: italic;
 }
 </style>
