@@ -1362,7 +1362,8 @@ textarea:focus,
 }
 
 .rich-markdown-content p,
-.rich-markdown-content ul {
+.rich-markdown-content ul,
+.rich-markdown-content .insight-list {
   margin: 0 0 var(--spacing-space-4);
 }
 
@@ -1372,6 +1373,29 @@ textarea:focus,
 
 .rich-markdown-content li {
   margin-bottom: var(--spacing-space-2);
+}
+
+.rich-markdown-content .insight-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-space-3);
+  padding-left: 0;
+}
+
+.rich-markdown-content .insight-item {
+  margin: 0;
+  padding: 11px 14px 11px 16px;
+  border-left: 3px solid var(--color-border-brand-base);
+  border-radius: 0 var(--border-radius-small) var(--border-radius-small) 0;
+  background: var(--color-surface-neutral-alpha-100);
+  line-height: 1.65;
+  color: var(--color-text-neutral-base);
+  font-size: 14px;
+}
+
+.rich-markdown-content .insight-item strong {
+  color: var(--color-text-neutral-strong);
+  font-weight: 600;
 }
 
 .rich-markdown-content code,

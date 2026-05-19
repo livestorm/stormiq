@@ -27,7 +27,8 @@
         <h3>Core providers</h3>
         <p><strong>Livestorm</strong> is used for session, event, chat, question, and recording retrieval.</p>
         <p><strong>Gladia</strong> is used for transcription, diarization, sentence extraction, NER, and subtitles.</p>
-        <p><strong>OpenAI GPT models</strong> are used for analytical and generative writing tasks.</p>
+        <p><strong>Anthropic Claude</strong> is used for all analytical and generative writing tasks — overall analysis, deep analysis, smart recap, and content repurposing.</p>
+        <p><strong>OpenAI Images API</strong> is used exclusively for AI-generated session cover images.</p>
       </article>
     </div>
 
@@ -44,7 +45,7 @@
         <div class="beta-model-row">
           <span>Transcript fetch</span>
           <span><code>gladia-v2-pre-recorded</code></span>
-          <span>Speech-to-text, diarization, sentences, NER, subtitle generation (`srt`, `vtt`).</span>
+          <span>Speech-to-text, diarization, sentences, NER, subtitle generation (srt, vtt).</span>
         </div>
         <div class="beta-model-row">
           <span>Transcript page</span>
@@ -53,30 +54,51 @@
         </div>
         <div class="beta-model-row">
           <span>Overall Analysis</span>
-          <span><code>gpt-4o-mini</code></span>
-          <span>Generates the transcript-based overall analysis.</span>
+          <span><code>claude-haiku-4-5</code></span>
+          <span>Generates the 5-section overall analysis from transcript, chat, and question signals.</span>
         </div>
         <div class="beta-model-row">
           <span>Deep Analysis</span>
-          <span><code>gpt-4o-mini</code></span>
-          <span>Generates the deeper diagnostic analysis using transcript, chat, questions, and session context.</span>
+          <span><code>claude-haiku-4-5</code></span>
+          <span>Generates the 10-section host-facing diagnostic using transcript, chat, questions, and session context.</span>
         </div>
         <div class="beta-model-row">
           <span>Content Repurposing</span>
-          <span><code>gpt-4o-mini</code></span>
-          <span>Creates summary, blog, email, and social copy variants from session content.</span>
+          <span><code>claude-haiku-4-5</code></span>
+          <span>Creates summary, blog post, follow-up email, and social media copy from session content.</span>
         </div>
         <div class="beta-model-row">
           <span>Smart Recap</span>
-          <span><code>gpt-5.4-mini</code></span>
-          <span>Produces tone-specific recap variants such as professional, hype, or surprise.</span>
+          <span><code>claude-sonnet-4-6</code></span>
+          <span>Produces tone-specific recap variants (professional, hype, surprise). Uses a stronger model intentionally.</span>
         </div>
         <div class="beta-model-row">
-          <span>Translations</span>
-          <span><code>gpt-4o-mini</code></span>
-          <span>Translates generated outputs between supported languages when needed.</span>
+          <span>Language switching</span>
+          <span><code>claude-haiku-4-5</code></span>
+          <span>Translates generated outputs between English and French when the missing language is requested.</span>
+        </div>
+        <div class="beta-model-row">
+          <span>Session cover image</span>
+          <span><code>gpt-image-2</code> — OpenAI Images API</span>
+          <span>Generates a 16:9 AI cover image for each session card, derived from the Professional Smart Recap.</span>
         </div>
       </div>
+    </section>
+
+    <section class="panel beta-notice-card">
+      <div class="panel-heading">
+        <h3>Infrastructure &amp; data residency</h3>
+      </div>
+      <p>
+        The application, background worker, and database are hosted on <strong>Render</strong> in the
+        <strong>Frankfurt (EU Central)</strong> region. Session data, transcripts, and generated outputs are stored in a
+        Render-managed PostgreSQL database located in Frankfurt. No data is persisted outside the EU.
+      </p>
+      <p>
+        AI inference requests are sent to Anthropic&apos;s API (Claude) for text generation and to OpenAI&apos;s API for
+        cover image generation. Both providers process data transiently and do not retain request content for training
+        purposes under their standard API terms.
+      </p>
     </section>
 
     <section class="panel beta-notice-card">

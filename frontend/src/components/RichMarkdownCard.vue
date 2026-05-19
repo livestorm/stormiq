@@ -80,16 +80,16 @@ const renderedHtml = computed(() => {
     for (const item of listItems) {
       if (isInlineSubheading(item)) {
         if (renderedItems.length) {
-          blocks.push(`<ul>${renderedItems.join("")}</ul>`);
+          blocks.push(`<div class="insight-list">${renderedItems.join("")}</div>`);
           renderedItems.length = 0;
         }
         blocks.push(`<h4>${renderInlineMarkdown(cleanInlineSubheading(item))}</h4>`);
         continue;
       }
-      renderedItems.push(`<li>${renderInlineMarkdown(item)}</li>`);
+      renderedItems.push(`<p class="insight-item">${renderInlineMarkdown(item)}</p>`);
     }
     if (renderedItems.length) {
-      blocks.push(`<ul>${renderedItems.join("")}</ul>`);
+      blocks.push(`<div class="insight-list">${renderedItems.join("")}</div>`);
     }
     listItems = [];
   };

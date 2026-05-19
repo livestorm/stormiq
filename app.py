@@ -128,12 +128,17 @@ def _resolve_organization_id(request: Request) -> str:
     LS_API_KEY fallback (no OAuth connection), this returns "" — those
     callers read the cache without an org filter, matching legacy
     behaviour for local development.
+
+    Admin users also receive "" so they can access sessions from any
+    organisation without being blocked by the org filter.
     """
     connection_id = str(request.cookies.get(LIVESTORM_OAUTH_COOKIE) or "").strip()
     if not connection_id:
         return ""
     connection = refresh_connection_if_needed(connection_id)
     if not isinstance(connection, dict):
+        return ""
+    if _is_admin_request(request):
         return ""
     return str(connection.get("organization_id") or "").strip()
 

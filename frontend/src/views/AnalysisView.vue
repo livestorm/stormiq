@@ -285,6 +285,7 @@ const reactionColumnWidths = {
   question_count: "8rem",
 };
 
+
 function downloadBlob(filename, content, mimeType) {
   const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
@@ -378,72 +379,82 @@ async function runDeepFor(language) {
           <a class="ghost-link-button" :href="deepPdfUrl">{{ uiText.downloadPdf }}</a>
         </div>
         <AiJobProgress :job="state.aiJobs.deep_analysis" flow="deep_analysis" :is-french="isFrenchUi" />
-        <div class="section-tabs analysis-deep-section-tabs" v-if="hasDeepBody">
-          <button
-            v-for="section in deepSectionLabels"
-            :key="section.id"
-            type="button"
-            class="section-tab"
-            :class="{ active: activeDeepSection === section.id }"
-            @click="activeDeepSection = section.id"
-          >
-            {{ section.label }}
-          </button>
-        </div>
-        <KeyMomentsTimeline
-          v-if="activeDeepSection === 'key_moments'"
-          :body="activeDeepSectionBody"
-          :empty-message="isFrenchUi ? 'Aucun moment clé disponible.' : 'No key moments available yet.'"
-        />
-        <section v-else-if="activeDeepSection === 'session_scores'" class="panel score-cards-panel">
-          <p v-if="!parsedScores.length" class="score-cards-empty">{{ uiText.emptyDeep }}</p>
-          <div v-else class="score-cards">
-            <div v-for="score in parsedScores" :key="score.name" class="score-card" :data-level="score.level">
-              <div class="score-card-header">
-                <span class="score-card-name">{{ score.name }}</span>
-                <span class="score-card-value">{{ score.value }}</span>
-              </div>
-              <div class="score-bar-track">
-                <div class="score-bar-fill" :style="{ width: score.value + '%' }"></div>
-              </div>
-              <p class="score-card-rationale">{{ score.rationale }}</p>
-            </div>
-          </div>
-        </section>
-        <RichMarkdownCard v-else :body="activeDeepSectionBody" :empty-message="uiText.emptyDeep" />
-        <template v-if="hasDeepBody && activeDeepSection === 'cross_source_synthesis'">
-          <ContentPaceAudienceActivityChartCard
-            v-if="deepTimelineRows.length"
-            :title="uiText.contentPaceTitle"
-            :is-french="isFrenchUi"
-            :rows="deepTimelineRows"
-          />
+        <div v-if="hasDeepBody" class="deep-analysis-layout">
+          <nav class="deep-section-nav" aria-label="Deep analysis sections">
+            <button
+              v-for="(section, index) in deepSectionLabels"
+              :key="section.id"
+              type="button"
+              class="deep-section-nav-item"
+              :class="{ active: activeDeepSection === section.id }"
+              :title="section.label"
+              @click="activeDeepSection = section.id"
+            >
+              <span class="deep-section-nav-index">{{ index + 1 }}</span>
+              <span class="deep-section-nav-label">{{ section.label }}</span>
+            </button>
+          </nav>
 
-          <section class="panel" v-if="deepReactionRows.length">
-            <div class="panel-heading panel-heading-inline table-toolbar-panel">
-              <div class="panel-heading-inline-title">
-                <h3>{{ uiText.reactionMomentsTitle }}</h3>
-                <button
-                  class="inline-icon-button"
-                  type="button"
-                  :title="isFrenchUi ? 'Telecharger le CSV des segments avec le plus de reactions' : 'Download segments with the most reactions CSV'"
-                  @click="downloadCsv('segments-with-the-most-reactions.csv', deepReactionRows)"
-                >
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M12 3v10.2l3.6-3.6 1.4 1.4-6 6-6-6 1.4-1.4 3.6 3.6V3H12zm-7 14h14v2H5v-2z" fill="currentColor" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-            <DataTable
-              :rows="deepReactionRows"
-              :column-labels="reactionColumnLabels"
-              :column-widths="reactionColumnWidths"
-              csv-filename="segments-with-the-most-reactions.csv"
-              :show-toolbar="false"
+          <div class="deep-section-content">
+            <KeyMomentsTimeline
+              v-if="activeDeepSection === 'key_moments'"
+              :body="activeDeepSectionBody"
+              :empty-message="isFrenchUi ? 'Aucun moment clé disponible.' : 'No key moments available yet.'"
             />
-          </section>
-        </template>
+            <section v-else-if="activeDeepSection === 'session_scores'" class="panel score-cards-panel">
+              <p v-if="!parsedScores.length" class="score-cards-empty">{{ uiText.emptyDeep }}</p>
+              <div v-else class="score-cards">
+                <div v-for="score in parsedScores" :key="score.name" class="score-card" :data-level="score.level">
+                  <div class="score-card-header">
+                    <span class="score-card-name">{{ score.name }}</span>
+                    <span class="score-card-value">{{ score.value }}</span>
+                  </div>
+                  <div class="score-bar-track">
+                    <div class="score-bar-fill" :style="{ width: score.value + '%' }"></div>
+                  </div>
+                  <p class="score-card-rationale">{{ score.rationale }}</p>
+                </div>
+              </div>
+            </section>
+
+            <!-- Cross-Source Synthesis keeps its data charts -->
+            <template v-else-if="activeDeepSection === 'cross_source_synthesis'">
+              <RichMarkdownCard :body="activeDeepSectionBody" :empty-message="uiText.emptyDeep" />
+              <ContentPaceAudienceActivityChartCard
+                v-if="deepTimelineRows.length"
+                :title="uiText.contentPaceTitle"
+                :is-french="isFrenchUi"
+                :rows="deepTimelineRows"
+              />
+              <section class="panel" v-if="deepReactionRows.length">
+                <div class="panel-heading panel-heading-inline table-toolbar-panel">
+                  <div class="panel-heading-inline-title">
+                    <h3>{{ uiText.reactionMomentsTitle }}</h3>
+                    <button
+                      class="inline-icon-button"
+                      type="button"
+                      :title="isFrenchUi ? 'Telecharger le CSV des segments avec le plus de reactions' : 'Download segments with the most reactions CSV'"
+                      @click="downloadCsv('segments-with-the-most-reactions.csv', deepReactionRows)"
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M12 3v10.2l3.6-3.6 1.4 1.4-6 6-6-6 1.4-1.4 3.6 3.6V3H12zm-7 14h14v2H5v-2z" fill="currentColor" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+                <DataTable
+                  :rows="deepReactionRows"
+                  :column-labels="reactionColumnLabels"
+                  :column-widths="reactionColumnWidths"
+                  csv-filename="segments-with-the-most-reactions.csv"
+                  :show-toolbar="false"
+                />
+              </section>
+            </template>
+
+            <RichMarkdownCard v-else :body="activeDeepSectionBody" :empty-message="uiText.emptyDeep" />
+          </div>
+        </div>
       </template>
     </template>
     <section v-else-if="isTranscriptLoading" class="panel loading-panel">
@@ -459,6 +470,88 @@ async function runDeepFor(language) {
 </template>
 
 <style scoped>
+.deep-analysis-layout {
+  display: grid;
+  grid-template-columns: 196px 1fr;
+  gap: var(--spacing-space-6);
+  align-items: start;
+}
+
+.deep-section-nav {
+  position: sticky;
+  top: var(--spacing-space-6);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--color-surface-neutral-alpha-100);
+  border: 1px solid var(--color-border-neutral-alpha-100);
+  border-radius: var(--border-radius-medium);
+  padding: var(--spacing-space-2);
+}
+
+.deep-section-nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-space-3);
+  width: 100%;
+  padding: 7px var(--spacing-space-3);
+  background: none;
+  border: none;
+  border-radius: var(--border-radius-small);
+  cursor: pointer;
+  text-align: left;
+  color: var(--color-text-neutral-secondary);
+  font-size: 13px;
+  line-height: 18px;
+  transition: background 0.12s, color 0.12s;
+}
+
+.deep-section-nav-item:hover {
+  background: var(--color-surface-neutral-alpha-200);
+  color: var(--color-text-neutral-base);
+}
+
+.deep-section-nav-item.active {
+  background: var(--color-surface-brand-alpha-200);
+  color: var(--color-text-brand-base);
+  font-weight: 600;
+}
+
+.deep-section-nav-index {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--color-surface-neutral-alpha-200);
+  color: var(--color-text-neutral-tertiary);
+  font-size: 11px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.deep-section-nav-item.active .deep-section-nav-index {
+  background: var(--color-surface-brand-alpha-300);
+  color: var(--color-text-brand-base);
+}
+
+.deep-section-nav-label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.deep-section-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-space-5);
+  min-width: 0;
+}
+
 .score-cards-panel {
   padding: var(--spacing-space-6);
 }
