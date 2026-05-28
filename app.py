@@ -468,7 +468,12 @@ def workspace_sessions(http_request: Request) -> Dict[str, Any]:
       - the org has no cached sessions yet
     The frontend treats empty list as the empty-state for the page.
     """
-    org_id = _resolve_organization_id(http_request)
+    # Always use the caller's own org_id here — even admins should see their
+    # own org's workspace, not an empty list. _resolve_organization_id returns
+    # "" for admins (so they can bypass org-filters on specific-session reads),
+    # but for the workspace list we always want the caller's actual org.
+    connection = _resolve_current_connection(http_request)
+    org_id = str((connection or {}).get("organization_id") or "").strip()
     if not org_id:
         # No OAuth org → no workspace view to show. Return empty rather
         # than 401 so the page can render a "connect with Livestorm to
