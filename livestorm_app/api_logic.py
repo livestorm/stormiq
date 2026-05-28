@@ -880,6 +880,8 @@ def run_overall_analysis(api_analysis_key: str, session_id: str, output_language
         selected_sources.extend(["chat", "questions"])
 
     analysis_bundle = _normalize_text_bundle(cached.get("analysis_bundle"), str(cached.get("analysis_md") or ""))
+    if str(output_language or "").strip() not in ("", "English") and not analysis_bundle.get("English", "").strip():
+        raise RuntimeError("Generate the English analysis first before translating.")
     source_language, source_markdown = _get_alternate_language_text(analysis_bundle, output_language)
     if source_markdown:
         analysis_md = translate_markdown_with_openai(
@@ -926,6 +928,8 @@ def run_deep_analysis(api_analysis_key: str, session_id: str, output_language: s
     chat_df = build_chat_df_from_payload(chat_payload)
     questions_df = build_questions_df_from_payload(questions_payload)
     deep_bundle = _normalize_text_bundle(cached.get("deep_analysis_bundle"), str(cached.get("deep_analysis_md") or ""))
+    if str(output_language or "").strip() not in ("", "English") and not deep_bundle.get("English", "").strip():
+        raise RuntimeError("Generate the English deep analysis first before translating.")
     source_language, source_markdown = _get_alternate_language_text(deep_bundle, output_language)
     if source_markdown:
         deep_analysis_md = translate_markdown_with_openai(
@@ -1114,6 +1118,10 @@ def run_content_repurposing(api_analysis_key: str, session_id: str, output_langu
         raise RuntimeError("Content repurposing requires a transcript payload.")
 
     all_bundles = cached.get("content_repurpose_bundle") if isinstance(cached.get("content_repurpose_bundle"), dict) else {}
+    if str(output_language or "").strip() not in ("", "English"):
+        english_bundle = all_bundles.get("English", {}) if isinstance(all_bundles, dict) else {}
+        if not any(str(v or "").strip() for v in (english_bundle or {}).values()):
+            raise RuntimeError("Generate the English content first before translating.")
     source_language, source_bundle = _get_alternate_language_bundle(all_bundles, output_language)
     if source_bundle:
         bundle = translate_content_repurpose_bundle_with_openai(
@@ -1219,6 +1227,13 @@ def _start_ai_job(
     # the bundle without ever entering the polling loop.
     if _extract_cached_ai_body(cached, kind, language=language, tone=tone):
         return _serialize_cached_session(session_id, cached)
+
+    # English-first enforcement: French (and any non-English variant) must be
+    # a translation of the existing English version so outputs stay consistent.
+    # Reject if English hasn't been generated yet.
+    if kind in ("overall_analysis", "deep_analysis", "content_repurposing") and str(language or "").strip() not in ("", "English"):
+        if not _extract_cached_ai_body(cached, kind, language="English"):
+            raise RuntimeError("Generate the English version first before translating to another language.")
 
     # Dedupe: rapid double-clicks on the Generate button can fire multiple
     # POSTs before the frontend `loading` flag races into the disabled

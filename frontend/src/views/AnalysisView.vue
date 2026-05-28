@@ -15,13 +15,25 @@ const activeOverallLanguage = ref("English");
 const activeDeepLanguage = ref("English");
 const activeDeepSection = ref("executive_summary");
 
-const languageTabs = [
-  { id: "English", label: "English", icon: "🇬🇧" },
-  { id: "French", label: "Français", icon: "🇫🇷" },
-];
-
 const overallBundle = computed(() => state.workspace?.outputs?.analysisBundle || {});
 const deepBundle = computed(() => state.workspace?.outputs?.deepAnalysisBundle || {});
+
+const hasOverallEnglish = computed(() => Boolean(String(overallBundle.value?.English || "").trim()));
+const hasDeepEnglish = computed(() => Boolean(String(deepBundle.value?.English || "").trim()));
+
+const overallLanguageTabs = computed(() => {
+  const tabs = [{ id: "English", label: "English", icon: "🇬🇧" }];
+  if (hasOverallEnglish.value) tabs.push({ id: "French", label: "Français", icon: "🇫🇷" });
+  return tabs;
+});
+const deepLanguageTabs = computed(() => {
+  const tabs = [{ id: "English", label: "English", icon: "🇬🇧" }];
+  if (hasDeepEnglish.value) tabs.push({ id: "French", label: "Français", icon: "🇫🇷" });
+  return tabs;
+});
+const activeLanguageTabs = computed(() =>
+  activeCategory.value === "overall" ? overallLanguageTabs.value : deepLanguageTabs.value
+);
 
 const overallBody = computed(() => overallBundle.value?.[activeOverallLanguage.value] || "");
 const deepBody = computed(() => deepBundle.value?.[activeDeepLanguage.value] || "");
@@ -49,9 +61,6 @@ const uiText = computed(() =>
           overall: "Analyse globale",
           deep: "Analyse approfondie",
         },
-        overallButton: "Générer",
-        deepButton: "Générer",
-        running: "Génération...",
         downloadPdf: "Télécharger le PDF",
         empty: "Utilise la transcription pour générer l’analyse globale.",
         emptyDeep: "Utilise la transcription, la session, le chat et les questions pour générer une analyse approfondie orientée hôte.",
@@ -71,9 +80,6 @@ const uiText = computed(() =>
           overall: "Overall Analysis",
           deep: "Deep Analysis",
         },
-        overallButton: "Generate",
-        deepButton: "Generate",
-        running: "Running...",
         downloadPdf: "Download PDF",
         empty: "Uses the transcript to generate the overall analysis.",
         emptyDeep: "Uses transcript, session, chat, and question signals to generate the deeper host-facing diagnostic analysis.",
@@ -313,6 +319,16 @@ function downloadCsv(filename, rows) {
   downloadBlob(filename, csv, "text/csv;charset=utf-8;");
 }
 
+const overallButtonLabel = computed(() => {
+  if (state.loading.analysis) return "Running...";
+  return activeOverallLanguage.value === "French" ? "Translate to French" : "Generate";
+});
+
+const deepButtonLabel = computed(() => {
+  if (state.loading.deepAnalysis) return "Running...";
+  return activeDeepLanguage.value === "French" ? "Translate to French" : "Generate";
+});
+
 async function runOverallFor(language) {
   activeOverallLanguage.value = language;
   await runAnalysis(language);
@@ -332,7 +348,7 @@ async function runDeepFor(language) {
     <template v-if="state.workspace && hasTranscriptData">
       <div class="section-tabs analysis-language-tabs">
         <button
-          v-for="tab in languageTabs"
+          v-for="tab in activeLanguageTabs"
           :key="tab.id"
           type="button"
           class="section-tab"
@@ -359,7 +375,7 @@ async function runDeepFor(language) {
       <template v-if="activeCategory === 'overall'">
         <div class="action-row" v-if="!hasOverallBody">
           <button class="primary" :disabled="state.loading.analysis" @click="runOverallFor(activeOverallLanguage)">
-            {{ state.loading.analysis ? uiText.running : uiText.overallButton }}
+            {{ overallButtonLabel }}
           </button>
         </div>
         <div class="action-row" v-else>
@@ -372,7 +388,7 @@ async function runDeepFor(language) {
       <template v-else>
         <div class="action-row" v-if="!hasDeepBody">
           <button class="primary" :disabled="state.loading.deepAnalysis" @click="runDeepFor(activeDeepLanguage)">
-            {{ state.loading.deepAnalysis ? uiText.running : uiText.deepButton }}
+            {{ deepButtonLabel }}
           </button>
         </div>
         <div class="action-row" v-else>

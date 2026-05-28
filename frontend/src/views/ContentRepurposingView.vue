@@ -10,13 +10,18 @@ const { state, runContentRepurposing, hasTranscriptData, isTranscriptLoading, is
 const activeLanguage = ref("English");
 const activeContentType = ref("summary");
 
-const languageTabs = [
-  { id: "English", label: "English", icon: "🇬🇧" },
-  { id: "French", label: "Français", icon: "🇫🇷" },
-];
-
 const contentBundle = computed(() => state.workspace?.outputs?.contentRepurposeBundle || {});
 const activeLanguageBundle = computed(() => contentBundle.value?.[activeLanguage.value] || {});
+
+const hasEnglishContent = computed(() =>
+  Object.values(contentBundle.value?.English || {}).some((v) => Boolean(String(v || "").trim()))
+);
+
+const languageTabs = computed(() => {
+  const tabs = [{ id: "English", label: "English", icon: "🇬🇧" }];
+  if (hasEnglishContent.value) tabs.push({ id: "French", label: "Français", icon: "🇫🇷" });
+  return tabs;
+});
 const activeBody = computed(() => String(activeLanguageBundle.value?.[activeContentType.value] || "").trim());
 const hasActiveBody = computed(() => Boolean(activeBody.value));
 const hasActiveLanguageContent = computed(() =>
@@ -68,11 +73,11 @@ const uiText = computed(() =>
       }
 );
 
-const languageHint = computed(() =>
-  activeLanguage.value === "English"
-    ? "Content has already been generated for English. Switch language to generate the other version."
-    : "Le contenu est deja genere en anglais. Passez en francais pour generer cette version."
-);
+const generateButtonLabel = computed(() => {
+  if (state.loading.contentRepurposing) return uiText.value.generating;
+  if (activeLanguage.value === "French") return "Translate to French";
+  return uiText.value.generate;
+});
 
 async function generateForLanguage(language) {
   activeLanguage.value = language;
@@ -86,8 +91,6 @@ async function generateForLanguage(language) {
     <p class="page-description">{{ uiText.description }}</p>
 
     <template v-if="state.workspace && hasTranscriptData">
-      <p class="analysis-subcopy" v-if="contentBundle?.English">{{ languageHint }}</p>
-
       <div class="section-tabs analysis-language-tabs">
         <button
           v-for="tab in languageTabs"
@@ -116,7 +119,7 @@ async function generateForLanguage(language) {
 
       <div class="action-row" v-if="!hasActiveLanguageContent">
         <button class="primary" :disabled="state.loading.contentRepurposing" @click="generateForLanguage(activeLanguage)">
-          {{ state.loading.contentRepurposing ? uiText.generating : uiText.generate }}
+          {{ generateButtonLabel }}
         </button>
       </div>
 
