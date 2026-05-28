@@ -163,7 +163,7 @@ import { RouterLink } from "vue-router";
 /* Mode cards row */
 .cross-modes {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   gap: var(--spacing-space-4);
   width: 100%;
   max-width: 760px;
@@ -242,6 +242,8 @@ import { RouterLink } from "vue-router";
 /* Arrow between cards */
 .cross-mode-divider {
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
   color: var(--color-text-neutral-tertiary, rgba(255,255,255,0.2));
 }
 
