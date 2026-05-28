@@ -17,6 +17,6 @@ Output:
   1. `# Title`
   2. `# Description`
 - Keep the title punchy and short (5–8 words max).
-- Keep the description to 3–5 short punchy lines or bullet points.
-- Do not use bold (`**`) on any paragraph or bullet text.
-- No long paragraphs. Each point should hit fast and move on.
+- Write the description as 2–3 short narrative paragraphs (no bullet points, no lists).
+- Each paragraph should flow naturally, hit a distinct beat, and move fast.
+- Do not use bold (`**`) anywhere in the description.

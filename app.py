@@ -120,17 +120,14 @@ def _raise_http_error(resource_label: str, exc: Exception, status_code: int = 40
 
 
 def _resolve_organization_id(request: Request) -> str:
-    """Resolve the requesting user's `organization_id` (or '' when unknown).
+    """Resolve the requesting user's `organization_id` for READ paths.
 
-    Used to scope session_cache reads + initial upserts so teammates in
-    the same Livestorm organization share cached results, but cross-org
-    callers don't see them. When the user authenticated with the local
-    LS_API_KEY fallback (no OAuth connection), this returns "" — those
-    callers read the cache without an org filter, matching legacy
-    behaviour for local development.
+    Returns "" for admin users so they can access sessions from any org
+    without being blocked by the org filter. Also returns "" when there is
+    no OAuth connection (local LS_API_KEY fallback).
 
-    Admin users also receive "" so they can access sessions from any
-    organisation without being blocked by the org filter.
+    Use `_resolve_own_organization_id` on WRITE paths (fetch/upsert) so that
+    sessions are always stamped with the fetcher's actual org_id.
     """
     connection_id = str(request.cookies.get(LIVESTORM_OAUTH_COOKIE) or "").strip()
     if not connection_id:
@@ -141,6 +138,17 @@ def _resolve_organization_id(request: Request) -> str:
     if _is_admin_request(request):
         return ""
     return str(connection.get("organization_id") or "").strip()
+
+
+def _resolve_own_organization_id(request: Request) -> str:
+    """Resolve the caller's actual org_id regardless of admin status.
+
+    Used on write paths (session fetch/upsert) so every session is stamped
+    with the fetcher's real organization_id and appears in their workspace
+    list — even when the fetcher is an admin.
+    """
+    connection = _resolve_current_connection(request)
+    return str((connection or {}).get("organization_id") or "").strip()
 
 
 def _resolve_generator_kwargs(request: Request) -> Dict[str, Any]:
@@ -565,7 +573,7 @@ def get_cached_session_workspace(session_id: str, http_request: Request) -> Resp
 def fetch_session_workspace(session_id: str, request: FetchSessionRequest, http_request: Request) -> Dict[str, Any]:
     try:
         api_key = _resolve_livestorm_auth(request.api_key, http_request)
-        org_id = _resolve_organization_id(http_request)
+        org_id = _resolve_own_organization_id(http_request)
         generator = _resolve_generator_kwargs(http_request)
         transcript_api_key = str(request.transcript_api_key or "").strip() or get_runtime_secret("GLADIA_KEY", "")
         return fetch_all_session_data(
@@ -585,7 +593,7 @@ def fetch_session_workspace(session_id: str, request: FetchSessionRequest, http_
 def fetch_session_base_workspace(session_id: str, request: FetchSessionRequest, http_request: Request) -> Dict[str, Any]:
     try:
         api_key = _resolve_livestorm_auth(request.api_key, http_request)
-        org_id = _resolve_organization_id(http_request)
+        org_id = _resolve_own_organization_id(http_request)
         generator = _resolve_generator_kwargs(http_request)
         return fetch_session_base_data(
             api_key=api_key,
@@ -603,7 +611,7 @@ def fetch_session_base_workspace(session_id: str, request: FetchSessionRequest, 
 def fetch_session_transcript_workspace(session_id: str, request: FetchSessionRequest, http_request: Request) -> Dict[str, Any]:
     try:
         api_key = _resolve_livestorm_auth(request.api_key, http_request)
-        org_id = _resolve_organization_id(http_request)
+        org_id = _resolve_own_organization_id(http_request)
         generator = _resolve_generator_kwargs(http_request)
         transcript_api_key = str(request.transcript_api_key or "").strip() or get_runtime_secret("GLADIA_KEY", "")
         return fetch_session_transcript_data(
