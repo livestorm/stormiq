@@ -396,7 +396,7 @@ def upsert_cached_session(api_key: str, session_id: str, **fields: Any) -> None:
     # upserts the existing value is preserved via COALESCE — this keeps
     # the original generator attribution stable even when a different
     # user later refetches the same session.
-    preserve_on_update = {"created_by_user_id", "created_by_email", "created_by_name"}
+    preserve_on_update = {"created_by_user_id", "created_by_email", "created_by_name", "organization_id"}
     persisted_fields = {key: value for key, value in fields.items() if key in allowed_fields}
     if not persisted_fields:
         return
