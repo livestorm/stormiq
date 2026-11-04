@@ -110,10 +110,8 @@ const availableSubtitles = computed(() =>
   }))
 );
 const transcriptSegments = computed(() => state.workspace?.tables?.transcriptSegments || []);
-const transcriptKeyMoments = computed(() => state.workspace?.tables?.transcriptKeyMoments || []);
 const transcriptSpeakers = computed(() => state.workspace?.tables?.transcriptSpeakers || []);
 const transcriptSpeakerTurns = computed(() => state.workspace?.tables?.transcriptSpeakerTurns || []);
-const transcriptPace = computed(() => state.workspace?.tables?.transcriptPace || []);
 const transcriptNumbers = computed(() => state.workspace?.tables?.transcriptNumbers || []);
 const transcriptSilence = computed(() => state.workspace?.tables?.transcriptSilence || []);
 const transcriptPauseTypes = computed(() => state.workspace?.tables?.transcriptPauseTypes || []);
@@ -164,22 +162,6 @@ const speakerKeys = computed(() => {
     left.localeCompare(right, undefined, { numeric: true, sensitivity: "base" })
   );
 });
-
-const highlightsRows = computed(() =>
-  transcriptKeyMoments.value
-    .map((row) => ({
-      time_label: row.time_label,
-      speaker: mapSpeakerLabel(row.speaker),
-      score: row.score,
-      reasons: row.reasons,
-      excerpt: row.excerpt,
-    }))
-    .filter((row) => {
-      const excerpt = String(row.excerpt || "").trim();
-      const wordCount = excerpt.split(/\s+/).filter(Boolean).length;
-      return excerpt.length >= 24 && wordCount >= 4;
-    })
-);
 
 const numbersRows = computed(() =>
   transcriptNumbers.value.map((row) => ({

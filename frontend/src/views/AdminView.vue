@@ -211,17 +211,6 @@ function formatDate(ts) {
   }
 }
 
-function contentFlags(session) {
-  const flags = [];
-  if (session.has_transcript) flags.push("Transcript");
-  if (session.has_overall) flags.push("Overall");
-  if (session.has_deep) flags.push("Deep");
-  if (session.has_recap) flags.push("Recap");
-  if (session.has_repurposing) flags.push("Content");
-  if (session.has_cover) flags.push("Cover");
-  return flags;
-}
-
 onMounted(() => {
   loadUsers();
   loadSettings();

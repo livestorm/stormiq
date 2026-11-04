@@ -1,0 +1,17 @@
+# Lint only (no auto-formatting yet): pyflakes, syntax/runtime-error
+# pycodestyle rules, and flake8-bugbear. Run: ruff check .
+target-version = "py313"
+
+[lint]
+select = ["E4", "E7", "E9", "F", "B"]
+
+[lint.flake8-bugbear]
+# FastAPI dependency markers are meant to be called in default arguments.
+extend-immutable-calls = [
+    "fastapi.Body",
+    "fastapi.Cookie",
+    "fastapi.Depends",
+    "fastapi.Header",
+    "fastapi.Path",
+    "fastapi.Query",
+]

@@ -58,7 +58,6 @@ const questionRows = computed(() => state.workspace?.tables?.questions || []);
 const chatStats = computed(() => state.workspace?.stats?.chat || {});
 const questionStats = computed(() => state.workspace?.stats?.questions || {});
 const activityTimelineRowsRaw = computed(() => state.workspace?.tables?.chatQuestionsTimeline || []);
-const reactionMomentsRowsRaw = computed(() => state.workspace?.tables?.chatQuestionReactionMoments || []);
 
 const avgMessageLength = computed(() => {
   const statValue = Number(chatStats.value?.text_length?.avg_chars || 0);
@@ -251,15 +250,6 @@ const responseCoverageCards = computed(() => {
     { label: "Coverage Rate", value: `${coverage.toFixed(1)}%` },
   ];
 });
-
-const reactionMomentsRows = computed(() =>
-  reactionMomentsRowsRaw.value.map((row) => ({
-    progress_window: row.progress_window,
-    chat_messages: Number(row.chat_messages) || 0,
-    question_count: Number(row.question_count) || 0,
-    excerpt: row.excerpt,
-  }))
-);
 
 const tabs = [
   { id: "chat", label: "Chat" },

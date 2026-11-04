@@ -21,7 +21,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from typing import Any, Optional, TypedDict
+from typing import Any, Dict, Optional, TypedDict
 
 import redis as redis_sync
 

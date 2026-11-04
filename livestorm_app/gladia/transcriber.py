@@ -647,7 +647,7 @@ def _merge_chunk_results(chunk_results: list[dict[str, Any]]) -> dict[str, Any]:
     merged_duration_seconds = 0.0
     detected_language: str | None = None
 
-    for index, chunk_result in enumerate(chunk_results, start=1):
+    for chunk_result in chunk_results:
         chunk_payload = chunk_result["gladia_result"]
         offset_seconds = float(chunk_result.get("offset_seconds") or 0.0)
         duration_seconds = _extract_duration_seconds(chunk_payload) or 0.0
