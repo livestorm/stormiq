@@ -1,123 +1,61 @@
-# Livestorm Session Workspace
+# StormIQ
 
-Vue + FastAPI workspace to:
-- Fetch Livestorm session overview, chat, questions, and transcript data
-- Cache fetched sessions in Postgres by `session_id`
-- Explore each major area in its own routed frontend view
-- Run overall analysis, deep analysis, smart recap, and content repurposing workflows
-- Persist speaker labels alongside the cached session
+StormIQ analyses finished Livestorm sessions. It fetches a session's overview, chat, questions and recording transcript, caches them, and provides:
 
-## Quickstart
+- session overview and audience analytics
+- transcript diagnostics (pace, airtime, pauses, entities, segments)
+- chat and questions analytics
+- AI overall and deep analysis, Smart Recap, and content repurposing (English and French, exportable as PDF)
 
-Backend:
+Access is scoped to the user's Livestorm organization through Livestorm OAuth.
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn app:app --reload
-```
+- **[CLAUDE.md](CLAUDE.md):** architecture, business rules, routes and schema. It is the source of truth for engineers.
+- **[doc.md](doc.md):** product description of every view, chart and formula.
+- **[BRAND.md](BRAND.md):** brand guidelines.
 
-Frontend:
+## Architecture
 
-```bash
-cd frontend
-npm install
-npm run dev
-```
+| Service | What it runs |
+|---|---|
+| **web** | FastAPI API plus the built Vue SPA ([Dockerfile](Dockerfile)) |
+| **worker** | arq worker for transcription (Gladia) and AI generation jobs ([docker/Dockerfile.worker](docker/Dockerfile.worker)) |
+| **redis** | job queue and progress |
+| **Postgres** | session cache, OAuth connections, jobs |
 
-## Render Deployment
+Production runs on Render ([render.yaml](render.yaml)).
 
-This repo is set up to deploy to Render as a single web service:
-
-- FastAPI serves the API routes
-- FastAPI also serves the built Vue frontend from `frontend/dist`
-- Render only needs to run the Docker image
-
-Recommended Render settings:
-
-- Environment: `Docker`
-- Build Command: none
-- Start Command: none
-  Docker uses the `CMD` from [Dockerfile](/Users/fares/Code/chat-analysis/Dockerfile)
-
-Required environment variables on Render:
-
-- `OPENAI_API_KEY`
-- `API_AUTH_KEY`
-- the Postgres connection variables used by [db.py](/Users/fares/Code/chat-analysis/livestorm_app/db.py)
-- optionally `STORMIQ_LOCAL_DEV=1` + `LS_API_KEY` to skip OAuth during local development (never on Render; see CLAUDE.md §4)
-
-Local Docker test:
+## Local development
 
 ```bash
-docker build -t stormiq .
-docker run --rm -p 10000:10000 --env-file .env stormiq
+cp .env.example .env                  # fill in the keys you need; see comments inside
+docker compose up --build             # web on http://localhost:10000, plus worker, redis, postgres
 ```
 
-Then open:
+Local development uses its own Postgres from `docker-compose.yml`. Never point it at the production database. To run the app outside Docker (hot reload), start only the data services, then the app:
 
-```text
-http://localhost:10000
+```bash
+docker compose up -d postgres redis
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements-dev.txt
+uvicorn app:app --reload                     # API on :8000
+arq livestorm_app.worker.WorkerSettings      # worker
+cd frontend && npm install && npm run dev    # SPA on :5173, proxies /api to :8000
 ```
 
-## Backend API
+`STORMIQ_LOCAL_DEV=1` with an `LS_API_KEY` lets you skip OAuth locally; see [CLAUDE.md §4](CLAUDE.md).
 
-The FastAPI backend exposes JSON endpoints for:
-- loading past event sessions
-- fetching and caching a session workspace
-- saving speaker labels
-- running overall analysis
-- running deep analysis
-- generating smart recap output
-- generating content repurposing bundles
+## Tests and checks
 
-## Project Structure
+CI runs these on every pull request:
 
-```text
-assets/
-  icons/
-frontend/
-  src/
-livestorm_app/
-  api_logic.py
-  config.py
-  db.py
-  services.py
-  session_overview.py
-prompts/
-app.py
-README.md
-requirements.txt
+```bash
+ruff check .
+TEST_DATABASE_URL=postgresql://stormiq:stormiq@localhost:5433/stormiq pytest
+cd frontend && npm run lint && npm run build
 ```
 
-## Frontend Routes
+Python dependencies are locked with hashes. To change them, edit `requirements.in` (or `requirements-dev.in`) and re-run the `uv pip compile` command shown at the top of the lock file.
 
-- `/session-overview`
-- `/transcript`
-- `/chat-questions`
-- `/analysis`
-- `/smart-recap`
-- `/content-repurposing`
+## Prompts
 
-## Editable Prompt
-
-You can change the analysis instructions without code edits:
-
-- `prompts/analysis_base_prompt.txt`
-- `prompts/analysis_chat_prompt.txt`
-- `prompts/analysis_questions_prompt.txt`
-- `prompts/analysis_transcript_prompt.txt`
-- `prompts/analysis_all_sources_prompt.txt`
-- `prompts/analysis_deep_prompt.txt`
-- `prompts/content_repurpose_summary_prompt.txt`
-- `prompts/content_repurpose_email_prompt.txt`
-- `prompts/content_repurpose_blog_prompt.txt`
-- `prompts/content_repurpose_social_media_prompt.txt`
-
-## Notes
-
-- Set `OPENAI_API_KEY` for analysis, recap, and content generation.
-- Set `API_AUTH_KEY` for transcript fetching.
-- In local dev, Vite proxies `/api` and `/brand-assets` to the FastAPI server.
-- In production, FastAPI serves the built frontend directly from `frontend/dist`.
+All AI prompts live in [`prompts/`](prompts/) as plain text and can be tuned without code changes.
