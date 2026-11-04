@@ -1,14 +1,17 @@
+import atexit
 import hashlib
 import json
 import os
 import logging
+import threading
+import time
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterator, List, Optional, Union
+from typing import Any, Dict, Iterator, List, Optional, Sequence, Union
 
-from psycopg import connect
 from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
 
 
 DATABASE_URL_ENV_VARS = ("DATABASE_URL", "POSTGRES_URL", "RENDER_POSTGRES_URL")
@@ -69,12 +72,68 @@ def build_account_key_hash(api_key: str) -> str:
     return hashlib.sha256(str(api_key or "").strip().encode("utf-8")).hexdigest()
 
 
+# ── Connection pool ─────────────────────────────────────────────────────────
+#
+# One pool per process (web and worker). Opening a connection to Render's
+# Postgres costs a TCP + TLS handshake and authentication; a typical request
+# used to pay that several times. Pooled connections are checked before use
+# (dropped idle connections are replaced) and recycled after an hour.
+# The pool follows the configured URL, so a changed DATABASE_URL (tests use a
+# schema per test) gets a fresh pool.
+
+DB_POOL_MAX_SIZE = 10
+DB_POOL_TIMEOUT_SECONDS = 15
+
+_pool: Optional[ConnectionPool] = None
+_pool_url = ""
+_pool_lock = threading.Lock()
+
+
+def _get_pool(database_url: str) -> ConnectionPool:
+    global _pool, _pool_url
+    stale: Optional[ConnectionPool] = None
+    with _pool_lock:
+        if _pool is None or _pool_url != database_url:
+            stale = _pool
+            _pool = ConnectionPool(
+                database_url,
+                min_size=1,
+                max_size=DB_POOL_MAX_SIZE,
+                kwargs={"row_factory": dict_row},
+                check=ConnectionPool.check_connection,
+                max_idle=300,
+                max_lifetime=3600,
+                timeout=DB_POOL_TIMEOUT_SECONDS,
+                name="stormiq",
+                open=True,
+            )
+            _pool_url = database_url
+        pool = _pool
+    if stale is not None:
+        stale.close()
+    return pool
+
+
+def close_db_pool() -> None:
+    """Close the process's pool (app shutdown, worker shutdown, exit)."""
+    global _pool, _pool_url
+    with _pool_lock:
+        pool, _pool, _pool_url = _pool, None, ""
+    if pool is not None:
+        pool.close()
+
+
+atexit.register(close_db_pool)
+
+
 @contextmanager
 def get_db_connection() -> Iterator[Any]:
+    """A pooled connection. On exit the transaction is committed (or rolled
+    back on error) and the connection goes back to the pool."""
     database_url = get_database_url()
     if not database_url:
         raise RuntimeError("Database is not configured.")
-    with connect(database_url, row_factory=dict_row) as connection:
+    with _get_pool(database_url).connection() as connection:
         yield connection
 
 
@@ -404,6 +463,50 @@ def fetch_cached_session(
         return None
 
 
+# Light reads for polling and job starts: only these fields can be asked
+# for, by name. A 2-hour session row is megabytes; a poll needs a flag.
+_SESSION_FIELD_SQL = {
+    "has_transcript": "transcript_payload IS NOT NULL",
+    "transcript_payload": "transcript_payload",
+    "analysis_bundle": "analysis_bundle",
+    "analysis_md": "analysis_md",
+    "deep_analysis_bundle": "deep_analysis_bundle",
+    "deep_analysis_md": "deep_analysis_md",
+    "smart_recap_bundle": "smart_recap_bundle",
+    "content_repurpose_bundle": "content_repurpose_bundle",
+    "updated_at": "updated_at",
+}
+
+
+def fetch_session_fields(
+    session_id: str,
+    fields: Sequence[str],
+    *,
+    organization_id: OrgScope,
+) -> Optional[Dict[str, Any]]:
+    """Read only `fields` of a cached session row. Same scope rules as
+    `fetch_cached_session`: None when the row is missing or not visible."""
+    unknown = [field for field in fields if field not in _SESSION_FIELD_SQL]
+    if unknown or not fields:
+        raise ValueError(f"Unknown session fields: {unknown}")
+    if not database_enabled() or not str(session_id or "").strip():
+        return None
+    try:
+        org_filter = _org_filter(organization_id)
+    except ScopeMatchesNothing:
+        return None
+    columns = ", ".join(f"{_SESSION_FIELD_SQL[field]} AS {field}" for field in fields)
+    where_clause = "WHERE session_id = %s" + (" AND organization_id = %s" if org_filter is not None else "")
+    params = (str(session_id).strip(),) + ((org_filter,) if org_filter is not None else ())
+    try:
+        with get_db_connection() as connection:
+            row = connection.execute(f"SELECT {columns} FROM session_cache {where_clause} LIMIT 1", params).fetchone()
+        return dict(row) if isinstance(row, dict) else None
+    except Exception:
+        logger.exception("Failed to read session fields for session_id=%s", str(session_id).strip())
+        return None
+
+
 def upsert_cached_session(api_key: str, session_id: str, **fields: Any) -> None:
     """Insert or update a session_cache row.
 
@@ -554,13 +657,40 @@ def merge_cached_bundle_entry(
         raise RuntimeError(f"Session {session_id_value} is no longer cached; the result was not saved.")
 
 
-def list_workspace_sessions(organization_id: str) -> List[Dict[str, Any]]:
-    """Return cached session rows belonging to the given organization.
+_SQL_WHITESPACE = r"E' \t\n\r\f\v'"
 
-    Reverse-chronological by `updated_at`. The session_payload column
-    carries enough Livestorm attribute data for the card list; chat /
-    questions / transcript / bundles are NOT loaded here — those are
-    only fetched when the user opens a specific session.
+
+def _has_content_sql(column: str) -> str:
+    """SQL flag: does this AI bundle column hold any output?
+
+    True when the bundle (a JSON object) has a non-blank string value, or an
+    object value with at least one truthy, non-blank member (Python's
+    `str(member or "").strip()`). Computing this in Postgres means the card
+    list never transfers the bundles themselves. tests/test_performance.py
+    checks it against the Python rule it replaced.
+    """
+    return f"""EXISTS (
+        SELECT 1
+        FROM jsonb_each(CASE WHEN jsonb_typeof({column}) = 'object' THEN {column} ELSE '{{}}'::jsonb END) AS entry(key, value)
+        WHERE (jsonb_typeof(entry.value) = 'string' AND btrim(entry.value #>> '{{}}', {_SQL_WHITESPACE}) <> '')
+           OR (jsonb_typeof(entry.value) = 'object' AND EXISTS (
+                SELECT 1 FROM jsonb_each(entry.value) AS member(key, value)
+                WHERE (jsonb_typeof(member.value) = 'string' AND btrim(member.value #>> '{{}}', {_SQL_WHITESPACE}) <> '')
+                   OR (jsonb_typeof(member.value) = 'number' AND member.value <> '0'::jsonb)
+                   OR member.value = 'true'::jsonb
+                   OR (jsonb_typeof(member.value) = 'array' AND jsonb_array_length(member.value) > 0)
+                   OR (jsonb_typeof(member.value) = 'object' AND member.value <> '{{}}'::jsonb)
+           ))
+    )"""
+
+
+def list_workspace_sessions(organization_id: str) -> List[Dict[str, Any]]:
+    """Return the card-list fields of every cached session of an organization.
+
+    Reverse-chronological by `updated_at`. Only what a card shows is read:
+    the session's attributes object (not its attendee list), the event
+    title, and has-output flags computed in SQL. Payloads, transcripts and
+    AI bundles stay in the database; a 2-hour session row is megabytes.
 
     Returns [] when the database is disabled, the organization_id is
     blank, or the SELECT fails. Empty list ≠ error so the new frontend
@@ -573,17 +703,19 @@ def list_workspace_sessions(organization_id: str) -> List[Dict[str, Any]]:
         with get_db_connection() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
-                    """
+                    f"""
                     SELECT
                         session_id,
                         organization_id,
-                        session_payload,
-                        event_payload,
+                        CASE WHEN jsonb_typeof(session_payload -> 'data' -> 'attributes') = 'object'
+                             THEN session_payload -> 'data' -> 'attributes' END AS session_attributes,
+                        CASE WHEN jsonb_typeof(event_payload -> 'data' -> 'attributes') = 'object'
+                             THEN event_payload -> 'data' -> 'attributes' ->> 'title' END AS event_title,
                         transcript_payload IS NOT NULL AS has_transcript,
-                        analysis_bundle,
-                        deep_analysis_bundle,
-                        smart_recap_bundle,
-                        content_repurpose_bundle,
+                        {_has_content_sql("analysis_bundle")} AS has_overall_analysis,
+                        {_has_content_sql("deep_analysis_bundle")} AS has_deep_analysis,
+                        {_has_content_sql("smart_recap_bundle")} AS has_smart_recap,
+                        {_has_content_sql("content_repurpose_bundle")} AS has_content_repurposing,
                         cover_image_bytes IS NOT NULL AS has_cover_image,
                         cover_image_mime,
                         cover_image_generated_at,
@@ -1074,21 +1206,37 @@ def admin_list_users() -> List[Dict[str, Any]]:
 
 # ── System settings ───────────────────────────────────────────────────────────
 
+# Settings are read on every LLM call. They are cached per process for a
+# minute (another process sees an admin change within that time), and a
+# failed read serves the last known value instead of silently falling back
+# to the defaults (which could switch the LLM provider or model mid-flight).
+SETTINGS_CACHE_TTL_SECONDS = 60.0
+_settings_cache: Dict[tuple, tuple] = {}
+_settings_cache_lock = threading.Lock()
+
+
 def get_setting(key: str, default: Optional[str] = None) -> Optional[str]:
     if not database_enabled():
         return default
+    cache_key = (get_database_url(), str(key).strip())
+    with _settings_cache_lock:
+        cached = _settings_cache.get(cache_key)
+    if cached is not None and time.monotonic() - cached[0] < SETTINGS_CACHE_TTL_SECONDS:
+        return cached[1] if cached[1] is not None else default
     try:
         with get_db_connection() as connection:
             with connection.cursor() as cursor:
-                cursor.execute(
-                    "SELECT value FROM system_settings WHERE key = %s",
-                    (str(key).strip(),),
-                )
+                cursor.execute("SELECT value FROM system_settings WHERE key = %s", (cache_key[1],))
                 row = cursor.fetchone()
-                return str(row["value"]) if row else default
+        value = str(row["value"]) if row else None
     except Exception:
         logger.exception("Failed to read system_setting key=%s", key)
+        if cached is not None:
+            return cached[1] if cached[1] is not None else default
         return default
+    with _settings_cache_lock:
+        _settings_cache[cache_key] = (time.monotonic(), value)
+    return value if value is not None else default
 
 
 def set_setting(key: str, value: str) -> None:
@@ -1111,6 +1259,8 @@ def set_setting(key: str, value: str) -> None:
     except Exception:
         logger.exception("Failed to set system_setting key=%s", key)
         raise
+    with _settings_cache_lock:
+        _settings_cache[(get_database_url(), str(key).strip())] = (time.monotonic(), str(value))
 
 
 def get_all_settings() -> Dict[str, str]:

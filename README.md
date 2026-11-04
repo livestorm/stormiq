@@ -55,6 +55,14 @@ TEST_REDIS_URL=redis://localhost:6379/15 pytest
 cd frontend && npm run lint && npm run build
 ```
 
+To measure performance locally, seed synthetic sessions and time the heaviest routes (both scripts refuse non-local databases):
+
+```bash
+export DATABASE_URL=postgresql://stormiq:stormiq@localhost:5433/stormiq REDIS_URL=redis://localhost:6379/13
+python scripts/seed_benchmark_sessions.py --reset
+python scripts/benchmark_routes.py
+```
+
 Python dependencies are locked with hashes. To change them, edit `requirements.in` (or `requirements-dev.in`) and re-run the `uv pip compile` command shown at the top of the lock file.
 
 ## Prompts

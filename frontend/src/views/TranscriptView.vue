@@ -10,6 +10,7 @@ import SpeakerTimelineChartCard from "../components/charts/transcript/SpeakerTim
 import SpeakingBurstChartCard from "../components/charts/transcript/SpeakingBurstChartCard.vue";
 import TimelinePauseChartCard from "../components/charts/transcript/TimelinePauseChartCard.vue";
 import WordsOverTimeChartCard from "../components/charts/transcript/WordsOverTimeChartCard.vue";
+import { api } from "../api";
 import { useWorkspace } from "../store/workspace";
 
 const { state, saveSpeakerLabels, isTranscriptUnavailable, retryTranscript } = useWorkspace();
@@ -66,14 +67,13 @@ function downloadBlob(filename, content, mimeType) {
 }
 
 function downloadTranscriptJson() {
-  const transcriptPayload = state.workspace?.payloads?.transcript;
-  if (!transcriptPayload) return;
-  const sessionId = state.workspace?.sessionId || "session";
-  downloadBlob(
-    `livestorm-transcript-${sessionId}.json`,
-    JSON.stringify(transcriptPayload, null, 2),
-    "application/json;charset=utf-8;",
-  );
+  // The workspace no longer carries the raw transcript; the server sends it
+  // as an attachment.
+  const sessionId = state.workspace?.sessionId;
+  if (!sessionId || !state.workspace?.payloads?.transcript) return;
+  const link = document.createElement("a");
+  link.href = api.getTranscriptJsonUrl(sessionId);
+  link.click();
 }
 
 function downloadSubtitleFile() {

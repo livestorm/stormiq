@@ -19,9 +19,13 @@ Hard rules:
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
+import dataclasses
 import logging
 import os
-from typing import Any, Dict, Optional, TypedDict
+import threading
+import time
+from typing import Any, Awaitable, Callable, Dict, Optional, TypedDict, TypeVar
 
 from arq import create_pool
 from arq.connections import ArqRedis, RedisSettings
@@ -29,6 +33,8 @@ from arq.constants import result_key_prefix
 
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 
 # ── Connection ──────────────────────────────────────────────────────────────
@@ -135,6 +141,101 @@ async def enqueue_job(function_name: str, *args: Any, **kwargs: Any) -> Optional
         return None
 
 
+# ── Sync bridge ─────────────────────────────────────────────────────────────
+#
+# FastAPI runs `def` handlers in a threadpool with no event loop, while arq
+# is async. Instead of building a new event loop and a new Redis connection
+# for every enqueue or status read, each process keeps one background
+# event-loop thread holding one arq pool, and sync callers submit
+# coroutines to it. The pool follows REDIS_URL (tests switch databases).
+
+SYNC_CALL_TIMEOUT_SECONDS = 20.0
+# When Redis is unreachable, calls fail at once for this long instead of each
+# waiting for its own connection attempt: polls must never tie up the web
+# server's threads during a Redis outage.
+REDIS_DOWN_COOLDOWN_SECONDS = 5.0
+
+
+class _QueueBridge:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._pool: Optional[ArqRedis] = None
+        self._pool_url = ""
+        self._pool_lock: Optional[asyncio.Lock] = None
+        self._down_url = ""
+        self._down_until = 0.0
+
+    def _event_loop(self) -> asyncio.AbstractEventLoop:
+        with self._lock:
+            if self._loop is None or self._loop.is_closed():
+                loop = asyncio.new_event_loop()
+                threading.Thread(target=loop.run_forever, name="stormiq-queue", daemon=True).start()
+                self._loop = loop
+            return self._loop
+
+    async def _current_pool(self) -> ArqRedis:
+        if self._pool_lock is None:
+            self._pool_lock = asyncio.Lock()
+        async with self._pool_lock:
+            url = get_redis_url()
+            if self._pool is not None and self._pool_url == url:
+                return self._pool
+            if url == self._down_url and time.monotonic() < self._down_until:
+                raise ConnectionError("Redis was unreachable a moment ago; not retrying yet.")
+            stale, self._pool = self._pool, None
+            if stale is not None:
+                await stale.aclose()
+            try:
+                # One attempt (about 1 s), not arq's default 5 retries: callers
+                # wait behind this lock, and the cooldown covers the retries.
+                self._pool = await create_pool(dataclasses.replace(get_redis_settings(), conn_retries=0))
+            except Exception:
+                self._down_url, self._down_until = url, time.monotonic() + REDIS_DOWN_COOLDOWN_SECONDS
+                raise
+            self._pool_url = url
+            return self._pool
+
+    def run(self, operation: Callable[[ArqRedis], Awaitable[T]]) -> T:
+        """Run `operation(pool)` on the bridge loop and wait for its result."""
+
+        async def with_pool() -> T:
+            return await operation(await self._current_pool())
+
+        future = asyncio.run_coroutine_threadsafe(with_pool(), self._event_loop())
+        try:
+            return future.result(timeout=SYNC_CALL_TIMEOUT_SECONDS)
+        except concurrent.futures.TimeoutError:
+            future.cancel()
+            raise
+
+    def close(self) -> None:
+        with self._lock:
+            loop, self._loop = self._loop, None
+        if loop is None:
+            return
+
+        async def shutdown() -> None:
+            if self._pool is not None:
+                await self._pool.aclose()
+            self._pool, self._pool_url = None, ""
+            self._pool_lock = None  # bound to this loop; a new loop needs a new lock
+
+        try:
+            asyncio.run_coroutine_threadsafe(shutdown(), loop).result(timeout=5)
+        except Exception:
+            logger.warning("Closing the queue connection failed", exc_info=True)
+        loop.call_soon_threadsafe(loop.stop)
+
+
+_bridge = _QueueBridge()
+
+
+def close_queue_bridge() -> None:
+    """Release the web process's Redis connection (app shutdown)."""
+    _bridge.close()
+
+
 def enqueue_unique_job_sync(
     function_name: str,
     job_id: str,
@@ -155,18 +256,7 @@ def enqueue_unique_job_sync(
     result is cleared and the job queued afresh: this is what lets a user
     retry after an error. Returns None when Redis is unreachable.
     """
-    try:
-        return asyncio.run(_enqueue_unique(function_name, job_id, *args, **kwargs))
-    except Exception:
-        logger.exception("Failed to enqueue arq job %s (%s)", function_name, job_id)
-        return None
-
-
-async def _enqueue_unique(function_name: str, job_id: str, *args: Any, **kwargs: Any) -> Dict[str, Any]:
-    # A fresh pool per call: the module-level pool belongs to another event
-    # loop and can't be reused from asyncio.run().
-    pool = await create_pool(get_redis_settings())
-    try:
+    async def enqueue(pool: ArqRedis) -> Dict[str, Any]:
         for _attempt in range(2):
             job = await pool.enqueue_job(function_name, *args, _job_id=job_id, **kwargs)
             if job is not None:
@@ -179,8 +269,12 @@ async def _enqueue_unique(function_name: str, job_id: str, *args: Any, **kwargs:
             await pool.delete(result_key_prefix + job_id)
         status = await _job_status(pool, job_id)
         return {"jobId": job_id, "jobStatus": status["jobStatus"], "enqueued": False}
-    finally:
-        await pool.close()
+
+    try:
+        return _bridge.run(enqueue)
+    except Exception:
+        logger.exception("Failed to enqueue arq job %s (%s)", function_name, job_id)
+        return None
 
 
 # ── Job status lookup (sync) ───────────────────────────────────────────────
@@ -204,21 +298,14 @@ def read_job_status_sync(job_id: str) -> Dict[str, Any]:
 
     Returns: `{ jobStatus: str, error?: str }`. See the vocabulary above.
     """
-    if not str(job_id or "").strip():
+    cleaned = str(job_id or "").strip()
+    if not cleaned:
         return {"jobStatus": "not_found"}
     try:
-        return asyncio.run(_read_job_status_async(str(job_id).strip()))
+        return _bridge.run(lambda pool: _job_status(pool, cleaned))
     except Exception:
         logger.warning("read_job_status_sync failed for %s", job_id, exc_info=True)
         return {"jobStatus": "unknown"}
-
-
-async def _read_job_status_async(job_id: str) -> Dict[str, Any]:
-    pool = await create_pool(get_redis_settings())
-    try:
-        return await _job_status(pool, job_id)
-    finally:
-        await pool.close()
 
 
 async def _job_status(pool: ArqRedis, job_id: str) -> Dict[str, Any]:

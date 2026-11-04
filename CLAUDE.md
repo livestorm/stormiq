@@ -261,6 +261,13 @@ Sources of truth:
 - **Only complete AI output is saved.** Empty output, output truncated at the token limit, or an incomplete content-repurposing bundle (any of the four sections missing) fails the job with a clear error and saves nothing.
 - `force_refresh: true` in the fetch payload bypasses the cache and re-fetches from Livestorm/Gladia.
 
+### Reading a workspace (performance rules)
+
+- **Derived insights are cached in-process.** `build_transcript_insights` (the ~27 transcript DataFrames) is the costly part of a workspace read. `api_logic._cached_transcript_insights` keeps the last 6 sessions per process, keyed by `(session_id, updated_at)`: every write to a `session_cache` row bumps `updated_at`, so the key changes whenever the input can. The frames are shared between requests, so readers must copy before modifying (`_df_records` and `build_cross_source_insights` do). Insights are built once per read; pass them to `build_cross_source_insights(..., transcript_insights=...)` instead of letting it rebuild them.
+- **Polls and job starts read only what they need.** `db.fetch_session_fields(session_id, [fields], organization_id=...)` reads named columns or flags (allow-listed), with the same org-scope rules as `fetch_cached_session`. The transcript poll reads `has_transcript`; AI polls and starts read the bundle column of their kind. The full row is loaded only to return a finished result.
+- **The card list never loads payloads.** `db.list_workspace_sessions` selects the session's attributes object, the event title and has-output flags computed in SQL (`db._has_content_sql`).
+- **No raw upstream payloads in the workspace.** The serialized workspace carries the derived tables, the display transcript and the AI outputs. `payloads.transcript` is `{subtitles, language, durationSeconds}` (or null when there's no transcript); the full raw transcript is downloaded from `GET /api/sessions/{id}/transcript.json`. Raw session/chat/questions payloads, `text.transcriptPlain`, `tables.transcriptKeyMoments` and `tables.transcriptPace` are not sent (the frontend didn't use them; add a table back when a view needs it).
+
 ---
 
 ## 6. Analysis output schemas
@@ -507,6 +514,7 @@ All routes are FastAPI handlers in [app.py](app.py). Frontend wrapper in [fronte
 | `/api/sessions/{id}/fetch-base` | POST | caller | Fetch session payload only |
 | `/api/sessions/{id}/fetch-transcript` | POST | caller | Start transcript job, return jobId |
 | `/api/sessions/{id}/transcript-job` | GET | caller | Poll transcript job status / progress |
+| `/api/sessions/{id}/transcript.json` | GET | caller | Full raw transcript as a download (the workspace only carries subtitles, §5) |
 | `/api/sessions/{id}/speaker-labels` | POST | caller | Save edited speaker labels |
 | `/api/sessions/{id}/analysis` | POST | caller | Run Overall Analysis (English or French) |
 | `/api/sessions/{id}/deep-analysis` | POST | caller | Run Deep Analysis (English or French) |
@@ -544,6 +552,7 @@ chat-analysis/                      # repo name; product name is StormIQ
 │   ├── progress.py                 # Redis-backed stage-floor progress reporting (Phase 1)
 │   ├── worker.py                   # arq worker entry-point + stuck-job sweeper cron (Phase 1)
 │   ├── llm_client.py               # LLM provider abstraction (Anthropic default, OpenAI optional) — §12
+│   ├── timing.py                   # Per-request timing log for /api/* (route, status, ms, bytes) — §14
 │   └── charts/                     # (empty — directories exist for future per-chart Python modules)
 ├── docker/
 │   └── Dockerfile.worker           # Worker image (no frontend, no HTTP) — runs `arq livestorm_app.worker.WorkerSettings`
@@ -553,7 +562,8 @@ chat-analysis/                      # repo name; product name is StormIQ
 ├── requirements-dev.in / requirements-dev.txt  # dev tools (pytest, httpx, ruff), locked the same way
 ├── ruff.toml                       # Python lint rules (lint only, no auto-format)
 ├── .env.example                    # Every env var the code reads, placeholders only
-├── scripts/                        # One-off backfills and diagnostics (run manually, read the docstring first)
+├── scripts/                        # One-off backfills and diagnostics (run manually, read the docstring first);
+│                                   #   seed_benchmark_sessions.py + benchmark_routes.py: local performance benchmark (§14)
 ├── Dockerfile                      # Web image (FastAPI + built Vue frontend)
 ├── tests/                          # pytest suite (requirements-dev.txt); access-control route matrix
 ├── prompts/                        # 13 .txt files — editable without code changes
@@ -719,6 +729,14 @@ The web Dockerfile is a two-stage build: a Node stage builds the frontend, and t
 
 **Worker environment**: the worker resolves every credential itself, because job arguments (stored in Redis) never carry secrets. It needs `DATABASE_URL`, `REDIS_URL`, `GLADIA_KEY`, the LLM key (`CLAUDE_API_KEY` or `OPENAI_API_KEY`), `OPENAI_API_KEY` for covers, and `LIVESTORM_OAUTH_CLIENT_ID` / `LIVESTORM_OAUTH_CLIENT_SECRET` to refresh a user's Livestorm token when a queued transcription starts close to its expiry. It logs a warning at startup when `GLADIA_KEY` is missing. Each worker runs at most `MAX_CONCURRENT_TRANSCRIPTIONS` (2) transcriptions at once; more wait for a slot.
 
+**Connections**: each process (web, worker) keeps one Postgres connection pool (`psycopg_pool`, up to `DB_POOL_MAX_SIZE` = 10 connections, checked before use, recycled hourly) behind `db.get_db_connection()`, so web and worker together hold at most 20 connections: keep that under the Render Postgres plan's limit. The web process also keeps one Redis connection pool on a background event-loop thread (`queue._QueueBridge`) for enqueues and job-status reads from sync handlers. When Redis is unreachable the bridge makes one connection attempt, then fails every call immediately for `REDIS_DOWN_COOLDOWN_SECONDS` (5 s): polls report `unknown` and job starts report "queue unavailable" instead of tying up the web server's threads. Both pools are closed on shutdown.
+
+**Caching headers**: hashed files under `/assets` are served with `Cache-Control: public, max-age=31536000, immutable`; `index.html` is `no-store`. Render's edge (Cloudflare) already brotli-compresses responses, so the app adds no compression middleware.
+
+**Request timing**: every `/api/*` request (except `/api/health`) logs one line, `timing method=GET route=/api/sessions/{session_id} status=200 ms=84.2 bytes=1834402`, with the route template rather than ids. Search Render's logs for `timing route=` to see per-endpoint latency and response sizes.
+
+**Benchmark**: `scripts/seed_benchmark_sessions.py` fills a *local* database with synthetic sessions (10-minute, 2-hour, a running transcription, 40 cards); `scripts/benchmark_routes.py` times the heaviest routes in-process and prints a table (first-request and median ms, response size, Postgres connections opened). Both refuse non-local databases. Use them before and after a performance change.
+
 **Local development never uses the production database.** `docker-compose.yml` provides a local Postgres (loopback port 5433) and Redis; copy `.env.example` to `.env` to start.
 
 **Running locally with Docker Compose** (whole stack):
@@ -812,6 +830,7 @@ Security, data-integrity, reliability and performance fixes from the November 20
 - ✅ **PR 2 `chore/safety-net`**: local Postgres in compose and `.env.example`; hashed dependency locks (uv); ruff and ESLint, with the issues they found fixed; real-Postgres and pure-function tests; CI; slimmer non-root images with health checks; Node 24 build stage; docs drift fixed.
 - ✅ **PR 3 `fix/data-integrity`**: atomic per-entry bundle writes (`merge_cached_bundle_entry`); `account_key_hash` insert-only; database write failures raise instead of being swallowed; empty, truncated or incomplete AI output fails the job instead of saving partial results; transcription heartbeat for the stuck-job sweeper.
 - ✅ **PR 4 `fix/job-reliability-cost`**: deterministic arq job ids replace the Redis in-flight marker, and a failed job can be retried at once; reading a session never starts a paid cover image (and the post-recap cover trigger works again); one active transcription per session (partial unique index), with dead queue jobs detected instead of blocking for an hour; `/fetch` no longer transcribes inside the web request; retries with backoff and timeouts on every LLM, Livestorm and Gladia call; per-job timeouts, a two-transcription concurrency cap, and cancellation handling; no credentials in job arguments (the worker reads the Gladia key from its env and the user's connection from the job row); language and tone validated before any paid job; AI job polls no longer trust a client-supplied job id.
+- ✅ **PR 5 `perf/backend`**: a 2-hour session opens in ~0.1 s instead of ~4.5 s (an O(mentions × sentences) entity lookup replaced, transcript insights built once per read and cached per session version); the workspace response is ~3.5× smaller (raw payloads dropped, raw transcript moved to `transcript.json`); Postgres connection pool and one long-lived Redis pool (no new connection per request); polls and the card list read only the columns they need; system settings cached for a minute; immutable caching for hashed assets; per-request timing log; local benchmark scripts (§14).
 
 ### Shipped (current state)
 - Livestorm OAuth (PKCE) + API-key fallback for local dev

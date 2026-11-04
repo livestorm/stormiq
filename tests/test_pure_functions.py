@@ -86,6 +86,7 @@ def ai_job_backend(monkeypatch):
     enqueued: list = []
     rows: dict = {}
     monkeypatch.setattr(api_logic, "fetch_cached_session", lambda key, sid, *, organization_id: rows.get(sid))
+    monkeypatch.setattr(api_logic, "fetch_session_fields", lambda sid, fields, *, organization_id: rows.get(sid))
     monkeypatch.setattr(
         api_logic,
         "enqueue_unique_job_sync",

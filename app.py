@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
 from contextlib import asynccontextmanager
@@ -29,6 +30,7 @@ from livestorm_app.api_logic import (
     get_deep_analysis_job_data,
     get_overall_analysis_job_data,
     get_smart_recap_job_data,
+    get_transcript_download,
     get_transcript_job_status_data,
     list_workspace_sessions_data,
     save_speaker_labels,
@@ -55,6 +57,7 @@ from livestorm_app.db import (
     admin_list_users,
     demote_admin,
     ensure_database_schema,
+    close_db_pool,
     fetch_cover_image,
     get_all_settings,
     promote_admin,
@@ -74,6 +77,8 @@ from livestorm_app.oauth_client import (
     seed_dev_connection,
     validate_handshake,
 )
+from livestorm_app.queue import close_queue_bridge
+from livestorm_app.timing import RequestTimingMiddleware
 
 
 logging.basicConfig(level=logging.INFO)
@@ -207,6 +212,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             LOCAL_DEV_ENV_VAR,
         )
     yield
+    close_queue_bridge()
+    close_db_pool()
 
 
 # Interactive API docs and the OpenAPI schema are a local convenience; in
@@ -224,6 +231,9 @@ app = FastAPI(
 
 # No CORS middleware: the SPA is served by this app (and proxied by Vite in
 # dev), so every browser request is same-origin.
+
+# One `timing ...` log line per API request (route template, status, ms, bytes).
+app.add_middleware(RequestTimingMiddleware)
 
 if BRAND_ASSETS_DIR.exists():
     app.mount("/brand-assets", StaticFiles(directory=BRAND_ASSETS_DIR), name="brand-assets")
@@ -566,6 +576,24 @@ def get_transcript_job_status(session_id: SessionId, caller: Caller = Depends(ge
         raise
 
 
+@app.get("/api/sessions/{session_id}/transcript.json")
+def download_transcript_json(session_id: SessionId, caller: Caller = Depends(get_caller)) -> Response:
+    """The full raw transcript (the workspace only carries what the UI renders)."""
+    try:
+        payload = get_transcript_download(session_id, organization_id=caller.read_scope)
+    except Exception as exc:
+        _raise_http_error("Transcript", exc)
+        raise
+    return Response(
+        content=json.dumps(payload, ensure_ascii=False, indent=2),
+        media_type="application/json",
+        headers={
+            "Content-Disposition": f'attachment; filename="livestorm-transcript-{session_id}.json"',
+            "Cache-Control": "private, no-store",
+        },
+    )
+
+
 @app.post("/api/sessions/{session_id}/speaker-labels")
 def update_speaker_labels(session_id: SessionId, request: SpeakerLabelsRequest, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
     try:
@@ -700,8 +728,21 @@ _INDEX_HTML_HEADERS = {
     "Expires": "0",
 }
 
+class ImmutableStaticFiles(StaticFiles):
+    """Static files whose names change whenever their content does.
+
+    Vite puts a content hash in every file name under /assets, so browsers
+    may keep them for a year without revalidating; a deploy ships new names.
+    """
+
+    def file_response(self, *args: Any, **kwargs: Any) -> Response:
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
+
+
 if (FRONTEND_DIST_DIR / "assets").is_dir():
-    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST_DIR / "assets"), name="assets")
+    app.mount("/assets", ImmutableStaticFiles(directory=FRONTEND_DIST_DIR / "assets"), name="assets")
 
 
 def _resolve_frontend_file(full_path: str, dist_dir: Path = FRONTEND_DIST_DIR) -> Optional[Path]:

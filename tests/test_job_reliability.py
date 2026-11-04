@@ -100,6 +100,7 @@ def ai_rows(monkeypatch):
     rows: dict = {"s1": {"analysis_bundle": {}, "smart_recap_bundle": {}}}
     enqueued: list = []
     monkeypatch.setattr(api_logic, "fetch_cached_session", lambda key, sid, *, organization_id: rows.get(sid))
+    monkeypatch.setattr(api_logic, "fetch_session_fields", lambda sid, fields, *, organization_id: rows.get(sid))
     monkeypatch.setattr(api_logic, "_serialize_cached_session", lambda sid, cached: {"sessionId": sid})
 
     def fake_enqueue(function_name, job_id, *args):

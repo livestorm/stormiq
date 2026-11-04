@@ -181,6 +181,10 @@ export const api = {
     });
     return `/api/sessions/${sessionId}/content-repurposing-pdf?${params.toString()}`;
   },
+  // Full raw transcript; the workspace payload only carries what the UI renders.
+  getTranscriptJsonUrl(sessionId) {
+    return `/api/sessions/${encodeURIComponent(sessionId)}/transcript.json`;
+  },
 
   // ── Admin ─────────────────────────────────────────────────────────────────
   adminGetUsers() {

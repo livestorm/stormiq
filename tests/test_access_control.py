@@ -84,6 +84,12 @@ class FakeBackend:
             return _row()
         return None
 
+    def fetch_session_fields(self, session_id, fields, *, organization_id):
+        if session_id != SESSION_ID or not _visible(organization_id):
+            return None
+        row = {**_row(), "has_transcript": True}
+        return {field: row.get(field) for field in fields}
+
     def fetch_cover_image(self, session_id, *, organization_id):
         if session_id == SESSION_ID and _visible(organization_id):
             return {"bytes": MARKER.encode(), "mime": "image/png", "generated_at": None}
@@ -122,6 +128,7 @@ def backend(monkeypatch):
     monkeypatch.setattr(auth, "refresh_connection_if_needed", lambda cid: CONNECTIONS.get(cid))
     monkeypatch.setattr(auth, "is_admin_email", lambda email: email == ADMIN_EMAIL)
     monkeypatch.setattr(api_logic, "fetch_cached_session", fake.fetch_cached_session)
+    monkeypatch.setattr(api_logic, "fetch_session_fields", fake.fetch_session_fields)
     monkeypatch.setattr(app_module, "fetch_cover_image", fake.fetch_cover_image)
     monkeypatch.setattr(api_logic, "upsert_cached_session", fake.upsert_cached_session)
     monkeypatch.setattr(api_logic, "enqueue_unique_job_sync", fake.enqueue_unique_job_sync)

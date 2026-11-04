@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import logging
 import math
+import threading
+from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -16,6 +18,7 @@ from livestorm_app.db import (
     OrgScope,
     create_transcript_job,
     fetch_cached_session,
+    fetch_session_fields,
     get_transcript_job_for_session,
     list_workspace_sessions,
     merge_cached_bundle_entry,
@@ -156,6 +159,69 @@ def _df_records(df: Optional[pd.DataFrame], limit: Optional[int] = None) -> List
     return safe_df.to_dict("records")
 
 
+# ── Derived-insights cache ──────────────────────────────────────────────────
+#
+# `build_transcript_insights` is the expensive part of a workspace read (it
+# builds ~27 DataFrames). It depends only on the stored transcript, and
+# every write to a session_cache row bumps `updated_at`, so
+# (session_id, updated_at) identifies its input exactly. A few recent
+# sessions are kept per process; the frames are never modified by readers
+# (`_df_records` and the cross-source build copy them).
+
+TRANSCRIPT_INSIGHTS_CACHE_SIZE = 6
+_insights_cache: "OrderedDict[Tuple[str, Any], Dict[str, Any]]" = OrderedDict()
+_insights_cache_lock = threading.Lock()
+
+
+def _cached_transcript_insights(session_id: str, cached_session: Dict[str, Any]) -> Dict[str, Any]:
+    transcript_payload = cached_session.get("transcript_payload")
+    if not isinstance(transcript_payload, dict):
+        return {}
+    updated_at = cached_session.get("updated_at")
+    key = (str(session_id), updated_at) if updated_at is not None else None
+    if key is not None:
+        with _insights_cache_lock:
+            hit = _insights_cache.get(key)
+            if hit is not None:
+                _insights_cache.move_to_end(key)
+                return hit
+    insights = build_transcript_insights(transcript_payload)
+    if key is not None:
+        with _insights_cache_lock:
+            for stale in [k for k in _insights_cache if k[0] == key[0] and k != key]:
+                del _insights_cache[stale]  # an older version of this session
+            _insights_cache[key] = insights
+            while len(_insights_cache) > TRANSCRIPT_INSIGHTS_CACHE_SIZE:
+                _insights_cache.popitem(last=False)
+    return insights
+
+
+def _transcript_summary(transcript_payload: Any) -> Optional[Dict[str, Any]]:
+    """What the frontend needs from the raw transcript: its subtitle files.
+
+    None when there is no transcript (the frontend checks presence). The
+    full raw payload is served by `get_transcript_download` instead.
+    """
+    if not isinstance(transcript_payload, dict):
+        return None
+    subtitles = transcript_payload.get("subtitles")
+    return {
+        "subtitles": [item for item in subtitles if isinstance(item, dict)] if isinstance(subtitles, list) else [],
+        "language": transcript_payload.get("language"),
+        "durationSeconds": transcript_payload.get("duration_seconds"),
+    }
+
+
+def get_transcript_download(session_id: str, *, organization_id: OrgScope) -> Dict[str, Any]:
+    """The full stored transcript payload, for the "Download JSON" button."""
+    row = fetch_session_fields(session_id, ["transcript_payload"], organization_id=organization_id)
+    if not isinstance(row, dict):
+        raise SessionNotFoundError()
+    if not isinstance(row.get("transcript_payload"), dict):
+        raise SessionNotFoundError("This session has no transcript yet.")
+    return row["transcript_payload"]
+
+
 def _serialize_cached_session(session_id: str, cached_session: Dict[str, Any]) -> Dict[str, Any]:
     session_payload = cached_session.get("session_payload")
     chat_payload = cached_session.get("chat_payload")
@@ -166,8 +232,7 @@ def _serialize_cached_session(session_id: str, cached_session: Dict[str, Any]) -
     chat_df = build_chat_df_from_payload(chat_payload) if isinstance(chat_payload, dict) else pd.DataFrame()
     questions_df = build_questions_df_from_payload(questions_payload) if isinstance(questions_payload, dict) else pd.DataFrame()
     transcript_text = build_transcript_display_text(transcript_payload) if isinstance(transcript_payload, dict) else ""
-    transcript_plain_text = build_transcript_plain_text(transcript_payload) if isinstance(transcript_payload, dict) else ""
-    transcript_insights = build_transcript_insights(transcript_payload) if isinstance(transcript_payload, dict) else {}
+    transcript_insights = _cached_transcript_insights(session_id, cached_session)
     session_overview = build_session_overview_data(session_payload) if isinstance(session_payload, dict) else {}
     derived_stats = build_derived_stats(
         chat_df=chat_df if not chat_df.empty else None,
@@ -179,6 +244,7 @@ def _serialize_cached_session(session_id: str, cached_session: Dict[str, Any]) -
         chat_df=chat_df if not chat_df.empty else None,
         questions_df=questions_df if not questions_df.empty else None,
         transcript_payload=transcript_payload if isinstance(transcript_payload, dict) else None,
+        transcript_insights=transcript_insights,
     )
 
     # ── Hero metadata (Phase 4 follow-up) ──────────────────────────────
@@ -232,11 +298,11 @@ def _serialize_cached_session(session_id: str, cached_session: Dict[str, Any]) -
         "updatedAt": cached_session.get("updated_at"),
         "speakerNames": speaker_names,
         "meta": meta,
+        # Raw upstream payloads are not sent: the frontend renders the derived
+        # tables. Only the transcript's subtitles are used (and its presence);
+        # the full raw transcript is a separate download, transcript.json.
         "payloads": {
-            "session": session_payload,
-            "chat": chat_payload,
-            "questions": questions_payload,
-            "transcript": transcript_payload,
+            "transcript": _transcript_summary(transcript_payload),
         },
         "tables": {
             "chat": _df_records(chat_df),
@@ -248,11 +314,9 @@ def _serialize_cached_session(session_id: str, cached_session: Dict[str, Any]) -
             "attendanceDistribution": _df_records(session_overview.get("attendance_distribution_df")),
             "engagementTop": _df_records(session_overview.get("engagement_top_df")),
             "transcriptSegments": _df_records(transcript_insights.get("segments_df")),
-            "transcriptKeyMoments": _df_records(transcript_insights.get("key_moments_df")),
             "transcriptNumbers": _df_records(transcript_insights.get("numbers_df")),
             "transcriptSpeakers": _df_records(transcript_insights.get("speaker_df")),
             "transcriptSpeakerTurns": _df_records(transcript_insights.get("speaker_turns_df")),
-            "transcriptPace": _df_records(transcript_insights.get("pace_df")),
             "transcriptSilence": _df_records(transcript_insights.get("silence_df")),
             "transcriptPauseTypes": _df_records(transcript_insights.get("pause_type_df")),
             "transcriptPauseDistribution": _df_records(transcript_insights.get("pause_distribution_df")),
@@ -271,7 +335,6 @@ def _serialize_cached_session(session_id: str, cached_session: Dict[str, Any]) -
         },
         "text": {
             "transcriptDisplay": transcript_text,
-            "transcriptPlain": transcript_plain_text,
         },
         "outputs": {
             "analysisBundle": _normalize_text_bundle(cached_session.get("analysis_bundle"), str(cached_session.get("analysis_md") or "")),
@@ -374,18 +437,6 @@ def _extract_event_title(event_payload: Any, fallback: str = "Untitled event") -
     return title or fallback
 
 
-def _has_non_empty_bundle(bundle: Any) -> bool:
-    """True when a JSON bundle holds at least one non-empty string value."""
-    if not isinstance(bundle, dict):
-        return False
-    for value in bundle.values():
-        if isinstance(value, str) and value.strip():
-            return True
-        if isinstance(value, dict) and any(str(inner or "").strip() for inner in value.values()):
-            return True
-    return False
-
-
 def list_workspace_sessions_data(organization_id: str) -> Dict[str, Any]:
     """Return the card list for the Single Analysis page.
 
@@ -396,20 +447,17 @@ def list_workspace_sessions_data(organization_id: str) -> Dict[str, Any]:
     rows = list_workspace_sessions(organization_id)
     sessions: List[Dict[str, Any]] = []
     for row in rows:
-        session_payload = row.get("session_payload")
-        attributes = (
-            extract_session_attributes(session_payload)
-            if isinstance(session_payload, dict)
-            else {}
-        )
+        # The query returns only the session's attributes object, the event
+        # title and has-output flags (see db.list_workspace_sessions).
+        attributes = row.get("session_attributes") if isinstance(row.get("session_attributes"), dict) else {}
         started_at_unix = attributes.get("started_at") or attributes.get("estimated_started_at")
         duration_seconds = attributes.get("duration")
-        event_payload = row.get("event_payload")
         # Falls back to session name (if any), then to "Untitled event"
         # when the event payload hasn't been backfilled yet.
-        event_title = _extract_event_title(
-            event_payload,
-            fallback=str(attributes.get("name") or "").strip() or "Untitled event",
+        event_title = (
+            str(row.get("event_title") or "").strip()
+            or str(attributes.get("name") or "").strip()
+            or "Untitled event"
         )
         created_at_value = row.get("created_at")
         sessions.append(
@@ -428,10 +476,10 @@ def list_workspace_sessions_data(organization_id: str) -> Dict[str, Any]:
                 "schedulingStatus": attributes.get("status") or attributes.get("scheduling_status"),
                 "language": attributes.get("language"),
                 "hasTranscript": bool(row.get("has_transcript")),
-                "hasOverallAnalysis": _has_non_empty_bundle(row.get("analysis_bundle")),
-                "hasDeepAnalysis": _has_non_empty_bundle(row.get("deep_analysis_bundle")),
-                "hasSmartRecap": _has_non_empty_bundle(row.get("smart_recap_bundle")),
-                "hasContentRepurposing": _has_non_empty_bundle(row.get("content_repurpose_bundle")),
+                "hasOverallAnalysis": bool(row.get("has_overall_analysis")),
+                "hasDeepAnalysis": bool(row.get("has_deep_analysis")),
+                "hasSmartRecap": bool(row.get("has_smart_recap")),
+                "hasContentRepurposing": bool(row.get("has_content_repurposing")),
                 # Phase 4: cover image is rendered by an OpenAI image
                 # call from the Professional Smart Recap. The list view
                 # uses hasCoverImage to decide between the real cover
@@ -795,10 +843,13 @@ def get_transcript_job_status_data(
     session_id = str(session_id or "").strip()
 
     # Transcript may have finished between polls — return full data if so.
-    cached = fetch_cached_session(api_key, session_id, organization_id=organization_id)
-    if isinstance(cached, dict) and isinstance(cached.get("transcript_payload"), dict):
-        return _serialize_cached_session(session_id, cached)
-    if cached is None and organization_id is not ALL_ORGS:
+    # Polls only read a flag; the full row is loaded once, at completion.
+    state = fetch_session_fields(session_id, ["has_transcript"], organization_id=organization_id)
+    if isinstance(state, dict) and state.get("has_transcript"):
+        cached = fetch_cached_session(api_key, session_id, organization_id=organization_id)
+        if isinstance(cached, dict) and isinstance(cached.get("transcript_payload"), dict):
+            return _serialize_cached_session(session_id, cached)
+    if state is None and organization_id is not ALL_ORGS:
         raise SessionNotFoundError()
 
     job = get_transcript_job_for_session(session_id)
@@ -1234,6 +1285,22 @@ _ARQ_JOB_FUNCTION_BY_KIND: Dict[str, str] = {
     "content_repurposing": "run_content_repurposing_job",
 }
 
+# The columns `_extract_cached_ai_body` reads for each kind: job starts and
+# polls read only these, and load the full row only to return a finished result.
+_AI_BODY_FIELDS: Dict[str, List[str]] = {
+    "overall_analysis": ["analysis_bundle", "analysis_md"],
+    "deep_analysis": ["deep_analysis_bundle", "deep_analysis_md"],
+    "smart_recap": ["smart_recap_bundle"],
+    "content_repurposing": ["content_repurpose_bundle"],
+}
+
+
+def _load_serialized_workspace(session_id: str, organization_id: OrgScope) -> Dict[str, Any]:
+    cached = fetch_cached_session("", session_id, organization_id=organization_id)
+    if not isinstance(cached, dict):
+        raise SessionNotFoundError()
+    return _serialize_cached_session(session_id, cached)
+
 
 def _start_ai_job(
     kind: str,
@@ -1262,14 +1329,14 @@ def _start_ai_job(
         raise ValueError(f"Unsupported output language {language!r}. Use one of: {', '.join(OUTPUT_LANGUAGE_MAP)}.")
 
     session_id = str(session_id or "").strip()
-    cached = fetch_cached_session("", session_id, organization_id=organization_id)
+    cached = fetch_session_fields(session_id, _AI_BODY_FIELDS[kind], organization_id=organization_id)
     if not isinstance(cached, dict):
         raise SessionNotFoundError()
 
     # Cache hit — return the full workspace synchronously. The user will see
     # the bundle without ever entering the polling loop.
     if _extract_cached_ai_body(cached, kind, language=language, tone=tone):
-        return _serialize_cached_session(session_id, cached)
+        return _load_serialized_workspace(session_id, organization_id)
 
     # English-first enforcement: French (and any non-English variant) must be
     # a translation of the existing English version so outputs stay consistent.
@@ -1324,14 +1391,14 @@ def _get_ai_job_data(
         raise RuntimeError(f"Unknown AI job kind: {kind!r}")
 
     session_id = str(session_id or "").strip()
-    cached = fetch_cached_session("", session_id, organization_id=organization_id)
+    cached = fetch_session_fields(session_id, _AI_BODY_FIELDS[kind], organization_id=organization_id)
     if not isinstance(cached, dict):
         raise SessionNotFoundError()
 
     # Cache hit — the worker already finished and persisted. Return the full
     # workspace so the frontend can replace its state in one step.
-    if isinstance(cached, dict) and _extract_cached_ai_body(cached, kind, language=language, tone=tone):
-        return _serialize_cached_session(session_id, cached)
+    if _extract_cached_ai_body(cached, kind, language=language, tone=tone):
+        return _load_serialized_workspace(session_id, organization_id)
 
     # Pull live status from arq + progress from Redis. Both are best-effort.
     # The job id is derived here, never taken from the client: ids are
