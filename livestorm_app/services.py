@@ -3023,5 +3023,6 @@ def analyze_with_openai(
     if has_structured_context:
         messages.append({"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)})
 
-    text = call_llm(api_key, model, messages, temperature=0.2, max_tokens=max_tokens)
-    return text if text else "No analysis text returned by model."
+    # An empty answer is returned as-is: callers fail the job on it
+    # (api_logic._require_generated_text) rather than saving a placeholder.
+    return call_llm(api_key, model, messages, temperature=0.2, max_tokens=max_tokens) or ""

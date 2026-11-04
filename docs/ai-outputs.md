@@ -57,7 +57,7 @@ Stored as `content_repurpose_bundle: {English: {summary, blog, email, social_med
 
 ## Saving rules
 
-- **Only complete output is saved.** Output cut off at the token limit, or a content-repurposing bundle missing any of its four sections, fails the job with a clear error and saves nothing. Empty output is meant to fail the same way (`api_logic._require_generated_text`), but for overall, deep and recap it currently doesn't: `services.analyze_with_openai` replaces an empty answer with the text "No analysis text returned by model.", which is then saved ([known limitation](roadmap.md#known-limitations)).
+- **Only complete output is saved.** Empty output (`api_logic._require_generated_text`), output cut off at the token limit, or a content-repurposing bundle missing any of its four sections fails the job with a clear error and saves nothing.
 - **Truncation.** `llm_client.call_llm` checks why the model stopped (`stop_reason == "max_tokens"` on Anthropic, `finish_reason == "length"` on OpenAI). A truncated answer is retried once with double the token budget, capped at `TRUNCATION_RETRY_MAX_TOKENS` (16,000). If it's still cut off, `LLMOutputTruncated` is raised and nothing is saved.
 - **One entry at a time.** Each job writes only its own language or tone (`db.merge_cached_bundle_entry`), see [data-model.md](data-model.md#caching-rules).
 
