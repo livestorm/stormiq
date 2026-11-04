@@ -11,6 +11,8 @@ import requests
 from livestorm_app.config import OUTPUT_LANGUAGE_MAP
 from livestorm_app.llm_client import get_llm_model
 from livestorm_app.db import (
+    ALL_ORGS,
+    OrgScope,
     create_transcript_job,
     fetch_cached_session,
     get_transcript_job_for_session,
@@ -71,6 +73,17 @@ from livestorm_app.session_overview import (
 from livestorm_app.transcript_client import fetch_session_transcript
 
 logger = logging.getLogger(__name__)
+
+
+class SessionNotFoundError(RuntimeError):
+    """The session is not cached, or not visible in the caller's org scope.
+
+    Both cases deliberately look the same to the caller (HTTP 404), so a
+    session id from another org reveals nothing about whether it exists.
+    """
+
+    def __init__(self, message: str = "No cached session was found. Fetch the session data first.") -> None:
+        super().__init__(message)
 
 
 def _sanitize_json_value(value: Any) -> Any:
@@ -271,7 +284,7 @@ def _serialize_cached_session(session_id: str, cached_session: Dict[str, Any]) -
     return _sanitize_json_value(serialized)
 
 
-def get_cached_workspace(session_id: str, *, organization_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+def get_cached_workspace(session_id: str, *, organization_id: OrgScope) -> Optional[Dict[str, Any]]:
     cached = fetch_cached_session("", session_id, organization_id=organization_id)
     if not isinstance(cached, dict):
         return None
@@ -594,15 +607,21 @@ def fetch_all_session_data(
     session_id: str,
     force_refresh: bool = False,
     *,
+    read_scope: OrgScope,
     organization_id: str = "",
     created_by_user_id: str = "",
     created_by_email: str = "",
     created_by_name: str = "",
 ) -> Dict[str, Any]:
+    """Fetch session + chat + questions + transcript, cache-first.
+
+    `read_scope` governs cache lookups (what the caller may read).
+    `organization_id` is the caller's own org, stamped on newly created rows.
+    """
     session_id = str(session_id or "").strip()
     cached = (
         None if force_refresh
-        else fetch_cached_session(api_key, session_id, organization_id=organization_id)
+        else fetch_cached_session(api_key, session_id, organization_id=read_scope)
     )
     if isinstance(cached, dict):
         has_all_payloads = all(isinstance(cached.get(key), dict) for key in ("session_payload", "chat_payload", "questions_payload", "transcript_payload"))
@@ -640,7 +659,7 @@ def fetch_all_session_data(
         **_org_kwarg(organization_id),
         **_generator_kwargs(created_by_user_id, created_by_email, created_by_name),
     )
-    cached = fetch_cached_session(api_key, session_id, organization_id=organization_id)
+    cached = fetch_cached_session(api_key, session_id, organization_id=read_scope)
     if not isinstance(cached, dict):
         raise RuntimeError("Fetched session data but failed to reload it from the cache.")
     return _serialize_cached_session(session_id, cached)
@@ -651,15 +670,17 @@ def fetch_session_base_data(
     session_id: str,
     force_refresh: bool = False,
     *,
+    read_scope: OrgScope,
     organization_id: str = "",
     created_by_user_id: str = "",
     created_by_email: str = "",
     created_by_name: str = "",
 ) -> Dict[str, Any]:
+    """Fetch session + chat + questions, cache-first. Scope args as in `fetch_all_session_data`."""
     session_id = str(session_id or "").strip()
     cached = (
         None if force_refresh
-        else fetch_cached_session(api_key, session_id, organization_id=organization_id)
+        else fetch_cached_session(api_key, session_id, organization_id=read_scope)
     )
     if isinstance(cached, dict):
         has_base_payloads = all(isinstance(cached.get(key), dict) for key in ("session_payload", "chat_payload", "questions_payload"))
@@ -685,7 +706,7 @@ def fetch_session_base_data(
         **_org_kwarg(organization_id),
         **_generator_kwargs(created_by_user_id, created_by_email, created_by_name),
     )
-    cached = fetch_cached_session(api_key, session_id, organization_id=organization_id)
+    cached = fetch_cached_session(api_key, session_id, organization_id=read_scope)
     if not isinstance(cached, dict):
         raise RuntimeError("Fetched session overview/chat data but failed to reload it from the cache.")
     return _serialize_cached_session(session_id, cached)
@@ -697,12 +718,15 @@ def fetch_session_transcript_data(
     session_id: str,
     force_refresh: bool = False,
     *,
+    read_scope: OrgScope,
     organization_id: str = "",
     created_by_user_id: str = "",
     created_by_email: str = "",
     created_by_name: str = "",
 ) -> Dict[str, Any]:
     """Start a transcription job (or attach to a running one).
+
+    Scope args as in `fetch_all_session_data`.
 
     Returns the cached workspace immediately if the transcript already
     exists. Otherwise enqueues a `run_transcription` arq job and returns
@@ -723,17 +747,23 @@ def fetch_session_transcript_data(
     """
     session_id = str(session_id or "").strip()
 
+    cached = fetch_cached_session(api_key, session_id, organization_id=read_scope)
+
     # Return immediately when transcript is already cached (skip job machinery).
-    cached = (
-        None if force_refresh
-        else fetch_cached_session(api_key, session_id, organization_id=organization_id)
-    )
-    if isinstance(cached, dict) and isinstance(cached.get("transcript_payload"), dict):
+    if not force_refresh and isinstance(cached, dict) and isinstance(cached.get("transcript_payload"), dict):
         # Same self-healing trigger as get_cached_workspace — kick off
         # the default recap / cover image if either is missing on this
         # cache-hit fetch.
         _maybe_enqueue_default_outputs(cached, session_id)
         return _serialize_cached_session(session_id, cached)
+
+    if not isinstance(cached, dict):
+        # The caller cannot see a cached row for this session: it is new,
+        # legacy (NULL org), or owned by another org. Before re-attaching to
+        # a job, stamping the row, or enqueueing paid work, prove the
+        # caller's own Livestorm credentials can access the session.
+        # Livestorm answers 404/403 for sessions outside the caller's org.
+        fetch_session_details(api_key, session_id)
 
     transcript_api_key = str(transcript_api_key or "").strip()
     if not transcript_api_key:
@@ -785,7 +815,7 @@ def get_transcript_job_status_data(
     api_key: str,
     session_id: str,
     *,
-    organization_id: str = "",
+    organization_id: OrgScope,
 ) -> Dict[str, Any]:
     """Polling endpoint payload: returns full workspace data once done, else job status.
 
@@ -794,6 +824,11 @@ def get_transcript_job_status_data(
       raw Gladia step payloads). Kept for backward compat.
     - Redis `stormiq:progress:transcript:{session_id}` (new stage-floor
       progress with percent). Preferred when present.
+
+    `organization_id` is the caller's read scope. Org-scoped callers only
+    see job status for sessions whose cache row is in their org (the fetch
+    route pre-stamps the row before enqueuing, so it exists while the job
+    runs).
     """
     session_id = str(session_id or "").strip()
 
@@ -801,6 +836,8 @@ def get_transcript_job_status_data(
     cached = fetch_cached_session(api_key, session_id, organization_id=organization_id)
     if isinstance(cached, dict) and isinstance(cached.get("transcript_payload"), dict):
         return _serialize_cached_session(session_id, cached)
+    if cached is None and organization_id is not ALL_ORGS:
+        raise SessionNotFoundError()
 
     job = get_transcript_job_for_session(session_id)
     if not isinstance(job, dict):
@@ -838,8 +875,15 @@ def save_speaker_labels(
     session_id: str,
     speaker_names: Dict[str, str],
     *,
-    organization_id: str = "",
+    organization_id: OrgScope,
 ) -> Dict[str, Any]:
+    """Save edited speaker labels on a session the caller can read.
+
+    `organization_id` is the caller's read scope. The row must already be
+    visible in that scope; this never creates rows or touches another org's.
+    """
+    if not isinstance(fetch_cached_session(api_key, session_id, organization_id=organization_id), dict):
+        raise SessionNotFoundError()
     normalized = {
         str(speaker): str(label).strip()
         for speaker, label in (speaker_names or {}).items()
@@ -849,7 +893,6 @@ def save_speaker_labels(
         api_key,
         session_id,
         transcript_speaker_names=normalized,
-        **_org_kwarg(organization_id),
     )
     cached = fetch_cached_session(api_key, session_id, organization_id=organization_id)
     if not isinstance(cached, dict):
@@ -857,15 +900,20 @@ def save_speaker_labels(
     return _serialize_cached_session(session_id, cached)
 
 
-def _require_cached_payloads(session_id: str) -> Dict[str, Any]:
-    cached = fetch_cached_session("", session_id)
+def _require_cached_payloads(session_id: str, *, organization_id: OrgScope) -> Dict[str, Any]:
+    """Load a cached row or raise SessionNotFoundError.
+
+    Worker runners pass ALL_ORGS (trusted internal code); PDF routes pass
+    the caller's read scope.
+    """
+    cached = fetch_cached_session("", session_id, organization_id=organization_id)
     if not isinstance(cached, dict):
-        raise RuntimeError("No cached session was found. Fetch the session data first.")
+        raise SessionNotFoundError()
     return cached
 
 
 def run_overall_analysis(api_analysis_key: str, session_id: str, output_language: str) -> Dict[str, Any]:
-    cached = _require_cached_payloads(session_id)
+    cached = _require_cached_payloads(session_id, organization_id=ALL_ORGS)
     session_payload = cached.get("session_payload")
     chat_payload = cached.get("chat_payload")
     questions_payload = cached.get("questions_payload")
@@ -917,7 +965,7 @@ def run_overall_analysis(api_analysis_key: str, session_id: str, output_language
 
 
 def run_deep_analysis(api_analysis_key: str, session_id: str, output_language: str) -> Dict[str, Any]:
-    cached = _require_cached_payloads(session_id)
+    cached = _require_cached_payloads(session_id, organization_id=ALL_ORGS)
     session_payload = cached.get("session_payload")
     chat_payload = cached.get("chat_payload")
     questions_payload = cached.get("questions_payload")
@@ -965,8 +1013,8 @@ def run_deep_analysis(api_analysis_key: str, session_id: str, output_language: s
     return {"markdown": str(deep_analysis_md or "").strip(), "bundle": deep_bundle}
 
 
-def build_analysis_pdf(session_id: str, analysis_kind: str, language: str) -> Dict[str, Any]:
-    cached = _require_cached_payloads(session_id)
+def build_analysis_pdf(session_id: str, analysis_kind: str, language: str, *, organization_id: OrgScope) -> Dict[str, Any]:
+    cached = _require_cached_payloads(session_id, organization_id=organization_id)
     language = str(language or "English").strip() or "English"
     kind = str(analysis_kind or "").strip().lower()
     is_french = language.lower() == "french"
@@ -1013,7 +1061,7 @@ def run_cover_image_generation(
     or swallow; the worker logs+swallows so a failed cover doesn't
     cascade into a failed recap.
     """
-    cached = _require_cached_payloads(session_id)
+    cached = _require_cached_payloads(session_id, organization_id=ALL_ORGS)
     smart_bundle = _normalize_smart_recap_bundle(cached.get("smart_recap_bundle"))
     recap_markdown = str(smart_bundle.get("professional") or "").strip()
     if not recap_markdown:
@@ -1047,7 +1095,7 @@ def run_cover_image_generation(
 
 
 def run_smart_recap(api_analysis_key: str, session_id: str, tone: str) -> Dict[str, Any]:
-    cached = _require_cached_payloads(session_id)
+    cached = _require_cached_payloads(session_id, organization_id=ALL_ORGS)
     transcript_payload = cached.get("transcript_payload")
     if not isinstance(transcript_payload, dict):
         raise RuntimeError("Smart recap requires a transcript payload.")
@@ -1068,8 +1116,8 @@ def run_smart_recap(api_analysis_key: str, session_id: str, tone: str) -> Dict[s
     return {"markdown": str(markdown or "").strip(), "bundle": smart_bundle}
 
 
-def build_smart_recap_pdf(session_id: str, tone: str) -> Dict[str, Any]:
-    cached = _require_cached_payloads(session_id)
+def build_smart_recap_pdf(session_id: str, tone: str, *, organization_id: OrgScope) -> Dict[str, Any]:
+    cached = _require_cached_payloads(session_id, organization_id=organization_id)
     tone_key = str(tone or "").strip().lower()
     smart_bundle = _normalize_smart_recap_bundle(cached.get("smart_recap_bundle"))
     markdown = str(smart_bundle.get(tone_key) or "").strip()
@@ -1087,8 +1135,8 @@ def build_smart_recap_pdf(session_id: str, tone: str) -> Dict[str, Any]:
     return {"filename": filename, "content": pdf_bytes}
 
 
-def build_content_repurposing_pdf(session_id: str, language: str, item: str) -> Dict[str, Any]:
-    cached = _require_cached_payloads(session_id)
+def build_content_repurposing_pdf(session_id: str, language: str, item: str, *, organization_id: OrgScope) -> Dict[str, Any]:
+    cached = _require_cached_payloads(session_id, organization_id=organization_id)
     language_key = str(language or "English").strip() or "English"
     is_french = language_key.lower() == "french"
     item_key = str(item or "").strip().lower()
@@ -1112,7 +1160,7 @@ def build_content_repurposing_pdf(session_id: str, language: str, item: str) -> 
 
 
 def run_content_repurposing(api_analysis_key: str, session_id: str, output_language: str) -> Dict[str, Any]:
-    cached = _require_cached_payloads(session_id)
+    cached = _require_cached_payloads(session_id, organization_id=ALL_ORGS)
     transcript_payload = cached.get("transcript_payload")
     if not isinstance(transcript_payload, dict):
         raise RuntimeError("Content repurposing requires a transcript payload.")
@@ -1207,9 +1255,12 @@ def _start_ai_job(
     *,
     language: str = "",
     tone: str = "",
-    organization_id: str = "",
+    organization_id: OrgScope,
 ) -> Dict[str, Any]:
     """Start an AI job (or return the cached result if already complete).
+
+    `organization_id` is the caller's read scope: a job can only be started
+    on a session the caller can read.
 
     Returns either:
         - the full serialised workspace (cache hit), or
@@ -1221,7 +1272,7 @@ def _start_ai_job(
     session_id = str(session_id or "").strip()
     cached = fetch_cached_session("", session_id, organization_id=organization_id)
     if not isinstance(cached, dict):
-        raise RuntimeError("No cached session was found. Fetch the session data first.")
+        raise SessionNotFoundError()
 
     # Cache hit — return the full workspace synchronously. The user will see
     # the bundle without ever entering the polling loop.
@@ -1288,9 +1339,9 @@ def _get_ai_job_data(
     *,
     language: str = "",
     tone: str = "",
-    organization_id: str = "",
+    organization_id: OrgScope,
 ) -> Dict[str, Any]:
-    """Poll an AI job.
+    """Poll an AI job on a session the caller can read.
 
     Returns:
         - full serialised workspace if the cache already has the requested bundle, OR
@@ -1301,6 +1352,8 @@ def _get_ai_job_data(
 
     session_id = str(session_id or "").strip()
     cached = fetch_cached_session("", session_id, organization_id=organization_id)
+    if not isinstance(cached, dict):
+        raise SessionNotFoundError()
 
     # Cache hit — the worker already finished and persisted. Return the full
     # workspace so the frontend can replace its state in one step.
@@ -1332,35 +1385,35 @@ def _get_ai_job_data(
 # kept thin to make the per-flow contract obvious from app.py.
 
 
-def start_overall_analysis(session_id: str, output_language: str, *, organization_id: str = "") -> Dict[str, Any]:
+def start_overall_analysis(session_id: str, output_language: str, *, organization_id: OrgScope) -> Dict[str, Any]:
     return _start_ai_job("overall_analysis", session_id, language=output_language, organization_id=organization_id)
 
 
-def get_overall_analysis_job_data(session_id: str, job_id: str, language: str, *, organization_id: str = "") -> Dict[str, Any]:
+def get_overall_analysis_job_data(session_id: str, job_id: str, language: str, *, organization_id: OrgScope) -> Dict[str, Any]:
     return _get_ai_job_data("overall_analysis", session_id, job_id, language=language, organization_id=organization_id)
 
 
-def start_deep_analysis(session_id: str, output_language: str, *, organization_id: str = "") -> Dict[str, Any]:
+def start_deep_analysis(session_id: str, output_language: str, *, organization_id: OrgScope) -> Dict[str, Any]:
     return _start_ai_job("deep_analysis", session_id, language=output_language, organization_id=organization_id)
 
 
-def get_deep_analysis_job_data(session_id: str, job_id: str, language: str, *, organization_id: str = "") -> Dict[str, Any]:
+def get_deep_analysis_job_data(session_id: str, job_id: str, language: str, *, organization_id: OrgScope) -> Dict[str, Any]:
     return _get_ai_job_data("deep_analysis", session_id, job_id, language=language, organization_id=organization_id)
 
 
-def start_smart_recap(session_id: str, tone: str, *, organization_id: str = "") -> Dict[str, Any]:
+def start_smart_recap(session_id: str, tone: str, *, organization_id: OrgScope) -> Dict[str, Any]:
     return _start_ai_job("smart_recap", session_id, tone=tone, organization_id=organization_id)
 
 
-def get_smart_recap_job_data(session_id: str, job_id: str, tone: str, *, organization_id: str = "") -> Dict[str, Any]:
+def get_smart_recap_job_data(session_id: str, job_id: str, tone: str, *, organization_id: OrgScope) -> Dict[str, Any]:
     return _get_ai_job_data("smart_recap", session_id, job_id, tone=tone, organization_id=organization_id)
 
 
-def start_content_repurposing(session_id: str, output_language: str, *, organization_id: str = "") -> Dict[str, Any]:
+def start_content_repurposing(session_id: str, output_language: str, *, organization_id: OrgScope) -> Dict[str, Any]:
     return _start_ai_job("content_repurposing", session_id, language=output_language, organization_id=organization_id)
 
 
-def get_content_repurposing_job_data(session_id: str, job_id: str, language: str, *, organization_id: str = "") -> Dict[str, Any]:
+def get_content_repurposing_job_data(session_id: str, job_id: str, language: str, *, organization_id: OrgScope) -> Dict[str, Any]:
     return _get_ai_job_data("content_repurposing", session_id, job_id, language=language, organization_id=organization_id)
 
 

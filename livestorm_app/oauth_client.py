@@ -55,12 +55,20 @@ def get_frontend_app_url() -> str:
     return str(get_runtime_secret("FRONTEND_APP_URL", "")).strip()
 
 
+HANDSHAKE_MAX_AGE_SECONDS = 600
+
+
 def get_session_secret() -> str:
-    return (
-        str(get_runtime_secret("SESSION_SECRET", "")).strip()
-        or get_oauth_client_secret()
-        or "dev-insecure-session-secret"
-    )
+    """HMAC key for the OAuth handshake cookie.
+
+    SESSION_SECRET is preferred; the OAuth client secret is an acceptable
+    fallback (it is server-only). There is no hard-coded fallback: with
+    neither set, signing fails instead of using a publicly known key.
+    """
+    secret = str(get_runtime_secret("SESSION_SECRET", "")).strip() or get_oauth_client_secret()
+    if not secret:
+        raise RuntimeError("SESSION_SECRET (or LIVESTORM_OAUTH_CLIENT_SECRET) must be set to sign OAuth handshakes.")
+    return secret
 
 
 def _b64encode(raw: bytes) -> str:
@@ -128,7 +136,16 @@ def validate_handshake(handshake_token: str, state: str) -> Dict[str, Any]:
     payload = _unsign_payload(handshake_token)
     if not isinstance(payload, dict):
         raise RuntimeError("OAuth handshake cookie is invalid or expired.")
-    if str(payload.get("state") or "").strip() != str(state or "").strip():
+    try:
+        created_at = int(payload.get("created_at") or 0)
+    except (TypeError, ValueError):
+        created_at = 0
+    age_seconds = int(datetime.now(timezone.utc).timestamp()) - created_at
+    # Allow a minute of clock skew between web instances.
+    if created_at <= 0 or age_seconds < -60 or age_seconds > HANDSHAKE_MAX_AGE_SECONDS:
+        raise RuntimeError("OAuth handshake expired. Please try connecting again.")
+    expected_state = str(payload.get("state") or "").strip()
+    if not expected_state or not hmac.compare_digest(expected_state, str(state or "").strip()):
         raise RuntimeError("OAuth state mismatch. Please try connecting again.")
     verifier = str(payload.get("verifier") or "").strip()
     if not verifier:

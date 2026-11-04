@@ -73,17 +73,35 @@ If a billing model is introduced later, document it here.
 
 ## 4. Authentication
 
-Two paths, resolved in this order by [`_resolve_livestorm_auth`](app.py):
+Every request's identity is resolved once by [`livestorm_app/auth.py`](livestorm_app/auth.py). Routes declare it as a FastAPI dependency (`get_caller`, `require_admin`, or `get_optional_caller`) and never resolve org ids or admin status by hand.
 
-1. **Inline API key** in the request body (`apiKey` field). Power-user path, mostly used by automation/admin flows.
-2. **Livestorm OAuth** session cookie (`livestorm_oauth_connection`). Standard path for end users. PKCE flow with HMAC-signed handshake cookie. Access tokens are refreshed automatically when within 5 minutes of expiry. See [oauth_client.py](livestorm_app/oauth_client.py).
-3. **Local API-key fallback** — only enabled when:
-   - the request comes from `127.0.0.1`/`localhost`/`::1`, AND
-   - `LS_API_KEY` is set in the server environment.
+**Identity sources**
 
-   Used for local dev so the operator doesn't need to OAuth on every restart.
+1. **Livestorm OAuth** session cookie (`livestorm_oauth_connection`). The standard path. PKCE flow with an HMAC-signed handshake cookie that expires after 10 minutes, checked server-side. Access tokens are refreshed automatically when within 5 minutes of expiry; a failed refresh returns 401 "Please reconnect". See [oauth_client.py](livestorm_app/oauth_client.py).
+2. **Local-dev mode.** Enabled only when `STORMIQ_LOCAL_DEV=1` **and** the process is not on Render (Render sets `RENDER=true` on every service). The env flag is what grants access. A request must also use a loopback `Host` (`localhost`, `127.0.0.1`, `::1`); that check does not authenticate anyone, it stops DNS-rebinding web pages from reaching a developer's local server under another hostname. In local-dev mode:
+   - Requests without an OAuth cookie act as a trusted local operator.
+   - Livestorm calls use `LS_API_KEY`.
+   - `/api/dev/auto-login` seeds an OAuth-like identity from `LS_API_KEY`. Its fixed connection id (`dev-auto-login`) is rejected whenever local-dev mode is off.
+   - Inline `apiKey` fields in request bodies are accepted only in this mode; elsewhere they return 400.
 
-Server-side secrets used by the backend (never sent to the client): `OPENAI_API_KEY`, `GLADIA_KEY`, OAuth client credentials, Postgres URL. See §13.
+**Caller kinds and read scope** (`Caller.read_scope`)
+
+| Kind | Who | Reads cached sessions of |
+|---|---|---|
+| `user` | OAuth user | their own `organization_id` only. A connection with no org sees nothing. |
+| `admin` | OAuth user in `ADMIN_EMAILS` or `admin_users` | every org (`ALL_ORGS`) |
+| `local_dev` | no OAuth cookie, local-dev mode on | every org (`ALL_ORGS`) |
+| anonymous | everyone else | nothing: **401** on every session, event and admin route |
+
+**Fail-closed rules**
+
+- `db.fetch_cached_session` and `db.fetch_cover_image` require an explicit `organization_id` scope. A blank scope matches no rows. `ALL_ORGS` is a named sentinel that only admin, local-dev and worker code pass.
+- A session outside the caller's scope is indistinguishable from a missing one (404, or 204 on `/cached`).
+- Writes (`speaker-labels`) and AI-job POSTs first check that the row is in the caller's scope.
+- Fetch routes only stamp `organization_id` on a row after the caller's own Livestorm credentials prove access to the session (Livestorm 404s otherwise). The stamp is first-writer-wins, so stamping without that proof would let an outsider claim a session before its owner fetches it.
+- `tests/test_access_control.py` enumerates every `/api/sessions/{session_id}*` route from `app.routes` and asserts: anonymous → 401; another org → no data, no writes, no enqueues; same org and admin → 2xx. A new route that forgets the dependency fails CI.
+
+Server-side secrets used by the backend (never sent to the client): `CLAUDE_API_KEY`, `OPENAI_API_KEY`, `GLADIA_KEY`, OAuth client credentials, `SESSION_SECRET`, Postgres URL, and `LS_API_KEY`, which `/api/bootstrap` no longer returns. Error responses carry `{resource, message, details: {resource, status_code?}}`; upstream URLs and response bodies are logged server-side only. See §13.
 
 ---
 
@@ -370,6 +388,31 @@ transcript_jobs (
 --   idx_transcript_jobs_status_updated_at   (status, updated_at)   -- used by the stuck-job sweeper
 ```
 
+### `admin_users`
+
+```sql
+admin_users (
+  email              TEXT PRIMARY KEY,           -- lower-cased; matched against oauth_connections.email
+  user_id            TEXT,
+  promoted_by_email  TEXT,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+```
+
+Admins come from this table plus the `ADMIN_EMAILS` env var (bootstrap admins, which cannot be demoted through the UI). See §4.
+
+### `system_settings`
+
+```sql
+system_settings (
+  key        TEXT PRIMARY KEY,                   -- allow-listed in app.py: llm_provider, llm_default_model, llm_smart_recap_model, image_model
+  value      TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+```
+
+Admin-editable runtime overrides for provider and model selection (`/api/admin/settings`).
+
 ### Schema rules
 
 - Caching is per-session, not per-output. Re-running analysis overwrites the previous bundle for that language.
@@ -382,32 +425,46 @@ transcript_jobs (
 
 All routes are FastAPI handlers in [app.py](app.py). Frontend wrapper in [frontend/src/api.js](frontend/src/api.js).
 
-| Route | Method | Purpose |
-|---|---|---|
-| `/api/health` | GET | Render health check |
-| `/api/bootstrap` | GET | Initial frontend state: default API key, OAuth status, connected user |
-| `/api/auth/livestorm/start` | GET | Begin OAuth flow (sets handshake cookie, 302 to Livestorm) |
-| `/api/auth/livestorm/callback` | GET | OAuth callback: exchange code, fetch /me, set session cookie |
-| `/api/auth/logout` | POST | Delete connection row, clear session cookie |
-| `/api/workspace-events` | POST | Paginated list of events with title/status filters |
-| `/api/workspace-sessions` | GET | (Phase 4) Cached session cards for the calling user's Livestorm org |
-| `/api/event-sessions` | POST | List sessions inside an event |
-| `/api/sessions/{id}` | GET | Read cached workspace (404 if not cached) |
-| `/api/sessions/{id}/cached` | GET | Same, but returns 204 instead of 404 when missing |
-| `/api/sessions/{id}/fetch` | POST | Full fetch (session + chat + questions + start transcript) |
-| `/api/sessions/{id}/fetch-base` | POST | Fetch session payload only |
-| `/api/sessions/{id}/fetch-transcript` | POST | Start transcript job, return jobId |
-| `/api/sessions/{id}/transcript-job` | GET | Poll transcript job status / progress |
-| `/api/sessions/{id}/speaker-labels` | POST | Save edited speaker labels |
-| `/api/sessions/{id}/analysis` | POST | Run Overall Analysis (English or French) |
-| `/api/sessions/{id}/deep-analysis` | POST | Run Deep Analysis (English or French) |
-| `/api/sessions/{id}/analysis-pdf` | GET | Render Overall or Deep PDF (`kind`, `language` query params) |
-| `/api/sessions/{id}/smart-recap` | POST | Run Smart Recap for a tone |
-| `/api/sessions/{id}/smart-recap-pdf` | GET | Render Smart Recap PDF |
-| `/api/sessions/{id}/content-repurposing` | POST | Run Content Repurposing bundle (4 assets) |
-| `/api/sessions/{id}/content-repurposing-pdf` | GET | Render a single asset PDF |
+**Auth column:** *public* = no identity needed. *caller* = `Depends(get_caller)`: 401 without an identity, and session routes are scoped to `Caller.read_scope` (§4). *admin* = `Depends(require_admin)`: 401, or 403 for non-admins. `{id}` must match `^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$` (422 otherwise).
 
-Catch-all `GET /{full_path}` serves the Vue SPA from `frontend/dist`.
+| Route | Method | Auth | Purpose |
+|---|---|---|---|
+| `/api/health` | GET | public | Render health check |
+| `/api/bootstrap` | GET | public | Initial frontend state: OAuth status, connected user, `isAdmin`, local-dev flag. Never returns an API key. |
+| `/api/auth/livestorm/start` | GET | public | Begin OAuth flow (sets handshake cookie, 302 to Livestorm) |
+| `/api/auth/livestorm/callback` | GET | public | OAuth callback: validate handshake, exchange code, fetch /me, set session cookie |
+| `/api/auth/logout` | POST | public | Delete connection row, clear session cookie |
+| `/api/dev/auto-login` | GET | local-dev only | Seed a dev identity from `LS_API_KEY` (403 unless local-dev mode, §4) |
+| `/api/admin/check` | GET | admin | Confirm admin status |
+| `/api/admin/users` | GET | admin | List users and admins |
+| `/api/admin/users/promote` | POST | admin | Add an email to `admin_users` |
+| `/api/admin/users/demote` | POST | admin | Remove an admin (not `ADMIN_EMAILS` admins, not yourself) |
+| `/api/admin/sessions` | GET | admin | List cached sessions across orgs |
+| `/api/admin/sessions/{id}` | DELETE | admin | Delete a cached session |
+| `/api/admin/settings` | GET / POST | admin | Read or update allow-listed `system_settings` keys |
+| `/api/workspace-events` | POST | caller | Paginated list of events with title/status filters |
+| `/api/workspace-sessions` | GET | public* | (Phase 4) Cached session cards for the caller's own org; `{sessions: []}` without an org |
+| `/api/event-sessions` | POST | caller | List sessions inside an event |
+| `/api/sessions/{id}/cover.png` | GET | caller | Cover image (`Cache-Control: private`) |
+| `/api/sessions/{id}` | GET | caller | Read cached workspace (404 if not cached) |
+| `/api/sessions/{id}/cached` | GET | caller | Same, but returns 204 instead of 404 when missing |
+| `/api/sessions/{id}/fetch` | POST | caller | Full fetch (session + chat + questions + start transcript) |
+| `/api/sessions/{id}/fetch-base` | POST | caller | Fetch session payload only |
+| `/api/sessions/{id}/fetch-transcript` | POST | caller | Start transcript job, return jobId |
+| `/api/sessions/{id}/transcript-job` | GET | caller | Poll transcript job status / progress |
+| `/api/sessions/{id}/speaker-labels` | POST | caller | Save edited speaker labels |
+| `/api/sessions/{id}/analysis` | POST | caller | Run Overall Analysis (English or French) |
+| `/api/sessions/{id}/deep-analysis` | POST | caller | Run Deep Analysis (English or French) |
+| `/api/sessions/{id}/analysis-pdf` | GET | caller | Render Overall or Deep PDF (`kind`, `language` query params) |
+| `/api/sessions/{id}/smart-recap` | POST | caller | Run Smart Recap for a tone |
+| `/api/sessions/{id}/smart-recap-pdf` | GET | caller | Render Smart Recap PDF |
+| `/api/sessions/{id}/content-repurposing` | POST | caller | Run Content Repurposing bundle (4 assets) |
+| `/api/sessions/{id}/content-repurposing-pdf` | GET | caller | Render a single asset PDF |
+| `/api/sessions/{id}/{flow}/job` | GET | caller | Poll an AI job: `analysis`, `deep-analysis`, `smart-recap`, `content-repurposing` (§5) |
+
+`/docs`, `/redoc` and `/openapi.json` are served locally only; they are disabled on Render.
+
+Catch-all `GET /{full_path}` serves the Vue SPA from `frontend/dist`. It only serves files that resolve *inside* `frontend/dist` (no `..` escapes) and returns 404 JSON for unknown `/api/*` paths instead of `index.html`. There is no CORS middleware: the SPA is same-origin (Vite proxies `/api` in dev).
 
 ---
 
@@ -418,6 +475,7 @@ chat-analysis/                      # repo name; product name is StormIQ
 ├── app.py                          # FastAPI app, route handlers, OAuth wiring, SPA static serving
 ├── livestorm_app/
 │   ├── api_logic.py                # Orchestration: fetch flows, analysis runners, PDF builders
+│   ├── auth.py                     # Request identity (Caller), org read scope, local-dev mode — see §4
 │   ├── services.py                 # Pure compute: Livestorm API calls, DataFrames, prompts, OpenAI client
 │   ├── session_overview.py         # Session payload → people DF, hero stats, charts
 │   ├── transcript_client.py        # Thin wrapper around gladia.transcriber
@@ -435,6 +493,7 @@ chat-analysis/                      # repo name; product name is StormIQ
 │   └── Dockerfile.worker           # Worker image (no frontend, no HTTP) — runs `arq livestorm_app.worker.WorkerSettings`
 ├── docker-compose.yml              # Local dev: web + worker + redis
 ├── Dockerfile                      # Web image (FastAPI + built Vue frontend)
+├── tests/                          # pytest suite (requirements-dev.txt); access-control route matrix
 ├── prompts/                        # 13 .txt files — editable without code changes
 │   ├── analysis_base_prompt.txt
 │   ├── analysis_chat_prompt.txt
@@ -526,13 +585,16 @@ CLAUDE_API_KEY                # Required when LLM_PROVIDER=anthropic (or unset)
 OPENAI_API_KEY                # Required when LLM_PROVIDER=openai; always required for cover image generation
 
 # Livestorm
-LS_API_KEY                    # Optional; local-dev fallback only (see §4)
+LS_API_KEY                    # Optional; used only when STORMIQ_LOCAL_DEV=1 (see §4). Never sent to the browser.
+STORMIQ_LOCAL_DEV             # Optional; "1" enables local-dev mode (§4). Ignored on Render (RENDER is set there).
+ADMIN_EMAILS                  # Optional; comma-separated bootstrap admin emails (see §4, §9 admin_users)
 LIVESTORM_OAUTH_CLIENT_ID     # Required for OAuth path
 LIVESTORM_OAUTH_CLIENT_SECRET # Required for OAuth path
 LIVESTORM_OAUTH_REDIRECT_URI  # Required for OAuth path
 LIVESTORM_OAUTH_SCOPES        # Optional; default 'identity:read events:read'
 FRONTEND_APP_URL              # Optional; used to build post-OAuth redirect URLs
-SESSION_SECRET                # Optional; HMAC key for the handshake cookie (falls back to client_secret)
+SESSION_SECRET                # Recommended; HMAC key for the OAuth handshake cookie. Falls back to
+                              # LIVESTORM_OAUTH_CLIENT_SECRET; there is no hard-coded fallback.
 
 # Transcription
 GLADIA_KEY                    # Required to fetch new transcripts
@@ -584,6 +646,7 @@ brew install redis && brew services start redis     # macOS
 # 2. Backend
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+# .env: STORMIQ_LOCAL_DEV=1 + LS_API_KEY=... to skip OAuth locally (§4)
 uvicorn app:app --reload                            # in one terminal
 arq livestorm_app.worker.WorkerSettings             # in another terminal
 
@@ -611,6 +674,7 @@ docker run --rm -p 10000:10000 --env-file .env stormiq
 7. **Prompts are editable without code.** All AI prompts live in `prompts/*.txt`. Operators can tune them. Changing wording does not require a deploy if the file is mounted/overridden.
 8. **Brand-adjacent, not brand-impersonating.** App is called **StormIQ**. Never replace the app logo with the Livestorm logo. See [BRAND.md](BRAND.md).
 9. **No telemetry beyond stderr logging.** No analytics, no error-reporting service, no per-user usage tracking today.
+10. **Access fails closed.** Every session, event and admin route takes its identity from `livestorm_app.auth` (§4). An unknown identity or a blank org never widens access: it gets 401, or matches no rows. New routes must use `Depends(get_caller)` / `Depends(require_admin)`, and `tests/test_access_control.py` must keep passing.
 
 ---
 
@@ -632,6 +696,11 @@ Each phase is independently shippable. PRs into `main` only after the phase is f
 ---
 
 ## 17. Roadmap
+
+### Hardening track (in progress)
+Security, data-integrity, reliability and performance fixes from the November 2026 review, tracked as six PRs in a maintainer-local plan (`docs/improvement-plan.md`, deliberately not committed: this repository is public and the plan lists issues that are not fixed yet). The design overhaul follows it.
+
+- ✅ **PR 1 `fix/security-org-scoping`**: fail-closed access control (§4), `livestorm_app/auth.py`, path-traversal fix in the SPA route, local-dev mode behind `STORMIQ_LOCAL_DEV` instead of the Host header, Secure cookies, CORS removed, handshake expiry enforced, upstream error details no longer returned, route-matrix test suite.
 
 ### Shipped (current state)
 - Livestorm OAuth (PKCE) + API-key fallback for local dev

@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import logging
+import re
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Annotated, Any, AsyncIterator, Dict, Optional
 
-from fastapi import FastAPI, HTTPException, Query, Request, Response
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi import Path as ApiPath
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from livestorm_app.api_logic import (
+    SessionNotFoundError,
     build_analysis_pdf,
     build_content_repurposing_pdf,
     build_smart_recap_pdf,
@@ -34,7 +37,18 @@ from livestorm_app.api_logic import (
     start_overall_analysis,
     start_smart_recap,
 )
-from livestorm_app.config import ENV_PATH, get_runtime_secret, load_env_file
+from livestorm_app.auth import (
+    LOCAL_DEV_ENV_VAR,
+    Caller,
+    env_admin_emails,
+    get_caller,
+    get_optional_caller,
+    local_api_key,
+    local_dev_enabled,
+    require_admin,
+    running_on_render,
+)
+from livestorm_app.config import get_runtime_secret, load_env_file
 from livestorm_app.db import (
     admin_delete_session,
     admin_list_sessions,
@@ -43,8 +57,6 @@ from livestorm_app.db import (
     ensure_database_schema,
     fetch_cover_image,
     get_all_settings,
-    get_setting,
-    is_admin_email,
     promote_admin,
     set_setting,
 )
@@ -59,7 +71,6 @@ from livestorm_app.oauth_client import (
     get_frontend_app_url,
     oauth_enabled,
     persist_oauth_connection,
-    refresh_connection_if_needed,
     seed_dev_connection,
     validate_handshake,
 )
@@ -72,6 +83,15 @@ BASE_DIR = Path(__file__).resolve().parent
 FRONTEND_DIST_DIR = BASE_DIR / "frontend" / "dist"
 BRAND_ASSETS_DIR = BASE_DIR / "assets"
 
+# Livestorm session ids are UUIDs. Accept any short URL-safe id so an
+# upstream format change doesn't break lookups, but reject anything
+# path-like or oversized before it reaches the DB or a filename.
+SessionId = Annotated[str, ApiPath(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")]
+
+MAX_SPEAKER_LABELS = 100
+MAX_SPEAKER_ID_LENGTH = 64
+MAX_SPEAKER_LABEL_LENGTH = 120
+
 
 class EventSessionsRequest(BaseModel):
     api_key: str = Field("", alias="apiKey")
@@ -79,7 +99,7 @@ class EventSessionsRequest(BaseModel):
 
 
 class WorkspaceEventsRequest(BaseModel):
-    api_key: str = Field(..., alias="apiKey")
+    api_key: str = Field("", alias="apiKey")
     page_number: int = Field(0, alias="pageNumber")
     page_size: int = Field(20, alias="pageSize")
     title: str = Field("", alias="title")
@@ -96,6 +116,19 @@ class SpeakerLabelsRequest(BaseModel):
     api_key: str = Field("", alias="apiKey")
     speaker_names: Dict[str, str] = Field(default_factory=dict, alias="speakerNames")
 
+    @field_validator("speaker_names")
+    @classmethod
+    def _limit_speaker_names(cls, value: Dict[str, str]) -> Dict[str, str]:
+        if len(value) > MAX_SPEAKER_LABELS:
+            raise ValueError(f"At most {MAX_SPEAKER_LABELS} speaker labels are allowed.")
+        for speaker, label in value.items():
+            if len(str(speaker)) > MAX_SPEAKER_ID_LENGTH or len(str(label)) > MAX_SPEAKER_LABEL_LENGTH:
+                raise ValueError(
+                    f"Speaker ids are limited to {MAX_SPEAKER_ID_LENGTH} characters "
+                    f"and labels to {MAX_SPEAKER_LABEL_LENGTH}."
+                )
+        return value
+
 
 class AnalysisRequest(BaseModel):
     api_key: str = Field("", alias="apiKey")
@@ -108,175 +141,88 @@ class SmartRecapRequest(BaseModel):
 
 
 def _raise_http_error(resource_label: str, exc: Exception, status_code: int = 400) -> None:
+    """Convert a service exception into an HTTP error.
+
+    Upstream debug details (URLs, raw response bodies) are logged on the
+    server and never returned to the client.
+    """
+    if isinstance(exc, HTTPException):
+        raise exc
+    if isinstance(exc, SessionNotFoundError):
+        raise HTTPException(status_code=404, detail={"resource": resource_label, "message": str(exc)})
     error_payload = format_service_error(exc, resource_label)
+    debug_details = error_payload.get("details")
+    debug_details = debug_details if isinstance(debug_details, dict) else {}
+    if isinstance(exc, RuntimeError):
+        logger.info("%s request failed: %s", resource_label, error_payload.get("message"))
+    else:
+        logger.warning("%s request failed: %s | details=%s", resource_label, error_payload.get("message"), debug_details, exc_info=True)
+    public_details: Dict[str, Any] = {"resource": resource_label}
+    if debug_details.get("status_code"):
+        public_details["status_code"] = debug_details["status_code"]
     raise HTTPException(
         status_code=status_code,
         detail={
             "resource": resource_label,
             "message": error_payload["message"],
-            "details": error_payload["details"],
+            "details": public_details,
         },
     )
 
 
-def _resolve_organization_id(request: Request) -> str:
-    """Resolve the requesting user's `organization_id` for READ paths.
+_UNSAFE_FILENAME_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
 
-    Returns "" for admin users so they can access sessions from any org
-    without being blocked by the org filter. Also returns "" when there is
-    no OAuth connection (local LS_API_KEY fallback).
 
-    Use `_resolve_own_organization_id` on WRITE paths (fetch/upsert) so that
-    sessions are always stamped with the fetcher's actual org_id.
+def _pdf_response(result: Dict[str, Any]) -> Response:
+    filename = _UNSAFE_FILENAME_CHARS.sub("-", str(result.get("filename") or "")).strip("-.") or "stormiq-export.pdf"
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return Response(content=result["content"], media_type="application/pdf", headers=headers)
+
+
+def _cookie_secure(request: Request) -> bool:
+    """Secure cookies everywhere except plain-HTTP local development.
+
+    Render terminates TLS at its proxy, so the app sees plain HTTP; the
+    RENDER env var marks production regardless of scheme.
     """
-    connection_id = str(request.cookies.get(LIVESTORM_OAUTH_COOKIE) or "").strip()
-    if not connection_id:
-        return ""
-    connection = refresh_connection_if_needed(connection_id)
-    if not isinstance(connection, dict):
-        return ""
-    if _is_admin_request(request):
-        return ""
-    return str(connection.get("organization_id") or "").strip()
-
-
-def _resolve_own_organization_id(request: Request) -> str:
-    """Resolve the caller's actual org_id regardless of admin status.
-
-    Used on write paths (session fetch/upsert) so every session is stamped
-    with the fetcher's real organization_id and appears in their workspace
-    list — even when the fetcher is an admin.
-    """
-    connection = _resolve_current_connection(request)
-    return str((connection or {}).get("organization_id") or "").strip()
-
-
-def _resolve_generator_kwargs(request: Request) -> Dict[str, Any]:
-    """Pull `{created_by_user_id, created_by_email, created_by_name}` from
-    the OAuth connection.
-
-    Empty dict when the caller is in LS_API_KEY-only mode (no OAuth
-    connection) — the cache stores blanks then, and the "Generated by"
-    UI falls back to "Unknown user". Only `created_by_name` falls back
-    to the email when the profile has no full_name.
-    """
-    connection_id = str(request.cookies.get(LIVESTORM_OAUTH_COOKIE) or "").strip()
-    if not connection_id:
-        return {}
-    connection = refresh_connection_if_needed(connection_id)
-    if not isinstance(connection, dict):
-        return {}
-    profile = connection.get("profile") or {}
-    profile = profile if isinstance(profile, dict) else {}
-    user_id = str(connection.get("user_id") or profile.get("user_id") or "").strip()
-    email = str(connection.get("email") or profile.get("email") or "").strip()
-    name = str(profile.get("full_name") or "").strip() or email
-    out: Dict[str, Any] = {}
-    if user_id:
-        out["created_by_user_id"] = user_id
-    if email:
-        out["created_by_email"] = email
-    if name:
-        out["created_by_name"] = name
-    return out
-
-
-def _resolve_livestorm_auth(raw_api_key: str, request: Request) -> str:
-    direct_api_key = str(raw_api_key or "").strip()
-    if direct_api_key:
-        return direct_api_key
-    if _allow_local_api_key_fallback(request):
-        local_api_key = get_runtime_secret("LS_API_KEY", "")
-        if str(local_api_key or "").strip():
-            return str(local_api_key).strip()
-    connection_id = str(request.cookies.get(LIVESTORM_OAUTH_COOKIE) or "").strip()
-    if not connection_id:
-        raise HTTPException(
-            status_code=401,
-            detail={"resource": "Livestorm authentication", "message": "Please connect with Livestorm first."},
-        )
-    connection = refresh_connection_if_needed(connection_id)
-    if not isinstance(connection, dict):
-        raise HTTPException(
-            status_code=401,
-            detail={"resource": "Livestorm authentication", "message": "Your Livestorm connection has expired. Please reconnect."},
-        )
-    access_token = str(connection.get("access_token") or "").strip()
-    token_type = str(connection.get("token_type") or "Bearer").strip() or "Bearer"
-    if not access_token:
-        raise HTTPException(
-            status_code=401,
-            detail={"resource": "Livestorm authentication", "message": "Your Livestorm connection is missing an access token. Please reconnect."},
-        )
-    return f"{token_type} {access_token}"
-
-
-def _resolve_current_connection(request: Request) -> Optional[Dict[str, Any]]:
-    connection_id = str(request.cookies.get(LIVESTORM_OAUTH_COOKIE) or "").strip()
-    if not connection_id:
-        return None
-    connection = refresh_connection_if_needed(connection_id)
-    return connection if isinstance(connection, dict) else None
-
-
-def _is_admin_request(request: Request) -> bool:
-    connection = _resolve_current_connection(request)
-    if not connection:
-        return False
-    email = str(connection.get("email") or "").strip().lower()
-    if not email:
-        return False
-    env_admins = [e.strip().lower() for e in get_runtime_secret("ADMIN_EMAILS", "").split(",") if e.strip()]
-    if email in env_admins:
+    if running_on_render():
         return True
-    return is_admin_email(email)
-
-
-def _check_admin_or_raise(request: Request) -> Dict[str, Any]:
-    connection = _resolve_current_connection(request)
-    if not connection:
-        raise HTTPException(status_code=401, detail={"resource": "Admin", "message": "Not authenticated."})
-    email = str(connection.get("email") or "").strip().lower()
-    env_admins = [e.strip().lower() for e in get_runtime_secret("ADMIN_EMAILS", "").split(",") if e.strip()]
-    if email not in env_admins and not is_admin_email(email):
-        raise HTTPException(status_code=403, detail={"resource": "Admin", "message": "Admin access required."})
-    return connection
-
-
-def _get_bootstrap_auth(request: Request) -> Dict[str, Any]:
-    connection_id = str(request.cookies.get(LIVESTORM_OAUTH_COOKIE) or "").strip()
-    connection = refresh_connection_if_needed(connection_id) if connection_id else None
-    return {
-        "oauthEnabled": oauth_enabled(),
-        "connectedUser": get_connection_identity(connection),
-        "allowLocalApiKeyFallback": _allow_local_api_key_fallback(request),
-        "isAdmin": _is_admin_request(request),
-    }
-
-
-def _allow_local_api_key_fallback(request: Request | None) -> bool:
-    if request is None:
-        return False
-    hostname = str(request.url.hostname or "").strip().lower()
-    if hostname not in {"127.0.0.1", "localhost", "::1", "0.0.0.0"}:
-        return False
-    return bool(str(get_runtime_secret("LS_API_KEY", "") or "").strip())
+    forwarded_proto = str(request.headers.get("x-forwarded-proto") or "").split(",")[0].strip().lower()
+    return forwarded_proto == "https" or request.url.scheme == "https"
 
 
 load_env_file()
-try:
-    ensure_database_schema()
-except Exception:
-    logger.exception("Database schema initialization failed")
 
-app = FastAPI(title="Livestorm Post Event Analysis API", version="0.1.0")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    try:
+        ensure_database_schema()
+    except Exception:
+        logger.exception("Database schema initialization failed")
+    if local_dev_enabled():
+        logger.warning(
+            "Local-dev mode is ON (%s): requests without an OAuth session act as a trusted local operator.",
+            LOCAL_DEV_ENV_VAR,
+        )
+    yield
+
+
+# Interactive API docs and the OpenAPI schema are a local convenience; in
+# production they would publish the full route map to anonymous visitors.
+_API_DOCS_ENABLED = not running_on_render()
+
+app = FastAPI(
+    title="Livestorm Post Event Analysis API",
+    version="0.1.0",
+    lifespan=lifespan,
+    docs_url="/docs" if _API_DOCS_ENABLED else None,
+    redoc_url="/redoc" if _API_DOCS_ENABLED else None,
+    openapi_url="/openapi.json" if _API_DOCS_ENABLED else None,
 )
+
+# No CORS middleware: the SPA is served by this app (and proxied by Vite in
+# dev), so every browser request is same-origin.
 
 if BRAND_ASSETS_DIR.exists():
     app.mount("/brand-assets", StaticFiles(directory=BRAND_ASSETS_DIR), name="brand-assets")
@@ -288,16 +234,17 @@ def healthcheck() -> Dict[str, str]:
 
 
 @app.get("/api/bootstrap")
-def bootstrap_defaults(request: Request) -> Dict[str, Any]:
-    auth = _get_bootstrap_auth(request)
-    default_api_key = ""
-    if ENV_PATH.exists() and (not auth.get("oauthEnabled") or auth.get("allowLocalApiKeyFallback")):
-        default_api_key = get_runtime_secret("LS_API_KEY", "")
+def bootstrap_defaults(request: Request, caller: Optional[Caller] = Depends(get_optional_caller)) -> Dict[str, Any]:
+    # The raw LS_API_KEY is never sent to the browser. In local-dev mode the
+    # server applies it itself (see livestorm_app.auth).
     return {
-        "defaults": {
-            "apiKey": default_api_key,
+        "defaults": {"apiKey": ""},
+        "auth": {
+            "oauthEnabled": oauth_enabled(),
+            "connectedUser": get_connection_identity(caller.connection if caller else None),
+            "allowLocalApiKeyFallback": bool(local_api_key(request)),
+            "isAdmin": bool(caller and caller.is_admin),
         },
-        "auth": auth,
     }
 
 
@@ -307,32 +254,27 @@ class AdminPromoteRequest(BaseModel):
 
 
 @app.get("/api/admin/check")
-def admin_check(request: Request) -> Dict[str, Any]:
-    connection = _check_admin_or_raise(request)
-    return {"isAdmin": True, "email": connection.get("email", "")}
+def admin_check(caller: Caller = Depends(require_admin)) -> Dict[str, Any]:
+    return {"isAdmin": True, "email": (caller.connection or {}).get("email", "")}
 
 
 @app.get("/api/admin/users")
-def admin_get_users(request: Request) -> Dict[str, Any]:
-    _check_admin_or_raise(request)
+def admin_get_users(_caller: Caller = Depends(require_admin)) -> Dict[str, Any]:
     return {"users": admin_list_users()}
 
 
 @app.post("/api/admin/users/promote")
-def admin_promote_user(body: AdminPromoteRequest, request: Request) -> Dict[str, Any]:
-    actor = _check_admin_or_raise(request)
-    actor_email = str(actor.get("email") or "").strip()
+def admin_promote_user(body: AdminPromoteRequest, caller: Caller = Depends(require_admin)) -> Dict[str, Any]:
+    actor_email = str((caller.connection or {}).get("email") or "").strip()
     promote_admin(body.email.strip(), body.user_id.strip(), actor_email)
     return {"ok": True}
 
 
 @app.post("/api/admin/users/demote")
-def admin_demote_user(body: AdminPromoteRequest, request: Request) -> Dict[str, Any]:
-    actor = _check_admin_or_raise(request)
-    actor_email = str(actor.get("email") or "").strip().lower()
+def admin_demote_user(body: AdminPromoteRequest, caller: Caller = Depends(require_admin)) -> Dict[str, Any]:
+    actor_email = str((caller.connection or {}).get("email") or "").strip().lower()
     target_email = str(body.email or "").strip().lower()
-    env_admins = [e.strip().lower() for e in get_runtime_secret("ADMIN_EMAILS", "").split(",") if e.strip()]
-    if target_email in env_admins:
+    if target_email in env_admin_emails():
         raise HTTPException(status_code=400, detail={"resource": "Admin", "message": "Cannot demote a bootstrap admin set via ADMIN_EMAILS env var."})
     if target_email == actor_email:
         raise HTTPException(status_code=400, detail={"resource": "Admin", "message": "You cannot demote yourself."})
@@ -341,14 +283,12 @@ def admin_demote_user(body: AdminPromoteRequest, request: Request) -> Dict[str, 
 
 
 @app.get("/api/admin/sessions")
-def admin_get_sessions(request: Request) -> Dict[str, Any]:
-    _check_admin_or_raise(request)
+def admin_get_sessions(_caller: Caller = Depends(require_admin)) -> Dict[str, Any]:
     return {"sessions": admin_list_sessions()}
 
 
 @app.delete("/api/admin/sessions/{session_id}")
-def admin_remove_session(session_id: str, request: Request) -> Dict[str, Any]:
-    _check_admin_or_raise(request)
+def admin_remove_session(session_id: SessionId, _caller: Caller = Depends(require_admin)) -> Dict[str, Any]:
     admin_delete_session(session_id)
     return {"ok": True, "sessionId": session_id}
 
@@ -359,14 +299,12 @@ class AdminSettingRequest(BaseModel):
 
 
 @app.get("/api/admin/settings")
-def admin_get_settings(request: Request) -> Dict[str, Any]:
-    _check_admin_or_raise(request)
+def admin_get_settings(_caller: Caller = Depends(require_admin)) -> Dict[str, Any]:
     return {"settings": get_all_settings()}
 
 
 @app.post("/api/admin/settings")
-def admin_update_setting(body: AdminSettingRequest, request: Request) -> Dict[str, Any]:
-    _check_admin_or_raise(request)
+def admin_update_setting(body: AdminSettingRequest, _caller: Caller = Depends(require_admin)) -> Dict[str, Any]:
     allowed_keys = {
         "llm_provider",
         "llm_default_model",
@@ -384,7 +322,7 @@ def admin_update_setting(body: AdminSettingRequest, request: Request) -> Dict[st
 
 
 @app.get("/api/auth/livestorm/start")
-def start_livestorm_oauth(returnTo: str = Query("/")) -> Response:
+def start_livestorm_oauth(request: Request, returnTo: str = Query("/")) -> Response:
     if not oauth_enabled():
         raise HTTPException(status_code=400, detail={"resource": "OAuth", "message": "Livestorm OAuth is not configured on the server yet."})
     auth_request = build_authorization_url(return_to=returnTo)
@@ -394,7 +332,7 @@ def start_livestorm_oauth(returnTo: str = Query("/")) -> Response:
         auth_request["handshake_token"],
         httponly=True,
         samesite="lax",
-        secure=False,
+        secure=_cookie_secure(request),
         max_age=600,
         path="/",
     )
@@ -402,8 +340,8 @@ def start_livestorm_oauth(returnTo: str = Query("/")) -> Response:
 
 
 @app.get("/api/auth/livestorm/callback")
-def complete_livestorm_oauth(code: str = Query(""), state: str = Query(""), request: Request = None) -> Response:
-    handshake_cookie = str((request.cookies.get(LIVESTORM_OAUTH_HANDSHAKE_COOKIE) if request else "") or "").strip()
+def complete_livestorm_oauth(request: Request, code: str = Query(""), state: str = Query("")) -> Response:
+    handshake_cookie = str(request.cookies.get(LIVESTORM_OAUTH_HANDSHAKE_COOKIE) or "").strip()
     frontend_base = get_frontend_app_url()
     success_redirect = f"{frontend_base}/auth/callback?auth=success" if frontend_base else "/auth/callback?auth=success"
     failure_redirect = f"{frontend_base}/auth/callback?auth=error" if frontend_base else "/auth/callback?auth=error"
@@ -422,7 +360,7 @@ def complete_livestorm_oauth(code: str = Query(""), state: str = Query(""), requ
             str(connection.get("connection_id") or "").strip(),
             httponly=True,
             samesite="lax",
-            secure=False,
+            secure=_cookie_secure(request),
             max_age=60 * 60 * 24 * 30,
             path="/",
         )
@@ -447,53 +385,53 @@ def logout_livestorm_oauth(request: Request) -> Response:
 
 @app.get("/api/dev/auto-login")
 def dev_auto_login(request: Request) -> Response:
-    """Localhost-only: seed a real OAuth identity from LS_API_KEY.
+    """Local-dev only: seed a real OAuth identity from LS_API_KEY.
 
     Calls /me with the local API key, stores the user/org identity in
     oauth_connections under a stable connection_id, and sets the session
     cookie — so org filtering, 'Generated by', and the session card list
-    all behave as they would after a real OAuth login.
+    all behave as they would after a real OAuth login. Requires
+    STORMIQ_LOCAL_DEV and LS_API_KEY; never available on Render.
     """
-    if not _allow_local_api_key_fallback(request):
-        raise HTTPException(status_code=403, detail="Dev auto-login is only available on localhost with LS_API_KEY set.")
-    api_key = str(get_runtime_secret("LS_API_KEY", "") or "").strip()
+    api_key = local_api_key(request)
+    if not api_key:
+        raise HTTPException(
+            status_code=403,
+            detail={"resource": "Dev auto-login", "message": f"Requires {LOCAL_DEV_ENV_VAR}=1, LS_API_KEY, and a localhost URL (never on Render)."},
+        )
     try:
         connection_id = seed_dev_connection(api_key)
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Failed to fetch identity from Livestorm /me: {exc}") from exc
+        logger.warning("Dev auto-login failed to fetch identity from Livestorm /me", exc_info=True)
+        raise HTTPException(
+            status_code=502,
+            detail={"resource": "Dev auto-login", "message": "Failed to fetch identity from Livestorm /me."},
+        ) from exc
     response = RedirectResponse(url="/", status_code=302)
-    response.set_cookie(key=LIVESTORM_OAUTH_COOKIE, value=connection_id, httponly=True, samesite="lax", path="/")
+    response.set_cookie(key=LIVESTORM_OAUTH_COOKIE, value=connection_id, httponly=True, samesite="lax", secure=_cookie_secure(request), path="/")
     return response
 
 
 @app.get("/api/workspace-sessions")
-def workspace_sessions(http_request: Request) -> Dict[str, Any]:
+def workspace_sessions(caller: Optional[Caller] = Depends(get_optional_caller)) -> Dict[str, Any]:
     """Phase 4: list every cached session the calling user's org can see.
 
-    Powers the Single Analysis card grid. Filters by `organization_id`
-    from the OAuth connection. Returns `{ sessions: [] }` when:
-      - the caller has no OAuth connection (local LS_API_KEY mode)
+    Powers the Single Analysis card grid. Always lists the caller's *own*
+    org, admins included. Returns `{ sessions: [] }` when:
+      - the caller has no OAuth connection (anonymous, or local dev without auto-login)
       - the org has no cached sessions yet
     The frontend treats empty list as the empty-state for the page.
     """
-    # Always use the caller's own org_id here — even admins should see their
-    # own org's workspace, not an empty list. _resolve_organization_id returns
-    # "" for admins (so they can bypass org-filters on specific-session reads),
-    # but for the workspace list we always want the caller's actual org.
-    connection = _resolve_current_connection(http_request)
-    org_id = str((connection or {}).get("organization_id") or "").strip()
+    org_id = caller.org_id if caller else ""
     if not org_id:
-        # No OAuth org → no workspace view to show. Return empty rather
-        # than 401 so the page can render a "connect with Livestorm to
-        # see your workspace sessions" CTA.
         return {"sessions": []}
     return list_workspace_sessions_data(org_id)
 
 
 @app.post("/api/event-sessions")
-def event_sessions(request: EventSessionsRequest, http_request: Request) -> Dict[str, Any]:
+def event_sessions(request: EventSessionsRequest, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
     try:
-        api_key = _resolve_livestorm_auth(request.api_key, http_request)
+        api_key = caller.livestorm_auth(request.api_key)
         return fetch_event_sessions(api_key, request.event_id)
     except Exception as exc:
         _raise_http_error("Event sessions", exc)
@@ -501,9 +439,9 @@ def event_sessions(request: EventSessionsRequest, http_request: Request) -> Dict
 
 
 @app.post("/api/workspace-events")
-def workspace_events(request: WorkspaceEventsRequest, http_request: Request) -> Dict[str, Any]:
+def workspace_events(request: WorkspaceEventsRequest, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
     try:
-        api_key = _resolve_livestorm_auth(request.api_key, http_request)
+        api_key = caller.livestorm_auth(request.api_key)
         return fetch_available_events(
             api_key,
             page_number=request.page_number,
@@ -517,28 +455,26 @@ def workspace_events(request: WorkspaceEventsRequest, http_request: Request) -> 
 
 
 @app.get("/api/sessions/{session_id}/cover.png")
-def get_session_cover_image(session_id: str, http_request: Request) -> Response:
+def get_session_cover_image(session_id: SessionId, caller: Caller = Depends(get_caller)) -> Response:
     """Serve the OpenAI-generated cover image for the workspace card grid.
 
     BYTEA columns stay out of `/api/workspace-sessions` so that endpoint
     is small (no 50× 2 MB payloads). The card looks up `hasCoverImage`
     there and renders `<img src=".../cover.png">` only when true.
 
-    Org-scoped via `_resolve_organization_id` — same access rule as
-    everything else. Returns 404 with a small JSON body when the row
-    has no cover yet (the frontend falls back to the placeholder
-    gradient on a network error).
+    Org-scoped like every session route. Returns 404 with a small JSON body
+    when the row has no cover yet or isn't visible to the caller (the
+    frontend falls back to the placeholder gradient).
     """
     try:
-        org_id = _resolve_organization_id(http_request)
-        cover = fetch_cover_image(session_id, organization_id=org_id)
+        cover = fetch_cover_image(session_id, organization_id=caller.read_scope)
         if not isinstance(cover, dict) or not cover.get("bytes"):
             return JSONResponse({"message": "Cover image not available."}, status_code=404)
-        # Cache aggressively in the browser — the bytes don't change
-        # until the worker rewrites the row, and the URL itself isn't
-        # versioned (yet). Once we regenerate, the user can hard-refresh.
+        # Browser-only cache (`private`): the image is org-scoped, so shared
+        # caches must not store it. The bytes don't change until the worker
+        # rewrites the row; after a regeneration the user can hard-refresh.
         headers = {
-            "Cache-Control": "public, max-age=86400",
+            "Cache-Control": "private, max-age=86400",
             "Content-Type": cover.get("mime", "image/png"),
         }
         return Response(content=cover["bytes"], media_type=headers["Content-Type"], headers=headers)
@@ -548,19 +484,17 @@ def get_session_cover_image(session_id: str, http_request: Request) -> Response:
 
 
 @app.get("/api/sessions/{session_id}")
-def get_session_workspace(session_id: str, http_request: Request) -> Dict[str, Any]:
-    org_id = _resolve_organization_id(http_request)
-    cached = get_cached_workspace(session_id, organization_id=org_id)
+def get_session_workspace(session_id: SessionId, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
+    cached = get_cached_workspace(session_id, organization_id=caller.read_scope)
     if not isinstance(cached, dict):
         raise HTTPException(status_code=404, detail={"resource": "Session cache", "message": "No cached session found."})
     return cached
 
 
 @app.get("/api/sessions/{session_id}/cached")
-def get_cached_session_workspace(session_id: str, http_request: Request) -> Response:
+def get_cached_session_workspace(session_id: SessionId, caller: Caller = Depends(get_caller)) -> Response:
     try:
-        org_id = _resolve_organization_id(http_request)
-        cached = get_cached_workspace(session_id, organization_id=org_id)
+        cached = get_cached_workspace(session_id, organization_id=caller.read_scope)
         if not isinstance(cached, dict):
             return Response(status_code=204)
         return JSONResponse(content=jsonable_encoder(cached))
@@ -570,19 +504,18 @@ def get_cached_session_workspace(session_id: str, http_request: Request) -> Resp
 
 
 @app.post("/api/sessions/{session_id}/fetch")
-def fetch_session_workspace(session_id: str, request: FetchSessionRequest, http_request: Request) -> Dict[str, Any]:
+def fetch_session_workspace(session_id: SessionId, request: FetchSessionRequest, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
     try:
-        api_key = _resolve_livestorm_auth(request.api_key, http_request)
-        org_id = _resolve_own_organization_id(http_request)
-        generator = _resolve_generator_kwargs(http_request)
+        api_key = caller.livestorm_auth(request.api_key)
         transcript_api_key = str(request.transcript_api_key or "").strip() or get_runtime_secret("GLADIA_KEY", "")
         return fetch_all_session_data(
             api_key=api_key,
             transcript_api_key=transcript_api_key,
             session_id=session_id,
             force_refresh=request.force_refresh,
-            organization_id=org_id,
-            **generator,
+            read_scope=caller.read_scope,
+            organization_id=caller.org_id,
+            **caller.generator_kwargs(),
         )
     except Exception as exc:
         _raise_http_error("Session data", exc)
@@ -590,17 +523,16 @@ def fetch_session_workspace(session_id: str, request: FetchSessionRequest, http_
 
 
 @app.post("/api/sessions/{session_id}/fetch-base")
-def fetch_session_base_workspace(session_id: str, request: FetchSessionRequest, http_request: Request) -> Dict[str, Any]:
+def fetch_session_base_workspace(session_id: SessionId, request: FetchSessionRequest, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
     try:
-        api_key = _resolve_livestorm_auth(request.api_key, http_request)
-        org_id = _resolve_own_organization_id(http_request)
-        generator = _resolve_generator_kwargs(http_request)
+        api_key = caller.livestorm_auth(request.api_key)
         return fetch_session_base_data(
             api_key=api_key,
             session_id=session_id,
             force_refresh=request.force_refresh,
-            organization_id=org_id,
-            **generator,
+            read_scope=caller.read_scope,
+            organization_id=caller.org_id,
+            **caller.generator_kwargs(),
         )
     except Exception as exc:
         _raise_http_error("Session overview", exc)
@@ -608,19 +540,18 @@ def fetch_session_base_workspace(session_id: str, request: FetchSessionRequest, 
 
 
 @app.post("/api/sessions/{session_id}/fetch-transcript")
-def fetch_session_transcript_workspace(session_id: str, request: FetchSessionRequest, http_request: Request) -> Dict[str, Any]:
+def fetch_session_transcript_workspace(session_id: SessionId, request: FetchSessionRequest, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
     try:
-        api_key = _resolve_livestorm_auth(request.api_key, http_request)
-        org_id = _resolve_own_organization_id(http_request)
-        generator = _resolve_generator_kwargs(http_request)
+        api_key = caller.livestorm_auth(request.api_key)
         transcript_api_key = str(request.transcript_api_key or "").strip() or get_runtime_secret("GLADIA_KEY", "")
         return fetch_session_transcript_data(
             api_key=api_key,
             transcript_api_key=transcript_api_key,
             session_id=session_id,
             force_refresh=request.force_refresh,
-            organization_id=org_id,
-            **generator,
+            read_scope=caller.read_scope,
+            organization_id=caller.org_id,
+            **caller.generator_kwargs(),
         )
     except Exception as exc:
         _raise_http_error("Transcript", exc)
@@ -628,29 +559,26 @@ def fetch_session_transcript_workspace(session_id: str, request: FetchSessionReq
 
 
 @app.get("/api/sessions/{session_id}/transcript-job")
-def get_transcript_job_status(session_id: str, http_request: Request) -> Dict[str, Any]:
+def get_transcript_job_status(session_id: SessionId, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
     try:
-        api_key = _resolve_livestorm_auth("", http_request)
-        org_id = _resolve_organization_id(http_request)
-        return get_transcript_job_status_data(api_key, session_id, organization_id=org_id)
+        return get_transcript_job_status_data("", session_id, organization_id=caller.read_scope)
     except Exception as exc:
         _raise_http_error("Transcript job", exc)
         raise
 
 
 @app.post("/api/sessions/{session_id}/speaker-labels")
-def update_speaker_labels(session_id: str, request: SpeakerLabelsRequest, http_request: Request) -> Dict[str, Any]:
+def update_speaker_labels(session_id: SessionId, request: SpeakerLabelsRequest, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
     try:
-        api_key = _resolve_livestorm_auth(request.api_key, http_request)
-        org_id = _resolve_organization_id(http_request)
-        return save_speaker_labels(api_key, session_id, request.speaker_names, organization_id=org_id)
+        api_key = caller.livestorm_auth(request.api_key)
+        return save_speaker_labels(api_key, session_id, request.speaker_names, organization_id=caller.read_scope)
     except Exception as exc:
         _raise_http_error("Speaker labels", exc)
         raise
 
 
 @app.post("/api/sessions/{session_id}/analysis")
-def overall_analysis(session_id: str, request: AnalysisRequest, http_request: Request) -> Dict[str, Any]:
+def overall_analysis(session_id: SessionId, request: AnalysisRequest, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
     """Start an Overall Analysis job.
 
     Phase 2 contract change: this no longer returns the analysis body
@@ -659,152 +587,150 @@ def overall_analysis(session_id: str, request: AnalysisRequest, http_request: Re
     language } so the frontend can poll `/analysis/job`.
     """
     try:
-        org_id = _resolve_organization_id(http_request)
-        return start_overall_analysis(session_id, request.output_language, organization_id=org_id)
+        return start_overall_analysis(session_id, request.output_language, organization_id=caller.read_scope)
     except Exception as exc:
         _raise_http_error("Analysis", exc)
         raise
 
 
 @app.get("/api/sessions/{session_id}/analysis/job")
-def overall_analysis_job(session_id: str, http_request: Request, jobId: str = Query(""), language: str = Query("English")) -> Dict[str, Any]:
+def overall_analysis_job(session_id: SessionId, caller: Caller = Depends(get_caller), jobId: str = Query(""), language: str = Query("English")) -> Dict[str, Any]:
     try:
-        org_id = _resolve_organization_id(http_request)
-        return get_overall_analysis_job_data(session_id, jobId, language, organization_id=org_id)
+        return get_overall_analysis_job_data(session_id, jobId, language, organization_id=caller.read_scope)
     except Exception as exc:
         _raise_http_error("Analysis", exc)
         raise
 
 
 @app.post("/api/sessions/{session_id}/deep-analysis")
-def deep_analysis(session_id: str, request: AnalysisRequest, http_request: Request) -> Dict[str, Any]:
+def deep_analysis(session_id: SessionId, request: AnalysisRequest, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
     """Start a Deep Analysis job. See `overall_analysis` for the contract."""
     try:
-        org_id = _resolve_organization_id(http_request)
-        return start_deep_analysis(session_id, request.output_language, organization_id=org_id)
+        return start_deep_analysis(session_id, request.output_language, organization_id=caller.read_scope)
     except Exception as exc:
         _raise_http_error("Deep analysis", exc)
         raise
 
 
 @app.get("/api/sessions/{session_id}/deep-analysis/job")
-def deep_analysis_job(session_id: str, http_request: Request, jobId: str = Query(""), language: str = Query("English")) -> Dict[str, Any]:
+def deep_analysis_job(session_id: SessionId, caller: Caller = Depends(get_caller), jobId: str = Query(""), language: str = Query("English")) -> Dict[str, Any]:
     try:
-        org_id = _resolve_organization_id(http_request)
-        return get_deep_analysis_job_data(session_id, jobId, language, organization_id=org_id)
+        return get_deep_analysis_job_data(session_id, jobId, language, organization_id=caller.read_scope)
     except Exception as exc:
         _raise_http_error("Deep analysis", exc)
         raise
 
 
 @app.get("/api/sessions/{session_id}/analysis-pdf")
-def analysis_pdf(session_id: str, kind: str = Query(...), language: str = Query("English")) -> Response:
+def analysis_pdf(session_id: SessionId, caller: Caller = Depends(get_caller), kind: str = Query(...), language: str = Query("English")) -> Response:
     try:
-        result = build_analysis_pdf(session_id, kind, language)
-        filename = str(result["filename"])
-        pdf_bytes = result["content"]
-        headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
-        return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)
+        return _pdf_response(build_analysis_pdf(session_id, kind, language, organization_id=caller.read_scope))
     except Exception as exc:
         _raise_http_error("Analysis PDF", exc)
         raise
 
 
 @app.post("/api/sessions/{session_id}/smart-recap")
-def smart_recap(session_id: str, request: SmartRecapRequest, http_request: Request) -> Dict[str, Any]:
+def smart_recap(session_id: SessionId, request: SmartRecapRequest, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
     """Start a Smart Recap job. Same contract as overall_analysis, keyed by tone."""
     try:
-        org_id = _resolve_organization_id(http_request)
-        return start_smart_recap(session_id, request.tone, organization_id=org_id)
+        return start_smart_recap(session_id, request.tone, organization_id=caller.read_scope)
     except Exception as exc:
         _raise_http_error("Smart Recap", exc)
         raise
 
 
 @app.get("/api/sessions/{session_id}/smart-recap/job")
-def smart_recap_job(session_id: str, http_request: Request, jobId: str = Query(""), tone: str = Query("professional")) -> Dict[str, Any]:
+def smart_recap_job(session_id: SessionId, caller: Caller = Depends(get_caller), jobId: str = Query(""), tone: str = Query("professional")) -> Dict[str, Any]:
     try:
-        org_id = _resolve_organization_id(http_request)
-        return get_smart_recap_job_data(session_id, jobId, tone, organization_id=org_id)
+        return get_smart_recap_job_data(session_id, jobId, tone, organization_id=caller.read_scope)
     except Exception as exc:
         _raise_http_error("Smart Recap", exc)
         raise
 
 
 @app.get("/api/sessions/{session_id}/smart-recap-pdf")
-def smart_recap_pdf(session_id: str, tone: str = Query(...)) -> Response:
+def smart_recap_pdf(session_id: SessionId, caller: Caller = Depends(get_caller), tone: str = Query(...)) -> Response:
     try:
-        result = build_smart_recap_pdf(session_id, tone)
-        filename = str(result["filename"])
-        pdf_bytes = result["content"]
-        headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
-        return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)
+        return _pdf_response(build_smart_recap_pdf(session_id, tone, organization_id=caller.read_scope))
     except Exception as exc:
         _raise_http_error("Smart Recap PDF", exc)
         raise
 
 
 @app.post("/api/sessions/{session_id}/content-repurposing")
-def content_repurposing(session_id: str, request: AnalysisRequest, http_request: Request) -> Dict[str, Any]:
+def content_repurposing(session_id: SessionId, request: AnalysisRequest, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
     """Start a Content Repurposing job. Same contract as overall_analysis."""
     try:
-        org_id = _resolve_organization_id(http_request)
-        return start_content_repurposing(session_id, request.output_language, organization_id=org_id)
+        return start_content_repurposing(session_id, request.output_language, organization_id=caller.read_scope)
     except Exception as exc:
         _raise_http_error("Content Repurposing", exc)
         raise
 
 
 @app.get("/api/sessions/{session_id}/content-repurposing/job")
-def content_repurposing_job(session_id: str, http_request: Request, jobId: str = Query(""), language: str = Query("English")) -> Dict[str, Any]:
+def content_repurposing_job(session_id: SessionId, caller: Caller = Depends(get_caller), jobId: str = Query(""), language: str = Query("English")) -> Dict[str, Any]:
     try:
-        org_id = _resolve_organization_id(http_request)
-        return get_content_repurposing_job_data(session_id, jobId, language, organization_id=org_id)
+        return get_content_repurposing_job_data(session_id, jobId, language, organization_id=caller.read_scope)
     except Exception as exc:
         _raise_http_error("Content Repurposing", exc)
         raise
 
 
 @app.get("/api/sessions/{session_id}/content-repurposing-pdf")
-def content_repurposing_pdf(session_id: str, language: str = Query("English"), item: str = Query(...)) -> Response:
+def content_repurposing_pdf(session_id: SessionId, caller: Caller = Depends(get_caller), language: str = Query("English"), item: str = Query(...)) -> Response:
     try:
-        result = build_content_repurposing_pdf(session_id, language, item)
-        filename = str(result["filename"])
-        pdf_bytes = result["content"]
-        headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
-        return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)
+        return _pdf_response(build_content_repurposing_pdf(session_id, language, item, organization_id=caller.read_scope))
     except Exception as exc:
         _raise_http_error("Content Repurposing PDF", exc)
         raise
 
 
-if FRONTEND_DIST_DIR.exists():
-    assets_dir = FRONTEND_DIST_DIR / "assets"
-    if assets_dir.exists():
-        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+# ── Frontend (SPA) ─────────────────────────────────────────────────────────
+#
+# Vite ships hashed asset filenames (index-abc123.js) but the HTML that
+# references them is unhashed and SHOULD NEVER be cached. Without these
+# headers, a Render deploy that ships a fresh hash leaves users with
+# browsers/CDNs holding the OLD index.html pointing at the OLD asset — the
+# new asset 404s because the old file no longer exists in /assets. Forcing
+# no-cache on the HTML entry-point makes every navigation re-fetch the
+# index, while hashed asset files are served by the StaticFiles mount.
+_INDEX_HTML_HEADERS = {
+    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
 
-    # Vite ships hashed asset filenames (index-abc123.js) but the
-    # HTML that references them is unhashed and SHOULD NEVER be cached.
-    # Without these headers, a Render deploy that ships a fresh hash
-    # leaves users with browsers/CDNs holding the OLD index.html
-    # pointing at the OLD asset — the new asset 404s because the old
-    # file no longer exists in /assets. Forcing no-cache on the HTML
-    # entry-point makes every navigation re-fetch the index, while
-    # asset files are still served fresh by the StaticFiles mount above
-    # (the hashed filenames make them inherently cache-safe — a
-    # different bundle has a different URL).
-    _INDEX_HTML_HEADERS = {
-        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-        "Pragma": "no-cache",
-        "Expires": "0",
-    }
+if (FRONTEND_DIST_DIR / "assets").is_dir():
+    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST_DIR / "assets"), name="assets")
 
-    @app.get("/{full_path:path}")
-    def serve_frontend(full_path: str) -> Any:
-        requested_path = FRONTEND_DIST_DIR / full_path
-        if full_path and requested_path.exists() and requested_path.is_file():
-            return FileResponse(requested_path)
-        index_path = FRONTEND_DIST_DIR / "index.html"
-        if index_path.exists():
-            return FileResponse(index_path, headers=_INDEX_HTML_HEADERS)
-        return JSONResponse({"message": "Frontend build not found."}, status_code=404)
+
+def _resolve_frontend_file(full_path: str, dist_dir: Path = FRONTEND_DIST_DIR) -> Optional[Path]:
+    """Return the file inside the frontend build that `full_path` names, or None.
+
+    Resolves `..` segments and symlinks before checking containment, so a
+    request like `/%2e%2e/%2e%2e/app.py` cannot escape the build directory.
+    """
+    if not full_path:
+        return None
+    try:
+        root = dist_dir.resolve()
+        candidate = (root / full_path).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if not candidate.is_relative_to(root) or not candidate.is_file():
+        return None
+    return candidate
+
+
+@app.get("/{full_path:path}")
+def serve_frontend(full_path: str) -> Any:
+    if full_path == "api" or full_path.startswith("api/"):
+        return JSONResponse({"message": "Not found."}, status_code=404)
+    requested_path = _resolve_frontend_file(full_path)
+    if requested_path is not None:
+        return FileResponse(requested_path)
+    index_path = FRONTEND_DIST_DIR / "index.html"
+    if index_path.exists():
+        return FileResponse(index_path, headers=_INDEX_HTML_HEADERS)
+    return JSONResponse({"message": "Frontend build not found."}, status_code=404)
