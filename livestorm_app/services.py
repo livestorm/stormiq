@@ -10,6 +10,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import numpy as np
 import pandas as pd
 import requests
 from requests.adapters import HTTPAdapter
@@ -1839,6 +1840,68 @@ def apply_speaker_name_map_to_insights(insights: Dict[str, Any], speaker_name_ma
     return transformed
 
 
+class _EntityContextFinder:
+    """Pick the sentence that gives context to a named-entity mention.
+
+    Rules, in order:
+      1. the first sentence that contains the entity text and spans its time;
+      2. otherwise sentences containing the text beat those that don't, then
+         sentences spanning the time beat those that don't, then the nearest
+         start wins, then the earliest sentence.
+
+    Sentence texts and times are read once, and the sentences containing each
+    entity text are memoised, so a 2-hour transcript with hundreds of
+    mentions no longer costs mentions × sentences `iterrows` calls (that
+    scan was most of a 2-hour workspace read).
+
+    A sentence without a start time counts as infinitely far away. (The old
+    scan gave it a NaN distance, which made the first such sentence
+    unbeatable; Gladia sentences always have times, so this changes nothing
+    for real transcripts.)
+    """
+
+    def __init__(self, source_df: pd.DataFrame) -> None:
+        self.records: List[Dict[str, Any]] = source_df.to_dict("records") if not source_df.empty else []
+        self.texts = [str(r.get("sentence") or r.get("text") or "").strip().lower() for r in self.records]
+        self.starts = np.array([_seconds_or_nan(r.get("start_seconds")) for r in self.records], dtype=float)
+        self.ends = np.array([_seconds_or_nan(r.get("end_seconds")) for r in self.records], dtype=float)
+        self._containing: Dict[str, np.ndarray] = {}
+
+    def _sentences_containing(self, entity_text_lower: str) -> np.ndarray:
+        found = self._containing.get(entity_text_lower)
+        if found is None:
+            found = np.array([i for i, text in enumerate(self.texts) if text and entity_text_lower in text], dtype=int)
+            self._containing[entity_text_lower] = found
+        return found
+
+    def find(self, entity_text: str, entity_start_seconds: Optional[float]) -> Dict[str, Any]:
+        if not self.records:
+            return {}
+        if entity_start_seconds is None:
+            spans = np.zeros(len(self.records), dtype=bool)
+            distance = np.full(len(self.records), np.inf)
+        else:
+            moment = float(entity_start_seconds)
+            with np.errstate(invalid="ignore"):
+                spans = (self.starts <= moment) & (moment <= self.ends)
+            distance = np.abs(self.starts - moment)
+            distance[np.isnan(distance)] = np.inf
+
+        containing = self._sentences_containing(entity_text.lower())
+        if containing.size:
+            spanning = containing[spans[containing]]
+            best = spanning[0] if spanning.size else containing[np.argmin(distance[containing])]
+        else:
+            spanning = np.flatnonzero(spans)
+            best = spanning[np.argmin(distance[spanning])] if spanning.size else int(np.argmin(distance))
+        return dict(self.records[int(best)])
+
+
+def _seconds_or_nan(value: Any) -> float:
+    seconds = _coerce_seconds(value)
+    return float(seconds) if seconds is not None else float("nan")
+
+
 def build_transcript_insights(transcript_payload: Dict[str, Any]) -> Dict[str, Any]:
     segments_df = build_transcript_segments_df(transcript_payload)
     if segments_df.empty:
@@ -2387,47 +2450,14 @@ def build_transcript_insights(transcript_payload: Dict[str, Any]) -> Dict[str, A
         "FILENAME": 10,
     }
 
-    def _find_best_entity_context(entity_text: str, entity_start_seconds: Optional[float]) -> Dict[str, Any]:
-        if source_for_entities.empty:
-            return {}
-
-        best_row = None
-        best_score = None
-        entity_text_lower = entity_text.lower()
-        for _, candidate_row in source_for_entities.iterrows():
-            candidate_text = str(candidate_row.get("sentence") or candidate_row.get("text") or "").strip()
-            candidate_start = _coerce_seconds(candidate_row.get("start_seconds"))
-            candidate_end = _coerce_seconds(candidate_row.get("end_seconds"))
-            contains_entity = bool(candidate_text) and entity_text_lower in candidate_text.lower()
-            contains_time = (
-                entity_start_seconds is not None
-                and candidate_start is not None
-                and candidate_end is not None
-                and float(candidate_start) <= float(entity_start_seconds) <= float(candidate_end)
-            )
-            if contains_entity and contains_time:
-                return candidate_row.to_dict()
-
-            time_distance = abs(float(candidate_start) - float(entity_start_seconds)) if (
-                candidate_start is not None and entity_start_seconds is not None
-            ) else float("inf")
-            score = (
-                0 if contains_entity else 1,
-                0 if contains_time else 1,
-                time_distance,
-            )
-            if best_score is None or score < best_score:
-                best_score = score
-                best_row = candidate_row
-        return best_row.to_dict() if best_row is not None else {}
-
+    entity_contexts = _EntityContextFinder(source_for_entities)
     for entity_row in raw_named_entity_rows:
         entity_text = str(entity_row.get("entity") or "").strip()
         entity_type = str(entity_row.get("entity_type") or "Unknown").strip()
         start_seconds = _coerce_seconds(entity_row.get("start_seconds"))
         if not entity_text:
             continue
-        context_row = _find_best_entity_context(entity_text, start_seconds)
+        context_row = entity_contexts.find(entity_text, start_seconds)
         numbers_rows.append(
             {
                 "mention": entity_text,
@@ -2786,11 +2816,17 @@ def build_cross_source_insights(
     questions_df: Optional[pd.DataFrame],
     transcript_payload: Optional[Dict[str, Any]],
     bucket_size_pct: int = 10,
+    *,
+    transcript_insights: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
+    """`transcript_insights` lets a caller that already built them skip a
+    second (expensive) `build_transcript_insights` pass; frames are copied
+    before being modified."""
     if not isinstance(chat_df, pd.DataFrame) or not isinstance(questions_df, pd.DataFrame) or not isinstance(transcript_payload, dict):
         return {"combined_timeline_df": pd.DataFrame(), "reaction_moments_df": pd.DataFrame()}
 
-    transcript_insights = build_transcript_insights(transcript_payload)
+    if transcript_insights is None:
+        transcript_insights = build_transcript_insights(transcript_payload)
     segments_df = transcript_insights.get("segments_df", pd.DataFrame())
     if segments_df.empty:
         return {"combined_timeline_df": pd.DataFrame(), "reaction_moments_df": pd.DataFrame()}
