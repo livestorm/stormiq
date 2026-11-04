@@ -1,4 +1,7 @@
-FROM node:24-bookworm-slim AS frontend-build
+# Exact, patched versions (Node.js October 2026 security release: >= 26.12.1).
+# Floating tags let a cached, unpatched base image survive rebuilds.
+# Keep the Node version in sync with frontend/.nvmrc.
+FROM node:26.13.0-bookworm-slim AS frontend-build
 
 WORKDIR /app/frontend
 
@@ -9,7 +12,7 @@ COPY frontend/ ./
 RUN npm run build
 
 
-FROM python:3.13-slim AS runtime
+FROM python:3.13.18-slim-trixie AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

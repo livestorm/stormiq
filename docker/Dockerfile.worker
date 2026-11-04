@@ -7,7 +7,8 @@
 # Build:   docker build -f docker/Dockerfile.worker -t stormiq-worker .
 # Run:     docker run --rm --env-file .env stormiq-worker
 
-FROM python:3.13-slim AS runtime
+# Exact base version, matching the web image (see Dockerfile).
+FROM python:3.13.18-slim-trixie AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
