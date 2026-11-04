@@ -645,7 +645,9 @@ The backend reads `.env` at startup via [`load_env_file()`](livestorm_app/config
 
 `REDIS_URL` is shared by both web and worker. The web process uses the sync `redis` client to **read** progress; the worker uses `redis.asyncio` to **write** progress and consume the queue. Same Redis instance, different access pattern.
 
-The web Dockerfile is a two-stage build: a Node 24 stage builds the frontend, and the Python stage installs the hashed lock (`requirements.txt`) and copies the app in. The worker Dockerfile is single-stage and ships **without** the frontend (it doesn't serve HTTP). Both images run as an unprivileged `stormiq` user and need no compiler toolchain (every dependency ships wheels).
+The web Dockerfile is a two-stage build: a Node stage builds the frontend, and the Python stage installs the hashed lock (`requirements.txt`) and copies the app in. The worker Dockerfile is single-stage and ships **without** the frontend (it doesn't serve HTTP). Both images run as an unprivileged `stormiq` user and need no compiler toolchain (every dependency ships wheels).
+
+**Base images are pinned to exact versions**: `node:26.13.0-bookworm-slim` (frontend build only; Node never runs in production) and `python:3.13.18-slim-trixie` (web and worker runtime). Floating tags let a cached, unpatched base survive rebuilds. The Node version lives in `frontend/.nvmrc` (CI reads it) and must match the Dockerfile; `engines.node` in `frontend/package.json` sets the patched minimum (`>=26.12.1`, Node.js October 2026 security release). Bump all three together.
 
 **Health check**: `GET /api/health` returns `{"status": "ok"}`. `render.yaml` sets it as the web service's `healthCheckPath` (Render waits for it before routing to a new deploy), and the web image has a matching Docker `HEALTHCHECK`. Worker has no HTTP health check — Render's process-running signal is the liveness check.
 
