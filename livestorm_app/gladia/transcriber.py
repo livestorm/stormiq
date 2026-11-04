@@ -29,6 +29,9 @@ GLADIA_UPLOAD_PATH = "/v2/upload"
 GLADIA_PRE_RECORDED_PATH = "/v2/pre-recorded"
 GLADIA_POLL_INTERVAL_SECONDS = 3
 GLADIA_POLL_TIMEOUT_SECONDS = 30 * 60
+# Re-report progress at least this often while Gladia's status is unchanged
+# (keeps the worker's job heartbeat fresh; see _poll_gladia_transcription).
+PROGRESS_HEARTBEAT_SECONDS = 60
 # Gladia standard plan supports up to 135 min per request; enterprise up to 255 min.
 GLADIA_MAX_AUDIO_CHUNK_SECONDS = 135 * 60
 LIVESTORM_API_BASE = "https://api.livestorm.co/v1"
@@ -374,6 +377,7 @@ def _poll_gladia_transcription(
     deadline = time.monotonic() + GLADIA_POLL_TIMEOUT_SECONDS
     last_payload: dict[str, Any] | None = None
     last_gladia_status: str | None = None
+    last_reported_at = 0.0
 
     while time.monotonic() < deadline:
         payload = _json_request(
@@ -384,8 +388,14 @@ def _poll_gladia_transcription(
         last_payload = payload
         status = str(payload.get("status") or "").strip().lower()
 
-        if on_progress and status != last_gladia_status:
+        # Report on every status change, and at least every
+        # PROGRESS_HEARTBEAT_SECONDS while the status stays the same: the
+        # worker's progress callback refreshes transcript_jobs.updated_at,
+        # which the stuck-job sweeper uses to tell slow jobs from dead ones.
+        heartbeat_due = time.monotonic() - last_reported_at >= PROGRESS_HEARTBEAT_SECONDS
+        if on_progress and (status != last_gladia_status or heartbeat_due):
             last_gladia_status = status
+            last_reported_at = time.monotonic()
             chunk_label = f"chunk {chunk_index} of {chunk_total}" if chunk_total > 1 else "recording"
             on_progress({
                 "step": "transcribing",
