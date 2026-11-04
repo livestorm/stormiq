@@ -69,7 +69,6 @@ Comparative (2 sessions) and cumulative (up to 10) analysis. Depends on the card
 
 ## Known limitations
 
-- Empty model output for an overall analysis, deep analysis or Smart Recap is saved as the placeholder "No analysis text returned by model." instead of failing the job (`services.analyze_with_openai` substitutes it before `api_logic._require_generated_text` can catch it).
 - A worker killed mid-job (OOM) blocks regenerating that output for about 2 hours ([jobs.md](jobs.md#timeouts-and-failures)).
 - Sessions cached before org scoping stay invisible to their org until someone refetches them.
 - Only the latest version of each output is kept.

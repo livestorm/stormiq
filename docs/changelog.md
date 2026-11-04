@@ -2,6 +2,11 @@
 
 What has shipped, newest first. What's next is in [roadmap.md](roadmap.md).
 
+## November 2026: structure
+
+- **#10 Empty AI output fails the job.** An empty model answer for an overall analysis, deep analysis or Smart Recap was saved as the text "No analysis text returned by model."; the job now fails and the user can retry.
+- **#8 Project structure.** CLAUDE.md split into focused docs under `docs/` and per-folder CLAUDE.md files; a Makefile; dead code removed; the content-repurposing prompt moved into `prompts/`.
+
 ## November 2026: hardening
 
 Security, data-integrity, reliability and performance fixes from the November 2026 review, merged as pull requests #1 to #7.
