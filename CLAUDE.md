@@ -156,7 +156,7 @@ carries both `progress` (legacy DB shape — raw Gladia step payload) and
 wires the frontend to prefer `progressRedis`.
 ```
 
-**Migration status (Phase 2 commit 1):** the legacy `threading.Thread` path has been deleted. The arq worker is now the **only** transcription path. App restarts no longer drop in-flight jobs — they survive in Redis, and the stuck-job sweeper (every 10 minutes, see [worker.py](livestorm_app/worker.py)) marks any genuinely stalled `transcript_jobs` row as `error` so the UI can surface it.
+**Migration status (Phase 2 commit 1):** the legacy `threading.Thread` path has been deleted. The arq worker is now the **only** transcription path. App restarts no longer drop in-flight jobs — they survive in Redis, and the stuck-job sweeper (every 10 minutes, see [worker.py](livestorm_app/worker.py)) marks any genuinely stalled `transcript_jobs` row as `error` so the UI can surface it. While Gladia processes, the transcriber reports progress on every status change and at least once a minute (`PROGRESS_HEARTBEAT_SECONDS`), which keeps `updated_at` fresh; `running` or `pending` rows silent for an hour are swept. A job that finishes after being swept still writes `completed`. If saving the transcript fails, the job is marked `error`, never `completed`.
 
 **Auto-enqueue Professional Smart Recap (Phase 4 follow-up):** when `run_transcription` finishes successfully, it now reads the cache and — if `smart_recap_bundle.professional` is empty — enqueues `run_smart_recap_job(session_id, 'professional')` automatically. Every newly transcribed session ends up with a Professional recap in the cache without the user clicking Generate. The recap is the input for the planned card-cover-image generator. Failures to enqueue are logged and swallowed so a Redis hiccup never rolls back a successful transcription.
 
@@ -211,6 +211,9 @@ Sources of truth:
 - `account_key_hash` is `sha256(api_key)` — preserves which account owns the row without storing the raw key.
 - All cached fields are JSONB except `analysis_md` / `deep_analysis_md` which are TEXT.
 - Cached entries never expire automatically.
+- **Bundle columns are written one entry at a time.** AI runners never rewrite a whole bundle: `db.merge_cached_bundle_entry(session_id, column, key, value)` sets one language (or tone) with a single `jsonb_set` UPDATE, so concurrent jobs on the same session (English + French, or two recap tones) cannot erase each other's results. Never write a bundle column with `upsert_cached_session` from a worker job.
+- **Writes fail loudly.** `upsert_cached_session` and `merge_cached_bundle_entry` raise on database errors; a job is only `completed` once its result is saved.
+- **Only complete AI output is saved.** Empty output, output truncated at the token limit, or an incomplete content-repurposing bundle (any of the four sections missing) fails the job with a clear error and saves nothing.
 - `force_refresh: true` in the fetch payload bypasses the cache and re-fetches from Livestorm/Gladia.
 
 ---
@@ -227,7 +230,7 @@ Markdown blob with 5 sections (see [prompts/analysis_base_prompt.txt](prompts/an
 4. Risks / Friction Signals
 5. Actionable Recommendations
 
-Persisted as `analysis_bundle: { English: "...", French: "..." }`. Switching language reuses any already-generated language; only the missing language triggers a fresh OpenAI call.
+Persisted as `analysis_bundle: { English: "...", French: "..." }` (the legacy `analysis_md` column mirrors English only). Switching language reuses any already-generated language; only the missing language triggers a fresh OpenAI call.
 
 ### Deep Analysis (`/api/sessions/{id}/deep-analysis`)
 
@@ -244,7 +247,7 @@ Markdown blob with 10 sections (see [prompts/analysis_deep_prompt.txt](prompts/a
 9. Actionable Recommendations (Next Session / Follow-up / Optional)
 10. Risks, Ambiguities, And Data Quality Limits
 
-Persisted as `deep_analysis_bundle: { English: "...", French: "..." }`. Frontend chops sections via a regex parser ([AnalysisView.vue:172](frontend/src/views/AnalysisView.vue#L172)) with bilingual heading aliases.
+Persisted as `deep_analysis_bundle: { English: "...", French: "..." }` (the legacy `deep_analysis_md` column mirrors English only). Frontend chops sections via a regex parser ([AnalysisView.vue:172](frontend/src/views/AnalysisView.vue#L172)) with bilingual heading aliases.
 
 > **Known fragility**: section parsing depends on the LLM matching exact headings. This is a target for Phase 2 refactor (card registry — see §17).
 
@@ -319,7 +322,7 @@ Stores everything we know about a session, keyed by session_id.
 
 ```sql
 session_cache (
-  account_key_hash         TEXT NOT NULL,        -- sha256 of the Livestorm API key
+  account_key_hash         TEXT NOT NULL,        -- sha256 of the first writer's Livestorm credential (insert-only; informational)
   session_id               TEXT NOT NULL,
   organization_id          TEXT,                 -- Phase 4: Livestorm org that owns the session
   session_payload          JSONB,                -- raw Livestorm session API response
@@ -571,6 +574,8 @@ SMART_RECAP_OPENAI_MODEL   = "gpt-5.4-mini"
 
 Smart Recap uses a stronger model than the other flows regardless of provider.
 
+**Truncation:** `call_llm` checks why the model stopped (`stop_reason == "max_tokens"` on Anthropic, `finish_reason == "length"` on OpenAI). A truncated answer is retried once with double the token budget (capped at `TRUNCATION_RETRY_MAX_TOKENS`, 16,000); if it is still cut off, `LLMOutputTruncated` is raised and nothing is saved.
+
 ### Gladia configuration
 
 `DEFAULT_GLADIA_OPTIONS` in [gladia/transcriber.py](livestorm_app/gladia/transcriber.py):
@@ -696,7 +701,7 @@ docker run --rm -p 10000:10000 --env-file .env stormiq
 ## 15. Key Business Rules
 
 1. **Cache first.** Every fetch route checks `session_cache` before calling Livestorm/Gladia. `force_refresh: true` is the only bypass.
-2. **Account key hashing.** Never store raw Livestorm API keys in `session_cache`. Always use `sha256(api_key)` as the account discriminator.
+2. **Account key hashing.** Never store raw Livestorm API keys in `session_cache`. `account_key_hash` is `sha256` of the first writer's Livestorm credential, set on insert and never updated. It is informational: `organization_id` is the access boundary (§4). Rows written before November 2026 may carry the hash of an LLM provider key instead; that can't be repaired and doesn't matter for access.
 3. **OAuth tokens are refreshed proactively.** When a connection is within 5 minutes of expiry, the next request refreshes the access token via `refresh_token`. Failures surface as 401 with "Please reconnect."
 4. **Transcript is the gating dependency.** Analysis, Smart Recap, and Content Repurposing all require `transcript_payload` to be present. Views display either a loading state (job in progress) or an unavailable-reason banner.
 5. **Bilingual analysis re-uses existing language.** If a bundle already contains the target language, no new OpenAI call is made; the cached markdown is returned. Switching to a missing language generates only that language.
@@ -734,6 +739,7 @@ Security, data-integrity, reliability and performance fixes from the November 20
 
 - ✅ **PR 1 `fix/security-org-scoping`**: fail-closed access control (§4), `livestorm_app/auth.py`, path-traversal fix in the SPA route, local-dev mode behind `STORMIQ_LOCAL_DEV` instead of the Host header, Secure cookies, CORS removed, handshake expiry enforced, upstream error details no longer returned, route-matrix test suite.
 - ✅ **PR 2 `chore/safety-net`**: local Postgres in compose and `.env.example`; hashed dependency locks (uv); ruff and ESLint, with the issues they found fixed; real-Postgres and pure-function tests; CI; slimmer non-root images with health checks; Node 24 build stage; docs drift fixed.
+- ✅ **PR 3 `fix/data-integrity`**: atomic per-entry bundle writes (`merge_cached_bundle_entry`); `account_key_hash` insert-only; database write failures raise instead of being swallowed; empty, truncated or incomplete AI output fails the job instead of saving partial results; transcription heartbeat for the stuck-job sweeper.
 
 ### Shipped (current state)
 - Livestorm OAuth (PKCE) + API-key fallback for local dev

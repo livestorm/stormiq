@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import requests
 
@@ -95,6 +95,15 @@ def get_llm_model(role: str) -> str:
     return SMART_RECAP_OPENAI_MODEL if is_recap else DEFAULT_OPENAI_MODEL
 
 
+class LLMOutputTruncated(RuntimeError):
+    """The model stopped at its token limit, so the output is incomplete."""
+
+
+# Ceiling for the automatic retry after truncation. Stays within the output
+# limits of every configured model (gpt-4o-mini caps at ~16k tokens).
+TRUNCATION_RETRY_MAX_TOKENS = 16000
+
+
 def call_llm(
     api_key: str,
     model: str,
@@ -106,11 +115,25 @@ def call_llm(
 
     `messages` may contain role="system" entries — the Anthropic adapter
     extracts them into the top-level `system` parameter automatically.
+
+    If the model stops at `max_tokens`, the call is retried once with a
+    larger budget; if the answer is still cut off, LLMOutputTruncated is
+    raised so a partial result is never saved as if it were complete.
     """
-    provider = get_provider()
-    if provider == "anthropic":
-        return _call_anthropic(api_key, model, messages, temperature, max_tokens)
-    return _call_openai(api_key, model, messages, temperature, max_tokens)
+    call = _call_anthropic if get_provider() == "anthropic" else _call_openai
+    text, truncated = call(api_key, model, messages, temperature, max_tokens)
+    if not truncated:
+        return text
+    larger_budget = min(max_tokens * 2, TRUNCATION_RETRY_MAX_TOKENS)
+    if larger_budget > max_tokens:
+        logger.warning("LLM output hit max_tokens=%d; retrying once with %d", max_tokens, larger_budget)
+        text, truncated = call(api_key, model, messages, temperature, larger_budget)
+        if not truncated:
+            return text
+    raise LLMOutputTruncated(
+        f"The AI answer was cut off at its length limit ({max(larger_budget, max_tokens)} tokens), "
+        "so it was not saved. Please try again."
+    )
 
 
 # ── Anthropic ─────────────────────────────────────────────────────────────────
@@ -121,7 +144,8 @@ def _call_anthropic(
     messages: List[Dict[str, str]],
     temperature: float,
     max_tokens: int,
-) -> str:
+) -> Tuple[str, bool]:
+    """Return (text, truncated). Truncated means stop_reason == "max_tokens"."""
     from livestorm_app.config import ANTHROPIC_API_VERSION, ANTHROPIC_MESSAGES_URL
 
     system_parts = [m["content"] for m in messages if m["role"] == "system"]
@@ -144,10 +168,13 @@ def _call_anthropic(
 
     resp = _post_with_retry(ANTHROPIC_MESSAGES_URL, headers, payload, provider="anthropic")
     body = resp.json()
-    for block in body.get("content", []):
-        if isinstance(block, dict) and block.get("type") == "text":
-            return str(block["text"]).strip()
-    return ""
+    truncated = body.get("stop_reason") == "max_tokens"
+    text = "".join(
+        str(block.get("text") or "")
+        for block in body.get("content", [])
+        if isinstance(block, dict) and block.get("type") == "text"
+    )
+    return text.strip(), truncated
 
 
 # ── OpenAI ────────────────────────────────────────────────────────────────────
@@ -158,7 +185,8 @@ def _call_openai(
     messages: List[Dict[str, str]],
     temperature: float,
     max_tokens: int,
-) -> str:
+) -> Tuple[str, bool]:
+    """Return (text, truncated). Truncated means finish_reason == "length"."""
     from livestorm_app.config import OPENAI_CHAT_COMPLETIONS_URL
 
     token_param = "max_completion_tokens" if str(model or "").startswith("gpt-5") else "max_tokens"
@@ -176,10 +204,10 @@ def _call_openai(
     resp = _post_with_retry(OPENAI_CHAT_COMPLETIONS_URL, headers, payload, provider="openai")
     body = resp.json()
     choices = body.get("choices") or []
-    if choices:
-        content = choices[0].get("message", {}).get("content") or ""
-        return str(content).strip()
-    return ""
+    if not choices:
+        return "", False
+    content = choices[0].get("message", {}).get("content") or ""
+    return str(content).strip(), choices[0].get("finish_reason") == "length"
 
 
 # ── Shared retry helper ────────────────────────────────────────────────────────

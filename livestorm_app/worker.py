@@ -69,10 +69,13 @@ logging.basicConfig(level=logging.INFO)
 # UI will then surface the error to the user.
 #
 # Threshold rationale: Gladia transcription can legitimately run for
-# 30–45 minutes on a 2-hour recording, but the transcriber publishes
-# progress on every poll cycle (every 3s — see gladia/transcriber.py), so
-# `updated_at` is kept fresh. A row that's been silent for an hour is
-# genuinely stuck.
+# 30–45 minutes on a 2-hour recording. The transcriber reports progress on
+# every Gladia status change and at least once a minute in between
+# (PROGRESS_HEARTBEAT_SECONDS in gladia/transcriber.py); each report
+# refreshes `updated_at`. A 'running' row silent for an hour is stuck.
+# 'pending' rows are swept too: if Redis lost the queued job (e.g. a
+# restart of a non-persistent instance), nothing would ever pick it up.
+# A job that finishes after being swept still writes 'completed'.
 
 STALE_AFTER = timedelta(hours=1)
 

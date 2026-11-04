@@ -368,8 +368,17 @@ def fetch_cached_session(
 
 
 def upsert_cached_session(api_key: str, session_id: str, **fields: Any) -> None:
-    if not database_enabled() or not str(api_key or "").strip() or not str(session_id or "").strip():
+    """Insert or update a session_cache row.
+
+    Raises on failure: callers must never report success for data that was
+    not saved. `account_key_hash`, `organization_id` and `created_by_*` are
+    first-writer-wins; every other field passed here is overwritten. For a
+    single entry inside a bundle column, use `merge_cached_bundle_entry`.
+    """
+    if not database_enabled():
         return
+    if not str(api_key or "").strip() or not str(session_id or "").strip():
+        raise ValueError("upsert_cached_session requires an api_key and a session_id.")
 
     allowed_fields = {
         "session_payload",
@@ -407,7 +416,9 @@ def upsert_cached_session(api_key: str, session_id: str, **fields: Any) -> None:
     columns = ["account_key_hash", "session_id", *persisted_fields.keys()]
     placeholders = ["%s", "%s"]
     insert_values = [account_key_hash, session_id_value]
-    update_clauses = ["account_key_hash = EXCLUDED.account_key_hash"]
+    # account_key_hash is set on insert only: later writers (worker jobs,
+    # teammates) must not replace the original owner's discriminator.
+    update_clauses: List[str] = []
 
     for key, value in persisted_fields.items():
         if isinstance(value, (dict, list)):
@@ -440,8 +451,70 @@ def upsert_cached_session(api_key: str, session_id: str, **fields: Any) -> None:
                     insert_values,
                 )
             connection.commit()
-    except Exception:
+    except Exception as exc:
         logger.exception("Failed to upsert cached session for session_id=%s", session_id_value)
+        raise RuntimeError("Could not save the session to the database. Please try again.") from exc
+
+
+# Bundle columns hold one entry per language (or per tone for Smart Recap).
+_BUNDLE_COLUMNS = {"analysis_bundle", "deep_analysis_bundle", "smart_recap_bundle", "content_repurpose_bundle"}
+# Legacy single-language TEXT columns that may be written alongside a bundle entry.
+_LEGACY_TEXT_COLUMNS = {"analysis_md", "deep_analysis_md"}
+
+
+def merge_cached_bundle_entry(
+    session_id: str,
+    column: str,
+    key: str,
+    value: Any,
+    **legacy_text: str,
+) -> None:
+    """Atomically set `column[key] = value` without touching the bundle's other keys.
+
+    One UPDATE with jsonb_set: concurrent writers to the same row (English
+    and French analyses, or two Smart Recap tones) are serialised by
+    Postgres and each sees the other's entry, so neither result is lost.
+    `legacy_text` optionally sets `analysis_md` / `deep_analysis_md` in the
+    same statement. Raises if the row does not exist or the write fails.
+    """
+    if column not in _BUNDLE_COLUMNS:
+        raise ValueError(f"Not a bundle column: {column!r}")
+    if not set(legacy_text) <= _LEGACY_TEXT_COLUMNS:
+        raise ValueError(f"Unsupported legacy columns: {sorted(set(legacy_text) - _LEGACY_TEXT_COLUMNS)}")
+    entry_key = str(key or "").strip()
+    session_id_value = str(session_id or "").strip()
+    if not entry_key or not session_id_value:
+        raise ValueError("merge_cached_bundle_entry requires a session_id and a key.")
+    if not database_enabled():
+        raise RuntimeError("Database is not configured.")
+
+    # A non-object value (NULL, or a stray JSON scalar) is treated as an empty bundle.
+    set_clauses = [
+        f"{column} = jsonb_set("
+        f"CASE WHEN jsonb_typeof({column}) = 'object' THEN {column} ELSE '{{}}'::jsonb END, "
+        f"ARRAY[%s], %s::jsonb, true)"
+    ]
+    params: List[Any] = [entry_key, json.dumps(value, ensure_ascii=False)]
+    for legacy_column, text in legacy_text.items():
+        set_clauses.append(f"{legacy_column} = %s")
+        params.append(text)
+    set_clauses.append("updated_at = NOW()")
+    params.append(session_id_value)
+
+    try:
+        with get_db_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"UPDATE session_cache SET {', '.join(set_clauses)} WHERE session_id = %s",
+                    params,
+                )
+                updated = cursor.rowcount
+            connection.commit()
+    except Exception as exc:
+        logger.exception("Failed to merge %s[%s] for session_id=%s", column, entry_key, session_id_value)
+        raise RuntimeError("Could not save the result to the database. Please try again.") from exc
+    if not updated:
+        raise RuntimeError(f"Session {session_id_value} is no longer cached; the result was not saved.")
 
 
 def list_workspace_sessions(organization_id: str) -> List[Dict[str, Any]]:

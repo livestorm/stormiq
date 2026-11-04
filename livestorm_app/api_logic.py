@@ -17,6 +17,7 @@ from livestorm_app.db import (
     fetch_cached_session,
     get_transcript_job_for_session,
     list_workspace_sessions,
+    merge_cached_bundle_entry,
     update_transcript_job_status,
     upsert_cached_session,
 )
@@ -30,6 +31,7 @@ from livestorm_app.queue import (
     set_in_flight_ai_job_id,
 )
 from livestorm_app.services import (
+    _bundle_has_all_sections,
     analyze_with_openai,
     analysis_markdown_to_pdf_bytes,
     build_analysis_prompt,
@@ -911,6 +913,18 @@ def _require_cached_payloads(session_id: str, *, organization_id: OrgScope) -> D
     return cached
 
 
+def _require_generated_text(text: Any, label: str) -> str:
+    """Return stripped model output, or raise so the job fails visibly.
+
+    An empty answer must not be reported as a completed job: the UI would
+    show "done" with nothing to display.
+    """
+    cleaned = str(text or "").strip()
+    if not cleaned:
+        raise RuntimeError(f"The model returned an empty {label}. Nothing was saved; please try again.")
+    return cleaned
+
+
 def run_overall_analysis(api_analysis_key: str, session_id: str, output_language: str) -> Dict[str, Any]:
     cached = _require_cached_payloads(session_id, organization_id=ALL_ORGS)
     session_payload = cached.get("session_payload")
@@ -957,10 +971,13 @@ def run_overall_analysis(api_analysis_key: str, session_id: str, output_language
             session_payload=build_compact_session_payload_for_llm(session_payload) if isinstance(session_payload, dict) else None,
         )
 
-    if str(analysis_md or "").strip():
-        analysis_bundle[output_language] = str(analysis_md).strip()
-        upsert_cached_session(api_analysis_key, session_id, analysis_md=analysis_md, analysis_bundle=analysis_bundle)
-    return {"markdown": str(analysis_md or "").strip(), "bundle": analysis_bundle}
+    analysis_md = _require_generated_text(analysis_md, "overall analysis")
+    merge_cached_bundle_entry(
+        session_id, "analysis_bundle", output_language, analysis_md,
+        **({"analysis_md": analysis_md} if output_language == "English" else {}),
+    )
+    analysis_bundle[output_language] = analysis_md
+    return {"markdown": analysis_md, "bundle": analysis_bundle}
 
 
 def run_deep_analysis(api_analysis_key: str, session_id: str, output_language: str) -> Dict[str, Any]:
@@ -1006,10 +1023,13 @@ def run_deep_analysis(api_analysis_key: str, session_id: str, output_language: s
             session_payload=build_compact_session_payload_for_llm(session_payload) if isinstance(session_payload, dict) else None,
             max_tokens=5000,
         )
-    if str(deep_analysis_md or "").strip():
-        deep_bundle[output_language] = str(deep_analysis_md).strip()
-        upsert_cached_session(api_analysis_key, session_id, deep_analysis_md=deep_analysis_md, deep_analysis_bundle=deep_bundle)
-    return {"markdown": str(deep_analysis_md or "").strip(), "bundle": deep_bundle}
+    deep_analysis_md = _require_generated_text(deep_analysis_md, "deep analysis")
+    merge_cached_bundle_entry(
+        session_id, "deep_analysis_bundle", output_language, deep_analysis_md,
+        **({"deep_analysis_md": deep_analysis_md} if output_language == "English" else {}),
+    )
+    deep_bundle[output_language] = deep_analysis_md
+    return {"markdown": deep_analysis_md, "bundle": deep_bundle}
 
 
 def build_analysis_pdf(session_id: str, analysis_kind: str, language: str, *, organization_id: OrgScope) -> Dict[str, Any]:
@@ -1109,10 +1129,10 @@ def run_smart_recap(api_analysis_key: str, session_id: str, tone: str) -> Dict[s
         transcript_text=build_transcript_plain_text(transcript_payload),
         max_tokens=900,
     )
-    if str(markdown or "").strip():
-        smart_bundle[tone] = str(markdown).strip()
-        upsert_cached_session(api_analysis_key, session_id, smart_recap_bundle=smart_bundle)
-    return {"markdown": str(markdown or "").strip(), "bundle": smart_bundle}
+    markdown = _require_generated_text(markdown, "smart recap")
+    merge_cached_bundle_entry(session_id, "smart_recap_bundle", tone, markdown)
+    smart_bundle[tone] = markdown
+    return {"markdown": markdown, "bundle": smart_bundle}
 
 
 def build_smart_recap_pdf(session_id: str, tone: str, *, organization_id: OrgScope) -> Dict[str, Any]:
@@ -1185,10 +1205,14 @@ def run_content_repurposing(api_analysis_key: str, session_id: str, output_langu
             output_language=OUTPUT_LANGUAGE_MAP.get(output_language, output_language),
             transcript_text=build_transcript_plain_text(transcript_payload),
         )
-    if isinstance(bundle, dict) and any(str(value or "").strip() for value in bundle.values()):
-        all_bundles[output_language] = bundle
-        upsert_cached_session(api_analysis_key, session_id, content_repurpose_bundle=all_bundles)
-    return {"bundle": all_bundles, "currentLanguage": output_language, "current": all_bundles.get(output_language, {})}
+    if not isinstance(bundle, dict) or not _bundle_has_all_sections(bundle):
+        missing = [key for key in ("summary", "blog", "email", "social_media") if not str((bundle or {}).get(key) or "").strip()]
+        raise RuntimeError(
+            f"Content repurposing returned an incomplete result (missing: {', '.join(missing)}). Nothing was saved; please try again."
+        )
+    merge_cached_bundle_entry(session_id, "content_repurpose_bundle", output_language, bundle)
+    all_bundles[output_language] = bundle
+    return {"bundle": all_bundles, "currentLanguage": output_language, "current": bundle}
 
 
 # ── AI flow polling (Phase 2 commit 2) ─────────────────────────────────────
