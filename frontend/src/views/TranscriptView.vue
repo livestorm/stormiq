@@ -1,4 +1,5 @@
 <script setup>
+import { buildCsv } from "../utils/csv";
 import { computed, reactive, ref, watch } from "vue";
 import AiJobProgress from "../components/AiJobProgress.vue";
 import BarChartCard from "../components/charts/shared/BarChartCard.vue";
@@ -41,18 +42,7 @@ function handleCancelSpeakerLabels() {
 
 function downloadCsv(filename, rows) {
   if (!rows?.length) return;
-  const columns = Object.keys(rows[0]);
-  const escapeCell = (value) => {
-    const text = String(value ?? "");
-    if (/[",\n]/.test(text)) {
-      return `"${text.replace(/"/g, '""')}"`;
-    }
-    return text;
-  };
-  const csv = [
-    columns.join(","),
-    ...rows.map((row) => columns.map((column) => escapeCell(row?.[column])).join(",")),
-  ].join("\n");
+  const csv = buildCsv(Object.keys(rows[0]), rows);
   downloadBlob(filename, csv, "text/csv;charset=utf-8;");
 }
 

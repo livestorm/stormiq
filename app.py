@@ -621,9 +621,9 @@ def overall_analysis(session_id: SessionId, request: AnalysisRequest, caller: Ca
 
 
 @app.get("/api/sessions/{session_id}/analysis/job")
-def overall_analysis_job(session_id: SessionId, caller: Caller = Depends(get_caller), jobId: str = Query(""), language: str = Query("English")) -> Dict[str, Any]:
+def overall_analysis_job(session_id: SessionId, caller: Caller = Depends(get_caller), jobId: str = Query(""), language: str = Query("English"), outputsOnly: bool = Query(False)) -> Dict[str, Any]:
     try:
-        return get_overall_analysis_job_data(session_id, jobId, language, organization_id=caller.read_scope)
+        return get_overall_analysis_job_data(session_id, jobId, language, organization_id=caller.read_scope, outputs_only=outputsOnly)
     except Exception as exc:
         _raise_http_error("Analysis", exc)
         raise
@@ -640,9 +640,9 @@ def deep_analysis(session_id: SessionId, request: AnalysisRequest, caller: Calle
 
 
 @app.get("/api/sessions/{session_id}/deep-analysis/job")
-def deep_analysis_job(session_id: SessionId, caller: Caller = Depends(get_caller), jobId: str = Query(""), language: str = Query("English")) -> Dict[str, Any]:
+def deep_analysis_job(session_id: SessionId, caller: Caller = Depends(get_caller), jobId: str = Query(""), language: str = Query("English"), outputsOnly: bool = Query(False)) -> Dict[str, Any]:
     try:
-        return get_deep_analysis_job_data(session_id, jobId, language, organization_id=caller.read_scope)
+        return get_deep_analysis_job_data(session_id, jobId, language, organization_id=caller.read_scope, outputs_only=outputsOnly)
     except Exception as exc:
         _raise_http_error("Deep analysis", exc)
         raise
@@ -668,9 +668,9 @@ def smart_recap(session_id: SessionId, request: SmartRecapRequest, caller: Calle
 
 
 @app.get("/api/sessions/{session_id}/smart-recap/job")
-def smart_recap_job(session_id: SessionId, caller: Caller = Depends(get_caller), jobId: str = Query(""), tone: str = Query("professional")) -> Dict[str, Any]:
+def smart_recap_job(session_id: SessionId, caller: Caller = Depends(get_caller), jobId: str = Query(""), tone: str = Query("professional"), outputsOnly: bool = Query(False)) -> Dict[str, Any]:
     try:
-        return get_smart_recap_job_data(session_id, jobId, tone, organization_id=caller.read_scope)
+        return get_smart_recap_job_data(session_id, jobId, tone, organization_id=caller.read_scope, outputs_only=outputsOnly)
     except Exception as exc:
         _raise_http_error("Smart Recap", exc)
         raise
@@ -696,9 +696,9 @@ def content_repurposing(session_id: SessionId, request: AnalysisRequest, caller:
 
 
 @app.get("/api/sessions/{session_id}/content-repurposing/job")
-def content_repurposing_job(session_id: SessionId, caller: Caller = Depends(get_caller), jobId: str = Query(""), language: str = Query("English")) -> Dict[str, Any]:
+def content_repurposing_job(session_id: SessionId, caller: Caller = Depends(get_caller), jobId: str = Query(""), language: str = Query("English"), outputsOnly: bool = Query(False)) -> Dict[str, Any]:
     try:
-        return get_content_repurposing_job_data(session_id, jobId, language, organization_id=caller.read_scope)
+        return get_content_repurposing_job_data(session_id, jobId, language, organization_id=caller.read_scope, outputs_only=outputsOnly)
     except Exception as exc:
         _raise_http_error("Content Repurposing", exc)
         raise

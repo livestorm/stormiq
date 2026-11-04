@@ -1,5 +1,6 @@
 <script setup>
 import { computed, ref } from "vue";
+import { buildCsv } from "../utils/csv";
 
 const props = defineProps({
   rows: {
@@ -38,15 +39,19 @@ const sortDirection = ref("asc");
 
 const columns = computed(() => (props.rows.length ? Object.keys(props.rows[0]) : []));
 
+// Each row keeps its original position as its key, so sorting moves rows
+// instead of re-binding them by index.
+const keyedRows = computed(() => props.rows.map((row, index) => ({ key: index, row })));
+
 const sortedRows = computed(() => {
-  if (!sortColumn.value) return props.rows;
+  if (!sortColumn.value) return keyedRows.value;
 
   const column = sortColumn.value;
   const direction = sortDirection.value === "asc" ? 1 : -1;
 
-  return [...props.rows].sort((left, right) => {
-    const leftValue = left?.[column];
-    const rightValue = right?.[column];
+  return [...keyedRows.value].sort((leftEntry, rightEntry) => {
+    const leftValue = leftEntry.row?.[column];
+    const rightValue = rightEntry.row?.[column];
 
     const leftNumber = Number(leftValue);
     const rightNumber = Number(rightValue);
@@ -74,19 +79,8 @@ function toggleSort(column) {
 function downloadCsv() {
   if (!columns.value.length || !sortedRows.value.length) return;
 
-  const escapeCell = (value) => {
-    const text = String(value ?? "");
-    if (/[",\n]/.test(text)) {
-      return `"${text.replace(/"/g, '""')}"`;
-    }
-    return text;
-  };
-
-  const headerRow = columns.value.map((column) => escapeCell(prettifyColumn(column))).join(",");
-  const dataRows = sortedRows.value.map((row) =>
-    columns.value.map((column) => escapeCell(row?.[column])).join(",")
-  );
-  const csv = [headerRow, ...dataRows].join("\n");
+  const rows = sortedRows.value.map((entry) => entry.row);
+  const csv = buildCsv(columns.value, rows, prettifyColumn);
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -128,8 +122,8 @@ function downloadCsv() {
         </tr>
       </thead>
       <tbody>
-        <tr v-for="(row, index) in sortedRows" :key="index">
-          <td v-for="column in columns" :key="column">{{ row[column] }}</td>
+        <tr v-for="entry in sortedRows" :key="entry.key">
+          <td v-for="column in columns" :key="column">{{ entry.row[column] }}</td>
         </tr>
       </tbody>
     </table>

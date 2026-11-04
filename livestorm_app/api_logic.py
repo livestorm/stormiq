@@ -222,6 +222,24 @@ def get_transcript_download(session_id: str, *, organization_id: OrgScope) -> Di
     return row["transcript_payload"]
 
 
+# The columns `_serialize_outputs` reads (all AI bundles, plus the legacy
+# English-only markdown columns).
+_OUTPUT_FIELDS = [
+    "analysis_bundle", "analysis_md", "deep_analysis_bundle", "deep_analysis_md",
+    "content_repurpose_bundle", "smart_recap_bundle",
+]
+
+
+def _serialize_outputs(cached_session: Dict[str, Any]) -> Dict[str, Any]:
+    """The `outputs` part of a workspace: every AI result of the session."""
+    return {
+        "analysisBundle": _normalize_text_bundle(cached_session.get("analysis_bundle"), str(cached_session.get("analysis_md") or "")),
+        "deepAnalysisBundle": _normalize_text_bundle(cached_session.get("deep_analysis_bundle"), str(cached_session.get("deep_analysis_md") or "")),
+        "contentRepurposeBundle": cached_session.get("content_repurpose_bundle") if isinstance(cached_session.get("content_repurpose_bundle"), dict) else {},
+        "smartRecapBundle": _normalize_smart_recap_bundle(cached_session.get("smart_recap_bundle")),
+    }
+
+
 def _serialize_cached_session(session_id: str, cached_session: Dict[str, Any]) -> Dict[str, Any]:
     session_payload = cached_session.get("session_payload")
     chat_payload = cached_session.get("chat_payload")
@@ -336,12 +354,7 @@ def _serialize_cached_session(session_id: str, cached_session: Dict[str, Any]) -
         "text": {
             "transcriptDisplay": transcript_text,
         },
-        "outputs": {
-            "analysisBundle": _normalize_text_bundle(cached_session.get("analysis_bundle"), str(cached_session.get("analysis_md") or "")),
-            "deepAnalysisBundle": _normalize_text_bundle(cached_session.get("deep_analysis_bundle"), str(cached_session.get("deep_analysis_md") or "")),
-            "contentRepurposeBundle": cached_session.get("content_repurpose_bundle") if isinstance(cached_session.get("content_repurpose_bundle"), dict) else {},
-            "smartRecapBundle": _normalize_smart_recap_bundle(cached_session.get("smart_recap_bundle")),
-        },
+        "outputs": _serialize_outputs(cached_session),
     }
     return _sanitize_json_value(serialized)
 
@@ -1377,6 +1390,7 @@ def _get_ai_job_data(
     language: str = "",
     tone: str = "",
     organization_id: OrgScope,
+    outputs_only: bool = False,
 ) -> Dict[str, Any]:
     """Poll an AI job on a session the caller can read.
 
@@ -1384,7 +1398,9 @@ def _get_ai_job_data(
     the job is always this session's own `ai_job_id(kind, session, dimension)`.
 
     Returns:
-        - full serialised workspace if the cache already has the requested bundle, OR
+        - once the result is saved: the full serialised workspace, or with
+          `outputs_only` just `{ sessionId, outputsOnly: True, outputs }`
+          (the rest of the workspace is already on the caller's screen), OR
         - { jobId, jobKind, jobStatus, progress, error } with the live status.
     """
     if kind not in AI_JOB_KINDS:
@@ -1395,10 +1411,14 @@ def _get_ai_job_data(
     if not isinstance(cached, dict):
         raise SessionNotFoundError()
 
-    # Cache hit — the worker already finished and persisted. Return the full
-    # workspace so the frontend can replace its state in one step.
+    # Cache hit — the worker already finished and persisted.
     if _extract_cached_ai_body(cached, kind, language=language, tone=tone):
-        return _load_serialized_workspace(session_id, organization_id)
+        if not outputs_only:
+            return _load_serialized_workspace(session_id, organization_id)
+        row = fetch_session_fields(session_id, _OUTPUT_FIELDS, organization_id=organization_id)
+        if not isinstance(row, dict):
+            raise SessionNotFoundError()
+        return _sanitize_json_value({"sessionId": session_id, "outputsOnly": True, "outputs": _serialize_outputs(row)})
 
     # Pull live status from arq + progress from Redis. Both are best-effort.
     # The job id is derived here, never taken from the client: ids are
@@ -1432,32 +1452,32 @@ def start_overall_analysis(session_id: str, output_language: str, *, organizatio
     return _start_ai_job("overall_analysis", session_id, language=output_language, organization_id=organization_id)
 
 
-def get_overall_analysis_job_data(session_id: str, job_id: str, language: str, *, organization_id: OrgScope) -> Dict[str, Any]:
-    return _get_ai_job_data("overall_analysis", session_id, job_id, language=language, organization_id=organization_id)
+def get_overall_analysis_job_data(session_id: str, job_id: str, language: str, *, organization_id: OrgScope, outputs_only: bool = False) -> Dict[str, Any]:
+    return _get_ai_job_data("overall_analysis", session_id, job_id, language=language, organization_id=organization_id, outputs_only=outputs_only)
 
 
 def start_deep_analysis(session_id: str, output_language: str, *, organization_id: OrgScope) -> Dict[str, Any]:
     return _start_ai_job("deep_analysis", session_id, language=output_language, organization_id=organization_id)
 
 
-def get_deep_analysis_job_data(session_id: str, job_id: str, language: str, *, organization_id: OrgScope) -> Dict[str, Any]:
-    return _get_ai_job_data("deep_analysis", session_id, job_id, language=language, organization_id=organization_id)
+def get_deep_analysis_job_data(session_id: str, job_id: str, language: str, *, organization_id: OrgScope, outputs_only: bool = False) -> Dict[str, Any]:
+    return _get_ai_job_data("deep_analysis", session_id, job_id, language=language, organization_id=organization_id, outputs_only=outputs_only)
 
 
 def start_smart_recap(session_id: str, tone: str, *, organization_id: OrgScope) -> Dict[str, Any]:
     return _start_ai_job("smart_recap", session_id, tone=tone, organization_id=organization_id)
 
 
-def get_smart_recap_job_data(session_id: str, job_id: str, tone: str, *, organization_id: OrgScope) -> Dict[str, Any]:
-    return _get_ai_job_data("smart_recap", session_id, job_id, tone=tone, organization_id=organization_id)
+def get_smart_recap_job_data(session_id: str, job_id: str, tone: str, *, organization_id: OrgScope, outputs_only: bool = False) -> Dict[str, Any]:
+    return _get_ai_job_data("smart_recap", session_id, job_id, tone=tone, organization_id=organization_id, outputs_only=outputs_only)
 
 
 def start_content_repurposing(session_id: str, output_language: str, *, organization_id: OrgScope) -> Dict[str, Any]:
     return _start_ai_job("content_repurposing", session_id, language=output_language, organization_id=organization_id)
 
 
-def get_content_repurposing_job_data(session_id: str, job_id: str, language: str, *, organization_id: OrgScope) -> Dict[str, Any]:
-    return _get_ai_job_data("content_repurposing", session_id, job_id, language=language, organization_id=organization_id)
+def get_content_repurposing_job_data(session_id: str, job_id: str, language: str, *, organization_id: OrgScope, outputs_only: bool = False) -> Dict[str, Any]:
+    return _get_ai_job_data("content_repurposing", session_id, job_id, language=language, organization_id=organization_id, outputs_only=outputs_only)
 
 
 def format_service_error(exc: Exception, resource_label: str) -> Dict[str, Any]:

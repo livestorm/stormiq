@@ -207,6 +207,34 @@ def test_workspace_omits_raw_payloads_but_keeps_subtitles(monkeypatch):
     assert api_logic._serialize_cached_session("s2", {**row, "transcript_payload": None})["payloads"] == {"transcript": None}
 
 
+def test_finished_ai_job_poll_can_return_only_the_outputs(monkeypatch):
+    rows = {"s1": {"analysis_bundle": {"English": "# Overall"}, "analysis_md": "# Overall", "smart_recap_bundle": {"hype": "# Hype"}}}
+
+    def fields(sid, wanted, *, organization_id):
+        if organization_id != "org-a" or sid not in rows:
+            return None
+        return {field: rows[sid].get(field) for field in wanted}
+
+    def full_row(*args, **kwargs):
+        raise AssertionError("an outputs-only poll loaded the full session row")
+
+    monkeypatch.setattr(api_logic, "fetch_session_fields", fields)
+    monkeypatch.setattr(api_logic, "fetch_cached_session", full_row)
+    response = api_logic.get_overall_analysis_job_data("s1", "", "English", organization_id="org-a", outputs_only=True)
+    assert response == {
+        "sessionId": "s1",
+        "outputsOnly": True,
+        "outputs": {
+            "analysisBundle": {"English": "# Overall"},
+            "deepAnalysisBundle": {},
+            "contentRepurposeBundle": {},
+            "smartRecapBundle": {"hype": "# Hype"},
+        },
+    }
+    with pytest.raises(api_logic.SessionNotFoundError):
+        api_logic.get_overall_analysis_job_data("s1", "", "English", organization_id="org-b", outputs_only=True)
+
+
 def test_transcript_download_needs_a_visible_transcript(monkeypatch):
     rows = {"s1": {"transcript_payload": {"text": "full"}}, "s2": {"transcript_payload": None}}
     monkeypatch.setattr(api_logic, "fetch_session_fields", lambda sid, fields, *, organization_id: rows.get(sid))

@@ -15,26 +15,39 @@ function getFriendlyErrorMessage(path, response, errorPayload) {
   return backendMessage;
 }
 
+// Called whenever the server answers 401 (the Livestorm session expired or
+// was revoked). App.vue registers it to reset the signed-in state and send
+// the user to the connect screen; each request still rejects as usual.
+let unauthorizedHandler = null;
+
+export function onUnauthorized(handler) {
+  unauthorizedHandler = typeof handler === "function" ? handler : null;
+}
+
 async function request(path, options = {}) {
+  const { headers, ...rest } = options;
   const response = await fetch(path, {
+    ...rest,
     headers: {
       "Content-Type": "application/json",
-      ...(options.headers || {}),
+      ...(headers || {}),
     },
-    ...options,
   });
 
   if (!response.ok) {
     let errorPayload = null;
     try {
       errorPayload = await response.json();
-    } catch (error) {
+    } catch {
       errorPayload = { detail: { message: response.statusText } };
     }
     const message = getFriendlyErrorMessage(path, response, errorPayload);
     const error = new Error(message);
     error.status = response.status;
     error.payload = errorPayload;
+    if (response.status === 401 && unauthorizedHandler && !path.startsWith("/api/auth/")) {
+      unauthorizedHandler(error);
+    }
     throw error;
   }
 
@@ -43,6 +56,17 @@ async function request(path, options = {}) {
   }
 
   return response.json();
+}
+
+// Session ids come from URLs and form fields: always encode them.
+function sessionPath(sessionId, suffix = "") {
+  return `/api/sessions/${encodeURIComponent(String(sessionId ?? ""))}${suffix}`;
+}
+
+// Session-scoped calls accept `{ signal }` so the store can cancel them when
+// the user moves to another session.
+function postJson(path, payload, { signal } = {}) {
+  return request(path, { method: "POST", body: JSON.stringify(payload), signal });
 }
 
 export const api = {
@@ -58,132 +82,79 @@ export const api = {
     });
   },
   fetchWorkspaceEvents(payload) {
-    return request("/api/workspace-events", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
+    return postJson("/api/workspace-events", payload);
   },
   fetchEventSessions(payload) {
-    return request("/api/event-sessions", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
+    return postJson("/api/event-sessions", payload);
   },
   // Phase 4: list all cached sessions for the current user's Livestorm
   // organization. Powers the Single Analysis card grid. Returns
   // { sessions: [] } when the user isn't OAuth-connected — the view
   // shows a "connect with Livestorm" empty state in that case.
-  fetchWorkspaceSessions() {
-    return request("/api/workspace-sessions");
+  fetchWorkspaceSessions({ signal } = {}) {
+    return request("/api/workspace-sessions", { signal });
   },
-  fetchSession(sessionId, payload) {
-    return request(`/api/sessions/${sessionId}/fetch`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
+  fetchSessionBase(sessionId, payload, options) {
+    return postJson(sessionPath(sessionId, "/fetch-base"), payload, options);
   },
-  fetchSessionBase(sessionId, payload) {
-    return request(`/api/sessions/${sessionId}/fetch-base`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
+  fetchSessionTranscript(sessionId, payload, options) {
+    return postJson(sessionPath(sessionId, "/fetch-transcript"), payload, options);
   },
-  fetchSessionTranscript(sessionId, payload) {
-    return request(`/api/sessions/${sessionId}/fetch-transcript`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
+  getCachedSession(sessionId, { signal } = {}) {
+    return request(sessionPath(sessionId, "/cached"), { signal });
   },
-  getCachedSession(sessionId) {
-    return request(`/api/sessions/${sessionId}/cached`);
+  getTranscriptJobStatus(sessionId, { signal } = {}) {
+    return request(sessionPath(sessionId, "/transcript-job"), { signal });
   },
-  getTranscriptJobStatus(sessionId) {
-    return request(`/api/sessions/${sessionId}/transcript-job`);
+  getSession(sessionId, { signal } = {}) {
+    return request(sessionPath(sessionId), { signal });
   },
-  getSession(sessionId) {
-    return request(`/api/sessions/${sessionId}`);
-  },
-  saveSpeakerLabels(sessionId, payload) {
-    return request(`/api/sessions/${sessionId}/speaker-labels`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
+  saveSpeakerLabels(sessionId, payload, options) {
+    return postJson(sessionPath(sessionId, "/speaker-labels"), payload, options);
   },
   // ── AI flow start (POST) ────────────────────────────────────────────────
   //
-  // Phase 2 contract: each POST returns EITHER the full serialised
-  // workspace (cache hit — bundle already exists for the requested
-  // language/tone) OR { jobId, jobKind, jobStatus: 'pending', language|tone }
-  // when a worker job has been enqueued. The store decides which path to
-  // take by inspecting `result?.jobId` — present means "poll", absent
-  // means "apply immediately."
-  runAnalysis(sessionId, payload) {
-    return request(`/api/sessions/${sessionId}/analysis`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
+  // Each POST returns EITHER the full serialised workspace (cache hit —
+  // the bundle already exists for the requested language/tone) OR
+  // { jobId, jobKind, jobStatus, language|tone } when a worker job runs.
+  runAnalysis(sessionId, payload, options) {
+    return postJson(sessionPath(sessionId, "/analysis"), payload, options);
   },
-  runDeepAnalysis(sessionId, payload) {
-    return request(`/api/sessions/${sessionId}/deep-analysis`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
+  runDeepAnalysis(sessionId, payload, options) {
+    return postJson(sessionPath(sessionId, "/deep-analysis"), payload, options);
   },
-  runSmartRecap(sessionId, payload) {
-    return request(`/api/sessions/${sessionId}/smart-recap`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
+  runSmartRecap(sessionId, payload, options) {
+    return postJson(sessionPath(sessionId, "/smart-recap"), payload, options);
   },
-  runContentRepurposing(sessionId, payload) {
-    return request(`/api/sessions/${sessionId}/content-repurposing`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
+  runContentRepurposing(sessionId, payload, options) {
+    return postJson(sessionPath(sessionId, "/content-repurposing"), payload, options);
   },
   // ── AI flow polling (GET) ───────────────────────────────────────────────
   //
-  // Polled every 4-6s while a job is in flight. Returns the full
-  // serialised workspace when the bundle has landed in session_cache;
-  // otherwise { jobId, jobKind, jobStatus, progress, error? }.
-  getAnalysisJobStatus(sessionId, jobId, language) {
-    const params = new URLSearchParams({ jobId: jobId || "", language: language || "English" });
-    return request(`/api/sessions/${sessionId}/analysis/job?${params.toString()}`);
+  // Polled every few seconds while a job is in flight. Returns
+  // { jobId, jobKind, jobStatus, progress, error? } until the result is
+  // saved, then { sessionId, outputsOnly: true, outputs } (we ask for the
+  // AI outputs only: the rest of the workspace is already on screen).
+  getAiJobStatus(sessionId, flow, query, { signal } = {}) {
+    const params = new URLSearchParams({ ...query, outputsOnly: "true" });
+    return request(sessionPath(sessionId, `/${flow}/job?${params.toString()}`), { signal });
   },
-  getDeepAnalysisJobStatus(sessionId, jobId, language) {
-    const params = new URLSearchParams({ jobId: jobId || "", language: language || "English" });
-    return request(`/api/sessions/${sessionId}/deep-analysis/job?${params.toString()}`);
-  },
-  getSmartRecapJobStatus(sessionId, jobId, tone) {
-    const params = new URLSearchParams({ jobId: jobId || "", tone: tone || "professional" });
-    return request(`/api/sessions/${sessionId}/smart-recap/job?${params.toString()}`);
-  },
-  getContentRepurposingJobStatus(sessionId, jobId, language) {
-    const params = new URLSearchParams({ jobId: jobId || "", language: language || "English" });
-    return request(`/api/sessions/${sessionId}/content-repurposing/job?${params.toString()}`);
-  },
-  // ── PDF download URLs (unchanged) ───────────────────────────────────────
+  // ── Download URLs ───────────────────────────────────────────────────────
   getAnalysisPdfUrl(sessionId, kind, language) {
-    const params = new URLSearchParams({
-      kind,
-      language,
-    });
-    return `/api/sessions/${sessionId}/analysis-pdf?${params.toString()}`;
+    const params = new URLSearchParams({ kind, language });
+    return `${sessionPath(sessionId, "/analysis-pdf")}?${params.toString()}`;
   },
   getSmartRecapPdfUrl(sessionId, tone) {
     const params = new URLSearchParams({ tone });
-    return `/api/sessions/${sessionId}/smart-recap-pdf?${params.toString()}`;
+    return `${sessionPath(sessionId, "/smart-recap-pdf")}?${params.toString()}`;
   },
   getContentRepurposingPdfUrl(sessionId, language, item) {
-    const params = new URLSearchParams({
-      language,
-      item,
-    });
-    return `/api/sessions/${sessionId}/content-repurposing-pdf?${params.toString()}`;
+    const params = new URLSearchParams({ language, item });
+    return `${sessionPath(sessionId, "/content-repurposing-pdf")}?${params.toString()}`;
   },
   // Full raw transcript; the workspace payload only carries what the UI renders.
   getTranscriptJsonUrl(sessionId) {
-    return `/api/sessions/${encodeURIComponent(sessionId)}/transcript.json`;
+    return sessionPath(sessionId, "/transcript.json");
   },
 
   // ── Admin ─────────────────────────────────────────────────────────────────
@@ -194,27 +165,18 @@ export const api = {
     return request("/api/admin/sessions");
   },
   adminPromoteUser(email, user_id = "") {
-    return request("/api/admin/users/promote", {
-      method: "POST",
-      body: JSON.stringify({ email, user_id }),
-    });
+    return postJson("/api/admin/users/promote", { email, user_id });
   },
   adminDemoteUser(email) {
-    return request("/api/admin/users/demote", {
-      method: "POST",
-      body: JSON.stringify({ email, user_id: "" }),
-    });
+    return postJson("/api/admin/users/demote", { email, user_id: "" });
   },
   adminDeleteSession(sessionId) {
-    return request(`/api/admin/sessions/${sessionId}`, { method: "DELETE" });
+    return request(`/api/admin/sessions/${encodeURIComponent(String(sessionId ?? ""))}`, { method: "DELETE" });
   },
   adminGetSettings() {
     return request("/api/admin/settings");
   },
   adminUpdateSetting(key, value) {
-    return request("/api/admin/settings", {
-      method: "POST",
-      body: JSON.stringify({ key, value }),
-    });
+    return postJson("/api/admin/settings", { key, value });
   },
 };
