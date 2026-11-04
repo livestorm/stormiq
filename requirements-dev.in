@@ -1,0 +1,6 @@
+# Development and CI tools. Runtime deps come from requirements.in and are
+# constrained to the versions locked in requirements.txt.
+-r requirements.in
+pytest
+httpx
+ruff
