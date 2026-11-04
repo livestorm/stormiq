@@ -12,7 +12,8 @@ import threading
 
 import pytest
 
-from livestorm_app import api_logic, db, llm_client, services, worker
+from livestorm_app import api_logic, db, llm_client, worker
+from livestorm_app.ai import generation
 from livestorm_app.db import ALL_ORGS
 from livestorm_app.gladia import transcriber
 
@@ -140,7 +141,7 @@ def test_empty_recap_is_an_error_not_a_silent_success(runner_backend, monkeypatc
 def test_an_empty_model_answer_fails_the_job(runner_backend, monkeypatch, run, label):
     # Runs the real analyze_with_openai; only the provider call is faked. It
     # used to substitute a placeholder text, which was then saved as output.
-    monkeypatch.setattr(services, "call_llm", lambda *args, **kwargs: "")
+    monkeypatch.setattr(generation, "call_llm", lambda *args, **kwargs: "")
     with pytest.raises(RuntimeError, match=label):
         run()
     assert runner_backend == []

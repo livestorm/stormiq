@@ -33,43 +33,55 @@ from livestorm_app.queue import (
     read_job_status_sync,
     transcription_job_id,
 )
-from livestorm_app.services import (
+from livestorm_app.ai.cover_image import generate_cover_image_with_openai
+from livestorm_app.ai.generation import (
     _bundle_has_all_sections,
     analyze_with_openai,
-    analysis_markdown_to_pdf_bytes,
-    build_analysis_prompt,
-    build_chat_df_from_payload,
+    generate_content_repurpose_bundle_with_openai,
+    translate_content_repurpose_bundle_with_openai,
+    translate_markdown_with_openai,
+)
+from livestorm_app.ai.llm_inputs import (
     build_compact_chat_payload_for_llm,
     build_compact_questions_payload_for_llm,
     build_compact_transcript_payload_for_llm,
-    build_cross_source_insights,
     build_deep_analysis_chat_payload_for_llm,
-    build_deep_analysis_prompt,
     build_deep_analysis_questions_payload_for_llm,
     build_derived_stats,
-    build_event_session_options,
-    build_workspace_event_options,
-    build_questions_df_from_payload,
-    build_request_exception_debug_details,
-    build_http_error_debug_details,
+)
+from livestorm_app.ai.prompts import (
+    build_analysis_prompt,
+    build_deep_analysis_prompt,
     build_cover_image_prompt,
     build_smart_recap_prompt,
+)
+from livestorm_app.analytics.audience import (
+    build_chat_df_from_payload,
+    build_questions_df_from_payload,
+)
+from livestorm_app.analytics.cross_source import build_cross_source_insights
+from livestorm_app.analytics.transcript import (
     build_transcript_display_text,
     build_transcript_insights,
     build_transcript_plain_text,
+)
+from livestorm_app.livestorm.client import (
+    build_request_exception_debug_details,
+    build_http_error_debug_details,
     fetch_chat_and_questions_bundle,
     fetch_event_details,
     fetch_event_past_sessions,
     fetch_workspace_events_page,
     fetch_session_details,
-    generate_cover_image_with_openai,
     format_generic_http_error,
     format_livestorm_http_error,
-    generate_content_repurpose_bundle_with_openai,
-    translate_content_repurpose_bundle_with_openai,
-    translate_markdown_with_openai,
 )
-from livestorm_app.session_overview import (
+from livestorm_app.livestorm.payloads import (
+    build_event_session_options,
+    build_workspace_event_options,
+)
+from livestorm_app.pdf import analysis_markdown_to_pdf_bytes
+from livestorm_app.analytics.session_overview import (
     build_compact_session_payload_for_llm,
     build_session_overview_data,
     extract_session_attributes,
@@ -1443,7 +1455,7 @@ def _get_ai_job_data(
 # ── Thin per-flow start/poll wrappers ──────────────────────────────────────
 #
 # One pair per flow. Routes call these directly; the routes themselves are
-# kept thin to make the per-flow contract obvious from app.py.
+# kept thin to make the per-flow contract obvious from routes/ai.py.
 
 
 def start_overall_analysis(session_id: str, output_language: str, *, organization_id: OrgScope) -> Dict[str, Any]:

@@ -17,8 +17,9 @@ import pytest
 import requests
 from urllib3._collections import HTTPHeaderDict
 
-import app as app_module
-from livestorm_app import api_logic, auth, llm_client, queue, services, worker
+from livestorm_app.routes import models as routes_models
+from livestorm_app import api_logic, auth, llm_client, queue, worker
+from livestorm_app.livestorm import client as livestorm_client
 from livestorm_app.db import (
     ALL_ORGS,
     claim_transcript_job,
@@ -150,8 +151,8 @@ def test_job_poll_ignores_a_client_supplied_job_id(ai_rows, monkeypatch):
 @pytest.mark.parametrize(
     "model,payload",
     [
-        (app_module.AnalysisRequest, {"outputLanguage": "Klingon"}),
-        (app_module.SmartRecapRequest, {"tone": "angry"}),
+        (routes_models.AnalysisRequest, {"outputLanguage": "Klingon"}),
+        (routes_models.SmartRecapRequest, {"tone": "angry"}),
     ],
 )
 def test_request_models_reject_unknown_language_and_tone(model, payload):
@@ -630,28 +631,28 @@ def livestorm_stub():
 def test_livestorm_get_retries_a_transient_server_error(livestorm_stub):
     url, script, seen = livestorm_stub
     script.extend([503])
-    assert services.livestorm_get(url, headers={}).status_code == 200
+    assert livestorm_client.livestorm_get(url, headers={}).status_code == 200
     assert len(seen) == 2
 
 
 def test_livestorm_get_does_not_retry_a_client_error(livestorm_stub):
     url, script, seen = livestorm_stub
     script.extend([404])
-    assert services.livestorm_get(url, headers={}).status_code == 404
+    assert livestorm_client.livestorm_get(url, headers={}).status_code == 404
     assert len(seen) == 1
 
 
 def test_livestorm_session_never_shares_cookies_between_users(livestorm_stub):
     url, _script, seen = livestorm_stub
-    services.livestorm_get(url, headers={})
-    services.livestorm_get(url, headers={})
+    livestorm_client.livestorm_get(url, headers={})
+    livestorm_client.livestorm_get(url, headers={})
     assert seen == [None, None]
 
 
 def test_livestorm_retry_after_is_capped():
-    retry = services._livestorm_http.get_adapter("https://api.livestorm.co").max_retries
+    retry = livestorm_client._livestorm_http.get_adapter("https://api.livestorm.co").max_retries
     response = type("FakeResponse", (), {"headers": HTTPHeaderDict({"Retry-After": "3600"})})()
-    assert retry.get_retry_after(response) == services.LIVESTORM_MAX_RETRY_AFTER_SECONDS
+    assert retry.get_retry_after(response) == livestorm_client.LIVESTORM_MAX_RETRY_AFTER_SECONDS
 
 
 # ── Gladia ─────────────────────────────────────────────────────────────────

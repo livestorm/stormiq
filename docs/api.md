@@ -1,6 +1,6 @@
 # HTTP API
 
-Every route is a FastAPI handler in [`app.py`](../app.py); the frontend calls them through [`frontend/src/api.js`](../frontend/src/api.js).
+Every route is a FastAPI handler in [`livestorm_app/routes/`](../livestorm_app/routes/), one module per area (`system`, `oauth`, `admin`, `workspace`, `sessions`, `ai`, `spa`), which [`app.py`](../app.py) includes in that order. The frontend calls them through [`frontend/src/api.js`](../frontend/src/api.js).
 
 **Auth column.** *public*: no identity needed. *caller*: `Depends(get_caller)`; 401 without an identity, and session routes are scoped to the caller's organization ([security.md](security.md)). *admin*: `Depends(require_admin)`; 401, or 403 for non-admins. `{id}` must match `^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$` (422 otherwise).
 
@@ -52,6 +52,7 @@ Every route is a FastAPI handler in [`app.py`](../app.py); the frontend calls th
 
 ## Adding a route
 
-1. Take the identity from `livestorm_app.auth` (`Depends(get_caller)` or `Depends(require_admin)`); session routes read with the caller's scope.
-2. Add a row to the table above.
-3. Run the tests: `tests/test_access_control.py` picks up every `/api/sessions/{session_id}*` route automatically.
+1. Put it in the router module for its area in `livestorm_app/routes/`, with any request body in `routes/models.py`. Routes match in registration order, and the SPA catch-all (`routes/spa.py`) must stay last.
+2. Take the identity from `livestorm_app.auth` (`Depends(get_caller)` or `Depends(require_admin)`); session routes read with the caller's scope.
+3. Add a row to the table above.
+4. Run the tests: `tests/test_access_control.py` picks up every `/api/sessions/{session_id}*` route automatically.

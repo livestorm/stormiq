@@ -4,6 +4,7 @@ What has shipped, newest first. What's next is in [roadmap.md](roadmap.md).
 
 ## November 2026: structure
 
+- **#11 Module split.** `app.py` (776 lines) became the entry point plus one router per area in `livestorm_app/routes/`; `services.py` (3,000 lines) became `livestorm/` (API client), `analytics/`, `ai/` and `pdf.py`. Code moved verbatim: a before/after snapshot of workspaces, routes, the OpenAPI schema, prompts, LLM inputs and a PDF is byte-identical.
 - **#10 Empty AI output fails the job.** An empty model answer for an overall analysis, deep analysis or Smart Recap was saved as the text "No analysis text returned by model."; the job now fails and the user can retry.
 - **#8 Project structure.** CLAUDE.md split into focused docs under `docs/` and per-folder CLAUDE.md files; a Makefile; dead code removed; the content-repurposing prompt moved into `prompts/`.
 

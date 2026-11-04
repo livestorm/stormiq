@@ -22,11 +22,14 @@ Browser ── Vue SPA ──/api──▶ web: FastAPI (app.py) ─────
 
 | Path | What it does |
 |---|---|
-| `app.py` | FastAPI app: routes, OAuth wiring, request models, SPA static serving, startup and shutdown |
+| `app.py` | Entry point: creates the FastAPI app (startup and shutdown, middleware, static mounts) and includes the routers |
+| `livestorm_app/routes/` | HTTP routes, one module per area: `system`, `oauth`, `admin`, `workspace`, `sessions`, `ai`, `spa`; request bodies in `models.py`, shared helpers (session id type, error and PDF responses) in `common.py` |
 | `livestorm_app/auth.py` | Request identity (`Caller`), org read scope, local-dev mode ([security.md](security.md)) |
 | `livestorm_app/api_logic.py` | Orchestration behind the routes: fetch flows, job starts and polls, workspace serialization, PDF builders, and the synchronous AI runners the worker calls |
-| `livestorm_app/services.py` | Livestorm API client, the DataFrame pipeline (transcript, chat, questions, cross-source insights), prompt building, cover images, PDF rendering |
-| `livestorm_app/session_overview.py` | Session payload → people table, hero stats, distributions |
+| `livestorm_app/livestorm/` | Livestorm REST API: `client.py` (the shared HTTP session, fetchers, error formatting) and `payloads.py` (JSON:API parsing, pagination, event and session pickers) |
+| `livestorm_app/analytics/` | The deterministic pipeline: `session_overview.py` (people, hero stats, distributions), `audience.py` (chat and questions tables), `transcript.py` (transcript insights), `cross_source.py` (session-stage timeline) |
+| `livestorm_app/ai/` | `prompts.py` (system prompts from `prompts/`), `llm_inputs.py` (what the model is sent), `generation.py` (analyses, recap, content, translation), `cover_image.py` |
+| `livestorm_app/pdf.py` | PDF rendering of AI outputs (reportlab) |
 | `livestorm_app/db.py` | Connection pool, schema bootstrap, every SQL query |
 | `livestorm_app/queue.py` | arq job ids, enqueue and status from sync code (`_QueueBridge`) |
 | `livestorm_app/worker.py` | arq job handlers, the stuck-job sweeper, `WorkerSettings` |
@@ -80,7 +83,7 @@ The rules for working in it are in [`frontend/CLAUDE.md`](../frontend/CLAUDE.md)
 
 ## The data pipeline
 
-The deterministic analytics are pandas code in `services.py` and `session_overview.py`. The entry points:
+The deterministic analytics are pandas code in `livestorm_app/analytics/`. The entry points:
 
 - `build_session_overview_data(session_payload)`: hero stats, people table, country, role and attendance distributions.
 - `build_transcript_insights(transcript_payload)`: about 27 DataFrames (pace, airtime, pauses, named entities, segments, engagement scoring, key moments).

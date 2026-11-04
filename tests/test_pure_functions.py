@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import pytest
 
-from livestorm_app import api_logic, progress, services, worker
+from livestorm_app import api_logic, progress, worker
+from livestorm_app.ai import generation, prompts
+from livestorm_app.analytics import transcript as transcript_analytics
 
 
 # ── Content repurposing: LLM JSON bundle parsing ──────────────────────────
@@ -26,9 +28,9 @@ FULL_BUNDLE = '{"summary": "S", "blog": "B", "email": "E", "social_media": "M"}'
     ids=["bare", "fenced", "prose-wrapped"],
 )
 def test_repurpose_bundle_is_extracted_from_common_llm_shapes(response_text):
-    bundle = services.parse_content_repurpose_bundle_response(response_text)
+    bundle = generation.parse_content_repurpose_bundle_response(response_text)
     assert bundle == {"summary": "S", "blog": "B", "email": "E", "social_media": "M"}
-    assert services._bundle_has_all_sections(bundle)
+    assert generation._bundle_has_all_sections(bundle)
 
 
 @pytest.mark.parametrize(
@@ -37,13 +39,13 @@ def test_repurpose_bundle_is_extracted_from_common_llm_shapes(response_text):
     ids=["truncated", "not-an-object", "prose", "empty"],
 )
 def test_unparseable_repurpose_responses_yield_an_incomplete_bundle(response_text):
-    bundle = services.parse_content_repurpose_bundle_response(response_text)
+    bundle = generation.parse_content_repurpose_bundle_response(response_text)
     assert set(bundle) == {"summary", "blog", "email", "social_media"}
-    assert not services._bundle_has_all_sections(bundle)
+    assert not generation._bundle_has_all_sections(bundle)
 
 
 def test_bundle_with_a_blank_section_is_incomplete():
-    assert not services._bundle_has_all_sections({"summary": "S", "blog": "B", "email": "  ", "social_media": "M"})
+    assert not generation._bundle_has_all_sections({"summary": "S", "blog": "B", "email": "  ", "social_media": "M"})
 
 
 # ── Progress stages ───────────────────────────────────────────────────────
@@ -145,7 +147,7 @@ def test_pauses_are_classified_by_gap_length():
             ],
         }
     }
-    silence = services.build_transcript_insights(payload)["silence_df"]
+    silence = transcript_analytics.build_transcript_insights(payload)["silence_df"]
     assert list(silence["gap_seconds"]) == [0.8, 1.5, 2.5]
     assert list(silence["pause_type"]) == ["Thinking pause", "Hesitation", "Strong silence"]
     assert list(silence["speaker_transition"]) == [True, False, True]
@@ -157,8 +159,8 @@ def test_pauses_are_classified_by_gap_length():
 def test_content_repurposing_prompt_is_loaded_from_prompts_folder():
     # A missing prompt file loads as "", which would send the model no
     # instructions at all: the file must exist and ask for all four keys.
-    prompt = services.build_content_repurpose_bundle_prompt()
-    assert services.CONTENT_REPURPOSE_BUNDLE_PROMPT_PATH.name == "content_repurpose_bundle_prompt.txt"
+    prompt = prompts.build_content_repurpose_bundle_prompt()
+    assert prompts.CONTENT_REPURPOSE_BUNDLE_PROMPT_PATH.name == "content_repurpose_bundle_prompt.txt"
     for key in ("summary", "blog", "email", "social_media"):
         assert f"- {key}" in prompt
     assert prompt.endswith("Do not wrap the JSON in code fences.")

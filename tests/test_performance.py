@@ -25,7 +25,10 @@ from fastapi.testclient import TestClient
 from psycopg.types.json import Jsonb
 
 import app as app_module
-from livestorm_app import api_logic, db, queue, services
+from livestorm_app.routes import spa as routes_spa
+from livestorm_app import api_logic, db, queue
+from livestorm_app.analytics import cross_source
+from livestorm_app.analytics import transcript as transcript_analytics
 
 
 # ── Entity context lookup ───────────────────────────────────────────────────
@@ -39,8 +42,8 @@ def _reference_entity_context(source: pd.DataFrame, entity_text: str, entity_sta
     entity_text_lower = entity_text.lower()
     for _, candidate in source.iterrows():
         text = str(candidate.get("sentence") or candidate.get("text") or "").strip()
-        start = services._coerce_seconds(candidate.get("start_seconds"))
-        end = services._coerce_seconds(candidate.get("end_seconds"))
+        start = transcript_analytics._coerce_seconds(candidate.get("start_seconds"))
+        end = transcript_analytics._coerce_seconds(candidate.get("end_seconds"))
         contains_entity = bool(text) and entity_text_lower in text.lower()
         contains_time = (
             entity_start is not None and start is not None and end is not None
@@ -78,7 +81,7 @@ def test_entity_context_finder_matches_the_original_scan():
     checked = 0
     for _ in range(300):
         source = _random_sentences(rng)
-        finder = services._EntityContextFinder(source)
+        finder = transcript_analytics._EntityContextFinder(source)
         for _ in range(8):
             entity = rng.choice(["Livestorm", "paris", "Q3", "nowhere-to-be-found", "a"])
             start = None if rng.random() < 0.1 else rng.uniform(-5, 150)
@@ -96,7 +99,7 @@ def test_sentence_without_a_start_time_never_wins_on_proximity():
         {"sentence": "Paris intro", "start_seconds": None, "end_seconds": 5.0, "speaker": 0},
         {"sentence": "Paris pricing", "start_seconds": 98.0, "end_seconds": 99.0, "speaker": 1},
     ])
-    assert services._EntityContextFinder(source).find("Paris", 100.0)["sentence"] == "Paris pricing"
+    assert transcript_analytics._EntityContextFinder(source).find("Paris", 100.0)["sentence"] == "Paris pricing"
     assert _reference_entity_context(source, "Paris", 100.0)["sentence"] == "Paris intro"
 
 
@@ -104,27 +107,27 @@ def test_cross_source_reuses_insights_it_is_given(monkeypatch):
     chat = pd.DataFrame({"created_at": [1, 2], "text_content": ["a", "b"], "author_id": ["p1", "p2"]})
     questions = pd.DataFrame({"asked_at": [1], "question": ["q"]})
     transcript = {"segments": [{"start": 0.0, "end": 5.0, "text": "hello there", "speaker": 0}]}
-    insights = services.build_transcript_insights(transcript)
-    expected = services.build_cross_source_insights(chat, questions, transcript)
+    insights = transcript_analytics.build_transcript_insights(transcript)
+    expected = cross_source.build_cross_source_insights(chat, questions, transcript)
 
     def must_not_rebuild(*args, **kwargs):
         raise AssertionError("transcript insights were built a second time")
 
-    monkeypatch.setattr(services, "build_transcript_insights", must_not_rebuild)
-    reused = services.build_cross_source_insights(chat, questions, transcript, transcript_insights=insights)
+    monkeypatch.setattr(cross_source, "build_transcript_insights", must_not_rebuild)
+    reused = cross_source.build_cross_source_insights(chat, questions, transcript, transcript_insights=insights)
     for key in expected:
         pd.testing.assert_frame_equal(reused[key], expected[key])
 
 
 def test_a_workspace_read_builds_transcript_insights_once(monkeypatch):
     calls: list = []
-    real = services.build_transcript_insights
+    real = transcript_analytics.build_transcript_insights
 
     def counting(payload):
         calls.append(1)
         return real(payload)
 
-    monkeypatch.setattr(services, "build_transcript_insights", counting)
+    monkeypatch.setattr(cross_source, "build_transcript_insights", counting)
     monkeypatch.setattr(api_logic, "build_transcript_insights", counting)
     monkeypatch.setattr(api_logic, "_insights_cache", api_logic.OrderedDict())
     row = {
@@ -464,7 +467,7 @@ def test_the_bridge_reconnects_after_the_cooldown(monkeypatch):
 def test_hashed_assets_are_cached_for_a_year(tmp_path):
     (tmp_path / "index-abc123.js").write_text("console.log(1)")
     asset_app = FastAPI()
-    asset_app.mount("/assets", app_module.ImmutableStaticFiles(directory=tmp_path), name="assets")
+    asset_app.mount("/assets", routes_spa.ImmutableStaticFiles(directory=tmp_path), name="assets")
     response = TestClient(asset_app).get("/assets/index-abc123.js")
     assert response.status_code == 200
     assert response.headers["cache-control"] == "public, max-age=31536000, immutable"
