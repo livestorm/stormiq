@@ -34,7 +34,7 @@ const state = reactive({
   // tracks the property itself, not the thousands of rows inside it, so
   // every update replaces the object instead of mutating it.
   workspace: null,
-  // Phase 4: list of cached sessions for the current user's Livestorm
+  // List of cached sessions for the current user's Livestorm
   // org. Powers the Single Analysis card grid. Loaded on demand via
   // loadWorkspaceSessions(); refreshed after every successful fetch
   // (new sessions appear in the list).

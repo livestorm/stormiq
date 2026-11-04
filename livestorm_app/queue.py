@@ -3,8 +3,8 @@
 The worker process consumes jobs from these queues. The web process enqueues
 jobs into them. Both processes share the same Redis instance.
 
-CLAUDE.md §5 (processing flow) + §14 (deployment) describe how this fits
-into the rest of the app.
+docs/jobs.md (processing flows) and docs/operations.md (deployment)
+describe how this fits into the rest of the app.
 
 Hard rules:
 - The worker is a separate OS process. Never call worker functions
@@ -25,7 +25,7 @@ import logging
 import os
 import threading
 import time
-from typing import Any, Awaitable, Callable, Dict, Optional, TypedDict, TypeVar
+from typing import Any, Awaitable, Callable, Dict, Optional, TypeVar
 
 from arq import create_pool
 from arq.connections import ArqRedis, RedisSettings
@@ -55,47 +55,6 @@ def get_redis_settings() -> RedisSettings:
     return RedisSettings.from_dsn(get_redis_url())
 
 
-_pool: Optional[ArqRedis] = None
-
-
-async def get_arq_pool() -> ArqRedis:
-    """Singleton arq pool for enqueuing jobs from async code.
-
-    arq pools are long-lived. Reuse one per process. Created lazily so
-    importing this module doesn't open a connection.
-    """
-    global _pool
-    if _pool is None:
-        _pool = await create_pool(get_redis_settings())
-    return _pool
-
-
-async def close_arq_pool() -> None:
-    """Tear down the pool on app shutdown. Safe to call when uninitialised."""
-    global _pool
-    if _pool is not None:
-        try:
-            await _pool.close()
-        except Exception:
-            logger.exception("Failed to close arq pool")
-        _pool = None
-
-
-# ── Job type hints ──────────────────────────────────────────────────────────
-
-
-class JobMeta(TypedDict, total=False):
-    """Fields every job carries for observability + accounting.
-
-    `session_id`  — the session the job operates on (nullable only for
-                    cron jobs like the sweeper).
-    `enqueued_by` — `"web"` for handler-enqueued, `"cron"` for scheduled.
-    """
-
-    session_id: str
-    enqueued_by: str
-
-
 # ── Job ids ─────────────────────────────────────────────────────────────────
 #
 # arq refuses to enqueue a job whose id already has a queued job or a
@@ -120,25 +79,6 @@ def transcription_job_id(transcript_job_id: str) -> str:
     (one active job per session) is the dedupe; this id lets the web
     process ask arq whether the job behind a row is still alive."""
     return f"transcription:{str(transcript_job_id).strip()}"
-
-
-# ── Enqueue ─────────────────────────────────────────────────────────────────
-
-
-async def enqueue_job(function_name: str, *args: Any, **kwargs: Any) -> Optional[str]:
-    """Enqueue a job by name from async code.
-
-    Returns the job id, or None on failure or when `_job_id` is already
-    taken. Swallows connection errors so a Redis hiccup never bubbles up
-    into a 500.
-    """
-    try:
-        pool = await get_arq_pool()
-        job = await pool.enqueue_job(function_name, *args, **kwargs)
-        return job.job_id if job is not None else None
-    except Exception:
-        logger.exception("Failed to enqueue arq job %s", function_name)
-        return None
 
 
 # ── Sync bridge ─────────────────────────────────────────────────────────────

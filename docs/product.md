@@ -4,6 +4,8 @@ A companion application for Livestorm that turns a finished session into a struc
 
 This document describes what the app does, the data it produces, and the formulas behind each metric and chart.
 
+> The navigation and routes described here (the Events list, `/session-overview`…) predate the current Search and Single Analysis pages ([architecture.md](architecture.md#pages)) and will be rewritten with the redesign. The views, charts and formulas are current.
+
 ---
 
 ## Table of contents
@@ -344,7 +346,7 @@ The recap does not reference the fact that it was generated from a transcript. E
 
 **Route:** `/content-repurposing`
 
-Four ready-to-publish asset types, English or French, all PDF-exportable. The transcript is the primary input; chat and questions are used as secondary signal when available.
+Four ready-to-publish asset types, English or French, all PDF-exportable. The transcript is the only input.
 
 ### Summary
 500–700 words, structured markdown with `##` and `###` headings. Suggested sections:
@@ -370,7 +372,7 @@ Three platforms, each with one polished post + 2–4 hashtags + optional emoji:
 2. Facebook
 3. X / Twitter — capped at 280 characters
 
-All four assets are generated together in one call per language. Switching language regenerates the bundle in the new language.
+All four assets are generated together. English is generated first; French is translated from it.
 
 ---
 
@@ -392,9 +394,9 @@ All AI outputs are persisted to the session cache, so re-opening the workspace s
 ## 12. Language support
 
 - **Interface:** English by default; the Analysis and Content Repurposing views switch UI labels when French is selected for their output.
-- **AI outputs:** Overall Analysis, Deep Analysis, and Content Repurposing assets are available in English and French. Switching language regenerates the output in the target language.
+- **AI outputs:** Overall Analysis, Deep Analysis, and Content Repurposing assets are available in English and French. English is generated first; French is translated from the English version.
 - **Transcription:** the underlying transcription engine handles many languages; the transcript itself is captured in the spoken language.
-- **Smart Recap:** generated in the language of the transcript.
+- **Smart Recap:** generated in English.
 
 ---
 

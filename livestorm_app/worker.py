@@ -24,7 +24,7 @@ Hard rules:
   `transcript_jobs` row (`db.claim_transcript_job`, then
   `auth.livestorm_auth_for_job`).
 - Every handler must publish progress at each meaningful stage via
-  `livestorm_app.progress.publish_progress`. The UI depends on it.
+  `livestorm_app.progress.publish_progress_sync`. The UI depends on it.
 - On any error, the handler is responsible for writing the failure state
   to Postgres before re-raising. Nothing is retried (`max_tries=1`).
 - Each job kind has its own timeout (`WorkerSettings.functions`).
@@ -147,16 +147,15 @@ async def ping(ctx: Dict[str, Any]) -> str:
 
 # ── Transcription job ──────────────────────────────────────────────────────
 #
-# Replaces the legacy `threading.Thread` path in api_logic.py. The web
-# handler enqueues this job and returns immediately with a job_id; the
-# worker downloads the recording, uploads to Gladia, polls, persists, and
-# writes status back to `transcript_jobs`.
+# The web handler enqueues this job and returns immediately with a job_id;
+# the worker downloads the recording, uploads to Gladia, polls, persists,
+# and writes status back to `transcript_jobs`.
 #
 # Progress is written to two places:
-#   - `transcript_jobs.progress` (Postgres TEXT, JSON-encoded) — legacy path,
-#     kept for backward compat with the existing polling endpoint.
-#   - Redis via `publish_progress_sync('transcript', session_id, ...)` —
-#     new stage-floor progress; future-proof for the AI flows in commit 2.
+#   - `transcript_jobs.progress` (Postgres TEXT, JSON-encoded): the raw
+#     Gladia step. Its writes also keep `updated_at` fresh for the sweeper.
+#   - Redis via `publish_progress_sync('transcript', session_id, ...)`: the
+#     stage-floor progress the frontend renders.
 #
 # The Gladia transcriber is sync (urllib under the hood) and may take
 # 30-45 minutes on a 2-hour recording. We push it into a thread via
@@ -346,8 +345,8 @@ async def run_transcription(
 # Progress mapping is coarse: we publish 'loading_sources' → 'building_prompt'
 # → 'analyzing' before the (single, blocking) LLM call, then 'persisting'
 # → 'done' after it. The bar will sit at "analyzing" (floor 40) for the
-# bulk of the wait — same UX as the transcription job. Phase 2 refactor
-# (cards) will give us natural inflection points to publish more stages.
+# bulk of the wait — same UX as the transcription job. The card registry
+# (docs/roadmap.md) would give natural inflection points for more stages.
 
 
 def _read_llm_key_or_raise() -> str:
@@ -586,8 +585,7 @@ async def on_shutdown(ctx: Dict[str, Any]) -> None:
 class WorkerSettings:
     """arq WorkerSettings.
 
-    `functions` lists every job handler. Phase 2 will extend this list as
-    flows migrate; Phase 1 keeps it minimal so the worker boots clean.
+    `functions` lists every job handler, each with its own timeout.
 
     `cron_jobs` registers scheduled tasks. `run_at_startup=False` keeps
     the sweeper from running on every deploy (it would race the first

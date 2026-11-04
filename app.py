@@ -425,7 +425,7 @@ def dev_auto_login(request: Request) -> Response:
 
 @app.get("/api/workspace-sessions")
 def workspace_sessions(caller: Optional[Caller] = Depends(get_optional_caller)) -> Dict[str, Any]:
-    """Phase 4: list every cached session the calling user's org can see.
+    """List every cached session the calling user's org can see.
 
     Powers the Single Analysis card grid. Always lists the caller's *own*
     org, admins included. Returns `{ sessions: [] }` when:
@@ -608,10 +608,9 @@ def update_speaker_labels(session_id: SessionId, request: SpeakerLabelsRequest, 
 def overall_analysis(session_id: SessionId, request: AnalysisRequest, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
     """Start an Overall Analysis job.
 
-    Phase 2 contract change: this no longer returns the analysis body
-    inline. Returns either the full serialised workspace (if already
-    cached for the requested language) or { jobId, jobKind, jobStatus,
-    language } so the frontend can poll `/analysis/job`.
+    Returns either the full serialised workspace (if already cached for
+    the requested language) or { jobId, jobKind, jobStatus, language } so
+    the frontend can poll `/analysis/job`.
     """
     try:
         return start_overall_analysis(session_id, request.output_language, organization_id=caller.read_scope)

@@ -12,7 +12,6 @@ MAX_PAGES = 1000
 START_PAGE_NUMBER = 0
 
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
-DEEP_ANALYSIS_OPENAI_MODEL = "gpt-4o-mini"
 SMART_RECAP_OPENAI_MODEL = "gpt-5.4-mini"
 
 # Anthropic (Claude) — used when LLM_PROVIDER=anthropic (the default)
@@ -39,19 +38,13 @@ ANALYSIS_QUESTIONS_PROMPT_PATH = PROMPTS_DIR / "analysis_questions_prompt.txt"
 ANALYSIS_TRANSCRIPT_PROMPT_PATH = PROMPTS_DIR / "analysis_transcript_prompt.txt"
 ANALYSIS_ALL_SOURCES_PROMPT_PATH = PROMPTS_DIR / "analysis_all_sources_prompt.txt"
 ANALYSIS_DEEP_PROMPT_PATH = PROMPTS_DIR / "analysis_deep_prompt.txt"
-CONTENT_REPURPOSE_SUMMARY_PROMPT_PATH = PROMPTS_DIR / "content_repurpose_summary_prompt.txt"
-CONTENT_REPURPOSE_EMAIL_PROMPT_PATH = PROMPTS_DIR / "content_repurpose_email_prompt.txt"
-CONTENT_REPURPOSE_BLOG_PROMPT_PATH = PROMPTS_DIR / "content_repurpose_blog_prompt.txt"
-CONTENT_REPURPOSE_SOCIAL_MEDIA_PROMPT_PATH = PROMPTS_DIR / "content_repurpose_social_media_prompt.txt"
+CONTENT_REPURPOSE_BUNDLE_PROMPT_PATH = PROMPTS_DIR / "content_repurpose_bundle_prompt.txt"
 SMART_RECAP_PROFESSIONAL_PROMPT_PATH = PROMPTS_DIR / "smart_recap_professional_prompt.txt"
 SMART_RECAP_HYPE_PROMPT_PATH = PROMPTS_DIR / "smart_recap_hype_prompt.txt"
 SMART_RECAP_SURPRISE_PROMPT_PATH = PROMPTS_DIR / "smart_recap_surprise_prompt.txt"
 COVER_IMAGE_PROMPT_PATH = PROMPTS_DIR / "cover_image_prompt.txt"
 
 ENV_PATH = Path(".env")
-BASE_DIR = Path(__file__).resolve().parent.parent
-ASSETS_DIR = BASE_DIR / "assets"
-ICONS_DIR = ASSETS_DIR / "icons"
 
 OUTPUT_LANGUAGE_MAP = {
     "English": "English",

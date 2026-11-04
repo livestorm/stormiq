@@ -1,0 +1,45 @@
+# Backend
+
+The FastAPI routes are in `../app.py`; everything else is in this package. Route handlers are plain `def` functions, run in FastAPI's threadpool. Module map: [docs/architecture.md](../docs/architecture.md#backend-code).
+
+## Rules
+
+**Access**
+- Routes take their identity from `auth.py`: `Depends(get_caller)`, `Depends(require_admin)` or `Depends(get_optional_caller)`. Never read the session cookie or resolve org ids by hand.
+- Session reads pass the caller's scope (`organization_id=caller.read_scope`). Only admin, local-dev and worker code pass `ALL_ORGS`. A blank scope matches nothing, and an out-of-scope session looks missing (404).
+- Stamp `organization_id` on a row only after the caller's own Livestorm credentials returned the session. → [docs/security.md](../docs/security.md)
+
+**Database (`db.py`)**
+- All SQL lives in `db.py` and goes through the pooled `get_db_connection()`. Pass values as query parameters, never by string formatting.
+- Schema changes go in `ensure_database_schema()` and must be idempotent (`IF NOT EXISTS`); there is no migration tool.
+- Write an AI bundle with `merge_cached_bundle_entry` (one language or tone), never by rewriting the whole bundle. Writes raise on failure; don't swallow them.
+- Hot paths (polls, job starts) read with `fetch_session_fields`; add a field to `_SESSION_FIELD_SQL` rather than loading the full row. → [docs/data-model.md](../docs/data-model.md)
+
+**Jobs (`queue.py`, `worker.py`)**
+- Enqueue only through `queue.enqueue_unique_job_sync`, with a deterministic id (`ai_job_id`, `transcription_job_id`, `cover_image_job_id`).
+- Job arguments are ids only: no keys, tokens or connection ids.
+- A handler that users watch publishes progress (`progress.publish_progress_sync`) and clears it in `finally`. Every handler re-raises failures so arq records them (marking its own Postgres row `error` first, if it has one, as transcription does) and is registered in `WorkerSettings.functions` with its own `timeout`. → [docs/jobs.md](../docs/jobs.md)
+
+**Outbound calls**
+- Every HTTP call has a timeout. Retry only failures where nothing was produced or billed; never retry a POST that starts paid work. → [docs/providers.md](../docs/providers.md)
+- The Livestorm HTTP session (`services.livestorm_get`) is shared by all users: no cookies, no per-user state.
+
+**Workspace reads**
+- Get transcript insights through `api_logic._cached_transcript_insights`, once per read, and copy a shared DataFrame before modifying it.
+- Don't add raw upstream payloads to the serialized workspace; add the derived table a view needs.
+
+**Errors**
+- Return `{resource, message, details}`. Log upstream URLs and bodies server-side; never return them.
+
+## Tests (`../tests/`)
+
+| File | Covers |
+|---|---|
+| `test_access_control.py` | every session route × anonymous, other org, same org, admin |
+| `test_db_scope.py` | org-scoped SQL |
+| `test_data_integrity.py` | bundle writes, write failures, incomplete AI output |
+| `test_job_reliability.py` | dedupe, retries, timeouts, the transcript job lifecycle, cancellation |
+| `test_performance.py` | the insights cache, field reads, pools, the Redis cooldown, outputs-only polls |
+| `test_pure_functions.py` | metrics and formulas |
+
+`conftest.py` provides `test_database` (needs `TEST_DATABASE_URL`, local only) and `test_redis` (needs `TEST_REDIS_URL`, local, non-zero db index; it flushes that db). `make test-backend` sets both. Tests never call real providers: patch them at the module boundary, for example `monkeypatch.setattr("livestorm_app.transcript_client.fetch_session_transcript", fake)`.

@@ -8,10 +8,9 @@ import { computed } from "vue";
 //            | 'content_repurposing' — controls the "analyzing" label
 //   - isFrench (optional): switches the labels to French
 //
-// Phase 2 commit 3: functional but unstyled beyond the basics. Phase 4
-// (UI polish) is the right time to bring this in line with the brand
-// system — for now we just need the user to see "something is happening
-// and it's progressing."
+// Functional but unstyled beyond the basics; the redesign brings it in
+// line with the brand system. For now the user just needs to see
+// "something is happening and it's progressing."
 
 const props = defineProps({
   job: { type: Object, default: null },

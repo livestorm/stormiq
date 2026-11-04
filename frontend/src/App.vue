@@ -5,7 +5,7 @@ import { api, onUnauthorized } from "./api";
 import SessionHero from "./components/SessionHero.vue";
 import { useWorkspace } from "./store/workspace";
 
-// Phase 4 layout.
+// Layout.
 //
 // Top-level sidebar has three sections: Search / Single Analysis /
 // Cross Analysis. When the active route is /single-analysis/:sessionId/*,
