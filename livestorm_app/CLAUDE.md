@@ -1,10 +1,11 @@
 # Backend
 
-The FastAPI routes are in `../app.py`; everything else is in this package. Route handlers are plain `def` functions, run in FastAPI's threadpool. Module map: [docs/architecture.md](../docs/architecture.md#backend-code).
+The HTTP routes live in `routes/`, one module per area; `../app.py` creates the app and includes their routers in order, with the SPA catch-all (`routes/spa.py`) last. Route handlers are plain `def` functions, run in FastAPI's threadpool. Module map: [docs/architecture.md](../docs/architecture.md#backend-code).
 
 ## Rules
 
 **Access**
+- A new route goes in the router module for its area (`routes/`), never on `app` directly; request bodies go in `routes/models.py`.
 - Routes take their identity from `auth.py`: `Depends(get_caller)`, `Depends(require_admin)` or `Depends(get_optional_caller)`. Never read the session cookie or resolve org ids by hand.
 - Session reads pass the caller's scope (`organization_id=caller.read_scope`). Only admin, local-dev and worker code pass `ALL_ORGS`. A blank scope matches nothing, and an out-of-scope session looks missing (404).
 - Stamp `organization_id` on a row only after the caller's own Livestorm credentials returned the session. → [docs/security.md](../docs/security.md)
@@ -22,7 +23,7 @@ The FastAPI routes are in `../app.py`; everything else is in this package. Route
 
 **Outbound calls**
 - Every HTTP call has a timeout. Retry only failures where nothing was produced or billed; never retry a POST that starts paid work. → [docs/providers.md](../docs/providers.md)
-- The Livestorm HTTP session (`services.livestorm_get`) is shared by all users: no cookies, no per-user state.
+- The Livestorm HTTP session (`livestorm.client.livestorm_get`) is shared by all users: no cookies, no per-user state.
 
 **Workspace reads**
 - Get transcript insights through `api_logic._cached_transcript_insights`, once per read, and copy a shared DataFrame before modifying it.

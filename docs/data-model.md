@@ -103,7 +103,7 @@ Admins are this table plus the `ADMIN_EMAILS` env var (bootstrap admins, who can
 
 ```sql
 system_settings (
-  key        TEXT PRIMARY KEY,                 -- allow-listed in app.py: llm_provider, llm_default_model, llm_smart_recap_model, image_model
+  key        TEXT PRIMARY KEY,                 -- allow-listed in routes/admin.py: llm_provider, llm_default_model, llm_smart_recap_model, image_model
   value      TEXT NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )

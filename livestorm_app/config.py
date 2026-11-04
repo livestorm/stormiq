@@ -52,7 +52,7 @@ OUTPUT_LANGUAGE_MAP = {
 }
 
 # Each distinct language or tone is a separate paid LLM job, so requests
-# outside these sets are rejected (app.py request models + api_logic).
+# outside these sets are rejected (routes/models.py + api_logic).
 SMART_RECAP_TONES = ("professional", "hype", "surprise")
 
 

@@ -5,8 +5,9 @@ fakes. Session `sess-a` belongs to org `org-a` and every payload carries
 MARKER; the tests assert MARKER never reaches anyone outside org-a and that
 outsiders cannot write to the row or enqueue paid work on it.
 
-Session routes are discovered from `app.routes`, so a route added later
-without the auth dependency fails these tests automatically.
+Session routes are discovered from the app's routes (including those added
+through routers), so a route added later without the auth dependency fails
+these tests automatically.
 """
 
 from __future__ import annotations
@@ -15,10 +16,14 @@ import time
 
 import pytest
 import requests
-from fastapi.routing import APIRoute
+from fastapi.routing import APIRoute, iter_route_contexts
 from fastapi.testclient import TestClient
 
 import app as app_module
+from livestorm_app.routes import common as routes_common
+from livestorm_app.routes import models as routes_models
+from livestorm_app.routes import sessions as routes_sessions
+from livestorm_app.routes import spa as routes_spa
 from livestorm_app import api_logic, auth, oauth_client
 from livestorm_app.db import ALL_ORGS
 
@@ -129,7 +134,7 @@ def backend(monkeypatch):
     monkeypatch.setattr(auth, "is_admin_email", lambda email: email == ADMIN_EMAIL)
     monkeypatch.setattr(api_logic, "fetch_cached_session", fake.fetch_cached_session)
     monkeypatch.setattr(api_logic, "fetch_session_fields", fake.fetch_session_fields)
-    monkeypatch.setattr(app_module, "fetch_cover_image", fake.fetch_cover_image)
+    monkeypatch.setattr(routes_sessions, "fetch_cover_image", fake.fetch_cover_image)
     monkeypatch.setattr(api_logic, "upsert_cached_session", fake.upsert_cached_session)
     monkeypatch.setattr(api_logic, "enqueue_unique_job_sync", fake.enqueue_unique_job_sync)
     monkeypatch.setattr(
@@ -168,20 +173,18 @@ QUERY = {"kind": "overall", "tone": "professional", "item": "summary", "language
 BODY = {"tone": "professional", "outputLanguage": "English", "speakerNames": {"spk_0": "Host"}}
 
 
-def _session_routes():
-    for route in app_module.app.routes:
-        if isinstance(route, APIRoute) and route.path.startswith("/api/sessions/{session_id}"):
+def _api_routes(prefix: str):
+    # `app.routes` holds one entry per included router; iter_route_contexts
+    # walks into them and yields every effective route.
+    for context in iter_route_contexts(app_module.app.routes):
+        route = context.original_route
+        if isinstance(route, APIRoute) and context.path.startswith(prefix):
             for method in sorted(route.methods):
-                yield pytest.param(method, route.path, id=f"{method} {route.path}")
+                yield pytest.param(method, context.path, id=f"{method} {context.path}")
 
 
-SESSION_ROUTES = list(_session_routes())
-ADMIN_ROUTES = [
-    pytest.param(method, route.path, id=f"{method} {route.path}")
-    for route in app_module.app.routes
-    if isinstance(route, APIRoute) and route.path.startswith("/api/admin/")
-    for method in sorted(route.methods)
-]
+SESSION_ROUTES = list(_api_routes("/api/sessions/{session_id}"))
+ADMIN_ROUTES = list(_api_routes("/api/admin/"))
 
 
 LOCALHOST = {"Host": "localhost"}
@@ -330,7 +333,7 @@ def test_invalid_session_id_is_rejected(client):
 
 
 def test_speaker_labels_are_capped(client, backend):
-    too_many = {f"spk_{i}": "Host" for i in range(app_module.MAX_SPEAKER_LABELS + 1)}
+    too_many = {f"spk_{i}": "Host" for i in range(routes_models.MAX_SPEAKER_LABELS + 1)}
     response = _call(
         client, "POST", "/api/sessions/{session_id}/speaker-labels",
         cookie="conn-a", body={"speakerNames": too_many},
@@ -438,13 +441,13 @@ def test_frontend_file_resolution_stays_inside_dist(tmp_path):
     (dist / "favicon.ico").write_text("icon")
     (tmp_path / "secret.txt").write_text("secret")
 
-    assert app_module._resolve_frontend_file("favicon.ico", dist) == (dist / "favicon.ico").resolve()
-    assert app_module._resolve_frontend_file("../secret.txt", dist) is None
-    assert app_module._resolve_frontend_file("assets/../../secret.txt", dist) is None
-    assert app_module._resolve_frontend_file("/etc/passwd", dist) is None
-    assert app_module._resolve_frontend_file("bad\x00name", dist) is None
-    assert app_module._resolve_frontend_file("assets", dist) is None  # directories are not served
-    assert app_module._resolve_frontend_file("", dist) is None
+    assert routes_spa._resolve_frontend_file("favicon.ico", dist) == (dist / "favicon.ico").resolve()
+    assert routes_spa._resolve_frontend_file("../secret.txt", dist) is None
+    assert routes_spa._resolve_frontend_file("assets/../../secret.txt", dist) is None
+    assert routes_spa._resolve_frontend_file("/etc/passwd", dist) is None
+    assert routes_spa._resolve_frontend_file("bad\x00name", dist) is None
+    assert routes_spa._resolve_frontend_file("assets", dist) is None  # directories are not served
+    assert routes_spa._resolve_frontend_file("", dist) is None
 
 
 def test_encoded_traversal_does_not_serve_source(client):
@@ -461,7 +464,7 @@ def test_unknown_api_path_is_404_not_the_spa(client):
 
 
 def test_pdf_filename_is_sanitised():
-    response = app_module._pdf_response({"filename": 'evil"\r\nX-Injected: 1.pdf', "content": b"%PDF"})
+    response = routes_common.pdf_response({"filename": 'evil"\r\nX-Injected: 1.pdf', "content": b"%PDF"})
     disposition = response.headers["content-disposition"]
     assert "\r" not in disposition and "\n" not in disposition
     assert disposition.count('"') == 2

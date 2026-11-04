@@ -1,14 +1,15 @@
 """Provider-agnostic LLM client for text generation.
 
-Active provider is selected via the LLM_PROVIDER environment variable:
+Active provider is selected by the `llm_provider` admin setting, else the
+LLM_PROVIDER environment variable:
   "anthropic" (default) — Anthropic Messages API, reads CLAUDE_API_KEY
   "openai"              — OpenAI Chat Completions API, reads OPENAI_API_KEY
 
 Cover image generation always uses the OpenAI Images API regardless of
-LLM_PROVIDER — that logic lives in services.py and is untouched here.
+the provider; that lives in livestorm_app/ai/cover_image.py.
 
-Switching providers: set LLM_PROVIDER and the matching API-key env var,
-then redeploy. No code changes required.
+Switching providers needs the matching API key on the worker; no code
+changes. See docs/providers.md.
 """
 
 from __future__ import annotations

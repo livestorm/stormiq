@@ -63,7 +63,7 @@ Stored as `content_repurpose_bundle: {English: {summary, blog, email, social_med
 
 ## Exports
 
-Every stored AI output has a PDF route, rendered with reportlab in [`services.py`](../livestorm_app/services.py): overall and deep analysis per language, Smart Recap per tone, and each content asset per language.
+Every stored AI output has a PDF route, rendered with reportlab in [`pdf.py`](../livestorm_app/pdf.py): overall and deep analysis per language, Smart Recap per tone, and each content asset per language.
 
 ## Prompts
 

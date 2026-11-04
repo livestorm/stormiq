@@ -44,7 +44,7 @@ from livestorm_app.db import (  # noqa: E402
     get_db_connection,
     upsert_cached_session,
 )
-from livestorm_app.services import fetch_event_details  # noqa: E402
+from livestorm_app.livestorm.client import fetch_event_details  # noqa: E402
 
 
 def _resolve_api_key(cli_value: Optional[str]) -> str:

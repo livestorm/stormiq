@@ -4,12 +4,12 @@ The services StormIQ calls, how models are chosen, and the timeout and retry rul
 
 | Service | Used for | Code | Credentials |
 |---|---|---|---|
-| **Livestorm REST API** | session, event, chat, questions, events list | [`services.livestorm_get`](../livestorm_app/services.py) | the user's OAuth token (or `LS_API_KEY` in local-dev mode) |
+| **Livestorm REST API** | session, event, chat, questions, events list | [`livestorm/client.py`](../livestorm_app/livestorm/client.py) | the user's OAuth token (or `LS_API_KEY` in local-dev mode) |
 | **Livestorm OAuth** | sign-in, token refresh, `/me` | [`oauth_client.py`](../livestorm_app/oauth_client.py) | OAuth client id and secret |
 | **Gladia v2 (pre-recorded)** | transcription with diarization, named entities, sentences and subtitles; the transcriber also fetches the session's recordings from Livestorm | [`gladia/transcriber.py`](../livestorm_app/gladia/transcriber.py) | `GLADIA_KEY` (worker only) |
 | **Anthropic** (default) | overall and deep analysis, Smart Recap, content repurposing, translation | [`llm_client.py`](../livestorm_app/llm_client.py) | `CLAUDE_API_KEY` |
 | **OpenAI Chat Completions** (optional) | the same flows, when the provider is `openai` | [`llm_client.py`](../livestorm_app/llm_client.py) | `OPENAI_API_KEY` |
-| **OpenAI Images** | cover images, whatever the text provider | [`services.py`](../livestorm_app/services.py) | `OPENAI_API_KEY` |
+| **OpenAI Images** | cover images, whatever the text provider | [`ai/cover_image.py`](../livestorm_app/ai/cover_image.py) | `OPENAI_API_KEY` |
 
 ## Choosing the provider and models
 
@@ -31,7 +31,7 @@ Every outbound call has a timeout. Retries are limited to failures that almost a
 | Call | Timeout | Retried on | Not retried |
 |---|---|---|---|
 | LLM (`llm_client._post_with_retry`) | 10 s connect, 300 s read | 429, 500, 502, 503, 504, 529 and connection errors; up to 4 attempts, exponential backoff with jitter, `Retry-After` honoured (capped at 30 s) | read timeouts (the model may still be generating, and billing, that answer); other 4xx |
-| Livestorm API (`services.livestorm_get`, all GETs) | 10 s connect, 30 s read | 429, 5xx and connection errors; 3 retries, backoff 0/1/2 s, `Retry-After` capped at 10 s | other 4xx |
+| Livestorm API (`livestorm.client.livestorm_get`, all GETs) | 10 s connect, 30 s read | 429, 5xx and connection errors; 3 retries, backoff 0/1/2 s, `Retry-After` capped at 10 s | other 4xx |
 | Gladia JSON calls (`transcriber._urlopen_json`) | 60 s socket | status polls ride out up to 4 consecutive timeouts, 429s or 5xx; the Livestorm recordings GET gets up to 3 attempts | starting a transcription (a POST: a retry could pay twice); 4xx |
 | Gladia upload, recording download | 120 s, 60 s socket | — | — |
 | Livestorm OAuth (token exchange, refresh, `/me`) | 60 s | — | — |
