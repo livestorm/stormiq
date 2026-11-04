@@ -107,58 +107,75 @@ Server-side secrets used by the backend (never sent to the client): `CLAUDE_API_
 
 ## 5. Processing Flow
 
-### Session fetch (synchronous + threaded job)
+### Session fetch
 
 ```
 User selects a session
-→ POST /api/sessions/{id}/fetch  (full data)
-   or /fetch-base   (just session payload)
-   or /fetch-transcript (just transcript)
+→ POST /api/sessions/{id}/fetch-base        (session + chat + questions, synchronous)
+   then /fetch-transcript                    (starts the transcript job, see below)
+   /fetch does both in one call and returns the base workspace plus
+   `transcriptJob: {jobId, jobStatus}` (or the full workspace when the
+   transcript is already cached). The frontend uses fetch-base + fetch-transcript.
 
 Backend:
-  1. Check session_cache.session_payload → return cached if present (and not force_refresh)
+  1. Check session_cache → return cached if present (and not force_refresh)
   2. Fetch session payload, chat, questions from Livestorm API
   3. Upsert into session_cache
-  4. For transcript: start a *threaded* background job (see below) — returns
-     immediately with { jobId, jobStatus: "pending" }
+  4. Transcript: enqueue a worker job, return { jobId, jobStatus } at once
   5. Frontend polls GET /api/sessions/{id}/transcript-job every 6s
-  6. When job completes: return full workspace payload
+  6. When job completes: the poll returns the full workspace payload
 ```
+
+Transcription never runs inside a web request: the web process does not import the Gladia client.
 
 ### Transcript transcription (queue-backed)
 
 ```
 POST /api/sessions/{id}/fetch-transcript
 → fetch_session_transcript_data:
-   1. Return cached workspace if transcript_payload is already present.
-   2. Re-attach to an in-flight job (transcript_jobs.status in 'pending'/'running')
-      to dedupe concurrent fetches for the same session.
-   3. Otherwise: insert transcript_jobs row, enqueue `run_transcription` arq job,
-      return { jobId, jobStatus: 'pending' } immediately.
+   1. Return cached workspace if transcript_payload is already present
+      (unless force_refresh).
+   2. If the session has an active job (transcript_jobs.status in
+      'pending'/'running'), attach to it — force_refresh included. Before
+      attaching, ask arq whether that job is still alive; if arq reports it
+      failed, or has no trace of it 2 minutes after the row was last updated
+      (Redis restart, deploy), the row is marked 'error' and a new job starts.
+   3. Otherwise: insert a transcript_jobs row and enqueue `run_transcription`
+      with arq id `transcription:{job_id}`, return { jobId, jobStatus: 'pending' }.
+      The partial unique index allows one active row per session; a request
+      that loses the insert race attaches to the winner's job.
 
-Worker (livestorm_app.worker.run_transcription):
-   1. Mark transcript_jobs.status = 'running'.
-   2. Publish stage='fetching_recording' to Redis.
-   3. asyncio.to_thread(fetch_session_transcript, ...) — Gladia download +
-      upload + poll. The Gladia step→stage mapping inside on_progress
-      writes to both transcript_jobs.progress (legacy DB) and Redis
-      stage-floor progress.
-   4. Publish stage='persisting', upsert session_cache.transcript_payload.
-   5. Mark transcript_jobs.status = 'completed', publish stage='done', clear
-      Redis progress after a 2s hold so slow pollers still catch 100%.
-   6. On any exception: status='error', error_message persisted, Redis cleared.
-      arq retries are disabled for this job (max_tries=1) — failures are
-      mostly deterministic and re-runs cost Gladia money.
+Worker (livestorm_app.worker.run_transcription(job_id, session_id)):
+   1. Claim the row: 'pending' → 'running' in one UPDATE that also reads
+      and clears transcript_jobs.connection_id. A row that is no longer
+      'pending' (swept, closed as lost) is skipped: no paid work.
+   2. Wait for a transcription slot (MAX_CONCURRENT_TRANSCRIPTIONS = 2 per
+      worker; download + ffmpeg are memory-heavy). While waiting, progress
+      is refreshed every minute so the sweeper leaves the row alone.
+   3. Resolve credentials: GLADIA_KEY from the worker env; the Livestorm token
+      from the claimed connection id (refreshed if close to expiry). Job args
+      hold only job_id and session_id: arq stores them in Redis and logs
+      them, and a connection id is also the user's session cookie.
+   4. asyncio.to_thread(fetch_session_transcript, ...) — download + upload +
+      Gladia poll. Progress goes to transcript_jobs.progress and to Redis.
+   5. Upsert session_cache.transcript_payload, mark 'completed', clear progress.
+   6. On any exception, timeout or cancellation (worker shutdown):
+      status='error' with a message, progress cleared. arq retries are disabled
+      (max_tries=1) — failures are mostly deterministic and re-runs cost
+      Gladia money. The user retries from the UI.
 
-Frontend polls GET /api/sessions/{id}/transcript-job every 6s. The response
-carries both `progress` (legacy DB shape — raw Gladia step payload) and
-`progressRedis` (new stage-floor shape with percent). Phase 2 commit 3
-wires the frontend to prefer `progressRedis`.
+Frontend polls GET /api/sessions/{id}/transcript-job every 6s. Each poll also
+reconciles the row with arq (as in step 2), so a job that died in the queue
+shows as an error within minutes instead of after the sweeper's hour. The
+response carries `progress` (raw Gladia step payload) and `progressRedis`
+(stage-floor shape with percent).
 ```
 
-**Migration status (Phase 2 commit 1):** the legacy `threading.Thread` path has been deleted. The arq worker is now the **only** transcription path. App restarts no longer drop in-flight jobs — they survive in Redis, and the stuck-job sweeper (every 10 minutes, see [worker.py](livestorm_app/worker.py)) marks any genuinely stalled `transcript_jobs` row as `error` so the UI can surface it. While Gladia processes, the transcriber reports progress on every status change and at least once a minute (`PROGRESS_HEARTBEAT_SECONDS`), which keeps `updated_at` fresh; `running` or `pending` rows silent for an hour are swept. A job that finishes after being swept still writes `completed`. If saving the transcript fails, the job is marked `error`, never `completed`.
+The arq worker is the **only** transcription path. The stuck-job sweeper (every 10 minutes, see [worker.py](livestorm_app/worker.py)) is the backstop: `running` or `pending` rows silent for an hour are marked `error`. While Gladia processes, the transcriber reports progress on every status change and at least once a minute (`PROGRESS_HEARTBEAT_SECONDS`), which keeps `updated_at` fresh. A job that finishes after being swept still writes `completed`. If saving the transcript fails, the job is marked `error`, never `completed`.
 
-**Auto-enqueue Professional Smart Recap (Phase 4 follow-up):** when `run_transcription` finishes successfully, it now reads the cache and — if `smart_recap_bundle.professional` is empty — enqueues `run_smart_recap_job(session_id, 'professional')` automatically. Every newly transcribed session ends up with a Professional recap in the cache without the user clicking Generate. The recap is the input for the planned card-cover-image generator. Failures to enqueue are logged and swallowed so a Redis hiccup never rolls back a successful transcription.
+**Smart Recap is on-demand only**: nothing generates it automatically.
+
+**Cover images** are generated by `run_cover_image_job` in exactly two cases: after a Professional Smart Recap completes (the worker chains it, unless the session already has a cover) and by `scripts/backfill_cover_images.py`. Reading a session never starts one. The arq id is `cover_image:{session_id}`, so a cover that is queued, running, or failed within the last hour (arq's retained result) is not started again. Failures are logged and swallowed so a broken image generator never fails the recap.
 
 ### AI generation (queue-backed — overall / deep / smart recap / content repurposing)
 
@@ -171,7 +188,28 @@ POST /api/sessions/{id}/content-repurposing -> enqueue content repurposing job
 Each POST response is one of:
   - the full serialised workspace (cache hit — the requested bundle is
     already present for the requested language/tone), OR
-  - { jobId, jobKind, jobStatus: 'pending', language|tone } (job enqueued).
+  - { jobId, jobKind, jobStatus: 'pending'|'running', language|tone }
+    (job enqueued, or the same job already in flight).
+
+Request validation: `outputLanguage` must be English or French and `tone`
+one of professional / hype / surprise (422 otherwise). Every distinct value
+would be a separate paid LLM job.
+
+Dedupe: the arq job id is deterministic, `{kind}:{session_id}:{language|tone}`
+(queue.ai_job_id). arq refuses a second job with that id while one is queued
+or running, so double-clicks and teammates generating the same output share
+one job. arq also keeps a finished job's result for an hour under that id;
+`queue.enqueue_unique_job_sync` clears it when the user asks again (e.g.
+retry after an error), so a failure never blocks a retry. The poll routes
+derive the job id from the session, kind and language/tone; the `jobId`
+query parameter is ignored, because predictable ids must not let a caller
+read another session's job.
+
+If the worker process is killed mid-job (OOM, not a normal shutdown), arq
+keeps reporting that job as running until its in-progress key expires:
+the longest job timeout plus 10 s, so about 2 hours. Until then the same
+output can't be regenerated (deleting `arq:in-progress:{job id}` in Redis
+frees it).
 
 Frontend polls every 4-6s:
   GET /api/sessions/{id}/analysis/job?jobId=...&language=English
@@ -192,9 +230,16 @@ Worker side (livestorm_app.worker):
   - run_content_repurposing_job(ctx, session_id, output_language)
 Each reads the active LLM provider's key (CLAUDE_API_KEY by default, OPENAI_API_KEY when
 LLM_PROVIDER=openai) from its own env, publishes stage-floor progress
-to Redis ('queued' → 'loading_sources' → 'building_prompt' → 'analyzing'
-→ 'persisting' → 'done'), and wraps the existing sync runner in
-asyncio.to_thread so the worker event loop stays responsive.
+to Redis ('queued' → 'loading_sources' → 'building_prompt' → 'analyzing'),
+wraps the existing sync runner in asyncio.to_thread so the worker event
+loop stays responsive, and clears progress as soon as it finishes or fails
+(pollers read the durable cache first, so no 'done' marker has to linger).
+
+Job timeouts (WorkerSettings.functions): AI flows 15 min, cover image 5 min,
+transcription 120 min. A timeout fails the job; the thread it started is not
+killed, which is why every HTTP call also has its own timeout (§12). A
+cancelled transcription also signals its thread, which stops at its next
+progress report (within a minute while Gladia is processing).
 
 Sources of truth:
   - "is this done?"  → session_cache (durable)
@@ -384,12 +429,18 @@ transcript_jobs (
   status      TEXT NOT NULL DEFAULT 'pending',   -- 'pending' | 'running' | 'completed' | 'error'
   error       TEXT,
   progress    TEXT,                              -- JSON-encoded progress dict from Gladia poll
+  connection_id TEXT,                            -- OAuth connection that started the job (NULL = LS_API_KEY, local dev).
+                                                 -- Read and cleared when the worker claims the job; cleared when it ends.
+                                                 -- Never returned by any route (it is also the session cookie value).
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )
 -- Indexes:
 --   idx_transcript_jobs_session_id          (session_id, created_at DESC)
 --   idx_transcript_jobs_status_updated_at   (status, updated_at)   -- used by the stuck-job sweeper
+--   idx_transcript_jobs_one_active_per_session  UNIQUE (session_id) WHERE status IN ('pending','running')
+--       at most one active transcription per session; db.create_transcript_job uses
+--       INSERT … ON CONFLICT DO NOTHING and attaches to the existing job
 ```
 
 ### `admin_users`
@@ -452,7 +503,7 @@ All routes are FastAPI handlers in [app.py](app.py). Frontend wrapper in [fronte
 | `/api/sessions/{id}/cover.png` | GET | caller | Cover image (`Cache-Control: private`) |
 | `/api/sessions/{id}` | GET | caller | Read cached workspace (404 if not cached) |
 | `/api/sessions/{id}/cached` | GET | caller | Same, but returns 204 instead of 404 when missing |
-| `/api/sessions/{id}/fetch` | POST | caller | Full fetch (session + chat + questions + start transcript) |
+| `/api/sessions/{id}/fetch` | POST | caller | Full fetch: session + chat + questions, then start the transcript job (`transcriptJob` in the response until the transcript is cached) |
 | `/api/sessions/{id}/fetch-base` | POST | caller | Fetch session payload only |
 | `/api/sessions/{id}/fetch-transcript` | POST | caller | Start transcript job, return jobId |
 | `/api/sessions/{id}/transcript-job` | GET | caller | Poll transcript job status / progress |
@@ -460,9 +511,9 @@ All routes are FastAPI handlers in [app.py](app.py). Frontend wrapper in [fronte
 | `/api/sessions/{id}/analysis` | POST | caller | Run Overall Analysis (English or French) |
 | `/api/sessions/{id}/deep-analysis` | POST | caller | Run Deep Analysis (English or French) |
 | `/api/sessions/{id}/analysis-pdf` | GET | caller | Render Overall or Deep PDF (`kind`, `language` query params) |
-| `/api/sessions/{id}/smart-recap` | POST | caller | Run Smart Recap for a tone |
+| `/api/sessions/{id}/smart-recap` | POST | caller | Run Smart Recap for a tone (`professional`, `hype`, `surprise`; 422 otherwise) |
 | `/api/sessions/{id}/smart-recap-pdf` | GET | caller | Render Smart Recap PDF |
-| `/api/sessions/{id}/content-repurposing` | POST | caller | Run Content Repurposing bundle (4 assets) |
+| `/api/sessions/{id}/content-repurposing` | POST | caller | Run Content Repurposing bundle (4 assets, English or French) |
 | `/api/sessions/{id}/content-repurposing-pdf` | GET | caller | Render a single asset PDF |
 | `/api/sessions/{id}/{flow}/job` | GET | caller | Poll an AI job: `analysis`, `deep-analysis`, `smart-recap`, `content-repurposing` (§5) |
 
@@ -489,7 +540,7 @@ chat-analysis/                      # repo name; product name is StormIQ
 │   ├── db.py                       # psycopg connection, schema bootstrap, session_cache + oauth + jobs CRUD
 │   ├── config.py                   # Constants: URLs, model names, prompt paths, .env loader
 │   ├── oauth_client.py             # Livestorm OAuth PKCE flow, token refresh, profile extraction
-│   ├── queue.py                    # Redis + arq queue: get_redis_url, get_arq_pool, enqueue_job (Phase 1)
+│   ├── queue.py                    # Redis + arq queue: deterministic job ids, enqueue_unique_job_sync, job status
 │   ├── progress.py                 # Redis-backed stage-floor progress reporting (Phase 1)
 │   ├── worker.py                   # arq worker entry-point + stuck-job sweeper cron (Phase 1)
 │   ├── llm_client.py               # LLM provider abstraction (Anthropic default, OpenAI optional) — §12
@@ -576,6 +627,20 @@ Smart Recap uses a stronger model than the other flows regardless of provider.
 
 **Truncation:** `call_llm` checks why the model stopped (`stop_reason == "max_tokens"` on Anthropic, `finish_reason == "length"` on OpenAI). A truncated answer is retried once with double the token budget (capped at `TRUNCATION_RETRY_MAX_TOKENS`, 16,000); if it is still cut off, `LLMOutputTruncated` is raised and nothing is saved.
 
+### Retries and timeouts
+
+Every outbound call has a timeout. Retries are limited to failures that almost always mean nothing was produced or billed (a gateway 502/504 or a dropped connection can occasionally hide a billed LLM answer; that rare double charge is accepted over failing the job):
+
+| Call | Timeout | Retried on | Not retried |
+|---|---|---|---|
+| LLM (`llm_client._post_with_retry`) | 10 s connect, 300 s read | 429, 500, 502, 503, 504, 529 and connection errors; up to 4 attempts, exponential backoff with jitter, `Retry-After` honoured (capped at 30 s) | read timeouts (the model may still be generating and billing that answer), other 4xx |
+| Livestorm API (`services.livestorm_get`, all GETs) | 10 s connect, 30 s read | 429, 5xx and connection errors; 3 retries, backoff 0/1/2 s, `Retry-After` capped at 10 s | other 4xx |
+| Gladia JSON calls (`transcriber._urlopen_json`) | 60 s socket | status polls ride out up to 4 consecutive timeouts / 429 / 5xx; the recordings GET is retried 3 times | starting a transcription (a POST, so a retry could pay twice); 4xx |
+| Gladia upload / recording download | 120 s / 60 s socket | — | — |
+| OpenAI Images (cover) | 180 s | — | — |
+
+The Livestorm HTTP session is shared by every user's requests, so it keeps no cookies.
+
 ### Gladia configuration
 
 `DEFAULT_GLADIA_OPTIONS` in [gladia/transcriber.py](livestorm_app/gladia/transcriber.py):
@@ -610,7 +675,7 @@ SESSION_SECRET                # Recommended; HMAC key for the OAuth handshake co
                               # LIVESTORM_OAUTH_CLIENT_SECRET; there is no hard-coded fallback.
 
 # Transcription
-GLADIA_KEY                    # Required to fetch new transcripts
+GLADIA_KEY                    # Required on the worker to transcribe (read from the worker's env, never passed through the queue)
 
 # Database
 DATABASE_URL                  # Required. Also accepts POSTGRES_URL or RENDER_POSTGRES_URL
@@ -626,6 +691,7 @@ IMAGE_QUALITY                 # Optional; default high
 
 # Tests only
 TEST_DATABASE_URL             # Optional; enables real-Postgres tests. Must be a local host (conftest refuses others)
+TEST_REDIS_URL                # Optional; enables real-Redis queue tests. Local host and a dedicated db index (e.g. /15): the fixture flushes it
 
 PORT                          # Set by Render; defaults to 10000
 ```
@@ -650,6 +716,8 @@ The web Dockerfile is a two-stage build: a Node stage builds the frontend, and t
 **Base images are pinned to exact versions**: `node:26.13.0-bookworm-slim` (frontend build only; Node never runs in production) and `python:3.13.18-slim-trixie` (web and worker runtime). Floating tags let a cached, unpatched base survive rebuilds. The Node version lives in `frontend/.nvmrc` (CI reads it) and must match the Dockerfile; `engines.node` in `frontend/package.json` sets the patched minimum (`>=26.12.1`, Node.js October 2026 security release). Bump all three together.
 
 **Health check**: `GET /api/health` returns `{"status": "ok"}`. `render.yaml` sets it as the web service's `healthCheckPath` (Render waits for it before routing to a new deploy), and the web image has a matching Docker `HEALTHCHECK`. Worker has no HTTP health check — Render's process-running signal is the liveness check.
+
+**Worker environment**: the worker resolves every credential itself, because job arguments (stored in Redis) never carry secrets. It needs `DATABASE_URL`, `REDIS_URL`, `GLADIA_KEY`, the LLM key (`CLAUDE_API_KEY` or `OPENAI_API_KEY`), `OPENAI_API_KEY` for covers, and `LIVESTORM_OAUTH_CLIENT_ID` / `LIVESTORM_OAUTH_CLIENT_SECRET` to refresh a user's Livestorm token when a queued transcription starts close to its expiry. It logs a warning at startup when `GLADIA_KEY` is missing. Each worker runs at most `MAX_CONCURRENT_TRANSCRIPTIONS` (2) transcriptions at once; more wait for a slot.
 
 **Local development never uses the production database.** `docker-compose.yml` provides a local Postgres (loopback port 5433) and Redis; copy `.env.example` to `.env` to start.
 
@@ -684,7 +752,8 @@ cd frontend && npm install && npm run dev           # in a third terminal
 
 ```bash
 ruff check .
-TEST_DATABASE_URL=postgresql://stormiq:stormiq@localhost:5433/stormiq pytest   # omit the var to skip DB tests
+TEST_DATABASE_URL=postgresql://stormiq:stormiq@localhost:5433/stormiq \
+TEST_REDIS_URL=redis://localhost:6379/15 pytest   # omit either var to skip those tests
 cd frontend && npm run lint && npm run build
 
 # Change Python dependencies: edit requirements.in (or requirements-dev.in), then re-run the
@@ -742,6 +811,7 @@ Security, data-integrity, reliability and performance fixes from the November 20
 - ✅ **PR 1 `fix/security-org-scoping`**: fail-closed access control (§4), `livestorm_app/auth.py`, path-traversal fix in the SPA route, local-dev mode behind `STORMIQ_LOCAL_DEV` instead of the Host header, Secure cookies, CORS removed, handshake expiry enforced, upstream error details no longer returned, route-matrix test suite.
 - ✅ **PR 2 `chore/safety-net`**: local Postgres in compose and `.env.example`; hashed dependency locks (uv); ruff and ESLint, with the issues they found fixed; real-Postgres and pure-function tests; CI; slimmer non-root images with health checks; Node 24 build stage; docs drift fixed.
 - ✅ **PR 3 `fix/data-integrity`**: atomic per-entry bundle writes (`merge_cached_bundle_entry`); `account_key_hash` insert-only; database write failures raise instead of being swallowed; empty, truncated or incomplete AI output fails the job instead of saving partial results; transcription heartbeat for the stuck-job sweeper.
+- ✅ **PR 4 `fix/job-reliability-cost`**: deterministic arq job ids replace the Redis in-flight marker, and a failed job can be retried at once; reading a session never starts a paid cover image (and the post-recap cover trigger works again); one active transcription per session (partial unique index), with dead queue jobs detected instead of blocking for an hour; `/fetch` no longer transcribes inside the web request; retries with backoff and timeouts on every LLM, Livestorm and Gladia call; per-job timeouts, a two-transcription concurrency cap, and cancellation handling; no credentials in job arguments (the worker reads the Gladia key from its env and the user's connection from the job row); language and tone validated before any paid job; AI job polls no longer trust a client-supplied job id.
 
 ### Shipped (current state)
 - Livestorm OAuth (PKCE) + API-key fallback for local dev
@@ -779,7 +849,7 @@ Branch: `feature/worker-redis-infra`.
 
 **Phase 2 cleanup** (branch `feature/phase-2-cleanup`):
 
-- ✅ **Server-side AI-job dedupe**: rapid double-clicks on Generate no longer enqueue duplicate jobs. `_start_ai_job` now writes an in-flight marker to Redis (`stormiq:ai-job:in-flight:{kind}:{session_id}:{dimension}`, TTL 1h) before enqueuing. Subsequent calls within the marker's lifetime that find the underlying arq job still pending/running get the existing job_id back. Stale markers (arq says complete/error/not_found) are self-healing — the lookup clears them and falls through to enqueue fresh.
+- ✅ **Server-side AI-job dedupe**: rapid double-clicks on Generate no longer enqueue duplicate jobs. (Originally a Redis in-flight marker; since hardening PR 4, a deterministic arq job id — see §5.)
 - ✅ **Transcript view → progressRedis**: transcript polling now populates `state.aiJobs.transcript` from the `progressRedis` field on each poll response. All four transcript-loading panels (TranscriptView + AnalysisView + SmartRecapView + ContentRepurposingView) render `<AiJobProgress flow="transcript">` instead of just the legacy Gladia step message. Stage labels (fetching_recording / uploading_to_gladia / transcribing / post_processing / persisting / done) added to `AiJobProgress` in EN and FR.
 
 ### Phase 4 — Workspace UX + shareable session URLs (branch `feature/phase-4-workspace-ui`)

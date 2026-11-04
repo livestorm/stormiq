@@ -72,3 +72,31 @@ def test_database(monkeypatch):
     finally:
         with psycopg.connect(url, autocommit=True) as conn:
             conn.execute(f'DROP SCHEMA "{schema}" CASCADE')
+
+
+@pytest.fixture
+def test_redis(monkeypatch):
+    """A real Redis for queue tests, flushed before and after each test.
+
+    Skips unless TEST_REDIS_URL is set (e.g. redis://localhost:6379/15).
+    Refuses non-local hosts and database 0 (the app's default), because the
+    fixture flushes the whole database.
+    """
+    import redis
+
+    url = os.environ.get("TEST_REDIS_URL", "").strip()
+    if not url:
+        pytest.skip("TEST_REDIS_URL is not set (docker compose up -d redis)")
+    parsed = urlparse(url)
+    if (parsed.hostname or "") not in _LOCAL_DB_HOSTS | {"redis"}:
+        pytest.fail(f"TEST_REDIS_URL must point at a local Redis, not {parsed.hostname!r}")
+    if parsed.path.strip("/") in ("", "0"):
+        pytest.fail("TEST_REDIS_URL must name a dedicated database index, e.g. redis://localhost:6379/15")
+    monkeypatch.setenv("REDIS_URL", url)
+    client = redis.Redis.from_url(url)
+    client.flushdb()
+    try:
+        yield client
+    finally:
+        client.flushdb()
+        client.close()

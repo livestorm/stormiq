@@ -35,6 +35,18 @@ PROGRESS_HEARTBEAT_SECONDS = 60
 # Gladia standard plan supports up to 135 min per request; enterprise up to 255 min.
 GLADIA_MAX_AUDIO_CHUNK_SECONDS = 135 * 60
 LIVESTORM_API_BASE = "https://api.livestorm.co/v1"
+# Socket timeout for every JSON call (Gladia and Livestorm). Without one, a
+# stalled connection would hang the worker thread forever.
+HTTP_TIMEOUT_SECONDS = 60
+# A paid transcription can poll for 30+ minutes; a brief network or Gladia
+# hiccup must not throw it away. Give up after this many failed polls in a row.
+GLADIA_POLL_MAX_CONSECUTIVE_ERRORS = 5
+# GETs to Livestorm (recording list) are retried this many times in total.
+LIVESTORM_GET_MAX_ATTEMPTS = 3
+
+
+class TransientHTTPError(RuntimeError):
+    """A failure worth retrying: timeout, dropped connection, HTTP 429 or 5xx."""
 DEFAULT_GLADIA_OPTIONS: dict[str, Any] = {
     "diarization": True,
     "diarization_config": {
@@ -242,14 +254,26 @@ def _json_request(
         headers["content-type"] = "application/json"
 
     request = urllib.request.Request(url=url, data=data, headers=headers, method=method)
+    return _urlopen_json(request, "Gladia API request")
+
+
+def _urlopen_json(request: urllib.request.Request, label: str) -> dict[str, Any]:
+    """Send `request` with a timeout and decode the JSON body.
+
+    Raises TransientHTTPError for failures worth retrying (timeouts, dropped
+    connections, HTTP 429/5xx) and RuntimeError for everything else.
+    """
     try:
-        with urllib.request.urlopen(request) as response:
+        with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         details = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Gladia API request failed with HTTP {exc.code}: {details}") from exc
+        error_class = TransientHTTPError if exc.code == 429 or exc.code >= 500 else RuntimeError
+        raise error_class(f"{label} failed with HTTP {exc.code}: {details}") from exc
     except urllib.error.URLError as exc:
-        raise RuntimeError(f"Gladia API request failed: {exc.reason}") from exc
+        raise TransientHTTPError(f"{label} failed: {exc.reason}") from exc
+    except (TimeoutError, ConnectionError) as exc:
+        raise TransientHTTPError(f"{label} failed: {type(exc).__name__}") from exc
 
 
 def _upload_audio_file(audio_path: Path, api_key: str) -> dict[str, Any]:
@@ -378,13 +402,23 @@ def _poll_gladia_transcription(
     last_payload: dict[str, Any] | None = None
     last_gladia_status: str | None = None
     last_reported_at = 0.0
+    consecutive_errors = 0
 
     while time.monotonic() < deadline:
-        payload = _json_request(
-            method="GET",
-            url=f"{GLADIA_API_BASE}{GLADIA_PRE_RECORDED_PATH}/{job_id}",
-            api_key=api_key,
-        )
+        try:
+            payload = _json_request(
+                method="GET",
+                url=f"{GLADIA_API_BASE}{GLADIA_PRE_RECORDED_PATH}/{job_id}",
+                api_key=api_key,
+            )
+        except TransientHTTPError:
+            # The Gladia job keeps running server-side; just poll again.
+            consecutive_errors += 1
+            if consecutive_errors >= GLADIA_POLL_MAX_CONSECUTIVE_ERRORS:
+                raise
+            time.sleep(GLADIA_POLL_INTERVAL_SECONDS * (2 ** consecutive_errors))
+            continue
+        consecutive_errors = 0
         last_payload = payload
         status = str(payload.get("status") or "").strip().lower()
 
@@ -819,14 +853,14 @@ def _fetch_livestorm_recordings(session_id: str, livestorm_api_key: str | None =
         },
         method="GET",
     )
-    try:
-        with urllib.request.urlopen(request) as response:
-            return json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        details = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Livestorm API request failed with HTTP {exc.code}: {details}") from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"Livestorm API request failed: {exc.reason}") from exc
+    for attempt in range(1, LIVESTORM_GET_MAX_ATTEMPTS + 1):
+        try:
+            return _urlopen_json(request, "Livestorm API request")
+        except TransientHTTPError:
+            if attempt == LIVESTORM_GET_MAX_ATTEMPTS:
+                raise
+            time.sleep(2 ** attempt)
+    raise AssertionError("unreachable: the last attempt returns or raises")
 
 
 def _select_recording(payload: dict[str, Any]) -> dict[str, Any]:

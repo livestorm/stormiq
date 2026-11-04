@@ -86,9 +86,11 @@ def ai_job_backend(monkeypatch):
     enqueued: list = []
     rows: dict = {}
     monkeypatch.setattr(api_logic, "fetch_cached_session", lambda key, sid, *, organization_id: rows.get(sid))
-    monkeypatch.setattr(api_logic, "enqueue_job_sync", lambda *args, **kwargs: enqueued.append(args) or "job-1")
-    monkeypatch.setattr(api_logic, "get_in_flight_ai_job_id", lambda *a, **k: None)
-    monkeypatch.setattr(api_logic, "set_in_flight_ai_job_id", lambda *a, **k: None)
+    monkeypatch.setattr(
+        api_logic,
+        "enqueue_unique_job_sync",
+        lambda *args, **kwargs: enqueued.append(args) or {"jobId": args[1], "jobStatus": "pending", "enqueued": True},
+    )
     monkeypatch.setattr(api_logic, "_serialize_cached_session", lambda sid, cached: {"sessionId": sid, "outputs": {}})
     return rows, enqueued
 
@@ -106,7 +108,7 @@ def test_french_analysis_is_enqueued_once_english_exists(ai_job_backend):
     rows["s1"] = {"analysis_bundle": {"English": "# Analysis"}}
     response = api_logic.start_overall_analysis("s1", "French", organization_id="org-a")
     assert response["jobStatus"] == "pending" and response["language"] == "French"
-    assert enqueued == [("run_overall_analysis_job", "s1", "French")]
+    assert enqueued == [("run_overall_analysis_job", "overall_analysis:s1:French", "s1", "French")]
 
 
 def test_cached_language_returns_the_workspace_without_enqueueing(ai_job_backend):

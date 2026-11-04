@@ -30,9 +30,19 @@ jobs:
           --health-interval 3s
           --health-timeout 3s
           --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 20
     env:
-      # Enables the real-database tests (tests/test_db_scope.py).
+      # Enable the real-database and real-queue tests (they skip without these).
       TEST_DATABASE_URL: postgresql://stormiq:stormiq@localhost:5432/stormiq
+      TEST_REDIS_URL: redis://localhost:6379/15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

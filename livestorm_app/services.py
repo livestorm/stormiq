@@ -5,12 +5,15 @@ import math
 import re
 import sys
 from collections import Counter
+from http.cookiejar import DefaultCookiePolicy
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from livestorm_app.config import (
     ANALYSIS_ALL_SOURCES_PROMPT_PATH,
@@ -64,6 +67,49 @@ def build_headers(key: str) -> Dict[str, str]:
         "Authorization": key,
         "accept": "application/vnd.api+json",
     }
+
+
+# ── Livestorm HTTP ────────────────────────────────────────────────────────────
+#
+# Every Livestorm call is a GET, so retrying is safe: rate limits (429),
+# transient server errors and dropped connections are retried with
+# exponential backoff (0s, 1s, 2s). A long `Retry-After` is capped so a web
+# request never sleeps for minutes. After the last attempt the final
+# response is returned and the caller's `raise_for_status()` reports it.
+
+LIVESTORM_TIMEOUT = (10, 30)  # (connect, read) seconds
+LIVESTORM_MAX_RETRY_AFTER_SECONDS = 10.0
+
+
+class _CappedRetry(Retry):
+    def get_retry_after(self, response):  # type: ignore[override]
+        value = super().get_retry_after(response)
+        return None if value is None else min(value, LIVESTORM_MAX_RETRY_AFTER_SECONDS)
+
+
+def _build_livestorm_http() -> requests.Session:
+    retry = _CappedRetry(
+        total=3,
+        backoff_factor=0.5,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset({"GET"}),
+        respect_retry_after_header=True,
+        raise_on_status=False,
+    )
+    session = requests.Session()
+    # Shared by every user's requests: never keep cookies between them.
+    session.cookies.set_policy(DefaultCookiePolicy(allowed_domains=[]))
+    session.mount("https://", HTTPAdapter(max_retries=retry))
+    session.mount("http://", HTTPAdapter(max_retries=retry))
+    return session
+
+
+_livestorm_http = _build_livestorm_http()
+
+
+def livestorm_get(url: str, *, headers: Dict[str, str], params: Optional[Dict[str, Any]] = None) -> requests.Response:
+    """GET a Livestorm API URL with retries and timeouts (see above)."""
+    return _livestorm_http.get(url, headers=headers, params=params, timeout=LIVESTORM_TIMEOUT)
 
 
 def format_livestorm_http_error(exc: requests.HTTPError, resource_label: str) -> str:
@@ -481,11 +527,10 @@ def fetch_chat_messages(key: str, session: str, page_size: int = DEFAULT_PAGE_SI
             break
         seen_pages.add(page_number)
 
-        resp = requests.get(
+        resp = livestorm_get(
             url,
             headers=headers,
             params={"page[number]": page_number, "page[size]": page_size},
-            timeout=30,
         )
         resp.raise_for_status()
         payload = resp.json()
@@ -529,11 +574,10 @@ def fetch_session_questions(key: str, session: str, page_size: int = DEFAULT_PAG
             break
         seen_pages.add(page_number)
 
-        resp = requests.get(
+        resp = livestorm_get(
             url,
             headers=headers,
             params={"page[number]": page_number, "page[size]": page_size, "include": "asker,responder"},
-            timeout=30,
         )
         resp.raise_for_status()
         payload = resp.json()
@@ -573,11 +617,10 @@ def fetch_session_questions(key: str, session: str, page_size: int = DEFAULT_PAG
 
 
 def fetch_session_details(key: str, session: str) -> Dict[str, Any]:
-    resp = requests.get(
+    resp = livestorm_get(
         f"{API_BASE}/sessions/{session}",
         headers=build_headers(key),
         params={"include": "people"},
-        timeout=30,
     )
     resp.raise_for_status()
     payload = resp.json()
@@ -591,10 +634,9 @@ def fetch_event_details(key: str, event_id: str) -> Dict[str, Any]:
     list view can show the event title (sessions themselves rarely have
     a `name` set — they're identified by their parent event).
     """
-    resp = requests.get(
+    resp = livestorm_get(
         f"{API_BASE}/events/{event_id}",
         headers=build_headers(key),
-        timeout=30,
     )
     resp.raise_for_status()
     payload = resp.json()
@@ -616,11 +658,10 @@ def fetch_event_past_sessions(key: str, event: str, page_size: int = DEFAULT_PAG
             break
         seen_pages.add(page_number)
 
-        resp = requests.get(
+        resp = livestorm_get(
             url,
             headers=headers,
             params={"page[number]": page_number, "page[size]": page_size, "filter[status]": "past"},
-            timeout=30,
         )
         resp.raise_for_status()
         payload = resp.json()
@@ -664,11 +705,10 @@ def fetch_workspace_events_page(
         params["filter[title]"] = normalized_title
     if normalized_status:
         params["filter[scheduling_status]"] = normalized_status
-    resp = requests.get(
+    resp = livestorm_get(
         url,
         headers=headers,
         params=params,
-        timeout=30,
     )
     resp.raise_for_status()
     payload = resp.json()

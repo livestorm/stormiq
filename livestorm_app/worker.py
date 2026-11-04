@@ -4,40 +4,48 @@ Run with:
     arq livestorm_app.worker.WorkerSettings
 
 The worker is a separate OS process. It consumes jobs enqueued by the
-FastAPI app (via `livestorm_app.queue.enqueue_job`). Phase 1 ships the
-worker scaffolding only — no production flow has been migrated yet, so
-the registered functions are a no-op `ping` (to prove the worker is
-healthy end-to-end) plus the stuck-job sweeper cron.
+FastAPI app (via `livestorm_app.queue.enqueue_unique_job_sync`):
 
-Phase 2 will replace `ping` with real job handlers for:
-    - run_transcription(session_id, livestorm_api_key, gladia_api_key)
-    - run_overall_analysis(session_id, output_language)
-    - run_deep_analysis(session_id, output_language)
-    - run_smart_recap(session_id, tone)
-    - run_content_repurposing(session_id, output_language)
+    - run_transcription(job_id, session_id)
+    - run_overall_analysis_job(session_id, output_language)
+    - run_deep_analysis_job(session_id, output_language)
+    - run_smart_recap_job(session_id, tone)
+    - run_content_repurposing_job(session_id, output_language)
+    - run_cover_image_job(session_id)   (chained after a Professional recap)
+
+plus a no-op `ping` and the stuck-job sweeper cron.
 
 Hard rules:
 - Job handlers receive `ctx` (arq's per-job context) as their first arg
-  and a structured payload after. Never pass positional args through the
-  queue beyond the bare minimum — push complex shapes into TypedDicts
-  defined in `queue.py`.
+  and a minimal payload after. Job args are stored in Redis and logged by
+  arq: never pass a secret, or a connection id (it is also the user's
+  session cookie). API keys come from the worker's own env; Livestorm
+  credentials are resolved from the connection id stored on the job's
+  `transcript_jobs` row (`db.claim_transcript_job`, then
+  `auth.livestorm_auth_for_job`).
 - Every handler must publish progress at each meaningful stage via
   `livestorm_app.progress.publish_progress`. The UI depends on it.
 - On any error, the handler is responsible for writing the failure state
-  to Postgres before re-raising. arq's retry logic kicks in after that.
+  to Postgres before re-raising. Nothing is retried (`max_tries=1`).
+- Each job kind has its own timeout (`WorkerSettings.functions`).
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+import threading
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict
+from typing import Any, AsyncIterator, Dict
 
 from arq import cron
+from arq.worker import func
 
-from livestorm_app.config import load_env_file
+from livestorm_app.config import get_runtime_secret, load_env_file
 from livestorm_app.db import (
+    ALL_ORGS,
+    claim_transcript_job,
     database_enabled,
     ensure_database_schema,
     fetch_cached_session,
@@ -50,7 +58,7 @@ from livestorm_app.progress import (
     clear_progress_sync,
     publish_progress_sync,
 )
-from livestorm_app.queue import get_redis_settings
+from livestorm_app.queue import cover_image_job_id, get_redis_settings
 
 
 logger = logging.getLogger(__name__)
@@ -98,6 +106,7 @@ def _sweep_stuck_transcript_jobs_sync() -> int:
                     UPDATE transcript_jobs
                     SET status = 'error',
                         error = 'sweeper: job stalled with no progress updates',
+                        connection_id = NULL,
                         updated_at = NOW()
                     WHERE status IN ('pending', 'running')
                       AND updated_at < %s
@@ -149,17 +158,61 @@ async def ping(ctx: Dict[str, Any]) -> str:
 #   - Redis via `publish_progress_sync('transcript', session_id, ...)` —
 #     new stage-floor progress; future-proof for the AI flows in commit 2.
 #
-# The Gladia transcriber is sync (uses `requests` under the hood) and may
-# take 30-45 minutes on a 2-hour recording. We push it into a thread via
+# The Gladia transcriber is sync (urllib under the hood) and may take
+# 30-45 minutes on a 2-hour recording. We push it into a thread via
 # `asyncio.to_thread` so the worker's event loop stays responsive for
 # other jobs. The callback runs INSIDE that thread, so it uses the sync
 # Redis writer — async would need a running loop the thread doesn't have.
 #
-# arq's default job_timeout is 300s — way too short for a long Gladia
-# call. The enqueue site passes `_job_try=1, _expires=...` etc.; this
-# function relies on the WorkerSettings.job_timeout override below.
+# Timeouts are per job kind (see WorkerSettings.functions). A timeout
+# cancels the coroutine, but a thread started with `asyncio.to_thread`
+# runs to completion regardless; the HTTP timeouts inside the clients
+# are what bound it. Cancellation is handled so the DB row never stays
+# 'running' after a timeout or a worker shutdown.
 
-TRANSCRIPTION_JOB_TIMEOUT_SECONDS = 60 * 90  # 90 min — fits Gladia's 135-min chunk cap with margin
+TRANSCRIPTION_JOB_TIMEOUT_SECONDS = 60 * 120  # download + ffmpeg + upload + Gladia on a long recording
+LLM_JOB_TIMEOUT_SECONDS = 60 * 15  # up to two LLM calls (truncation or completeness retry), 5-min read timeout each
+COVER_IMAGE_JOB_TIMEOUT_SECONDS = 60 * 5  # one Images call, 3-min HTTP timeout
+
+# Transcriptions download the recording and run ffmpeg locally; more than a
+# couple at once can exhaust the starter instance's memory. Extra jobs wait
+# for a slot (the wait counts toward their timeout).
+MAX_CONCURRENT_TRANSCRIPTIONS = 2
+TRANSCRIPTION_SLOT_HEARTBEAT_SECONDS = 60
+
+
+@contextlib.asynccontextmanager
+async def _transcription_slot(ctx: Dict[str, Any], job_id: str) -> AsyncIterator[None]:
+    """Hold one of the worker's transcription slots for the duration of a job.
+
+    While waiting, the job's progress is refreshed every minute: that keeps
+    `transcript_jobs.updated_at` fresh (so the stuck-job sweeper leaves it
+    alone) and tells the user why nothing is happening yet.
+    """
+    slots = ctx.get("transcription_slots") if isinstance(ctx, dict) else None
+    if slots is None:
+        yield
+        return
+    while True:
+        try:
+            await asyncio.wait_for(slots.acquire(), timeout=TRANSCRIPTION_SLOT_HEARTBEAT_SECONDS)
+            break
+        except asyncio.TimeoutError:
+            update_transcript_job_progress(job_id, {
+                "step": "waiting",
+                "message": "Waiting for another transcription to finish…",
+            })
+    try:
+        yield
+    finally:
+        slots.release()
+
+
+def _read_gladia_key_or_raise() -> str:
+    key = str(get_runtime_secret("GLADIA_KEY", "") or "").strip()
+    if not key:
+        raise RuntimeError("GLADIA_KEY is not configured on the worker. Transcription is unavailable.")
+    return key
 
 
 def _map_gladia_step_to_stage(step: str) -> str:
@@ -182,35 +235,49 @@ def _map_gladia_step_to_stage(step: str) -> str:
 async def run_transcription(
     ctx: Dict[str, Any],
     job_id: str,
-    api_key: str,
     session_id: str,
-    gladia_api_key: str,
 ) -> Dict[str, Any]:
     """Fetch + transcribe a Livestorm recording, persist to session_cache.
 
     Args:
-        job_id:          transcript_jobs.job_id created at enqueue time
-        api_key:         resolved Livestorm auth (raw key or "Bearer <token>")
-        session_id:      target Livestorm session
-        gladia_api_key:  Gladia transcription API key
+        job_id:      transcript_jobs.job_id created at enqueue time
+        session_id:  target Livestorm session
+
+    The job args hold no credentials (arq stores them in Redis and logs
+    them). The Livestorm credential reference is read from the job's row
+    when the job is claimed; the Gladia key comes from the worker's env.
 
     Returns a small status payload (for arq's result cache); the real
-    result lives in `session_cache.transcript_payload`.
+    result lives in `session_cache.transcript_payload`. A job whose row is
+    no longer 'pending' (swept, closed as lost) is skipped without paid work.
 
-    On error: marks transcript_jobs as 'error', clears Redis progress,
-    re-raises so arq logs the failure. arq's retry is intentionally NOT
-    configured for this job — see WorkerSettings note below.
+    On error, timeout or cancellation: marks transcript_jobs as 'error',
+    clears Redis progress, re-raises so arq records the failure. arq's
+    retry is intentionally NOT configured for this job — see
+    WorkerSettings note below.
     """
     # Import the sync Gladia client lazily so the worker can boot even
     # when imageio_ffmpeg or other transcoding deps are missing on a
     # given host (the import would otherwise fire at module load).
+    from livestorm_app.auth import livestorm_auth_for_job
     from livestorm_app.transcript_client import fetch_session_transcript
 
     logger.info("[run_transcription] job_id=%s session_id=%s start", job_id, session_id)
-    update_transcript_job_status(job_id, "running")
+    claim = claim_transcript_job(job_id)
+    if claim is None:
+        logger.warning("[run_transcription] job_id=%s is no longer pending; skipping", job_id)
+        return {"jobId": job_id, "status": "skipped"}
+    connection_id = claim["connection_id"]
     publish_progress_sync("transcript", session_id, "queued")
 
+    # Set when the job is cancelled (timeout, shutdown). The transcription
+    # thread can't be killed, but it stops at its next progress report
+    # instead of running on (and holding resources) after the job failed.
+    cancelled = threading.Event()
+
     def on_gladia_progress(progress: Dict[str, Any]) -> None:
+        if cancelled.is_set():
+            raise RuntimeError("Transcription job was cancelled; stopping.")
         # 1) Legacy DB write — keeps the existing /transcript-job endpoint
         #    working unchanged.
         update_transcript_job_progress(job_id, progress)
@@ -227,25 +294,37 @@ async def run_transcription(
         )
 
     try:
-        publish_progress_sync("transcript", session_id, "fetching_recording")
-        transcript_payload = await asyncio.to_thread(
-            fetch_session_transcript,
-            gladia_api_key,
-            session_id,
-            livestorm_api_key=api_key,
-            on_progress=on_gladia_progress,
-        )
+        gladia_api_key = _read_gladia_key_or_raise()
+        async with _transcription_slot(ctx, job_id):
+            # Resolved after the wait for a slot, so the token is fresh.
+            api_key = await asyncio.to_thread(livestorm_auth_for_job, connection_id)
+            publish_progress_sync("transcript", session_id, "fetching_recording")
+            transcript_payload = await asyncio.to_thread(
+                fetch_session_transcript,
+                gladia_api_key,
+                session_id,
+                livestorm_api_key=api_key,
+                on_progress=on_gladia_progress,
+            )
         publish_progress_sync("transcript", session_id, "persisting")
         upsert_cached_session(api_key, session_id, transcript_payload=transcript_payload)
         update_transcript_job_status(job_id, "completed")
-        publish_progress_sync("transcript", session_id, "done")
-        # Hold the 'done' marker briefly so a slow poller can see the
-        # 100% before it disappears, then clear so the next run starts
-        # from a clean slate.
-        await asyncio.sleep(2)
+        # Pollers read the durable cache first, so progress can go at once.
         clear_progress_sync("transcript", session_id)
         logger.info("[run_transcription] job_id=%s session_id=%s done", job_id, session_id)
         return {"jobId": job_id, "status": "completed"}
+    except asyncio.CancelledError:
+        # Timeout or worker shutdown. CancelledError is not an Exception,
+        # so without this the row would stay 'running' until the sweeper.
+        cancelled.set()
+        logger.warning("[run_transcription] job_id=%s session_id=%s cancelled", job_id, session_id)
+        update_transcript_job_status(
+            job_id,
+            "error",
+            error="The transcription was interrupted (time limit reached or worker restarted). Please try again.",
+        )
+        clear_progress_sync("transcript", session_id)
+        raise
     except Exception as exc:
         logger.exception("[run_transcription] job_id=%s session_id=%s failed", job_id, session_id)
         update_transcript_job_status(job_id, "error", error=str(exc))
@@ -288,10 +367,11 @@ async def _run_ai_job(
     `sync_runner` is the existing sync function in api_logic.py
     (run_overall_analysis / run_deep_analysis / etc.). Called inside
     `asyncio.to_thread` so the worker's event loop stays responsive.
+    The runner persists its own result before returning.
 
-    Always clears Redis progress on completion or failure. On success,
-    holds the 'done' marker for 2 seconds so slow pollers see the 100%
-    state before it disappears.
+    Always clears Redis progress on completion, failure, timeout or
+    cancellation. Pollers check the durable cache before progress, so
+    no 'done' marker needs to linger (and no worker slot is held for it).
     """
     logger.info("[%s] session_id=%s start", kind, session_id)
     publish_progress_sync(kind, session_id, "queued")
@@ -300,16 +380,13 @@ async def _run_ai_job(
         publish_progress_sync(kind, session_id, "building_prompt")
         publish_progress_sync(kind, session_id, "analyzing")
         result = await asyncio.to_thread(sync_runner, *runner_args)
-        publish_progress_sync(kind, session_id, "persisting")
-        publish_progress_sync(kind, session_id, "done")
-        await asyncio.sleep(2)
-        clear_progress_sync(kind, session_id)
         logger.info("[%s] session_id=%s done", kind, session_id)
         return result if isinstance(result, dict) else {"status": "ok"}
     except Exception:
         logger.exception("[%s] session_id=%s failed", kind, session_id)
-        clear_progress_sync(kind, session_id)
         raise
+    finally:
+        clear_progress_sync(kind, session_id)
 
 
 async def run_overall_analysis_job(
@@ -437,14 +514,15 @@ async def run_cover_image_job(
 async def _enqueue_default_cover_image(ctx: Dict[str, Any], session_id: str) -> None:
     """Fire-and-forget enqueue of the cover image after a Professional recap.
 
-    Skips when a cover already exists in the cache. Mirrors the
-    `_enqueue_default_smart_recap` pattern: failures are logged and
-    swallowed so a broken image generator never bubbles into the
-    recap or transcription path.
+    This is the only automatic cover trigger (page reads never start one).
+    Skips when a cover already exists. The fixed job id means a cover that
+    is already queued, running, or failed within the last hour (arq's
+    retained result) is not started again. Failures are logged and
+    swallowed so a broken image generator never bubbles into the recap.
     """
     try:
-        cached = await asyncio.to_thread(fetch_cached_session, "", session_id)
-        if (cached or {}).get("cover_image_bytes"):
+        cached = await asyncio.to_thread(fetch_cached_session, "", session_id, organization_id=ALL_ORGS)
+        if (cached or {}).get("has_cover_image"):
             logger.info(
                 "[run_smart_recap_job] session_id=%s already has cover image; skipping",
                 session_id,
@@ -457,7 +535,15 @@ async def _enqueue_default_cover_image(ctx: Dict[str, Any], session_id: str) -> 
                 session_id,
             )
             return
-        await redis_pool.enqueue_job("run_cover_image_job", session_id)
+        job = await redis_pool.enqueue_job(
+            "run_cover_image_job", session_id, _job_id=cover_image_job_id(session_id),
+        )
+        if job is None:
+            logger.info(
+                "[run_smart_recap_job] session_id=%s cover job already queued or ran within the last hour; skipping",
+                session_id,
+            )
+            return
         logger.info(
             "[run_smart_recap_job] session_id=%s auto-enqueued run_cover_image_job",
             session_id,
@@ -485,6 +571,11 @@ async def on_startup(ctx: Dict[str, Any]) -> None:
         ensure_database_schema()
     except Exception:
         logger.exception("[worker] ensure_database_schema failed on startup")
+    # Created here so it binds to the worker's event loop; arq copies ctx
+    # into every job, so all jobs share this one semaphore.
+    ctx["transcription_slots"] = asyncio.Semaphore(MAX_CONCURRENT_TRANSCRIPTIONS)
+    if not str(get_runtime_secret("GLADIA_KEY", "") or "").strip():
+        logger.warning("[worker] GLADIA_KEY is not set: transcription jobs will fail.")
     logger.info("[worker] startup complete")
 
 
@@ -504,35 +595,29 @@ class WorkerSettings:
 
     Defaults intentionally NOT customised:
     - `max_jobs` (default 10) — sized for one host with light parallelism.
-    - `job_timeout` (default 300s) — overridden per-job in Phase 2 for
-      long transcriptions.
+      Transcriptions are further capped by MAX_CONCURRENT_TRANSCRIPTIONS.
     - `keep_result` (default 3600s) — results stay in Redis 1h for polling.
+      With deterministic job ids this also blocks an identical job for an
+      hour; `queue.enqueue_unique_job_sync` clears it when a user retries.
+    - `job_timeout` (default 300s) — applies to `ping` only; every real
+      job sets its own timeout below.
     """
 
     redis_settings = get_redis_settings()
 
     functions = [
         ping,
-        run_transcription,
-        run_overall_analysis_job,
-        run_deep_analysis_job,
-        run_smart_recap_job,
-        run_content_repurposing_job,
-        run_cover_image_job,
+        func(run_transcription, timeout=TRANSCRIPTION_JOB_TIMEOUT_SECONDS),
+        func(run_overall_analysis_job, timeout=LLM_JOB_TIMEOUT_SECONDS),
+        func(run_deep_analysis_job, timeout=LLM_JOB_TIMEOUT_SECONDS),
+        func(run_smart_recap_job, timeout=LLM_JOB_TIMEOUT_SECONDS),
+        func(run_content_repurposing_job, timeout=LLM_JOB_TIMEOUT_SECONDS),
+        func(run_cover_image_job, timeout=COVER_IMAGE_JOB_TIMEOUT_SECONDS),
     ]
 
     cron_jobs = [
         cron(sweep_stuck_jobs, minute={0, 10, 20, 30, 40, 50}, run_at_startup=False),
     ]
-
-    # Global default. The transcription job's actual upper bound is set
-    # at enqueue time via `_job_try` / `_expires` kwargs to enqueue_job
-    # so other (faster) jobs don't inherit this ceiling. arq itself uses
-    # max(job_timeout, _timeout-at-enqueue) — we set the global to the
-    # transcription ceiling so the worker never SIGKILLs a long Gladia
-    # call mid-poll. AI flow jobs (Phase 2 commit 2) are bounded much
-    # tighter at their enqueue sites.
-    job_timeout = TRANSCRIPTION_JOB_TIMEOUT_SECONDS
 
     # Transcription is NOT retried automatically:
     # - It costs money on Gladia (audio uploaded again)

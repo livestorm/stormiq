@@ -4,16 +4,16 @@ The worker process consumes jobs from these queues. The web process enqueues
 jobs into them. Both processes share the same Redis instance.
 
 CLAUDE.md §5 (processing flow) + §14 (deployment) describe how this fits
-into the rest of the app. Phase 1 ships the infrastructure only — no flow
-has been migrated to the queue yet, so the `functions` registered in the
-worker are currently scaffolding (one no-op + the stuck-job sweeper).
-Phase 2 wires real jobs into this same machinery.
+into the rest of the app.
 
 Hard rules:
 - The worker is a separate OS process. Never call worker functions
-  directly from FastAPI handlers — enqueue them via `enqueue_job`.
-- Redis is a hard dependency once Phase 1 ships. Health-check at startup
-  so misconfiguration fails loudly instead of silently dropping jobs.
+  directly from FastAPI handlers — enqueue them via `enqueue_unique_job_sync`.
+- Every job has a deterministic id (see "Job ids" below), so the same
+  work can never be queued twice at once.
+- Job arguments are stored in Redis. Never put a secret in them (API keys,
+  OAuth tokens): pass a reference such as a connection id and let the
+  worker resolve it.
 """
 
 from __future__ import annotations
@@ -23,10 +23,9 @@ import logging
 import os
 from typing import Any, Dict, Optional, TypedDict
 
-import redis as redis_sync
-
 from arq import create_pool
 from arq.connections import ArqRedis, RedisSettings
+from arq.constants import result_key_prefix
 
 
 logger = logging.getLogger(__name__)
@@ -54,7 +53,7 @@ _pool: Optional[ArqRedis] = None
 
 
 async def get_arq_pool() -> ArqRedis:
-    """Singleton arq pool for enqueuing jobs from FastAPI handlers.
+    """Singleton arq pool for enqueuing jobs from async code.
 
     arq pools are long-lived. Reuse one per process. Created lazily so
     importing this module doesn't open a connection.
@@ -77,19 +76,13 @@ async def close_arq_pool() -> None:
 
 
 # ── Job type hints ──────────────────────────────────────────────────────────
-#
-# Phase 2 will add concrete TypedDicts for each migrated flow (transcription,
-# overall analysis, deep analysis, smart recap, content repurposing). Keeping
-# the shape here so handlers always pass a structured dict rather than
-# positional args — easier to evolve, easier to log.
 
 
 class JobMeta(TypedDict, total=False):
     """Fields every job carries for observability + accounting.
 
-    `session_id`  — the session the job operates on (always present once
-                    flows migrate; nullable here only because cron jobs
-                    like the sweeper don't have one).
+    `session_id`  — the session the job operates on (nullable only for
+                    cron jobs like the sweeper).
     `enqueued_by` — `"web"` for handler-enqueued, `"cron"` for scheduled.
     """
 
@@ -97,15 +90,41 @@ class JobMeta(TypedDict, total=False):
     enqueued_by: str
 
 
-# ── Enqueue helper ──────────────────────────────────────────────────────────
+# ── Job ids ─────────────────────────────────────────────────────────────────
+#
+# arq refuses to enqueue a job whose id already has a queued job or a
+# retained result (`keep_result`, 1 hour by default). Deterministic ids
+# turn that into dedupe: two clicks on Generate, or two teammates opening
+# the same session, share one job instead of paying for two.
+
+
+def ai_job_id(kind: str, session_id: str, dimension: str) -> str:
+    """One job per (AI flow, session, language or tone)."""
+    return f"{kind}:{str(session_id).strip()}:{str(dimension or '').strip() or '_'}"
+
+
+def cover_image_job_id(session_id: str) -> str:
+    """One cover job per session. The retained result doubles as a cooldown:
+    after a failure, the cover is not retried automatically for an hour."""
+    return f"cover_image:{str(session_id).strip()}"
+
+
+def transcription_job_id(transcript_job_id: str) -> str:
+    """arq id for a `transcript_jobs` row. The row's partial unique index
+    (one active job per session) is the dedupe; this id lets the web
+    process ask arq whether the job behind a row is still alive."""
+    return f"transcription:{str(transcript_job_id).strip()}"
+
+
+# ── Enqueue ─────────────────────────────────────────────────────────────────
 
 
 async def enqueue_job(function_name: str, *args: Any, **kwargs: Any) -> Optional[str]:
-    """Enqueue a job by name. Async — use from worker / async handlers.
+    """Enqueue a job by name from async code.
 
-    Returns the job id, or None on failure. Thin wrapper around
-    `pool.enqueue_job` that swallows connection errors so a Redis hiccup
-    never bubbles up into a 500.
+    Returns the job id, or None on failure or when `_job_id` is already
+    taken. Swallows connection errors so a Redis hiccup never bubbles up
+    into a 500.
     """
     try:
         pool = await get_arq_pool()
@@ -116,60 +135,74 @@ async def enqueue_job(function_name: str, *args: Any, **kwargs: Any) -> Optional
         return None
 
 
-def enqueue_job_sync(function_name: str, *args: Any, **kwargs: Any) -> Optional[str]:
-    """Enqueue a job from sync code (e.g. a sync FastAPI handler).
+def enqueue_unique_job_sync(
+    function_name: str,
+    job_id: str,
+    *args: Any,
+    **kwargs: Any,
+) -> Optional[Dict[str, Any]]:
+    """Enqueue `function_name` under a fixed `job_id`, or join the live job.
 
-    FastAPI runs `def` handlers in a threadpool — there's no event loop
-    in those threads, so we can't `await` from them. This helper spins up
-    a short-lived event loop just to enqueue, then tears it down. The
-    overhead is a few ms per call; fine for our enqueue rate.
+    For sync code (FastAPI runs `def` handlers in a threadpool with no event
+    loop). Returns `{jobId, jobStatus, enqueued}`:
 
-    Returns the job id, or None on failure.
+        enqueued=True,  jobStatus='pending'            a new job was queued
+        enqueued=False, jobStatus='pending'|'running'  the same job is
+                                                       already in flight
 
-    Do NOT call this from inside an `async def` handler — use `enqueue_job`
-    there, since asyncio.run() inside a running loop raises.
+    A finished job (completed or failed) only blocks re-enqueueing through
+    its retained result. The caller asked to run the work again, so that
+    result is cleared and the job queued afresh: this is what lets a user
+    retry after an error. Returns None when Redis is unreachable.
     """
     try:
-        return asyncio.run(_enqueue_one_shot(function_name, *args, **kwargs))
+        return asyncio.run(_enqueue_unique(function_name, job_id, *args, **kwargs))
     except Exception:
-        logger.exception("Failed to enqueue arq job %s (sync)", function_name)
+        logger.exception("Failed to enqueue arq job %s (%s)", function_name, job_id)
         return None
 
 
-async def _enqueue_one_shot(function_name: str, *args: Any, **kwargs: Any) -> Optional[str]:
-    # Create a fresh pool inside this event loop. The module-level cached
-    # pool (if any) belongs to a different loop and can't be reused; per-call
-    # connection setup is the price of a one-shot enqueue.
+async def _enqueue_unique(function_name: str, job_id: str, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+    # A fresh pool per call: the module-level pool belongs to another event
+    # loop and can't be reused from asyncio.run().
     pool = await create_pool(get_redis_settings())
     try:
-        job = await pool.enqueue_job(function_name, *args, **kwargs)
-        return job.job_id if job is not None else None
+        for _attempt in range(2):
+            job = await pool.enqueue_job(function_name, *args, _job_id=job_id, **kwargs)
+            if job is not None:
+                return {"jobId": job_id, "jobStatus": "pending", "enqueued": True}
+            status = await _job_status(pool, job_id)
+            if status["jobStatus"] in ("pending", "running"):
+                return {"jobId": job_id, "jobStatus": status["jobStatus"], "enqueued": False}
+            # Finished (or gone between the two calls): drop the retained
+            # result so the id is free, then enqueue again.
+            await pool.delete(result_key_prefix + job_id)
+        status = await _job_status(pool, job_id)
+        return {"jobId": job_id, "jobStatus": status["jobStatus"], "enqueued": False}
     finally:
         await pool.close()
 
 
 # ── Job status lookup (sync) ───────────────────────────────────────────────
 #
-# Sync wrapper around arq's `Job.status()`. Used by the AI-flow polling
-# endpoints. The status enum is normalised to the same vocabulary the
-# transcription flow already uses, so the frontend handles all four AI
-# polls + the transcript poll with one shape:
+# Sync wrapper around arq's `Job.status()`. Used by the polling endpoints.
+# The status enum is normalised to the same vocabulary the transcription
+# flow already uses, so the frontend handles every poll with one shape:
 #
 #     'pending'    — enqueued but not yet picked up (arq: deferred|queued)
 #     'running'    — worker has picked it up (arq: in_progress)
 #     'completed'  — worker finished successfully (arq: complete, no error)
 #     'error'      — worker raised; `error` field carries the message
-#     'not_found'  — job_id unknown or expired (arq keeps results for 1h
-#                    by default; after that, status falls back to not_found
-#                    and the polling endpoint should consult session_cache
-#                    for the durable result instead)
+#     'not_found'  — job_id unknown or expired (arq keeps results for 1h;
+#                    after that the polling endpoint relies on
+#                    session_cache for the durable result instead)
+#     'unknown'    — Redis could not be reached
 
 
 def read_job_status_sync(job_id: str) -> Dict[str, Any]:
     """Read an arq job's status from sync code. Never raises.
 
-    Returns: `{ jobStatus: str, error?: str }`. See module docstring for
-    the normalised status vocabulary.
+    Returns: `{ jobStatus: str, error?: str }`. See the vocabulary above.
     """
     if not str(job_id or "").strip():
         return {"jobStatus": "not_found"}
@@ -181,29 +214,32 @@ def read_job_status_sync(job_id: str) -> Dict[str, Any]:
 
 
 async def _read_job_status_async(job_id: str) -> Dict[str, Any]:
-    from arq.jobs import Job, JobStatus
-
     pool = await create_pool(get_redis_settings())
     try:
-        job = Job(job_id, pool)
-        status = await job.status()
-        if status == JobStatus.not_found:
-            return {"jobStatus": "not_found"}
-        if status == JobStatus.complete:
-            try:
-                # timeout=0 returns immediately. Raises ResultNotFound if the
-                # job is somehow complete-without-result; raises whatever the
-                # worker raised if the job errored.
-                await job.result(timeout=0)
-                return {"jobStatus": "completed"}
-            except Exception as exc:
-                return {"jobStatus": "error", "error": str(exc)}
-        if status == JobStatus.in_progress:
-            return {"jobStatus": "running"}
-        # deferred or queued — both surface as "pending" to the frontend.
-        return {"jobStatus": "pending"}
+        return await _job_status(pool, job_id)
     finally:
         await pool.close()
+
+
+async def _job_status(pool: ArqRedis, job_id: str) -> Dict[str, Any]:
+    from arq.jobs import Job, JobStatus
+
+    job = Job(job_id, pool)
+    status = await job.status()
+    if status == JobStatus.not_found:
+        return {"jobStatus": "not_found"}
+    if status == JobStatus.complete:
+        try:
+            # timeout=0 returns immediately. Raises whatever the worker
+            # raised if the job errored.
+            await job.result(timeout=0)
+            return {"jobStatus": "completed"}
+        except Exception as exc:
+            return {"jobStatus": "error", "error": str(exc) or type(exc).__name__}
+    if status == JobStatus.in_progress:
+        return {"jobStatus": "running"}
+    # deferred or queued — both surface as "pending" to the frontend.
+    return {"jobStatus": "pending"}
 
 
 # ── Job kind registry ──────────────────────────────────────────────────────
@@ -218,87 +254,3 @@ AI_JOB_KINDS = frozenset({
     "smart_recap",
     "content_repurposing",
 })
-
-
-# ── In-flight job dedupe ───────────────────────────────────────────────────
-#
-# Server-side guard against rapid double-clicks on the Generate button.
-# Without this, each click enqueues a fresh job (worker logs after the
-# Phase 2 deploy showed 3 identical run_overall_analysis_job invocations
-# from a single page session — the frontend disable flag races the user).
-#
-# Key shape: stormiq:ai-job:in-flight:{kind}:{session_id}:{dimension}
-# Value:     the arq job_id
-# TTL:       1 hour — covers the longest plausible job runtime; arq's
-#            default keep_result is also 1 hour, so the two lifetimes are
-#            naturally aligned.
-#
-# Used by _start_ai_job in api_logic.py: before enqueuing, look up an
-# existing job id for the same (kind, session, dimension). If found AND
-# the arq job is still pending/running, return that job_id instead of
-# enqueuing a duplicate. The worker doesn't have to clean the key up
-# explicitly — the lookup path verifies arq state and self-heals on
-# stale keys.
-
-IN_FLIGHT_TTL_SECONDS = 60 * 60
-
-
-def _in_flight_key(kind: str, session_id: str, dimension: str) -> str:
-    safe_kind = str(kind or "").strip()
-    safe_session = str(session_id or "").strip()
-    safe_dim = str(dimension or "").strip() or "_"
-    return f"stormiq:ai-job:in-flight:{safe_kind}:{safe_session}:{safe_dim}"
-
-
-_sync_redis_client: Optional[redis_sync.Redis] = None
-
-
-def _get_sync_redis() -> redis_sync.Redis:
-    global _sync_redis_client
-    if _sync_redis_client is None:
-        _sync_redis_client = redis_sync.Redis.from_url(get_redis_url(), decode_responses=True)
-    return _sync_redis_client
-
-
-def get_in_flight_ai_job_id(kind: str, session_id: str, dimension: str) -> Optional[str]:
-    """Look up the in-flight arq job id for this (kind, session, dimension).
-
-    Returns None when there's no marker, the marker has expired, or Redis
-    is unreachable. Callers should treat any non-None return as "maybe
-    in flight" and verify via `read_job_status_sync` before reusing.
-    """
-    try:
-        value = _get_sync_redis().get(_in_flight_key(kind, session_id, dimension))
-        return str(value).strip() if value else None
-    except Exception:
-        logger.warning(
-            "get_in_flight_ai_job_id failed for %s/%s/%s", kind, session_id, dimension, exc_info=True,
-        )
-        return None
-
-
-def set_in_flight_ai_job_id(kind: str, session_id: str, dimension: str, job_id: str) -> None:
-    """Record an in-flight arq job. Overwrites any previous marker for the
-    same key (the new job has effectively superseded it)."""
-    try:
-        _get_sync_redis().set(
-            _in_flight_key(kind, session_id, dimension),
-            str(job_id).strip(),
-            ex=IN_FLIGHT_TTL_SECONDS,
-        )
-    except Exception:
-        logger.warning(
-            "set_in_flight_ai_job_id failed for %s/%s/%s", kind, session_id, dimension, exc_info=True,
-        )
-
-
-def clear_in_flight_ai_job_id(kind: str, session_id: str, dimension: str) -> None:
-    """Drop the in-flight marker. Called by callers that detect a stale
-    marker (arq says completed/error/not_found). Safe to call when the
-    key doesn't exist."""
-    try:
-        _get_sync_redis().delete(_in_flight_key(kind, session_id, dimension))
-    except Exception:
-        logger.warning(
-            "clear_in_flight_ai_job_id failed for %s/%s/%s", kind, session_id, dimension, exc_info=True,
-        )

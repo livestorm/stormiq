@@ -3,12 +3,13 @@ from __future__ import annotations
 import json
 import logging
 import math
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 import requests
 
-from livestorm_app.config import OUTPUT_LANGUAGE_MAP
+from livestorm_app.config import OUTPUT_LANGUAGE_MAP, SMART_RECAP_TONES
 from livestorm_app.llm_client import get_llm_model
 from livestorm_app.db import (
     ALL_ORGS,
@@ -24,11 +25,10 @@ from livestorm_app.db import (
 from livestorm_app.progress import read_progress
 from livestorm_app.queue import (
     AI_JOB_KINDS,
-    clear_in_flight_ai_job_id,
-    enqueue_job_sync,
-    get_in_flight_ai_job_id,
+    ai_job_id,
+    enqueue_unique_job_sync,
     read_job_status_sync,
-    set_in_flight_ai_job_id,
+    transcription_job_id,
 )
 from livestorm_app.services import (
     _bundle_has_all_sections,
@@ -71,8 +71,6 @@ from livestorm_app.session_overview import (
     build_session_overview_data,
     extract_session_attributes,
 )
-from livestorm_app.transcript_client import fetch_session_transcript
-
 logger = logging.getLogger(__name__)
 
 
@@ -289,51 +287,9 @@ def get_cached_workspace(session_id: str, *, organization_id: OrgScope) -> Optio
     cached = fetch_cached_session("", session_id, organization_id=organization_id)
     if not isinstance(cached, dict):
         return None
-    # Backfill cover image when recap is present but image is missing.
-    # Smart Recap is on-demand only — this never auto-enqueues recap.
-    _maybe_enqueue_default_outputs(cached, session_id)
+    # Reads never start paid work. Cover images are generated only after a
+    # Professional Smart Recap (worker) or by scripts/backfill_cover_images.py.
     return _serialize_cached_session(session_id, cached)
-
-
-def _maybe_enqueue_default_outputs(cached: Dict[str, Any], session_id: str) -> None:
-    """Backfill cover image on cache-hit reads when recap is present but cover is missing.
-
-    Smart Recap is now on-demand only — this helper no longer auto-enqueues
-    it. The cover image is still triggered automatically after the user
-    generates the Professional recap (via the worker's run_smart_recap_job
-    chain). This function handles the backfill case: sessions where the recap
-    already exists but the cover was never generated (e.g. pre-cover-image
-    rows, or worker failures on the image step).
-
-    Fire-and-forget. Failures logged and swallowed.
-    """
-    if not isinstance(cached, dict):
-        return
-
-    sid = str(session_id or "").strip()
-    if not sid:
-        return
-
-    smart_bundle = cached.get("smart_recap_bundle") or {}
-    has_recap = (
-        isinstance(smart_bundle, dict)
-        and str(smart_bundle.get("professional") or "").strip() != ""
-    )
-    if not has_recap:
-        return
-
-    if not cached.get("has_cover_image"):
-        try:
-            job_id = enqueue_job_sync("run_cover_image_job", sid)
-            if job_id:
-                logger.info(
-                    "[get_cached_workspace] auto-enqueued cover_image for session_id=%s",
-                    sid,
-                )
-        except Exception:
-            logger.warning(
-                "Failed to auto-enqueue cover_image for %s", sid, exc_info=True,
-            )
 
 
 # ── Workspace sessions list (Phase 4) ──────────────────────────────────────
@@ -604,66 +560,37 @@ def _fetch_event_payload_safe(api_key: str, event_id: str) -> Optional[Dict[str,
 
 def fetch_all_session_data(
     api_key: str,
-    transcript_api_key: str,
     session_id: str,
     force_refresh: bool = False,
     *,
+    job_connection_id: str,
     read_scope: OrgScope,
     organization_id: str = "",
     created_by_user_id: str = "",
     created_by_email: str = "",
     created_by_name: str = "",
 ) -> Dict[str, Any]:
-    """Fetch session + chat + questions + transcript, cache-first.
+    """Fetch session + chat + questions, then start the transcript job.
 
-    `read_scope` governs cache lookups (what the caller may read).
-    `organization_id` is the caller's own org, stamped on newly created rows.
+    Returns the full workspace when the transcript is already cached;
+    otherwise the base workspace plus `transcriptJob: {jobId, jobStatus}`
+    to poll. Transcription always runs in the worker, never inside a web
+    request. Scope args as in `fetch_session_base_data`.
     """
-    session_id = str(session_id or "").strip()
-    cached = (
-        None if force_refresh
-        else fetch_cached_session(api_key, session_id, organization_id=read_scope)
-    )
-    if isinstance(cached, dict):
-        has_all_payloads = all(isinstance(cached.get(key), dict) for key in ("session_payload", "chat_payload", "questions_payload", "transcript_payload"))
-        if has_all_payloads:
-            return _serialize_cached_session(session_id, cached)
-
-    transcript_api_key = str(transcript_api_key or "").strip()
-    if not transcript_api_key:
-        raise RuntimeError("Gladia API key is not configured on the server. Set GLADIA_KEY before fetching uncached sessions.")
-
-    session_payload = fetch_session_details(api_key, session_id)
-    chat_bundle = fetch_chat_and_questions_bundle(api_key, session_id)
-    transcript_payload = fetch_session_transcript(
-        transcript_api_key,
-        session_id,
-        livestorm_api_key=api_key,
-    )
-    # Fetch the parent event's payload so the workspace card can show the
-    # event title (sessions rarely have their own `name` set).
-    event_payload = _fetch_event_payload_safe(
-        api_key, _extract_event_id_from_session(session_payload)
-    )
-    upsert_kwargs = {
-        "session_payload": session_payload,
-        "chat_payload": chat_bundle.get("chat_payload"),
-        "questions_payload": chat_bundle.get("questions_payload"),
-        "transcript_payload": transcript_payload,
+    identity = {
+        "read_scope": read_scope,
+        "organization_id": organization_id,
+        "created_by_user_id": created_by_user_id,
+        "created_by_email": created_by_email,
+        "created_by_name": created_by_name,
     }
-    if event_payload is not None:
-        upsert_kwargs["event_payload"] = event_payload
-    upsert_cached_session(
-        api_key,
-        session_id,
-        **upsert_kwargs,
-        **_org_kwarg(organization_id),
-        **_generator_kwargs(created_by_user_id, created_by_email, created_by_name),
+    base = fetch_session_base_data(api_key, session_id, force_refresh, **identity)
+    transcript = fetch_session_transcript_data(
+        api_key, session_id, force_refresh, job_connection_id=job_connection_id, **identity,
     )
-    cached = fetch_cached_session(api_key, session_id, organization_id=read_scope)
-    if not isinstance(cached, dict):
-        raise RuntimeError("Fetched session data but failed to reload it from the cache.")
-    return _serialize_cached_session(session_id, cached)
+    if "sessionId" in transcript:
+        return transcript
+    return {**base, "transcriptJob": transcript}
 
 
 def fetch_session_base_data(
@@ -677,7 +604,11 @@ def fetch_session_base_data(
     created_by_email: str = "",
     created_by_name: str = "",
 ) -> Dict[str, Any]:
-    """Fetch session + chat + questions, cache-first. Scope args as in `fetch_all_session_data`."""
+    """Fetch session + chat + questions, cache-first.
+
+    `read_scope` governs cache lookups (what the caller may read).
+    `organization_id` is the caller's own org, stamped on newly created rows.
+    """
     session_id = str(session_id or "").strip()
     cached = (
         None if force_refresh
@@ -713,38 +644,70 @@ def fetch_session_base_data(
     return _serialize_cached_session(session_id, cached)
 
 
+ACTIVE_TRANSCRIPT_JOB_STATUSES = ("pending", "running")
+
+# A `transcript_jobs` row whose arq job has vanished (Redis restarted, or the
+# job was lost during a deploy) is closed after this grace period. The grace
+# covers the moment between inserting the row and enqueueing its job.
+TRANSCRIPT_JOB_LOST_AFTER_SECONDS = 120
+
+
+def _seconds_since(value: Any) -> Optional[float]:
+    if not isinstance(value, datetime):
+        return None
+    moment = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - moment).total_seconds()
+
+
+def _reconcile_transcript_job(job: Dict[str, Any]) -> Dict[str, Any]:
+    """Close an active `transcript_jobs` row whose arq job is gone.
+
+    Only one transcription per session may be active (unique index), so a
+    dead row would otherwise block the session until the stuck-job sweeper
+    runs an hour later. When Redis can't be reached the row is left alone.
+    """
+    if job.get("status") not in ACTIVE_TRANSCRIPT_JOB_STATUSES:
+        return job
+    arq_status = read_job_status_sync(transcription_job_id(job["job_id"]))
+    state = arq_status.get("jobStatus")
+    if state == "error":
+        logger.warning("Transcription job %s failed in the queue: %s", job["job_id"], arq_status.get("error"))
+        message = "The transcription job stopped before finishing. Please try again."
+    elif state == "not_found" and (_seconds_since(job.get("updated_at")) or 0) > TRANSCRIPT_JOB_LOST_AFTER_SECONDS:
+        message = "The transcription job was lost by the queue (the worker probably restarted). Please try again."
+    else:
+        return job
+    update_transcript_job_status(job["job_id"], "error", error=message)
+    return {**job, "status": "error", "error": message}
+
+
 def fetch_session_transcript_data(
     api_key: str,
-    transcript_api_key: str,
     session_id: str,
     force_refresh: bool = False,
     *,
+    job_connection_id: str,
     read_scope: OrgScope,
     organization_id: str = "",
     created_by_user_id: str = "",
     created_by_email: str = "",
     created_by_name: str = "",
 ) -> Dict[str, Any]:
-    """Start a transcription job (or attach to a running one).
+    """Start a transcription job (or attach to the active one).
 
-    Scope args as in `fetch_all_session_data`.
+    Scope args as in `fetch_session_base_data`. `job_connection_id` is the
+    caller's `Caller.job_connection_id()`. It is stored on the job's row
+    (never in the queue); the worker resolves Livestorm credentials from it.
 
     Returns the cached workspace immediately if the transcript already
-    exists. Otherwise enqueues a `run_transcription` arq job and returns
-    `{ jobId, jobStatus }` so the client can poll
-    `get_transcript_job_status_data` for updates.
+    exists (unless `force_refresh`). Otherwise returns `{ jobId, jobStatus }`
+    for `get_transcript_job_status_data` polling. A session has at most one
+    active transcription: concurrent and repeated requests, `force_refresh`
+    included, attach to it instead of paying for a second one.
 
-    Phase 2 migration: replaces the legacy `threading.Thread` path. The
-    job runs in the arq worker process — app restarts no longer kill
-    in-flight transcriptions, and the stuck-job sweeper can recover any
-    orphans.
-
-    Phase 4 addition: pre-stamps `organization_id` on the session_cache
-    row before enqueuing the job, so the worker's later `transcript_payload`
-    upsert lands on a row that's already org-scoped. Without this, a
-    transcript-only fetch (without a prior fetch_session_base_data call)
-    would create a row with NULL organization_id, invisible to the
-    Single Analysis list view.
+    The session_cache row is stamped with `organization_id` before the job
+    is queued, so the worker's later `transcript_payload` upsert lands on a
+    row that is already org-scoped (visible in the Single Analysis list).
     """
     session_id = str(session_id or "").strip()
 
@@ -752,10 +715,6 @@ def fetch_session_transcript_data(
 
     # Return immediately when transcript is already cached (skip job machinery).
     if not force_refresh and isinstance(cached, dict) and isinstance(cached.get("transcript_payload"), dict):
-        # Same self-healing trigger as get_cached_workspace — kick off
-        # the default recap / cover image if either is missing on this
-        # cache-hit fetch.
-        _maybe_enqueue_default_outputs(cached, session_id)
         return _serialize_cached_session(session_id, cached)
 
     if not isinstance(cached, dict):
@@ -766,14 +725,11 @@ def fetch_session_transcript_data(
         # Livestorm answers 404/403 for sessions outside the caller's org.
         fetch_session_details(api_key, session_id)
 
-    transcript_api_key = str(transcript_api_key or "").strip()
-    if not transcript_api_key:
-        raise RuntimeError("Gladia API key is not configured on the server. Set GLADIA_KEY before fetching uncached sessions.")
-
-    # Re-attach to an already-running job instead of enqueuing a duplicate.
-    if not force_refresh:
-        existing_job = get_transcript_job_for_session(session_id)
-        if isinstance(existing_job, dict) and existing_job.get("status") in ("pending", "running"):
+    # Attach to the active job, unless its queue job is gone.
+    existing_job = get_transcript_job_for_session(session_id)
+    if isinstance(existing_job, dict):
+        existing_job = _reconcile_transcript_job(existing_job)
+        if existing_job.get("status") in ACTIVE_TRANSCRIPT_JOB_STATUSES:
             return {"jobId": existing_job["job_id"], "jobStatus": existing_job["status"]}
 
     # Pre-stamp organization_id (and the generator identity if we have it)
@@ -789,14 +745,19 @@ def fetch_session_transcript_data(
         upsert_cached_session(api_key, session_id, **prestamp_kwargs)
 
     # Create the DB row first so the polling endpoint can find the job
-    # even if enqueue races the first poll.
-    job_id = create_transcript_job(session_id)
-    enqueued = enqueue_job_sync(
+    # even if enqueue races the first poll. A concurrent request may have
+    # created one in the meantime: attach to it.
+    # The connection id is stored on the row, not in the job args: it is
+    # also the user's session cookie, and arq keeps args in Redis and logs.
+    job = create_transcript_job(session_id, connection_id=job_connection_id)
+    if not job["created"]:
+        return {"jobId": job["job_id"], "jobStatus": job["status"]}
+    job_id = job["job_id"]
+    enqueued = enqueue_unique_job_sync(
         "run_transcription",
+        transcription_job_id(job_id),
         job_id,
-        api_key,
         session_id,
-        transcript_api_key,
     )
     if not enqueued:
         # Redis or arq was unreachable. Mark the DB row so the user
@@ -843,6 +804,8 @@ def get_transcript_job_status_data(
     job = get_transcript_job_for_session(session_id)
     if not isinstance(job, dict):
         return {"jobStatus": "not_found"}
+    # Surface a job that died in the queue now, not after the sweeper's hour.
+    job = _reconcile_transcript_job(job)
 
     # Legacy DB progress (raw Gladia payload).
     db_progress: Optional[Dict[str, Any]] = None
@@ -1291,6 +1254,12 @@ def _start_ai_job(
     """
     if kind not in AI_JOB_KINDS:
         raise RuntimeError(f"Unknown AI job kind: {kind!r}")
+    # Every distinct language/tone is a separate paid job: accept known values only.
+    if kind == "smart_recap":
+        if tone not in SMART_RECAP_TONES:
+            raise ValueError(f"Unknown Smart Recap tone {tone!r}. Use one of: {', '.join(SMART_RECAP_TONES)}.")
+    elif language not in OUTPUT_LANGUAGE_MAP:
+        raise ValueError(f"Unsupported output language {language!r}. Use one of: {', '.join(OUTPUT_LANGUAGE_MAP)}.")
 
     session_id = str(session_id or "").strip()
     cached = fetch_cached_session("", session_id, organization_id=organization_id)
@@ -1309,45 +1278,23 @@ def _start_ai_job(
         if not _extract_cached_ai_body(cached, kind, language="English"):
             raise RuntimeError("Generate the English version first before translating to another language.")
 
-    # Dedupe: rapid double-clicks on the Generate button can fire multiple
-    # POSTs before the frontend `loading` flag races into the disabled
-    # state. The Redis in-flight marker lets us short-circuit duplicates
-    # back to the original job_id so all of them poll the same outcome.
-    dimension = str(tone or language or "").strip()
-    existing_job_id = get_in_flight_ai_job_id(kind, session_id, dimension)
-    if existing_job_id:
-        existing_status = read_job_status_sync(existing_job_id)
-        if existing_status.get("jobStatus") in ("pending", "running"):
-            payload: Dict[str, Any] = {
-                "jobId": existing_job_id,
-                "jobKind": kind,
-                "jobStatus": existing_status["jobStatus"],
-            }
-            if kind == "smart_recap":
-                payload["tone"] = tone
-            else:
-                payload["language"] = language
-            return payload
-        # Stale marker (arq says complete / error / not_found). Drop it
-        # and fall through to enqueue a fresh job. Worth doing — the
-        # caller has explicitly requested a re-run.
-        clear_in_flight_ai_job_id(kind, session_id, dimension)
-
-    arq_function = _ARQ_JOB_FUNCTION_BY_KIND[kind]
-    if kind == "smart_recap":
-        job_id = enqueue_job_sync(arq_function, session_id, tone)
-    else:
-        job_id = enqueue_job_sync(arq_function, session_id, language)
-
-    if not job_id:
+    # Dedupe: the job id is fixed per (kind, session, language/tone), so
+    # double-clicks and teammates generating the same output share one
+    # job. A failed or stale earlier run is cleared and re-queued.
+    dimension = tone if kind == "smart_recap" else language
+    job = enqueue_unique_job_sync(
+        _ARQ_JOB_FUNCTION_BY_KIND[kind],
+        ai_job_id(kind, session_id, dimension),
+        session_id,
+        dimension,
+    )
+    if not job:
         raise RuntimeError(
             f"{kind.replace('_', ' ').title()} queue is unavailable. "
             "Check the worker service and Redis connection."
         )
 
-    set_in_flight_ai_job_id(kind, session_id, dimension, job_id)
-
-    payload = {"jobId": job_id, "jobKind": kind, "jobStatus": "pending"}
+    payload: Dict[str, Any] = {"jobId": job["jobId"], "jobKind": kind, "jobStatus": job["jobStatus"]}
     if kind == "smart_recap":
         payload["tone"] = tone
     else:
@@ -1365,6 +1312,9 @@ def _get_ai_job_data(
     organization_id: OrgScope,
 ) -> Dict[str, Any]:
     """Poll an AI job on a session the caller can read.
+
+    `job_id` (from the client) is accepted for compatibility but not used:
+    the job is always this session's own `ai_job_id(kind, session, dimension)`.
 
     Returns:
         - full serialised workspace if the cache already has the requested bundle, OR
@@ -1384,11 +1334,14 @@ def _get_ai_job_data(
         return _serialize_cached_session(session_id, cached)
 
     # Pull live status from arq + progress from Redis. Both are best-effort.
-    status_payload = read_job_status_sync(job_id) if job_id else {"jobStatus": "not_found"}
+    # The job id is derived here, never taken from the client: ids are
+    # predictable, and a client-supplied one could name another session's job.
+    own_job_id = ai_job_id(kind, session_id, tone if kind == "smart_recap" else language)
+    status_payload = read_job_status_sync(own_job_id)
     progress = read_progress(kind, session_id)
 
     response: Dict[str, Any] = {
-        "jobId": job_id,
+        "jobId": own_job_id,
         "jobKind": kind,
         "jobStatus": status_payload.get("jobStatus", "unknown"),
         "progress": progress,
