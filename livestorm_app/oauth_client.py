@@ -206,8 +206,8 @@ def _extract_profile(me_payload: Dict[str, Any]) -> Dict[str, Any]:
     appears in the top-level `included[]` array under the matching
     `{type: "organizations", id}`. Earlier versions of this function
     looked at `attributes.organization.id` — that path doesn't exist
-    in Livestorm's response, so every OAuth login since Phase 4 has been
-    persisting `organization_id = ''`. Fixed here.
+    in Livestorm's response, so logins before the fix persisted
+    `organization_id = ''` (scripts/backfill_organization_id.py repairs them).
 
     Falls back to `attributes.organization.id` for any future endpoint
     that might inline the org in attributes. The `relationships` path

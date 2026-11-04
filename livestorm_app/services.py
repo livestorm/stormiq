@@ -24,10 +24,7 @@ from livestorm_app.config import (
     ANALYSIS_QUESTIONS_PROMPT_PATH,
     ANALYSIS_TRANSCRIPT_PROMPT_PATH,
     API_BASE,
-    CONTENT_REPURPOSE_BLOG_PROMPT_PATH,
-    CONTENT_REPURPOSE_EMAIL_PROMPT_PATH,
-    CONTENT_REPURPOSE_SOCIAL_MEDIA_PROMPT_PATH,
-    CONTENT_REPURPOSE_SUMMARY_PROMPT_PATH,
+    CONTENT_REPURPOSE_BUNDLE_PROMPT_PATH,
     COVER_IMAGE_MODEL,
     COVER_IMAGE_PROMPT_PATH,
     COVER_IMAGE_QUALITY,
@@ -803,59 +800,8 @@ def build_deep_analysis_prompt() -> str:
         "specific recommendations. Support conclusions with concrete evidence from the payloads."
     )
 
-def build_content_repurpose_prompt(content_type: str) -> str:
-    prompt_map = {
-        "summary": CONTENT_REPURPOSE_SUMMARY_PROMPT_PATH,
-        "email": CONTENT_REPURPOSE_EMAIL_PROMPT_PATH,
-        "blog": CONTENT_REPURPOSE_BLOG_PROMPT_PATH,
-        "social_media": CONTENT_REPURPOSE_SOCIAL_MEDIA_PROMPT_PATH,
-    }
-    prompt_path = prompt_map.get(content_type)
-    if prompt_path is not None:
-        prompt = load_analysis_prompt(prompt_path)
-        if prompt.strip():
-            return prompt
-    return (
-        "You are a content repurposing specialist. Use the provided Livestorm transcript, chat, and questions to "
-        "generate polished derivative content in the requested format. Be faithful to the source material, avoid "
-        "inventing facts, and write in the requested output language."
-    )
-
-
 def build_content_repurpose_bundle_prompt() -> str:
-    return (
-        "You are a content repurposing specialist.\n\n"
-        "Use only the provided transcript text. Do not use chat, questions, metadata, stats, or outside facts.\n"
-        "If the transcript text is missing or blank, return exactly: {\"summary\":\"Transcript is empty.\","
-        "\"blog\":\"Transcript is empty.\",\"email\":\"Transcript is empty.\",\"social_media\":\"Transcript is empty.\"}\n\n"
-        "Return valid JSON only with exactly these string keys:\n"
-        "- summary\n"
-        "- blog\n"
-        "- email\n"
-        "- social_media\n\n"
-        "All four keys are mandatory. Never omit a key. If you are running out of space, make each section shorter, but still return all four keys.\n\n"
-        "Each value must be markdown content in the requested output language.\n\n"
-        "Requirements for `summary`:\n"
-        "- 500-700 words.\n"
-        "- Use heading hierarchy with `#`, `##`, and `###`.\n"
-        "- Include only well-supported sections.\n"
-        "- Suggested structure: `# Event Summary`, `## Introduction`, `## Key Points Discussed`, `## Notable Quotes`, `## Key Takeaways`, `## Next Steps Or Call To Action`.\n\n"
-        "Requirements for `blog`:\n"
-        "- 1000-1500 words.\n"
-        "- Start with `Meta description: ...` then `# Title`.\n"
-        "- Use descriptive `##` and `###` headings.\n"
-        "- Write a strong standalone article based strictly on the transcript.\n\n"
-        "Requirements for `email`:\n"
-        "- Markdown only.\n"
-        "- Include `# Subject Line Options`, `# Email Version 1`, and `# Email Version 2`.\n"
-        "- Each email should read naturally in paragraphs and stay around 200-300 words.\n\n"
-        "Requirements for `social_media`:\n"
-        "- Markdown only.\n"
-        "- Include `# LinkedIn`, `# Facebook`, and `# X / Twitter`.\n"
-        "- For each platform provide one polished post and 2-4 suggested hashtags.\n"
-        "- Keep the X / Twitter version within 280 characters.\n\n"
-        "Do not wrap the JSON in code fences."
-    )
+    return load_analysis_prompt(CONTENT_REPURPOSE_BUNDLE_PROMPT_PATH)
 
 
 def _extract_json_object_from_text(text: str) -> str:
@@ -936,40 +882,6 @@ def _extract_text_fragments(value: Any) -> List[str]:
                 fragments.extend(_extract_text_fragments(value.get(key)))
         return fragments
     return []
-
-
-def _extract_chat_completion_text(payload: Dict[str, Any]) -> str:
-    choices = payload.get("choices")
-    if not isinstance(choices, list) or not choices:
-        return ""
-    message = choices[0].get("message", {})
-    content = message.get("content")
-    text_parts = _extract_text_fragments(content)
-    if text_parts:
-        return "\n".join(text_parts).strip()
-
-    # Fall back to tool-free message fields some model variants may populate.
-    for key in ("text", "output_text"):
-        text_parts = _extract_text_fragments(message.get(key))
-        if text_parts:
-            return "\n".join(text_parts).strip()
-    return ""
-
-
-def _build_chat_completions_payload(
-    model: str,
-    messages: List[Dict[str, str]],
-    temperature: float,
-    max_tokens: int,
-) -> Dict[str, Any]:
-    payload: Dict[str, Any] = {
-        "model": model,
-        "temperature": temperature,
-        "messages": messages,
-    }
-    token_param_name = "max_completion_tokens" if str(model or "").strip().startswith("gpt-5") else "max_tokens"
-    payload[token_param_name] = max_tokens
-    return payload
 
 
 def translate_markdown_with_openai(
@@ -1640,49 +1552,6 @@ def build_transcript_segments_df(transcript_payload: Dict[str, Any]) -> pd.DataF
     return df
 
 
-def extract_common_terms_from_series(text_series: pd.Series, top_n: int = 12) -> pd.DataFrame:
-    def normalize_term(term: str) -> str:
-        cleaned = term.lower().strip("'")
-        if len(cleaned) > 5 and cleaned.endswith("ing"):
-            cleaned = cleaned[:-3]
-        elif len(cleaned) > 4 and cleaned.endswith("ed"):
-            cleaned = cleaned[:-2]
-        elif len(cleaned) > 4 and cleaned.endswith("es"):
-            cleaned = cleaned[:-2]
-        elif len(cleaned) > 3 and cleaned.endswith("s"):
-            cleaned = cleaned[:-1]
-        if cleaned.endswith("'"):
-            cleaned = cleaned[:-1]
-        return cleaned
-
-    text = " ".join(text_series.fillna("").astype(str).tolist()).lower()
-    raw_terms = re.findall(r"\b[\w']{3,}\b", text)
-    normalized_terms = [normalize_term(term) for term in raw_terms]
-    filtered = [
-        term for term in normalized_terms
-        if term
-        and term not in COMMON_STOPWORDS
-        and not term.isdigit()
-        and len(term) >= 3
-    ]
-    counts = Counter(filtered).most_common(top_n)
-    return pd.DataFrame(counts, columns=["term", "count"]) if counts else pd.DataFrame(columns=["term", "count"])
-
-
-def extract_raw_terms_from_series(text_series: pd.Series, top_n: int = 10) -> pd.DataFrame:
-    text = " ".join(text_series.fillna("").astype(str).tolist()).lower()
-    normalized_text = text.replace("’", "'")
-    terms = [
-        term.strip("'") for term in re.findall(r"\b[\w']+\b", normalized_text)
-        if term
-        and not term.isdigit()
-        and term.strip("'") not in COMMON_STOPWORDS
-        and len(term.strip("'")) >= 3
-    ]
-    counts = Counter(terms).most_common(top_n)
-    return pd.DataFrame(counts, columns=["term", "count"]) if counts else pd.DataFrame(columns=["term", "count"])
-
-
 def extract_meaningful_terms_from_series(text_series: pd.Series, top_n: int = 10) -> pd.DataFrame:
     normalized_segments = text_series.fillna("").astype(str).str.lower().str.replace("’", "'", regex=False)
     token_pattern = re.compile(r"\b[\w']+\b")
@@ -1801,43 +1670,6 @@ def _min_max_scale(value: float, low: float, high: float) -> float:
     if high <= low:
         return 0.5
     return min(max((float(value) - low) / (high - low), 0.0), 1.0)
-
-
-def apply_speaker_name_map_to_insights(insights: Dict[str, Any], speaker_name_map: Dict[str, str]) -> Dict[str, Any]:
-    if not isinstance(insights, dict) or not isinstance(speaker_name_map, dict) or not speaker_name_map:
-        return insights
-
-    normalized_map = {
-        str(key).strip(): str(value).strip()
-        for key, value in speaker_name_map.items()
-        if str(key).strip() and str(value).strip()
-    }
-    if not normalized_map:
-        return insights
-
-    def map_speaker(value: Any) -> Any:
-        key = str(value).strip()
-        return normalized_map.get(key, value)
-
-    def map_speaker_pair(value: Any) -> Any:
-        if not isinstance(value, str) or "->" not in value:
-            return value
-        left, right = [part.strip() for part in value.split("->", 1)]
-        return f"{normalized_map.get(left, left)} -> {normalized_map.get(right, right)}"
-
-    transformed: Dict[str, Any] = {}
-    for key, value in insights.items():
-        if isinstance(value, pd.DataFrame):
-            df = value.copy()
-            for speaker_column in ["speaker", "from_speaker", "to_speaker", "dominant_speaker"]:
-                if speaker_column in df.columns:
-                    df[speaker_column] = df[speaker_column].apply(map_speaker)
-            if "speaker_pair" in df.columns:
-                df["speaker_pair"] = df["speaker_pair"].apply(map_speaker_pair)
-            transformed[key] = df
-        else:
-            transformed[key] = value
-    return transformed
 
 
 class _EntityContextFinder:
@@ -2962,22 +2794,6 @@ def build_cross_source_insights(
     return {"combined_timeline_df": combined_timeline_df, "reaction_moments_df": reaction_moments_df}
 
 
-def mark_analysis_source_defaults(
-    session_state: Any,
-    include_chat: bool = False,
-    include_questions: bool = False,
-    include_transcript: bool = False,
-) -> None:
-    if include_chat:
-        session_state["analysis_include_chat"] = True
-        session_state["analysis_include_chat_questions"] = True
-    if include_questions:
-        session_state["analysis_include_questions"] = True
-        session_state["analysis_include_chat_questions"] = True
-    if include_transcript:
-        session_state["analysis_include_transcript"] = True
-
-
 def build_derived_stats(
     chat_df: Optional[pd.DataFrame] = None,
     questions_df: Optional[pd.DataFrame] = None,
@@ -3141,12 +2957,6 @@ def build_compact_questions_payload_for_llm(questions_df: pd.DataFrame, max_rows
     return {
         "questions": questions_df.head(max_rows)[columns].fillna("").to_dict("records") if columns else [],
     }
-
-
-def extract_common_terms(df: pd.DataFrame, top_n: int = 12) -> pd.DataFrame:
-    if "text_content" not in df.columns:
-        return pd.DataFrame(columns=["term", "count"])
-    return extract_common_terms_from_series(df["text_content"], top_n=top_n)
 
 
 def analyze_with_openai(

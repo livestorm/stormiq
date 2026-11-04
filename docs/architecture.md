@@ -1,0 +1,100 @@
+# Architecture
+
+How StormIQ is put together, where the code lives, and the rules that keep reads fast.
+
+## System
+
+```
+Browser ── Vue SPA ──/api──▶ web: FastAPI (app.py) ───────────▶ Postgres
+                                │  enqueue, job status            ▲  session cache, OAuth
+                                ▼                                 │  connections, jobs
+                             Redis: arq queue + progress ◀──── worker: arq
+                                                                  │
+                                       Livestorm API, Gladia, Anthropic / OpenAI
+```
+
+- **web** serves the API and the built SPA. Handlers are plain `def` functions, run in FastAPI's threadpool. It calls the Livestorm API directly (fetching sessions is quick) and hands everything slow or paid to the worker.
+- **worker** runs transcription, AI generation and cover images as arq jobs ([jobs.md](jobs.md)).
+- **Postgres** is the durable store: one row per session holds the raw payloads and every AI output ([data-model.md](data-model.md)).
+- **Redis** holds the job queue and short-lived progress. Losing it loses no results.
+
+## Backend code
+
+| Path | What it does |
+|---|---|
+| `app.py` | FastAPI app: routes, OAuth wiring, request models, SPA static serving, startup and shutdown |
+| `livestorm_app/auth.py` | Request identity (`Caller`), org read scope, local-dev mode ([security.md](security.md)) |
+| `livestorm_app/api_logic.py` | Orchestration behind the routes: fetch flows, job starts and polls, workspace serialization, PDF builders, and the synchronous AI runners the worker calls |
+| `livestorm_app/services.py` | Livestorm API client, the DataFrame pipeline (transcript, chat, questions, cross-source insights), prompt building, cover images, PDF rendering |
+| `livestorm_app/session_overview.py` | Session payload → people table, hero stats, distributions |
+| `livestorm_app/db.py` | Connection pool, schema bootstrap, every SQL query |
+| `livestorm_app/queue.py` | arq job ids, enqueue and status from sync code (`_QueueBridge`) |
+| `livestorm_app/worker.py` | arq job handlers, the stuck-job sweeper, `WorkerSettings` |
+| `livestorm_app/progress.py` | Stage-floor progress in Redis |
+| `livestorm_app/llm_client.py` | Anthropic / OpenAI abstraction, retries, truncation handling |
+| `livestorm_app/oauth_client.py` | Livestorm OAuth (PKCE), token refresh, profile parsing |
+| `livestorm_app/gladia/` | Gladia transcription client (`transcriber.py`) and a debugging CLI |
+| `livestorm_app/transcript_client.py` | The worker's entry point into Gladia (keeps the web process from importing it) |
+| `livestorm_app/timing.py` | Per-request timing log |
+| `livestorm_app/config.py` | URLs, model defaults, prompt paths, `.env` loader |
+| `prompts/` | Every AI prompt, as plain text |
+| `scripts/` | Backfills, diagnostics, the local benchmark |
+| `tests/` | pytest, including the access-control route matrix |
+
+## Frontend code
+
+A Vue 3 single-page app built by Vite into `frontend/dist`, which FastAPI serves in production. In development, `npm run dev` proxies `/api` and `/brand-assets` to uvicorn. Dependencies are only `vue` and `vue-router`; charts are hand-built components.
+
+| Path | What it does |
+|---|---|
+| `src/App.vue` | Shell: sidebar navigation, top bar, the 401 handler |
+| `src/router.js` | Routes; every view but the session list is lazy-loaded |
+| `src/store/workspace.js` | The single reactive store (no Pinia): state, loaders, job polling |
+| `src/api.js` | `fetch` wrappers for `/api/*` |
+| `src/views/` | One file per route |
+| `src/components/` | `DataTable`, markdown cards, `AiJobProgress`, `SessionHero`, `KeyMomentsTimeline`, and chart cards under `charts/` |
+| `src/utils/csv.js` | CSV export for every table |
+| `src/styles.css` | Global styles |
+| `tests/` | Vitest |
+
+The rules for working in it are in [`frontend/CLAUDE.md`](../frontend/CLAUDE.md).
+
+### Pages
+
+| Route | View | Needs |
+|---|---|---|
+| `/` | redirects to `/single-analysis` | — |
+| `/search` | Find a session by session id, by event id, or by browsing the workspace's events | a connection |
+| `/single-analysis` | Card grid of the org's cached sessions, with search, filters, sort and grid/list modes | a connection |
+| `/single-analysis/:sessionId/session-overview` | Hero metrics, people, charts | a fetched session |
+| `/single-analysis/:sessionId/transcript` | Transcript diagnostics (8 tabs) | a transcript |
+| `/single-analysis/:sessionId/chat-questions` | Audience analytics (5 tabs) | a fetched session |
+| `/single-analysis/:sessionId/analysis` | Overall and deep analysis | a transcript |
+| `/single-analysis/:sessionId/smart-recap` | Smart Recap in three tones | a transcript |
+| `/single-analysis/:sessionId/content-repurposing` | Summary, blog post, email, social posts | a transcript |
+| `/cross-analysis` | Placeholder for cross-session analysis ([roadmap](roadmap.md)) | — |
+| `/admin` | Users, admins, cached sessions, model settings | admin |
+| `/auth/callback`, `/beta-info` | OAuth landing, beta notice | — |
+
+`/single-analysis/:sessionId/...` is the sharing contract: a teammate in the same Livestorm org can open any such link and land on that tab with the cached workspace loaded. Older paths (`/events`, `/transcript`, …) redirect to their new equivalents.
+
+## The data pipeline
+
+The deterministic analytics are pandas code in `services.py` and `session_overview.py`. The entry points:
+
+- `build_session_overview_data(session_payload)`: hero stats, people table, country, role and attendance distributions.
+- `build_transcript_insights(transcript_payload)`: about 27 DataFrames (pace, airtime, pauses, named entities, segments, engagement scoring, key moments).
+- `build_cross_source_insights(chat_df, questions_df, transcript_payload, transcript_insights=...)`: the 10-bucket session-stage timeline and reaction moments.
+- `build_question_stats(questions_df)`: answered and unanswered split.
+
+Every metric, chart and formula is documented once, in [product.md §13](product.md#13-glossary-of-metrics-and-formulas). Don't copy formulas elsewhere; link to it.
+
+## Reading a workspace
+
+Opening a session is the hottest path. These rules keep a 2-hour session around 0.1 s:
+
+- **Derived insights are cached in-process.** `build_transcript_insights` is the costly part of a read. `api_logic._cached_transcript_insights` keeps the last 6 sessions per process, keyed by `(session_id, updated_at)`; every write to a `session_cache` row bumps `updated_at`, so the key changes whenever the input can. The frames are shared between requests, so readers must copy before modifying (`_df_records` and `build_cross_source_insights` do). Build insights once per read and pass them on (`build_cross_source_insights(..., transcript_insights=...)`).
+- **Polls and job starts read only what they need.** `db.fetch_session_fields(session_id, [fields], organization_id=...)` reads allow-listed columns or flags, with the same scope rules as `fetch_cached_session`. The transcript poll reads `has_transcript`; AI polls and starts read their own bundle column. The full row is loaded only to return a finished result.
+- **The card list never loads payloads.** `db.list_workspace_sessions` selects the session attributes, the event title and has-output flags computed in SQL (`db._has_content_sql`).
+- **No raw upstream payloads in the workspace.** The serialized workspace carries derived tables, the display transcript and AI outputs. `payloads.transcript` is `{subtitles, language, durationSeconds}` (or null); the full transcript is a separate download (`/transcript.json`). Add a table back only when a view needs it.
+- **System settings** are cached for 60 s per process.

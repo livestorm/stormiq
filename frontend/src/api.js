@@ -87,7 +87,7 @@ export const api = {
   fetchEventSessions(payload) {
     return postJson("/api/event-sessions", payload);
   },
-  // Phase 4: list all cached sessions for the current user's Livestorm
+  // List all cached sessions for the current user's Livestorm
   // organization. Powers the Single Analysis card grid. Returns
   // { sessions: [] } when the user isn't OAuth-connected — the view
   // shows a "connect with Livestorm" empty state in that case.

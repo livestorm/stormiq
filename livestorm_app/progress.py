@@ -1,7 +1,7 @@
 """Redis-backed progress reporting with stage floors.
 
-The worker calls `publish_progress(kind, key, stage)` at each stage; the
-web process polls `read_progress(kind, key)` from a FastAPI handler and
+The worker calls `publish_progress_sync(kind, key, stage)` at each stage;
+the web process polls `read_progress(kind, key)` from a FastAPI handler and
 forwards the value to the client. Written to Redis (not Postgres) because
 progress updates are high-frequency and disposable — we don't want a DB
 write on every stage transition, and we don't need to retain progress
@@ -16,10 +16,6 @@ stage turns out to be fast.
 Key shape: `stormiq:progress:{kind}:{key}` → JSON-encoded payload
 TTL:       30 minutes — bounded so a dead worker doesn't leave a stale
            row in Redis forever.
-
-Phase 1 ships the module + stage tables for the flows we plan to migrate
-in Phase 2 (transcript, overall analysis, deep analysis, smart recap,
-content repurposing). No flow writes to it yet.
 """
 
 from __future__ import annotations
@@ -30,7 +26,6 @@ import time
 from typing import Any, Dict, Mapping, Optional
 
 import redis as redis_sync
-import redis.asyncio as redis_async
 
 from livestorm_app.queue import get_redis_url
 
@@ -43,8 +38,7 @@ logger = logging.getLogger(__name__)
 # Each map: ordered dict { stage_name: floor_percent }. The order matters
 # only for documentation — clients read whatever floor is published.
 #
-# Floor percents are monotonic and end at 100 ("done"). Phase 2 will add
-# the matching `publish_progress` calls inside the worker job functions.
+# Floor percents are monotonic and end at 100 ("done").
 
 
 TRANSCRIPT_STAGE_FLOORS: Dict[str, int] = {
@@ -60,14 +54,14 @@ TRANSCRIPT_STAGE_FLOORS: Dict[str, int] = {
 
 # Used by overall, deep, smart-recap, and content-repurposing flows. They
 # all have the same coarse shape: load cached sources → assemble prompt
-# → call OpenAI → persist. Cards-style refactor (Phase 2 roadmap) may
-# add intermediate stages later; floors are reserved with gaps so new
-# stages can slot in without renumbering.
+# → call the LLM → persist. The card registry (docs/roadmap.md) may add
+# intermediate stages later; floors are reserved with gaps so new stages
+# can slot in without renumbering.
 ANALYSIS_STAGE_FLOORS: Dict[str, int] = {
     "queued": 0,
     "loading_sources": 15,
     "building_prompt": 25,
-    "analyzing": 40,              # OpenAI call — by far the longest stage
+    "analyzing": 40,              # LLM call — by far the longest stage
     "persisting": 90,
     "done": 100,
 }
@@ -114,60 +108,16 @@ def _payload(kind: str, stage: str, label: Optional[str] = None, extra: Optional
     return body
 
 
-# ── Async write path (worker side) ─────────────────────────────────────────
-
-
-_async_client: Optional[redis_async.Redis] = None
-
-
-def _get_async_client() -> redis_async.Redis:
-    global _async_client
-    if _async_client is None:
-        _async_client = redis_async.from_url(get_redis_url(), decode_responses=True)
-    return _async_client
-
-
-async def publish_progress(
-    kind: str,
-    key: str,
-    stage: str,
-    label: Optional[str] = None,
-    extra: Optional[Mapping[str, Any]] = None,
-) -> None:
-    """Write a progress snapshot. Worker-side, async.
-
-    Best-effort: a Redis blip never fails the underlying job. The job's
-    eventual status row in Postgres is the system of record; this is the
-    UX layer on top.
-    """
-    payload = _payload(kind, stage, label, extra)
-    try:
-        client = _get_async_client()
-        await client.set(_key(kind, key), json.dumps(payload), ex=TTL_SECONDS)
-    except Exception:
-        logger.warning("publish_progress failed for %s:%s/%s", kind, key, stage, exc_info=True)
-
-
-async def clear_progress(kind: str, key: str) -> None:
-    """Drop the progress row. Called when the job terminates (success or error)."""
-    try:
-        client = _get_async_client()
-        await client.delete(_key(kind, key))
-    except Exception:
-        logger.warning("clear_progress failed for %s:%s", kind, key, exc_info=True)
-
-
-# ── Sync write path ────────────────────────────────────────────────────────
+# ── Write path (worker side) ───────────────────────────────────────────────
 #
-# Some job handlers wrap blocking SDKs (Gladia, requests, reportlab) inside
-# `asyncio.to_thread`. The blocking SDK then calls back into us from that
-# worker thread, which has no running event loop — so it cannot await the
-# async writer above. These sync writers exist for that case: they use the
-# sync redis client and write to the exact same key shape, so async readers
-# see no difference.
+# Job handlers run blocking code (Gladia, requests, reportlab) inside
+# `asyncio.to_thread`, and that code reports progress from its thread,
+# which has no running event loop. So the writers are synchronous. A
+# handler's own stage updates on the event loop are single, sub-millisecond
+# Redis SETs, which is acceptable there too.
 #
-# Don't use these from the worker's main event loop. Use the async versions
-# there to avoid blocking other concurrent jobs.
+# Best-effort: a Redis blip never fails the underlying job. The job's status
+# in Postgres is the system of record; this is the UX layer on top.
 
 
 def publish_progress_sync(

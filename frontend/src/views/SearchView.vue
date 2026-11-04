@@ -3,7 +3,7 @@ import { computed, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useWorkspace } from "../store/workspace";
 
-// Phase 4 search page. Three modes side by side in one place, instead
+// Search page. Three modes side by side in one place, instead
 // of buried in the sidebar:
 //   1. By session ID  — paste a known session UUID
 //   2. By event ID    — paste an event UUID, pick a session from the list

@@ -5,7 +5,6 @@ import { useWorkspace } from "./store/workspace";
 // The landing page (session list) ships in the entry bundle; every other
 // view is a separate chunk loaded on first visit, so admin, transcript and
 // analysis code doesn't slow down the first page load.
-const HomeView = () => import("./views/HomeView.vue");
 const SearchView = () => import("./views/SearchView.vue");
 const CrossAnalysisView = () => import("./views/CrossAnalysisView.vue");
 const SessionOverviewView = () => import("./views/SessionOverviewView.vue");
@@ -18,13 +17,13 @@ const AuthCallbackView = () => import("./views/AuthCallbackView.vue");
 const BetaNoticeView = () => import("./views/BetaNoticeView.vue");
 const AdminView = () => import("./views/AdminView.vue");
 
-// Phase 4 routing.
+// Routing.
 //
 // Top-level navigation reflects the new product shape:
 //   /search                                      — fetch sessions/events
 //   /single-analysis                             — workspace card grid
 //   /single-analysis/:sessionId/{tab}            — per-session analysis tabs
-//   /cross-analysis                              — placeholder (Phase 3)
+//   /cross-analysis                              — placeholder (cross-session analysis)
 //
 // Each session's analysis is now a shareable URL keyed by sessionId.
 // Teammates can paste any /single-analysis/:sessionId/... link and
@@ -89,8 +88,8 @@ const routes = [
   { path: "/smart-recap", redirect: redirectLegacyTab("smart-recap") },
   { path: "/content-repurposing", redirect: redirectLegacyTab("content-repurposing") },
 
-  // ── Untouched ───────────────────────────────────────────────────────────
-  { path: "/home", component: HomeView },           // available but not linked
+  // ── Other pages ─────────────────────────────────────────────────────────
+  { path: "/home", redirect: "/" },
   { path: "/beta-info", component: BetaNoticeView },
   { path: "/auth/callback", component: AuthCallbackView },
   { path: "/admin", component: AdminView },

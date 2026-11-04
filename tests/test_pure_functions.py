@@ -124,7 +124,7 @@ def test_partial_repurposing_bundle_is_not_a_cache_hit():
     assert api_logic._extract_cached_ai_body(partial, "content_repurposing", language="English") is None
 
 
-# ── Transcript metrics: pause classification (CLAUDE.md §7) ────────────────
+# ── Transcript metrics: pause classification (docs/product.md §13) ─────────
 
 
 def _segment(start: float, end: float, speaker: str) -> dict:
@@ -149,3 +149,16 @@ def test_pauses_are_classified_by_gap_length():
     assert list(silence["gap_seconds"]) == [0.8, 1.5, 2.5]
     assert list(silence["pause_type"]) == ["Thinking pause", "Hesitation", "Strong silence"]
     assert list(silence["speaker_transition"]) == [True, False, True]
+
+
+# ── Prompts ────────────────────────────────────────────────────────────────
+
+
+def test_content_repurposing_prompt_is_loaded_from_prompts_folder():
+    # A missing prompt file loads as "", which would send the model no
+    # instructions at all: the file must exist and ask for all four keys.
+    prompt = services.build_content_repurpose_bundle_prompt()
+    assert services.CONTENT_REPURPOSE_BUNDLE_PROMPT_PATH.name == "content_repurpose_bundle_prompt.txt"
+    for key in ("summary", "blog", "email", "social_media"):
+        assert f"- {key}" in prompt
+    assert prompt.endswith("Do not wrap the JSON in code fences.")

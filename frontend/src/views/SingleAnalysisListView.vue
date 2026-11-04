@@ -175,7 +175,7 @@ function gradientFor(sessionId) {
 }
 
 function coverImageUrl(card) {
-  // Phase 4: real AI cover, generated from the Professional Smart
+  // The real AI cover, generated from the Professional Smart
   // Recap. Falls back to the gradient placeholder when the row
   // doesn't have one yet (legacy rows + brand-new fetches whose
   // cover job hasn't completed). The `?v=<isodate>` query param
@@ -196,7 +196,7 @@ function initialsFor(label) {
 }
 
 function cardTitle(card) {
-  // Phase 4 follow-up: prefer the event title. Sessions rarely have
+  // Prefer the event title. Sessions rarely have
   // their own name set — the user-meaningful label is the event the
   // session belongs to.
   return (
