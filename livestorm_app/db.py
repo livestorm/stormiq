@@ -15,6 +15,44 @@ DATABASE_URL_ENV_VARS = ("DATABASE_URL", "POSTGRES_URL", "RENDER_POSTGRES_URL")
 logger = logging.getLogger(__name__)
 
 
+class _AllOrgs:
+    """Scope sentinel: read a session regardless of which org owns it.
+
+    Only trusted callers may pass it: admin requests, local-dev mode, and
+    worker jobs. Web routes resolve the scope through
+    `livestorm_app.auth.Caller.read_scope`, never by hand.
+    """
+
+    def __repr__(self) -> str:
+        return "ALL_ORGS"
+
+
+ALL_ORGS = _AllOrgs()
+
+# An org scope is either ALL_ORGS or an organization_id string. A blank or
+# missing org id matches no rows: an unknown identity must never widen access.
+OrgScope = Union[str, _AllOrgs]
+
+
+class ScopeMatchesNothing(Exception):
+    """Raised by `_org_filter` when the scope cannot match any row."""
+
+
+def _org_filter(organization_id: OrgScope) -> Optional[str]:
+    """Translate a scope into a SQL filter value.
+
+    Returns None for ALL_ORGS (no filter) and the org id otherwise. Raises
+    `ScopeMatchesNothing` for blank or non-string scopes so callers can
+    return "not found" without querying.
+    """
+    if organization_id is ALL_ORGS:
+        return None
+    cleaned = organization_id.strip() if isinstance(organization_id, str) else ""
+    if not cleaned:
+        raise ScopeMatchesNothing()
+    return cleaned
+
+
 def get_database_url() -> str:
     for env_var in DATABASE_URL_ENV_VARS:
         value = str(os.getenv(env_var, "") or "").strip()
@@ -265,100 +303,63 @@ def fetch_cached_session(
     api_key: str,
     session_id: str,
     *,
-    organization_id: Optional[str] = None,
+    organization_id: OrgScope,
 ) -> Optional[Dict[str, Any]]:
-    """Read a cached session row.
+    """Read a cached session row, scoped by organization.
 
-    `organization_id`:
-        - None (default) → no filter. Used by trusted internal code (worker
-          jobs reading cached payloads, polling endpoints that have already
-          authorized the caller). Returns the session regardless of which
-          org owns it.
-        - non-empty str → filter `organization_id = ...`. Used by web routes
-          that need to enforce org-scoped visibility — teammates in the
-          same org see the cache, cross-org callers don't.
-        - empty str ""  → treated like None (no filter). Lets callers pass
-          a freshly-resolved org_id without explicit null-checking; if the
-          user has no OAuth connection, fall back to legacy behaviour.
+    `organization_id` is required:
+        - an org id string → only that org's row is visible.
+        - ALL_ORGS → no filter. Trusted callers only (admin, local dev, worker).
+        - a blank string → matches nothing. Fail closed: a caller whose org
+          could not be resolved never sees another org's data.
 
-    `api_key` is kept in the signature for back-compat — it's no longer
-    used in the lookup.
+    `api_key` is kept in the signature for back-compat and is not used.
     """
     if not database_enabled() or not str(session_id or "").strip():
         return None
-    org_filter = str(organization_id or "").strip() if organization_id is not None else None
+    try:
+        org_filter = _org_filter(organization_id)
+    except ScopeMatchesNothing:
+        logger.warning("fetch_cached_session called with a blank org scope for session_id=%s", str(session_id).strip())
+        return None
+    where_clause = "WHERE session_id = %s" + (" AND organization_id = %s" if org_filter is not None else "")
+    params = (str(session_id).strip(),) + ((org_filter,) if org_filter is not None else ())
     try:
         with get_db_connection() as connection:
             with connection.cursor() as cursor:
-                if org_filter:
-                    cursor.execute(
-                        """
-                        SELECT
-                            account_key_hash,
-                            session_id,
-                            organization_id,
-                            session_payload,
-                            chat_payload,
-                            questions_payload,
-                            transcript_payload,
-                            transcript_speaker_names,
-                            analysis_md,
-                            analysis_bundle,
-                            deep_analysis_md,
-                            deep_analysis_bundle,
-                            content_repurpose_bundle,
-                            smart_recap_bundle,
-                            event_payload,
-                            cover_image_bytes IS NOT NULL AS has_cover_image,
-                            cover_image_mime,
-                            cover_image_generated_at,
-                            created_by_user_id,
-                            created_by_email,
-                            created_by_name,
-                            created_at,
-                            updated_at
-                        FROM session_cache
-                        WHERE session_id = %s
-                          AND organization_id = %s
-                        ORDER BY updated_at DESC
-                        LIMIT 1
-                        """,
-                        (str(session_id).strip(), org_filter),
-                    )
-                else:
-                    cursor.execute(
-                        """
-                        SELECT
-                            account_key_hash,
-                            session_id,
-                            organization_id,
-                            session_payload,
-                            chat_payload,
-                            questions_payload,
-                            transcript_payload,
-                            transcript_speaker_names,
-                            analysis_md,
-                            analysis_bundle,
-                            deep_analysis_md,
-                            deep_analysis_bundle,
-                            content_repurpose_bundle,
-                            smart_recap_bundle,
-                            event_payload,
-                            cover_image_bytes IS NOT NULL AS has_cover_image,
-                            cover_image_mime,
-                            cover_image_generated_at,
-                            created_by_user_id,
-                            created_by_email,
-                            created_by_name,
-                            created_at,
-                            updated_at
-                        FROM session_cache
-                        WHERE session_id = %s
-                        ORDER BY updated_at DESC
-                        LIMIT 1
-                        """,
-                        (str(session_id).strip(),),
-                    )
+                cursor.execute(
+                    f"""
+                    SELECT
+                        account_key_hash,
+                        session_id,
+                        organization_id,
+                        session_payload,
+                        chat_payload,
+                        questions_payload,
+                        transcript_payload,
+                        transcript_speaker_names,
+                        analysis_md,
+                        analysis_bundle,
+                        deep_analysis_md,
+                        deep_analysis_bundle,
+                        content_repurpose_bundle,
+                        smart_recap_bundle,
+                        event_payload,
+                        cover_image_bytes IS NOT NULL AS has_cover_image,
+                        cover_image_mime,
+                        cover_image_generated_at,
+                        created_by_user_id,
+                        created_by_email,
+                        created_by_name,
+                        created_at,
+                        updated_at
+                    FROM session_cache
+                    {where_clause}
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                    """,
+                    params,
+                )
                 row = cursor.fetchone()
         return dict(row) if isinstance(row, dict) else None
     except Exception:
@@ -497,41 +498,35 @@ def list_workspace_sessions(organization_id: str) -> List[Dict[str, Any]]:
 def fetch_cover_image(
     session_id: str,
     *,
-    organization_id: Optional[str] = None,
+    organization_id: OrgScope,
 ) -> Optional[Dict[str, Any]]:
     """Return the cover image bytes for a session, scoped by org.
 
-    Heavy column (BYTEA, often >1 MB), kept out of the list_workspace_sessions
-    query so the card endpoint stays light. Served via its own
-    GET /api/sessions/{id}/cover.png route. Returns `{ bytes, mime,
-    generated_at }` when present, or None.
+    Same scope rules as `fetch_cached_session`. Heavy column (BYTEA, often
+    >1 MB), kept out of the list_workspace_sessions query so the card
+    endpoint stays light. Served via GET /api/sessions/{id}/cover.png.
+    Returns `{ bytes, mime, generated_at }` when present, or None.
     """
     if not database_enabled() or not str(session_id or "").strip():
         return None
-    org_filter = str(organization_id or "").strip() if organization_id is not None else None
+    try:
+        org_filter = _org_filter(organization_id)
+    except ScopeMatchesNothing:
+        return None
+    where_clause = "WHERE session_id = %s" + (" AND organization_id = %s" if org_filter is not None else "")
+    params = (str(session_id).strip(),) + ((org_filter,) if org_filter is not None else ())
     try:
         with get_db_connection() as connection:
             with connection.cursor() as cursor:
-                if org_filter:
-                    cursor.execute(
-                        """
-                        SELECT cover_image_bytes, cover_image_mime, cover_image_generated_at
-                        FROM session_cache
-                        WHERE session_id = %s AND organization_id = %s
-                        LIMIT 1
-                        """,
-                        (str(session_id).strip(), org_filter),
-                    )
-                else:
-                    cursor.execute(
-                        """
-                        SELECT cover_image_bytes, cover_image_mime, cover_image_generated_at
-                        FROM session_cache
-                        WHERE session_id = %s
-                        LIMIT 1
-                        """,
-                        (str(session_id).strip(),),
-                    )
+                cursor.execute(
+                    f"""
+                    SELECT cover_image_bytes, cover_image_mime, cover_image_generated_at
+                    FROM session_cache
+                    {where_clause}
+                    LIMIT 1
+                    """,
+                    params,
+                )
                 row = cursor.fetchone()
         if not isinstance(row, dict):
             return None

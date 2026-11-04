@@ -60,9 +60,11 @@ The app does not record sessions. It analyses sessions that already exist in Liv
 Two paths are supported:
 
 - **Livestorm OAuth** — the user is redirected to Livestorm, authorises the app, and is sent back with a server-side session cookie. The connected user's identity is shown in the sidebar.
-- **API key fallback** — only enabled when the app runs on localhost with an `LS_API_KEY` configured. Used for local development.
+- **API key fallback** — only for local development: the operator must explicitly turn on local-development mode and configure an `LS_API_KEY`. It is never available in production.
 
-Server-side secrets used by the backend (not exposed to the client) include the OpenAI API key (for analysis and content generation) and the transcription provider key.
+Access is scoped to the user's Livestorm organization: teammates in the same organization share cached sessions and analyses, while sessions from other organizations are not visible at all, not even through a shared link. Without a Livestorm connection, no session data is accessible.
+
+Server-side secrets used by the backend (not exposed to the client) include the AI provider keys (for analysis, content generation and cover images) and the transcription provider key.
 
 ---
 

@@ -24,8 +24,11 @@ services:
       - .env
     environment:
       - REDIS_URL=redis://redis:6379/0
+    # Loopback only: with STORMIQ_LOCAL_DEV=1, any request without an OAuth
+    # session acts as the trusted local operator, so the port must not be
+    # reachable from the rest of the network.
     ports:
-      - "10000:10000"
+      - "127.0.0.1:10000:10000"
     depends_on:
       - redis
 
@@ -44,7 +47,7 @@ services:
     image: redis:7-alpine
     command: redis-server --appendonly yes
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis-data:/data
 

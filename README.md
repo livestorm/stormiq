@@ -46,7 +46,7 @@ Required environment variables on Render:
 - `OPENAI_API_KEY`
 - `API_AUTH_KEY`
 - the Postgres connection variables used by [db.py](/Users/fares/Code/chat-analysis/livestorm_app/db.py)
-- optionally `LS_API_KEY` if you want a server-side default in local-style flows
+- optionally `STORMIQ_LOCAL_DEV=1` + `LS_API_KEY` to skip OAuth during local development (never on Render; see CLAUDE.md §4)
 
 Local Docker test:
 
