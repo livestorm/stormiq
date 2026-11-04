@@ -138,6 +138,22 @@ class Caller:
         token_type = str(connection.get("token_type") or "Bearer").strip() or "Bearer"
         return f"{token_type} {access_token}"
 
+    def job_connection_id(self) -> str:
+        """Reference to this caller's Livestorm credentials for a worker job.
+
+        Stored on the job's database row and resolved in the worker by
+        `livestorm_auth_for_job`. It is also the caller's session cookie
+        value, so it must never go into Redis job args or logs.
+        "" means "use LS_API_KEY", which the worker honours only in
+        local-dev mode. Mirrors the precedence of `livestorm_auth`; an
+        inline API key (local dev only) is not forwarded, so background
+        jobs started with one fall back to LS_API_KEY.
+        """
+        if self.local_dev and _ls_api_key():
+            return ""
+        connection = self.connection or {}
+        return str(connection.get("connection_id") or "").strip()
+
     def generator_kwargs(self) -> Dict[str, str]:
         """`created_by_*` attribution for cache rows; empty without OAuth."""
         connection = self.connection
@@ -156,6 +172,31 @@ class Caller:
         if name:
             out["created_by_name"] = name
         return out
+
+
+def livestorm_auth_for_job(connection_id: str) -> str:
+    """Resolve a job's Livestorm credentials inside the worker.
+
+    `connection_id` comes from `Caller.job_connection_id`. The token is read
+    (and refreshed when close to expiry) at the moment the job runs, so a
+    job that waited in the queue never uses an expired token.
+    """
+    cid = str(connection_id or "").strip()
+    if cid:
+        if cid == DEV_CONNECTION_ID and not local_dev_enabled():
+            raise RuntimeError("This job was started with a local-dev identity, which is not accepted here.")
+        try:
+            connection = refresh_connection_if_needed(cid)
+        except Exception as exc:
+            raise RuntimeError("Your Livestorm connection could not be refreshed. Please reconnect and try again.") from exc
+        access_token = str((connection or {}).get("access_token") or "").strip()
+        if not access_token:
+            raise RuntimeError("The Livestorm connection that started this job no longer exists. Please reconnect and try again.")
+        token_type = str(connection.get("token_type") or "Bearer").strip() or "Bearer"
+        return f"{token_type} {access_token}"
+    if local_dev_enabled() and _ls_api_key():
+        return _ls_api_key()
+    raise RuntimeError("This job has no Livestorm credentials. Please reconnect and try again.")
 
 
 def _connection_cookie(request: Request) -> str:

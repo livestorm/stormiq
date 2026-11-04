@@ -4,7 +4,7 @@ import logging
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, Any, AsyncIterator, Dict, Optional
+from typing import Annotated, Any, AsyncIterator, Dict, Literal, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi import Path as ApiPath
@@ -48,7 +48,7 @@ from livestorm_app.auth import (
     require_admin,
     running_on_render,
 )
-from livestorm_app.config import get_runtime_secret, load_env_file
+from livestorm_app.config import load_env_file
 from livestorm_app.db import (
     admin_delete_session,
     admin_list_sessions,
@@ -108,7 +108,6 @@ class WorkspaceEventsRequest(BaseModel):
 
 class FetchSessionRequest(BaseModel):
     api_key: str = Field("", alias="apiKey")
-    transcript_api_key: Optional[str] = Field("", alias="transcriptApiKey")
     force_refresh: bool = Field(False, alias="forceRefresh")
 
 
@@ -132,12 +131,14 @@ class SpeakerLabelsRequest(BaseModel):
 
 class AnalysisRequest(BaseModel):
     api_key: str = Field("", alias="apiKey")
-    output_language: str = Field("English", alias="outputLanguage")
+    # Each language is a separate paid job; see config.OUTPUT_LANGUAGE_MAP.
+    output_language: Literal["English", "French"] = Field("English", alias="outputLanguage")
 
 
 class SmartRecapRequest(BaseModel):
     api_key: str = Field("", alias="apiKey")
-    tone: str
+    # See config.SMART_RECAP_TONES.
+    tone: Literal["professional", "hype", "surprise"]
 
 
 def _raise_http_error(resource_label: str, exc: Exception, status_code: int = 400) -> None:
@@ -507,12 +508,11 @@ def get_cached_session_workspace(session_id: SessionId, caller: Caller = Depends
 def fetch_session_workspace(session_id: SessionId, request: FetchSessionRequest, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
     try:
         api_key = caller.livestorm_auth(request.api_key)
-        transcript_api_key = str(request.transcript_api_key or "").strip() or get_runtime_secret("GLADIA_KEY", "")
         return fetch_all_session_data(
             api_key=api_key,
-            transcript_api_key=transcript_api_key,
             session_id=session_id,
             force_refresh=request.force_refresh,
+            job_connection_id=caller.job_connection_id(),
             read_scope=caller.read_scope,
             organization_id=caller.org_id,
             **caller.generator_kwargs(),
@@ -543,12 +543,11 @@ def fetch_session_base_workspace(session_id: SessionId, request: FetchSessionReq
 def fetch_session_transcript_workspace(session_id: SessionId, request: FetchSessionRequest, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
     try:
         api_key = caller.livestorm_auth(request.api_key)
-        transcript_api_key = str(request.transcript_api_key or "").strip() or get_runtime_secret("GLADIA_KEY", "")
         return fetch_session_transcript_data(
             api_key=api_key,
-            transcript_api_key=transcript_api_key,
             session_id=session_id,
             force_refresh=request.force_refresh,
+            job_connection_id=caller.job_connection_id(),
             read_scope=caller.read_scope,
             organization_id=caller.org_id,
             **caller.generator_kwargs(),

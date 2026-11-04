@@ -265,6 +265,16 @@ def ensure_database_schema() -> None:
                 ADD COLUMN IF NOT EXISTS progress TEXT
                 """
             )
+            # OAuth connection that started a queued job. It doubles as the
+            # user's session cookie value, so it is kept here (never in
+            # Redis job args or logs) and cleared once the worker claims
+            # the job or the job ends.
+            cursor.execute(
+                """
+                ALTER TABLE transcript_jobs
+                ADD COLUMN IF NOT EXISTS connection_id TEXT
+                """
+            )
             cursor.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_transcript_jobs_session_id
@@ -275,6 +285,33 @@ def ensure_database_schema() -> None:
                 """
                 CREATE INDEX IF NOT EXISTS idx_transcript_jobs_status_updated_at
                 ON transcript_jobs (status, updated_at)
+                """
+            )
+            # At most one active (pending/running) transcription per session:
+            # concurrent fetches can no longer start two paid Gladia jobs.
+            # Older duplicates left by the pre-index code are closed first,
+            # otherwise the index could not be built.
+            cursor.execute(
+                """
+                UPDATE transcript_jobs AS older
+                SET status = 'error',
+                    error = 'Superseded by a newer transcription job for the same session.',
+                    connection_id = NULL,
+                    updated_at = NOW()
+                WHERE older.status IN ('pending', 'running')
+                  AND EXISTS (
+                      SELECT 1 FROM transcript_jobs AS newer
+                      WHERE newer.session_id = older.session_id
+                        AND newer.status IN ('pending', 'running')
+                        AND (newer.created_at, newer.job_id) > (older.created_at, older.job_id)
+                  )
+                """
+            )
+            cursor.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_transcript_jobs_one_active_per_session
+                ON transcript_jobs (session_id)
+                WHERE status IN ('pending', 'running')
                 """
             )
             cursor.execute(
@@ -759,25 +796,89 @@ def update_oauth_connection_tokens(
         logger.exception("Failed to update oauth tokens for connection_id=%s", str(connection_id).strip())
 
 
-def create_transcript_job(session_id: str) -> str:
-    """Insert a new transcript job record and return its job_id."""
-    job_id = uuid.uuid4().hex
-    now = datetime.now(timezone.utc).isoformat()
+def create_transcript_job(session_id: str, connection_id: str = "") -> Dict[str, Any]:
+    """Create a pending transcript job, unless the session already has an active one.
+
+    Returns `{job_id, status, created}`. `created` is False when another
+    request got there first: the caller must attach to that job instead of
+    enqueueing a second one. The partial unique index
+    `idx_transcript_jobs_one_active_per_session` makes this atomic.
+
+    `connection_id` is the OAuth connection whose Livestorm token the worker
+    will use ("" = LS_API_KEY in local dev); see `claim_transcript_job`.
+    """
+    session_id = str(session_id).strip()
+    with get_db_connection() as connection:
+        with connection.cursor() as cursor:
+            for _attempt in range(2):
+                now = datetime.now(timezone.utc).isoformat()
+                cursor.execute(
+                    """
+                    INSERT INTO transcript_jobs (job_id, session_id, timestamped, status, connection_id, created_at, updated_at)
+                    VALUES (%s, %s, %s, 'pending', %s, %s, %s)
+                    ON CONFLICT (session_id) WHERE status IN ('pending', 'running') DO NOTHING
+                    RETURNING job_id, status
+                    """,
+                    (uuid.uuid4().hex, session_id, True, str(connection_id or "").strip() or None, now, now),
+                )
+                row = cursor.fetchone()
+                if row:
+                    connection.commit()
+                    return {"job_id": row["job_id"], "status": row["status"], "created": True}
+                cursor.execute(
+                    """
+                    SELECT job_id, status FROM transcript_jobs
+                    WHERE session_id = %s AND status IN ('pending', 'running')
+                    LIMIT 1
+                    """,
+                    (session_id,),
+                )
+                row = cursor.fetchone()
+                if row:
+                    connection.commit()
+                    return {"job_id": row["job_id"], "status": row["status"], "created": False}
+                # The active job finished between the two statements; try again.
+        connection.commit()
+    raise RuntimeError("Could not create a transcription job. Please try again.")
+
+
+def claim_transcript_job(job_id: str) -> Optional[Dict[str, Any]]:
+    """Move a job from 'pending' to 'running' for the worker that will run it.
+
+    Returns `{connection_id}` (the stored credential reference, cleared from
+    the row in the same statement), or None when the job is no longer
+    pending: it was swept, closed as lost, or already claimed. The worker
+    must not start paid work in that case.
+    """
     with get_db_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                INSERT INTO transcript_jobs (job_id, session_id, timestamped, status, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                UPDATE transcript_jobs AS job
+                SET status = 'running', connection_id = NULL, updated_at = NOW()
+                FROM (
+                    SELECT job_id, connection_id FROM transcript_jobs
+                    WHERE job_id = %s AND status = 'pending'
+                    FOR UPDATE
+                ) AS claimed
+                WHERE job.job_id = claimed.job_id
+                RETURNING claimed.connection_id
                 """,
-                (job_id, str(session_id).strip(), True, "pending", now, now),
+                (str(job_id).strip(),),
             )
+            row = cursor.fetchone()
         connection.commit()
-    return job_id
+    if not row:
+        return None
+    return {"connection_id": str(row["connection_id"] or "")}
 
 
 def update_transcript_job_status(job_id: str, status: str, error: Optional[str] = None) -> None:
-    """Update the status (and optional error) of a transcript job."""
+    """Update the status (and optional error) of a transcript job.
+
+    A finished job ('completed' or 'error') no longer needs its stored
+    connection id, so it is cleared.
+    """
     if not database_enabled() or not str(job_id or "").strip():
         return
     now = datetime.now(timezone.utc).isoformat()
@@ -787,10 +888,11 @@ def update_transcript_job_status(job_id: str, status: str, error: Optional[str] 
                 cursor.execute(
                     """
                     UPDATE transcript_jobs
-                    SET status = %s, error = %s, updated_at = %s
+                    SET status = %s, error = %s, updated_at = %s,
+                        connection_id = CASE WHEN %s IN ('completed', 'error') THEN NULL ELSE connection_id END
                     WHERE job_id = %s
                     """,
-                    (status, error, now, str(job_id).strip()),
+                    (status, error, now, status, str(job_id).strip()),
                 )
             connection.commit()
     except Exception:

@@ -77,6 +77,7 @@ class FakeBackend:
     def __init__(self) -> None:
         self.upserts: list = []
         self.enqueued: list = []
+        self.job_connections: list = []
 
     def fetch_cached_session(self, api_key, session_id, *, organization_id):
         if session_id == SESSION_ID and _visible(organization_id):
@@ -91,9 +92,9 @@ class FakeBackend:
     def upsert_cached_session(self, api_key, session_id, **fields):
         self.upserts.append((session_id, fields))
 
-    def enqueue_job_sync(self, *args, **kwargs):
-        self.enqueued.append(args)
-        return "job-1"
+    def enqueue_unique_job_sync(self, function_name, job_id, *args, **kwargs):
+        self.enqueued.append((function_name, job_id, *args))
+        return {"jobId": job_id, "jobStatus": "pending", "enqueued": True}
 
 
 def _livestorm_refuses(*_args, **_kwargs):
@@ -118,14 +119,12 @@ def _livestorm_session_details(api_key, session_id):
 @pytest.fixture
 def backend(monkeypatch):
     fake = FakeBackend()
-    # A configured Gladia key lets fetch-transcript reach its job/stamp path.
-    monkeypatch.setenv("GLADIA_KEY", "test-gladia-key")
     monkeypatch.setattr(auth, "refresh_connection_if_needed", lambda cid: CONNECTIONS.get(cid))
     monkeypatch.setattr(auth, "is_admin_email", lambda email: email == ADMIN_EMAIL)
     monkeypatch.setattr(api_logic, "fetch_cached_session", fake.fetch_cached_session)
     monkeypatch.setattr(app_module, "fetch_cover_image", fake.fetch_cover_image)
     monkeypatch.setattr(api_logic, "upsert_cached_session", fake.upsert_cached_session)
-    monkeypatch.setattr(api_logic, "enqueue_job_sync", fake.enqueue_job_sync)
+    monkeypatch.setattr(api_logic, "enqueue_unique_job_sync", fake.enqueue_unique_job_sync)
     monkeypatch.setattr(
         api_logic,
         "_serialize_cached_session",
@@ -133,17 +132,19 @@ def backend(monkeypatch):
     )
     monkeypatch.setattr(api_logic, "fetch_session_details", _livestorm_session_details)
     monkeypatch.setattr(api_logic, "fetch_chat_and_questions_bundle", _livestorm_refuses)
+    # sess-a has a transcription in flight; other sessions have no job yet.
     monkeypatch.setattr(
         api_logic,
         "get_transcript_job_for_session",
-        lambda sid: {"job_id": "job-t", "status": "running", "progress": None, "error": None},
+        lambda sid: {"job_id": "job-t", "status": "running", "progress": None, "error": None} if sid == SESSION_ID else None,
     )
-    monkeypatch.setattr(api_logic, "create_transcript_job", lambda sid: "job-t")
+    def create_transcript_job(sid, connection_id=""):
+        fake.job_connections.append(connection_id)
+        return {"job_id": "job-new", "status": "pending", "created": True}
+
+    monkeypatch.setattr(api_logic, "create_transcript_job", create_transcript_job)
     monkeypatch.setattr(api_logic, "read_progress", lambda *a, **k: None)
     monkeypatch.setattr(api_logic, "read_job_status_sync", lambda job_id: {"jobStatus": "running"})
-    monkeypatch.setattr(api_logic, "get_in_flight_ai_job_id", lambda *a, **k: None)
-    monkeypatch.setattr(api_logic, "set_in_flight_ai_job_id", lambda *a, **k: None)
-    monkeypatch.setattr(api_logic, "clear_in_flight_ai_job_id", lambda *a, **k: None)
     monkeypatch.setattr(api_logic, "analysis_markdown_to_pdf_bytes", lambda markdown, title: markdown.encode())
     return fake
 
@@ -236,9 +237,13 @@ def test_owner_can_start_transcript_for_an_uncached_session(client, backend):
         cookie="conn-a", body={"forceRefresh": True}, session_id="sess-new",
     )
     assert response.status_code == 200, response.text
-    assert response.json()["jobId"] == "job-t"
+    assert response.json()["jobId"] == "job-new"
     assert backend.upserts and backend.upserts[0][1]["organization_id"] == OWNER_ORG
-    assert backend.enqueued and backend.enqueued[0][0] == "run_transcription"
+    # The connection id is the session cookie value: it goes on the job row,
+    # never into the queue (arq stores and logs job args).
+    assert backend.job_connections == ["conn-a"]
+    assert backend.enqueued == [("run_transcription", "transcription:job-new", "job-new", "sess-new")]
+    assert not any("conn-a" in str(arg) for arg in backend.enqueued[0])
 
 
 def test_outsider_cannot_claim_an_uncached_session(client, backend):

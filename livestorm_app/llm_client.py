@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
+import random
 import time
 from typing import Any, Dict, List, Tuple
 
@@ -212,32 +213,72 @@ def _call_openai(
 
 # ── Shared retry helper ────────────────────────────────────────────────────────
 
+# Rate limits, overload (Anthropic 529) and transient server errors are worth
+# retrying: the provider did not produce (or bill) an answer.
+RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504, 529})
+LLM_MAX_ATTEMPTS = 4
+LLM_BACKOFF_BASE_SECONDS = 2.0
+LLM_BACKOFF_MAX_SECONDS = 30.0
+# (connect, read). Non-streaming calls send nothing until the whole answer is
+# generated, so the read timeout must cover a 16k-token completion.
+LLM_REQUEST_TIMEOUT = (10, 300)
+
+
+def _retry_delay(attempt: int, retry_after: str | None = None) -> float:
+    """Seconds to wait before retry `attempt` (0-based).
+
+    Honours a numeric `Retry-After` header (capped), otherwise exponential
+    backoff with jitter so parallel jobs don't retry in lockstep.
+    """
+    try:
+        hinted = float(retry_after) if retry_after else 0.0
+    except (TypeError, ValueError):
+        hinted = 0.0
+    if hinted > 0:
+        return min(hinted, LLM_BACKOFF_MAX_SECONDS)
+    backoff = LLM_BACKOFF_BASE_SECONDS * (2 ** attempt)
+    return min(backoff + random.uniform(0, backoff / 2), LLM_BACKOFF_MAX_SECONDS)
+
+
 def _post_with_retry(
     url: str,
     headers: Dict[str, str],
     payload: Dict[str, Any],
     provider: str,
-    max_attempts: int = 3,
+    max_attempts: int = LLM_MAX_ATTEMPTS,
 ) -> requests.Response:
-    resp: requests.Response | None = None
+    """POST to the provider, retrying transient failures.
+
+    Retried: RETRYABLE_STATUS_CODES and connection errors. These almost
+    always mean no answer was produced, but not always: a gateway 502/504
+    or a connection reset after the request was sent can hide an answer
+    that was generated and billed, and the retry then pays once more. That
+    rare double charge is accepted over failing the whole job. Not retried:
+    a read timeout, where the model is most likely still generating (and
+    billing) the answer; and any other 4xx, which would fail again.
+    """
     for attempt in range(max_attempts):
-        resp = requests.post(url, headers=headers, json=payload, timeout=120)
-        if resp.status_code == 429 and attempt < max_attempts - 1:
-            try:
-                wait = min(float(resp.headers.get("Retry-After") or 0), 30.0) or (10.0 * (attempt + 1))
-            except (TypeError, ValueError):
-                wait = 10.0 * (attempt + 1)
+        last_attempt = attempt == max_attempts - 1
+        try:
+            resp = requests.post(url, headers=headers, json=payload, timeout=LLM_REQUEST_TIMEOUT)
+        except requests.ConnectionError as exc:
+            if last_attempt:
+                raise
+            wait = _retry_delay(attempt)
             logger.warning(
-                "%s 429 on attempt %d/%d — waiting %.0fs",
-                provider.capitalize(),
-                attempt + 1,
-                max_attempts,
-                wait,
+                "%s connection error on attempt %d/%d (%s) — retrying in %.1fs",
+                provider.capitalize(), attempt + 1, max_attempts, type(exc).__name__, wait,
+            )
+            time.sleep(wait)
+            continue
+        if resp.status_code in RETRYABLE_STATUS_CODES and not last_attempt:
+            wait = _retry_delay(attempt, resp.headers.get("Retry-After"))
+            logger.warning(
+                "%s HTTP %d on attempt %d/%d — retrying in %.1fs",
+                provider.capitalize(), resp.status_code, attempt + 1, max_attempts, wait,
             )
             time.sleep(wait)
             continue
         resp.raise_for_status()
         return resp
-    assert resp is not None
-    resp.raise_for_status()
-    return resp
+    raise AssertionError("unreachable: the last attempt returns or raises")

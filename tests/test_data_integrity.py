@@ -212,12 +212,15 @@ def test_transcription_is_marked_error_when_saving_fails(monkeypatch):
     monkeypatch.setattr(worker, "publish_progress_sync", lambda *a, **k: None)
     monkeypatch.setattr(worker, "clear_progress_sync", lambda *a, **k: None)
     monkeypatch.setattr("livestorm_app.transcript_client.fetch_session_transcript", lambda *a, **k: {"text": "x"})
+    monkeypatch.setattr("livestorm_app.auth.livestorm_auth_for_job", lambda connection_id: "Bearer t")
+    monkeypatch.setattr(worker, "claim_transcript_job", lambda job_id: {"connection_id": "conn-a"})
+    monkeypatch.setenv("GLADIA_KEY", "gladia-key")
 
     def failing_upsert(*args, **kwargs):
         raise RuntimeError("Could not save the session to the database. Please try again.")
 
     monkeypatch.setattr(worker, "upsert_cached_session", failing_upsert)
     with pytest.raises(RuntimeError):
-        asyncio.run(worker.run_transcription({}, "job-1", "livestorm-key", "s1", "gladia-key"))
+        asyncio.run(worker.run_transcription({}, "job-1", "s1"))
     assert statuses[-1][0] == "error"
     assert ("completed", None) not in statuses
