@@ -32,3 +32,43 @@ os.environ["REDIS_URL"] = "redis://127.0.0.1:1/0"
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+import uuid  # noqa: E402
+from urllib.parse import parse_qsl, urlencode, urlparse  # noqa: E402
+
+import pytest  # noqa: E402
+
+_LOCAL_DB_HOSTS = {"localhost", "127.0.0.1", "::1", "postgres"}
+
+
+@pytest.fixture
+def test_database(monkeypatch):
+    """A real Postgres, isolated in a throwaway schema.
+
+    Skips unless TEST_DATABASE_URL is set (e.g. the compose `postgres`
+    service: postgresql://stormiq:stormiq@localhost:5433/stormiq). Refuses
+    any non-local host, so a test can never touch a shared database.
+    """
+    import psycopg
+
+    from livestorm_app.db import ensure_database_schema
+
+    url = os.environ.get("TEST_DATABASE_URL", "").strip()
+    if not url:
+        pytest.skip("TEST_DATABASE_URL is not set (docker compose up -d postgres)")
+    parsed = urlparse(url)
+    if (parsed.hostname or "") not in _LOCAL_DB_HOSTS:
+        pytest.fail(f"TEST_DATABASE_URL must point at a local database, not {parsed.hostname!r}")
+
+    schema = f"test_{uuid.uuid4().hex[:12]}"
+    with psycopg.connect(url, autocommit=True) as conn:
+        conn.execute(f'CREATE SCHEMA "{schema}"')
+    query = dict(parse_qsl(parsed.query))
+    query["options"] = f"-csearch_path={schema}"
+    monkeypatch.setenv("DATABASE_URL", parsed._replace(query=urlencode(query)).geturl())
+    ensure_database_schema()
+    try:
+        yield
+    finally:
+        with psycopg.connect(url, autocommit=True) as conn:
+            conn.execute(f'DROP SCHEMA "{schema}" CASCADE')

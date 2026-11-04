@@ -17,6 +17,8 @@ services:
     runtime: docker
     plan: starter
     autoDeploy: true
+    # Render waits for this to return 200 before routing traffic to a new deploy.
+    healthCheckPath: /api/health
     envVars:
       - key: REDIS_URL
         fromService:

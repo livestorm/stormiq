@@ -13,7 +13,6 @@ import { useWorkspace } from "../store/workspace";
 
 const { state } = useWorkspace();
 
-const workspace = computed(() => state.workspace);
 const sessionId = computed(() => String(state.workspace?.sessionId || "").trim());
 const meta = computed(() => state.workspace?.meta || {});
 

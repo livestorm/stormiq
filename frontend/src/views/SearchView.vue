@@ -18,7 +18,6 @@ const {
   loadSessionById,
   loadWorkspaceEvents,
   loadMoreWorkspaceEvents,
-  loadSessionsForSelectedWorkspaceEvent,
 } = useWorkspace();
 const router = useRouter();
 const activeMode = ref(state.inputMode === "event" ? "event" : "session");
@@ -98,13 +97,6 @@ function selectWorkspaceEvent(eventId) {
   state.eventSessions = [];
   state.loadedEventId = "";
   state.selectedEventSessionId = "";
-}
-
-async function fetchSessionsForWorkspaceEvent(eventId) {
-  if (state.selectedWorkspaceEventId !== eventId) {
-    selectWorkspaceEvent(eventId);
-  }
-  await loadSessionsForSelectedWorkspaceEvent();
 }
 
 // "Open event" on a workspace card jumps the user into the "By event

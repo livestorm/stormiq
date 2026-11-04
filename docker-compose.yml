@@ -1,19 +1,29 @@
 # Local development stack for StormIQ.
 #
-# Three services match the production deployment shape:
-#   - web    : FastAPI + built Vue frontend (Dockerfile)
-#   - worker : arq worker consuming the job queue (docker/Dockerfile.worker)
-#   - redis  : BullMQ-style queue + progress cache
+# Mirrors the production shape, with a local database:
+#   - web      : FastAPI + built Vue frontend (Dockerfile)
+#   - worker   : arq worker consuming the job queue (docker/Dockerfile.worker)
+#   - redis    : job queue + progress cache
+#   - postgres : local development database (never the production one)
 #
-# Postgres is intentionally NOT in this compose file. Local development
-# uses the same managed Postgres referenced by DATABASE_URL in .env so
-# devs see real cached data. Add a `postgres` service here only if you
-# want a fully isolated local DB.
+# web and worker always use the local `postgres` service: the DATABASE_URL
+# below overrides whatever .env contains. Running the backend outside
+# Docker instead? Start only the data services and point .env at them:
+#   docker compose up -d postgres redis
+#   DATABASE_URL=postgresql://stormiq:stormiq@localhost:5433/stormiq
+#   REDIS_URL=redis://localhost:6379/0
 #
 # Usage:
 #   docker compose up --build
 #   docker compose up worker        # rebuild just the worker
 #   docker compose logs -f worker   # follow worker logs
+#
+# All ports are published on loopback only: with STORMIQ_LOCAL_DEV=1, any
+# request without an OAuth session acts as the trusted local operator.
+
+x-local-data: &local-data
+  DATABASE_URL: postgresql://stormiq:stormiq@postgres:5432/stormiq
+  REDIS_URL: redis://redis:6379/0
 
 services:
   web:
@@ -23,14 +33,14 @@ services:
     env_file:
       - .env
     environment:
-      - REDIS_URL=redis://redis:6379/0
-    # Loopback only: with STORMIQ_LOCAL_DEV=1, any request without an OAuth
-    # session acts as the trusted local operator, so the port must not be
-    # reachable from the rest of the network.
+      <<: *local-data
     ports:
       - "127.0.0.1:10000:10000"
     depends_on:
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
 
   worker:
     build:
@@ -39,9 +49,29 @@ services:
     env_file:
       - .env
     environment:
-      - REDIS_URL=redis://redis:6379/0
+      <<: *local-data
     depends_on:
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: stormiq
+      POSTGRES_PASSWORD: stormiq
+      POSTGRES_DB: stormiq
+    # Host port 5433 avoids clashing with a Homebrew Postgres on 5432.
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stormiq -d stormiq"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
 
   redis:
     image: redis:7-alpine
@@ -52,4 +82,5 @@ services:
       - redis-data:/data
 
 volumes:
+  postgres-data:
   redis-data:

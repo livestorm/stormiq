@@ -4,11 +4,10 @@ import logging
 import math
 import re
 import sys
-import time
 from collections import Counter
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import requests
@@ -2849,7 +2848,6 @@ def build_cross_source_insights(
     else:
         combined_timeline_df = pd.DataFrame()
 
-    reaction_windows: List[Dict[str, Any]] = []
     if not combined_timeline_df.empty:
         grouped_segments = (
             working_segments.dropna(subset=["bucket_start_pct"])

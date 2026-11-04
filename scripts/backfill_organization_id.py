@@ -39,7 +39,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 # Make `livestorm_app` importable when running this file as a script.
 REPO_ROOT = Path(__file__).resolve().parent.parent

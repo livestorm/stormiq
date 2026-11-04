@@ -65,7 +65,7 @@ Single SPA served by FastAPI. No auth-walled vs public split — once connected 
 
 ## 3. There is no billing model
 
-This project has **no Stripe integration, no plans, no top-ups, no quotas, no rate limits**. Every Livestorm workspace that connects can run unlimited analyses. AI costs are absorbed by the operator's OpenAI key.
+This project has **no Stripe integration, no plans, no top-ups, no quotas, no rate limits**. Every Livestorm workspace that connects can run unlimited analyses. AI costs are absorbed by the operator's provider keys (Anthropic by default, OpenAI when `LLM_PROVIDER=openai`, and OpenAI for cover images).
 
 If a billing model is introduced later, document it here.
 
@@ -190,7 +190,8 @@ Worker side (livestorm_app.worker):
   - run_deep_analysis_job(ctx, session_id, output_language)
   - run_smart_recap_job(ctx, session_id, tone)
   - run_content_repurposing_job(ctx, session_id, output_language)
-Each reads OPENAI_API_KEY from its own env, publishes stage-floor progress
+Each reads the active LLM provider's key (CLAUDE_API_KEY by default, OPENAI_API_KEY when
+LLM_PROVIDER=openai) from its own env, publishes stage-floor progress
 to Redis ('queued' → 'loading_sources' → 'building_prompt' → 'analyzing'
 → 'persisting' → 'done'), and wraps the existing sync runner in
 asyncio.to_thread so the worker event loop stays responsive.
@@ -488,10 +489,17 @@ chat-analysis/                      # repo name; product name is StormIQ
 │   ├── queue.py                    # Redis + arq queue: get_redis_url, get_arq_pool, enqueue_job (Phase 1)
 │   ├── progress.py                 # Redis-backed stage-floor progress reporting (Phase 1)
 │   ├── worker.py                   # arq worker entry-point + stuck-job sweeper cron (Phase 1)
+│   ├── llm_client.py               # LLM provider abstraction (Anthropic default, OpenAI optional) — §12
 │   └── charts/                     # (empty — directories exist for future per-chart Python modules)
 ├── docker/
 │   └── Dockerfile.worker           # Worker image (no frontend, no HTTP) — runs `arq livestorm_app.worker.WorkerSettings`
-├── docker-compose.yml              # Local dev: web + worker + redis
+├── docker-compose.yml              # Local dev: web + worker + redis + postgres (never the prod DB)
+├── .github/workflows/ci.yml        # CI: ruff + pytest (with Postgres), eslint + build, Docker builds
+├── requirements.in / requirements.txt          # human-edited ranges / hashed lock (uv pip compile)
+├── requirements-dev.in / requirements-dev.txt  # dev tools (pytest, httpx, ruff), locked the same way
+├── ruff.toml                       # Python lint rules (lint only, no auto-format)
+├── .env.example                    # Every env var the code reads, placeholders only
+├── scripts/                        # One-off backfills and diagnostics (run manually, read the docstring first)
 ├── Dockerfile                      # Web image (FastAPI + built Vue frontend)
 ├── tests/                          # pytest suite (requirements-dev.txt); access-control route matrix
 ├── prompts/                        # 13 .txt files — editable without code changes
@@ -535,7 +543,7 @@ The frontend is built by Vite to `frontend/dist/` and served by FastAPI as stati
 
 ## 12. Providers
 
-External services accessed directly today (no provider abstraction layer yet — a target for Phase 2):
+Text generation goes through the provider abstraction in [llm_client.py](livestorm_app/llm_client.py); Livestorm, Gladia and the OpenAI Images API are called directly:
 
 | Service | Used for | File | Env var |
 |---|---|---|---|
@@ -606,6 +614,14 @@ DATABASE_URL                  # Required. Also accepts POSTGRES_URL or RENDER_PO
 REDIS_URL                     # Required in prod; defaults to redis://localhost:6379/0 for local dev
 
 # Render
+# Cover images (OpenAI Images API)
+IMAGE_MODEL                   # Optional; default in config.py (gpt-image-1)
+IMAGE_SIZE                    # Optional; default 1536x1024
+IMAGE_QUALITY                 # Optional; default high
+
+# Tests only
+TEST_DATABASE_URL             # Optional; enables real-Postgres tests. Must be a local host (conftest refuses others)
+
 PORT                          # Set by Render; defaults to 10000
 ```
 
@@ -624,34 +640,48 @@ The backend reads `.env` at startup via [`load_env_file()`](livestorm_app/config
 
 `REDIS_URL` is shared by both web and worker. The web process uses the sync `redis` client to **read** progress; the worker uses `redis.asyncio` to **write** progress and consume the queue. Same Redis instance, different access pattern.
 
-The web Dockerfile is a two-stage build: Node stage builds the frontend, Python stage installs requirements and copies everything in. The worker Dockerfile is single-stage and ships **without** the frontend (it doesn't serve HTTP).
+The web Dockerfile is a two-stage build: a Node 24 stage builds the frontend, and the Python stage installs the hashed lock (`requirements.txt`) and copies the app in. The worker Dockerfile is single-stage and ships **without** the frontend (it doesn't serve HTTP). Both images run as an unprivileged `stormiq` user and need no compiler toolchain (every dependency ships wheels).
 
-**Health check**: `GET /api/health` returns `{"status": "ok"}`. Worker has no HTTP health check — Render's process-running signal is the liveness check.
+**Health check**: `GET /api/health` returns `{"status": "ok"}`. `render.yaml` sets it as the web service's `healthCheckPath` (Render waits for it before routing to a new deploy), and the web image has a matching Docker `HEALTHCHECK`. Worker has no HTTP health check — Render's process-running signal is the liveness check.
 
-**Running locally with Docker Compose** (recommended once Phase 2 ships):
+**Local development never uses the production database.** `docker-compose.yml` provides a local Postgres (loopback port 5433) and Redis; copy `.env.example` to `.env` to start.
+
+**Running locally with Docker Compose** (whole stack):
 
 ```bash
 docker compose up --build
 ```
 
-This boots web (`:10000`), worker, and redis (`:6379`) using the local `.env` for credentials.
+This boots web (`:10000`), worker, redis (`:6379`) and postgres (`:5433`), all on loopback. web and worker always use the compose Postgres, whatever `.env` says; credentials come from `.env`.
 
-**Running locally without Docker**:
+**Running locally without Docker for the app** (data services still in Docker):
 
 ```bash
-# 1. Redis (any recent version)
-brew install redis && brew services start redis     # macOS
-# or: docker run -p 6379:6379 redis:7-alpine
+# 1. Data services
+docker compose up -d postgres redis
+# .env: DATABASE_URL=postgresql://stormiq:stormiq@localhost:5433/stormiq
+#       REDIS_URL=redis://localhost:6379/0
+#       STORMIQ_LOCAL_DEV=1 + LS_API_KEY=... to skip OAuth locally (§4)
 
 # 2. Backend
 python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-# .env: STORMIQ_LOCAL_DEV=1 + LS_API_KEY=... to skip OAuth locally (§4)
+pip install -r requirements-dev.txt
 uvicorn app:app --reload                            # in one terminal
 arq livestorm_app.worker.WorkerSettings             # in another terminal
 
 # 3. Frontend
 cd frontend && npm install && npm run dev           # in a third terminal
+```
+
+**Tests, lint and dependency updates** (CI runs the same on every PR, see `.github/workflows/ci.yml`):
+
+```bash
+ruff check .
+TEST_DATABASE_URL=postgresql://stormiq:stormiq@localhost:5433/stormiq pytest   # omit the var to skip DB tests
+cd frontend && npm run lint && npm run build
+
+# Change Python dependencies: edit requirements.in (or requirements-dev.in), then re-run the
+# `uv pip compile ...` command in the header of requirements.txt (or requirements-dev.txt).
 ```
 
 **Local Docker test of just the web image**:
@@ -691,6 +721,8 @@ We work in phased branches, each cleanly mergeable. CLAUDE.md is updated in the 
 
 Each phase is independently shippable. PRs into `main` only after the phase is feature-complete and CLAUDE.md/doc.md are updated to match.
 
+**CI must pass** (ruff, pytest including the access-control route matrix, eslint, frontend build, Docker builds) before merging.
+
 **Update rule**: every PR that changes business logic, schema, routes, providers, env vars, or deployment must include a diff to CLAUDE.md in the same commit. PRs that change user-visible behaviour must also update doc.md.
 
 ---
@@ -701,6 +733,7 @@ Each phase is independently shippable. PRs into `main` only after the phase is f
 Security, data-integrity, reliability and performance fixes from the November 2026 review, tracked as six PRs in a maintainer-local plan (`docs/improvement-plan.md`, deliberately not committed: this repository is public and the plan lists issues that are not fixed yet). The design overhaul follows it.
 
 - ✅ **PR 1 `fix/security-org-scoping`**: fail-closed access control (§4), `livestorm_app/auth.py`, path-traversal fix in the SPA route, local-dev mode behind `STORMIQ_LOCAL_DEV` instead of the Host header, Secure cookies, CORS removed, handshake expiry enforced, upstream error details no longer returned, route-matrix test suite.
+- ✅ **PR 2 `chore/safety-net`**: local Postgres in compose and `.env.example`; hashed dependency locks (uv); ruff and ESLint, with the issues they found fixed; real-Postgres and pure-function tests; CI; slimmer non-root images with health checks; Node 24 build stage; docs drift fixed.
 
 ### Shipped (current state)
 - Livestorm OAuth (PKCE) + API-key fallback for local dev
