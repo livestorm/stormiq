@@ -52,7 +52,7 @@ CI runs these on every pull request:
 ruff check .
 TEST_DATABASE_URL=postgresql://stormiq:stormiq@localhost:5433/stormiq \
 TEST_REDIS_URL=redis://localhost:6379/15 pytest
-cd frontend && npm run lint && npm run build
+cd frontend && npm test && npm run lint && npm run build
 ```
 
 To measure performance locally, seed synthetic sessions and time the heaviest routes (both scripts refuse non-local databases):

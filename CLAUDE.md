@@ -218,7 +218,10 @@ Frontend polls every 4-6s:
   GET /api/sessions/{id}/content-repurposing/job?jobId=...&language=English
 
 Each GET response is one of:
-  - the full serialised workspace (job finished, cache now has the bundle), OR
+  - the job finished, the cache has the bundle: the full serialised workspace,
+    or with `outputsOnly=true` (what the frontend sends) only
+    { sessionId, outputsOnly: true, outputs } for it to merge into the
+    workspace already on screen, OR
   - { jobId, jobKind, jobStatus, progress, error? } where:
       jobStatus ∈ {pending, running, completed, error, not_found}
       progress  = Redis stage-floor payload (or null)
@@ -523,7 +526,7 @@ All routes are FastAPI handlers in [app.py](app.py). Frontend wrapper in [fronte
 | `/api/sessions/{id}/smart-recap-pdf` | GET | caller | Render Smart Recap PDF |
 | `/api/sessions/{id}/content-repurposing` | POST | caller | Run Content Repurposing bundle (4 assets, English or French) |
 | `/api/sessions/{id}/content-repurposing-pdf` | GET | caller | Render a single asset PDF |
-| `/api/sessions/{id}/{flow}/job` | GET | caller | Poll an AI job: `analysis`, `deep-analysis`, `smart-recap`, `content-repurposing` (§5) |
+| `/api/sessions/{id}/{flow}/job` | GET | caller | Poll an AI job: `analysis`, `deep-analysis`, `smart-recap`, `content-repurposing` (§5); `outputsOnly=true` returns only the AI outputs once done |
 
 `/docs`, `/redoc` and `/openapi.json` are served locally only; they are disabled on Render.
 
@@ -581,11 +584,13 @@ chat-analysis/                      # repo name; product name is StormIQ
 │   ├── smart_recap_hype_prompt.txt
 │   └── smart_recap_surprise_prompt.txt
 ├── frontend/
+│   ├── tests/                      # Vitest: store async behaviour, api.js, CSV export (`npm test`)
 │   └── src/
-│       ├── App.vue                 # Sidebar nav, top bar, route shell
-│       ├── api.js                  # Typed fetch wrappers for /api/*
-│       ├── router.js               # vue-router routes
+│       ├── App.vue                 # Sidebar nav, top bar, route shell; registers the 401 handler
+│       ├── api.js                  # fetch wrappers for /api/* (encoded ids, abort signals, onUnauthorized)
+│       ├── router.js               # vue-router routes (lazy-loaded views, except the session list)
 │       ├── store/workspace.js      # Single reactive store (no Pinia); state, computed, actions
+│       ├── utils/csv.js            # CSV export for every table (formula-injection safe)
 │       ├── views/                  # One file per route
 │       └── components/
 │           ├── charts/
@@ -602,6 +607,14 @@ chat-analysis/                      # repo name; product name is StormIQ
 ```
 
 The frontend is built by Vite to `frontend/dist/` and served by FastAPI as static files in production. In dev, `npm run dev` runs Vite with `/api` and `/brand-assets` proxied to `uvicorn`.
+
+**Store rules** (`store/workspace.js`):
+- **Session scope.** Every load, job start, poll and save captures the session it started for (`openSessionScope`: id + `AbortController`). Opening another session or signing out aborts the old scope's requests, stops its pollers, and drops late results; no state write happens outside the current scope. AI jobs run against the session on screen (`displayedSessionScope`), never against the Search form's inputs.
+- **Loading flags** are owned by the call that set them last (`beginLoading`/`endLoading`), so a stale flow's `finally` can't clear a newer one's flag.
+- **Polls survive blips.** Network errors, 408, 429, 5xx and an `unknown` job status are retried with backoff; 5 failures in a row, or any other error (401, 404...), stop the poll.
+- **`state.workspace` is stored with `markRaw`** (`setWorkspace`): Vue tracks the property, not the thousands of rows inside. Never mutate it in place; replace it (`setWorkspace({ ...state.workspace, outputs })`).
+- **401 anywhere** calls the handler App.vue registers with `onUnauthorized`: it clears the signed-in state and the workspace and shows a "reconnect" message. It does not navigate away, so the sidebar's Connect button returns to the same page (shared session links keep working). Account-level lists (session cards, events) drop responses that arrive after the account changed.
+- **CSV downloads** go through `utils/csv.js`: text cells starting with `=`, `+`, `-`, `@`, tab or CR get a leading `'` (chat and questions are attendee-written).
 
 ---
 
@@ -772,7 +785,7 @@ cd frontend && npm install && npm run dev           # in a third terminal
 ruff check .
 TEST_DATABASE_URL=postgresql://stormiq:stormiq@localhost:5433/stormiq \
 TEST_REDIS_URL=redis://localhost:6379/15 pytest   # omit either var to skip those tests
-cd frontend && npm run lint && npm run build
+cd frontend && npm test && npm run lint && npm run build
 
 # Change Python dependencies: edit requirements.in (or requirements-dev.in), then re-run the
 # `uv pip compile ...` command in the header of requirements.txt (or requirements-dev.txt).
@@ -815,7 +828,7 @@ We work in phased branches, each cleanly mergeable. CLAUDE.md is updated in the 
 
 Each phase is independently shippable. PRs into `main` only after the phase is feature-complete and CLAUDE.md/doc.md are updated to match.
 
-**CI must pass** (ruff, pytest including the access-control route matrix, eslint, frontend build, Docker builds) before merging.
+**CI must pass** (ruff, pytest including the access-control route matrix, vitest, eslint, frontend build, Docker builds) before merging.
 
 **Update rule**: every PR that changes business logic, schema, routes, providers, env vars, or deployment must include a diff to CLAUDE.md in the same commit. PRs that change user-visible behaviour must also update doc.md.
 
@@ -823,7 +836,7 @@ Each phase is independently shippable. PRs into `main` only after the phase is f
 
 ## 17. Roadmap
 
-### Hardening track (in progress)
+### Hardening track (complete once PR 6 merges)
 Security, data-integrity, reliability and performance fixes from the November 2026 review, tracked as six PRs in a maintainer-local plan (`docs/improvement-plan.md`, deliberately not committed: this repository is public and the plan lists issues that are not fixed yet). The design overhaul follows it.
 
 - ✅ **PR 1 `fix/security-org-scoping`**: fail-closed access control (§4), `livestorm_app/auth.py`, path-traversal fix in the SPA route, local-dev mode behind `STORMIQ_LOCAL_DEV` instead of the Host header, Secure cookies, CORS removed, handshake expiry enforced, upstream error details no longer returned, route-matrix test suite.
@@ -831,6 +844,7 @@ Security, data-integrity, reliability and performance fixes from the November 20
 - ✅ **PR 3 `fix/data-integrity`**: atomic per-entry bundle writes (`merge_cached_bundle_entry`); `account_key_hash` insert-only; database write failures raise instead of being swallowed; empty, truncated or incomplete AI output fails the job instead of saving partial results; transcription heartbeat for the stuck-job sweeper.
 - ✅ **PR 4 `fix/job-reliability-cost`**: deterministic arq job ids replace the Redis in-flight marker, and a failed job can be retried at once; reading a session never starts a paid cover image (and the post-recap cover trigger works again); one active transcription per session (partial unique index), with dead queue jobs detected instead of blocking for an hour; `/fetch` no longer transcribes inside the web request; retries with backoff and timeouts on every LLM, Livestorm and Gladia call; per-job timeouts, a two-transcription concurrency cap, and cancellation handling; no credentials in job arguments (the worker reads the Gladia key from its env and the user's connection from the job row); language and tone validated before any paid job; AI job polls no longer trust a client-supplied job id.
 - ✅ **PR 5 `perf/backend`**: a 2-hour session opens in ~0.1 s instead of ~4.5 s (an O(mentions × sentences) entity lookup replaced, transcript insights built once per read and cached per session version); the workspace response is ~3.5× smaller (raw payloads dropped, raw transcript moved to `transcript.json`); Postgres connection pool and one long-lived Redis pool (no new connection per request); polls and the card list read only the columns they need; system settings cached for a minute; immutable caching for hashed assets; per-request timing log; local benchmark scripts (§14).
+- ✅ **PR 6 `fix/frontend-logic`**: session-scoped async work in the store (aborted on session switch, no late writes; AI jobs always target the session on screen); token-owned loading flags; polls that ride out transient failures; central 401 handling; `markRaw` workspace; lazy-loaded routes (entry bundle 272 → 135 KB); encoded path params; formula-safe CSV export and stable table row keys; AI job polls return only the outputs; the cover watch reads the card list and stops with the session; first frontend tests (Vitest). Hardening track complete; the design overhaul is next.
 
 ### Shipped (current state)
 - Livestorm OAuth (PKCE) + API-key fallback for local dev

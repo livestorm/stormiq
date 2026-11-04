@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
-import { api } from "./api";
+import { api, onUnauthorized } from "./api";
 import SessionHero from "./components/SessionHero.vue";
 import { useWorkspace } from "./store/workspace";
 
@@ -144,14 +144,35 @@ onMounted(async () => {
       window.location.replace("/api/dev/auto-login");
       return;
     }
-  } catch (_error) {
-    // Ignore bootstrap failures so manual entry still works.
+  } catch (error) {
+    console.error("Bootstrap failed", error);
+    state.error = "StormIQ could not load your account. Check your connection and reload the page.";
   }
   // If the user deep-links into a session detail page (shared link or
   // page reload), make sure the store has the matching workspace.
   if (routeSessionId.value) {
-    loadSessionById(routeSessionId.value).catch(() => {});
+    loadSessionById(routeSessionId.value).catch(logSessionLoadFailure);
   }
+});
+
+// The store already put the message in state.error / the transcript
+// banner; keep the details in the console for debugging.
+function logSessionLoadFailure(error) {
+  console.warn("Session load failed", error);
+}
+
+// Any 401 means the Livestorm session expired or was revoked (or the
+// visitor never connected): drop the signed-in state and ask them to
+// connect. The page stays where it is, so the sidebar's Connect button
+// brings them back to it (a shared session link keeps working).
+onUnauthorized(() => {
+  const wasSignedIn = Boolean(state.auth.connectedUser);
+  state.auth.connectedUser = null;
+  state.apiKey = "";
+  resetWorkspace();
+  state.error = wasSignedIn
+    ? "Your Livestorm session has expired. Please reconnect."
+    : "Please connect with Livestorm to open this page.";
 });
 
 onBeforeUnmount(() => {
@@ -167,8 +188,8 @@ watch(routeSessionId, async (next, previous) => {
   if (state.workspace?.sessionId === next) return;
   try {
     await loadSessionById(next);
-  } catch (_error) {
-    // Errors surface in state.error / state.transcriptUnavailableReason.
+  } catch (error) {
+    logSessionLoadFailure(error);
   }
 });
 
@@ -180,8 +201,9 @@ function handleConnectClick() {
 async function handleLogoutClick() {
   try {
     await api.logout();
-  } catch (_error) {
-    // Ignore logout failures and clear local state anyway.
+  } catch (error) {
+    // Clear local state anyway: the user asked to leave.
+    console.warn("Logout request failed", error);
   }
   state.auth.connectedUser = null;
   state.apiKey = "";
