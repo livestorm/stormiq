@@ -15,7 +15,7 @@ Browser ── Vue SPA ──/api──▶ web: FastAPI (app.py) ─────
 
 - **web** serves the API and the built SPA. Handlers are plain `def` functions, run in FastAPI's threadpool. It calls the Livestorm API directly (fetching sessions is quick) and hands everything slow or paid to the worker.
 - **worker** runs transcription, AI generation and cover images as arq jobs ([jobs.md](jobs.md)).
-- **Postgres** is the durable store: one row per session holds the raw payloads and every AI output ([data-model.md](data-model.md)).
+- **Postgres** is the durable store: one row per session holds the Livestorm payloads (minus registrant join links) and every AI output ([data-model.md](data-model.md)).
 - **Redis** holds the job queue and short-lived progress. Losing it loses no results.
 
 ## Backend code
@@ -26,7 +26,7 @@ Browser ── Vue SPA ──/api──▶ web: FastAPI (app.py) ─────
 | `livestorm_app/routes/` | HTTP routes, one module per area: `system`, `oauth`, `admin`, `workspace`, `sessions`, `ai`, `spa`; request bodies in `models.py`, shared helpers (session id type, error and PDF responses) in `common.py` |
 | `livestorm_app/auth.py` | Request identity (`Caller`), org read scope, local-dev mode ([security.md](security.md)) |
 | `livestorm_app/api_logic.py` | Orchestration behind the routes: fetch flows, job starts and polls, workspace serialization, PDF builders, and the synchronous AI runners the worker calls |
-| `livestorm_app/livestorm/` | Livestorm REST API: `client.py` (the shared HTTP session, fetchers, error formatting) and `payloads.py` (JSON:API parsing, pagination, event and session pickers) |
+| `livestorm_app/livestorm/` | Livestorm REST API: `client.py` (the shared HTTP session, fetchers, error formatting) and `payloads.py` (JSON:API parsing, pagination, event and session pickers, the registrant join-link strip) |
 | `livestorm_app/analytics/` | The deterministic pipeline: `session_overview.py` (people, hero stats, distributions), `audience.py` (chat and questions tables), `transcript.py` (transcript insights), `cross_source.py` (session-stage timeline) |
 | `livestorm_app/ai/` | `prompts.py` (system prompts from `prompts/`), `llm_inputs.py` (what the model is sent), `generation.py` (analyses, recap, content, translation), `cover_image.py` |
 | `livestorm_app/pdf.py` | PDF rendering of AI outputs (reportlab) |

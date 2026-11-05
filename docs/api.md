@@ -19,7 +19,7 @@ Every route is a FastAPI handler in [`livestorm_app/routes/`](../livestorm_app/r
 | `/api/admin/sessions` | GET | admin | List cached sessions across orgs |
 | `/api/admin/sessions/{id}` | DELETE | admin | Delete a cached session |
 | `/api/admin/settings` | GET, POST | admin | Read or update allow-listed `system_settings` keys |
-| `/api/workspace-events` | POST | caller | Paginated list of events, filtered by title and status |
+| `/api/workspace-events` | POST | caller | Paginated list of events (at most 50 per page), filtered by title and status |
 | `/api/workspace-sessions` | GET | public¹ | Cached session cards for the caller's own org |
 | `/api/event-sessions` | POST | caller | List the sessions of an event |
 | `/api/sessions/{id}/cover.png` | GET | caller | Cover image (`Cache-Control: private, max-age=86400`) |

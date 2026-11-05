@@ -51,7 +51,7 @@ The app does not record sessions. It analyses sessions that already exist in Liv
 3. The user selects an event, then a specific **session** within it.
 4. The app fetches four data sources from Livestorm: session payload, chat messages, questions, recording transcript.
 5. If the recording does not have a transcript yet, the app submits the recording for transcription and polls for completion.
-6. All raw payloads, derived tables, and statistics are cached in Postgres keyed by `session_id`.
+6. The Livestorm payloads (minus registrants' personal join links), derived tables, and statistics are cached in Postgres keyed by `session_id`.
 7. The user navigates between the views, and on-demand triggers AI generations (analysis, recap, content repurposing).
 8. AI outputs are persisted alongside the session, so re-opening the workspace returns to the same state.
 

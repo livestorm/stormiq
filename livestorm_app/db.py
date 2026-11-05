@@ -657,6 +657,80 @@ def merge_cached_bundle_entry(
         raise RuntimeError(f"Session {session_id_value} is no longer cached; the result was not saved.")
 
 
+# The raw Livestorm payloads saved by a base fetch.
+BASE_PAYLOAD_COLUMNS = ("session_payload", "chat_payload", "questions_payload")
+
+
+def scan_base_payloads(after_session_id: str = "", limit: int = 50) -> List[Dict[str, Any]]:
+    """Read a batch of rows' base payloads, in `session_id` order.
+
+    For maintenance scripts that walk every cached session: pass the last
+    `session_id` of one batch as `after_session_id` to get the next. Reads
+    every organization's rows, so web routes never call it. Returns
+    `session_id`, `updated_at` and the three base payload columns. Raises
+    on failure.
+    """
+    if not database_enabled():
+        raise RuntimeError("Database is not configured.")
+    columns = ", ".join(BASE_PAYLOAD_COLUMNS)
+    with get_db_connection() as connection:
+        rows = connection.execute(
+            f"""
+            SELECT session_id, updated_at, {columns}
+            FROM session_cache
+            WHERE session_id > %s
+            ORDER BY session_id
+            LIMIT %s
+            """,
+            (str(after_session_id or ""), max(1, int(limit))),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def rewrite_base_payloads(session_id: str, *, expected_updated_at: datetime, **payloads: Any) -> bool:
+    """Replace some of a row's base payloads in place, leaving `updated_at` alone.
+
+    For maintenance rewrites that change nothing the app reads, such as
+    removing registrant join links. `upsert_cached_session` would set
+    `updated_at = NOW()`, which reorders the session library and drops the
+    row's cached transcript insights.
+
+    The write happens only if the row's `updated_at` still equals
+    `expected_updated_at` (the value read with the payloads). If a fetch or
+    an AI result was saved in between, nothing is written and this returns
+    False; it also returns False when the row is gone. Each payload must be
+    a JSON object. Raises on database errors.
+    """
+    unknown = sorted(set(payloads) - set(BASE_PAYLOAD_COLUMNS))
+    if unknown or not payloads:
+        raise ValueError(f"rewrite_base_payloads takes only {BASE_PAYLOAD_COLUMNS}, got {unknown or 'nothing'}.")
+    not_objects = sorted(column for column, value in payloads.items() if not isinstance(value, dict))
+    if not_objects:
+        raise ValueError(f"Base payloads must be JSON objects: {not_objects}")
+    session_id_value = str(session_id or "").strip()
+    if not session_id_value or not isinstance(expected_updated_at, datetime):
+        raise ValueError("rewrite_base_payloads requires a session_id and the updated_at it read.")
+    if not database_enabled():
+        raise RuntimeError("Database is not configured.")
+
+    set_clauses = [f"{column} = %s::jsonb" for column in payloads]
+    params: List[Any] = [json.dumps(value, ensure_ascii=False) for value in payloads.values()]
+    params.extend([session_id_value, expected_updated_at])
+    try:
+        with get_db_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"UPDATE session_cache SET {', '.join(set_clauses)} WHERE session_id = %s AND updated_at = %s",
+                    params,
+                )
+                updated = cursor.rowcount
+            connection.commit()
+    except Exception as exc:
+        logger.exception("Failed to rewrite base payloads for session_id=%s", session_id_value)
+        raise RuntimeError("Could not rewrite the session's payloads.") from exc
+    return bool(updated)
+
+
 _SQL_WHITESPACE = r"E' \t\n\r\f\v'"
 
 
