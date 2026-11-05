@@ -416,7 +416,7 @@ Every PDF is headed by the StormIQ mark and ends each page with the "not an offi
 | Person engagement score | `messages_count + (questions_count × 3) + (up_votes_count × 2)`. `messages_count` is each person's own count from Livestorm, as in the People table's message count and the AI's `top_chatters`. It can be 0 for everyone even when the chat has messages; Chat Messages counts the chat instead |
 | Internal session | Team members (`role = team_member`, not guest speakers) are more than half of the attendees (`attended` true). When attendance is unknown or nobody attended, registrants are counted instead. No people: not internal. Decided once per session (`audience.is_internal_session`) |
 | Audience message | A chat message where neither `from_team_member` nor `from_guest_speaker` is true. Messages cached without these flags count as audience. On an internal session every message is an audience message |
-| Audience member | A person whose `role` is not `team_member` and who is not a guest speaker (`is_guest_speaker`). On an internal session everyone is an audience member. Used by Most Engaged People, and by Session Overview's Chat Messages when no chat is cached |
+| Audience member | A person whose `role` is not `team_member` and who is not a guest speaker (`is_guest_speaker`). On an internal session everyone is an audience member. Used by Most Engaged People, and by Session Overview's Chat Messages when no chat is cached. The v1 roster's rule is in [Roster](#roster-v1-report) |
 | Chat Messages (Session Overview) | Number of audience messages in the cached chat; "Excludes your team (n)" counts the chat's other messages. Only when no chat is cached: the sum of `messages_count` over audience members, and over the other people for the team's count. The chat comes first because Livestorm sometimes reports `messages_count` 0 for every person although the chat has messages. The session summary sent to the AI counts the same way, an empty cached chat as 0 (`session_overview.build_session_stats`) |
 | Question coverage rate | `answered / total_questions × 100` (answered = has a responder, or `response_orally` is true; older payloads spell it `responded_orally`) |
 
@@ -484,6 +484,25 @@ v1 Report (behind `?ui=v1`, [brand.md](brand.md#the-v1-design-switch)). No page 
 | Label | `mm:ss` into the session, with minutes counting past 59 (`125:30`). Before the start `−mm:ss`, after the end `+mm:ss`, both rounded up so a label never reads `−00:00` |
 | Evidence ids | Chat messages `C0001`, `C0002`… by `created_at`, then Livestorm id, then text. Questions `Q001`… the same way. Written answers (a question with response text) `A001`… by `responded_at`, then Livestorm id, then text. Items without a readable time come last. A message repeated across pages counts once; if its copies differ, the first copy is kept. The ids don't depend on the clock |
 | Has a link | The text holds a URL (`http://`, `https://` or `www.`), or the message's HTML links to one |
+
+### Roster (v1 Report)
+
+v1 Report (behind `?ui=v1`). No page shows it yet. One row per person in the session, from the people Livestorm returned with the session (`include=people`). Code: `livestorm_app/record/roster.py`, and `parse_person` in `livestorm/payloads.py`.
+
+| Term | Rule |
+|---|---|
+| Person | One per Livestorm people id; a person listed twice counts once (the first copy is kept). What a person row reads and leaves out: [security.md](security.md#what-v1-code-reads-about-people) |
+| Role | Team when Livestorm's `role` is exactly `team_member`, as in the classic rules. Otherwise guest speaker when `is_guest_speaker` is true. Otherwise audience. A team member who is also a guest speaker is team; an unknown role is audience. The string `"true"` counts as true |
+| Audience member (v1) | A person whose role is audience. On an internal session nobody is relabelled: the roster flags the session as internal, and each measure applies the internal rule |
+| Organizer | `session_role` is `organizer` (a host on stage). A flag beside the role; it never changes the role |
+| Counts by role | People per role, over everyone and over attendees (`attended` true). A person whose attendance is unknown is not an attendee |
+| Internal | The classic [Internal session](#audience-level) rule, applied to the roster's people. That rule doesn't count a team member who is also a guest speaker as team, while Role does, so a team share taken from the counts by role can differ. Measures read the roster's internal flag; they never recompute it from the counts |
+| Coverage | Complete only when the source says the list is complete and the number of people (after repeats and records without an id are dropped) matches Livestorm's own count of the list. Otherwise partial. The `include=people` list reads partial: it isn't known yet whether it is capped, nor whether `registrants_count` counts the team |
+| Channel (rule 1) | The first that applies: the UTM source, lower-cased (detail: the UTM medium, lower-cased); the referrer's host without `www.`, unless it is a Livestorm host (`livestorm.co`, `livestorm.io` or a subdomain); `type:` and the registration type, lower-cased; `direct_or_unknown` |
+| Lead time | `(started_at − registered_at) / 86,400` days, where `registered_at` is the registration's `created_at`. Buckets count 24-hour periods before the start; time zones and calendar dates play no part: under 24 hours (`same_day`, including exactly at the start), 1–3, 4–7, 8–14, 15+, and after the start (registered after `started_at`). No `started_at`, no lead time: `estimated_started_at` is never used |
+| Registration answers | Fields of type text, single select or multiple select, except the identity fields (email, first name, last name, avatar), Livestorm's built-in contact fields (phone, address, city, Twitter, LinkedIn, Facebook, website), company and job title. The built-in country field is kept. Empty answers are left out |
+| Field labels | From the workspace's people attributes when StormIQ has them. Otherwise the field's slug made readable (`team_size` → "Team size") |
+| Person ref | `P-` and the first 8 hex characters of SHA-256 of `session_id:person_id`. When two people of a session share one, the smallest Livestorm id keeps it and the others get the shortest longer prefix that tells them apart. So the same people always get the same refs, in any order. A ref can change only when a person whose 8-character ref matches it joins or leaves the list: it can lengthen, or go back to the short one. About 3 in 1,000 sessions of 5,000 people have such a match |
 
 ### Speaking burst detection
 

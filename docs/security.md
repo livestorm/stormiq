@@ -55,6 +55,16 @@ StormIQ never stores a registrant's personal join link; it doesn't need it.
 - `livestorm/client.py` removes both before a fetcher returns the session, chat or questions payload (`payloads.strip_payload_join_links`). So they never reach `session_cache`. Any new fetcher that returns people strips them the same way.
 - `scripts/strip_registrant_join_links.py` removes them from rows saved before this rule.
 
+## What v1 code reads about people
+
+The cached session payload still holds each person's full Livestorm record, minus the join links, until StormIQ stores its own people rows in place of `include=people`. The v1 roster limits what v1 code reads from it. It is built in memory and is not stored (`payloads.parse_person`, `record/roster.py`):
+
+- It reads the email domain, never the email address, and the referrer's host, never the full URL (its query string can hold personal values).
+- It leaves out phone, street address, city, social profiles, browser, OS, screen size, IP city, avatar, highlight flag and join links.
+- Registration answers are text and select fields only. Never the identity fields (email, names, avatar), Livestorm's built-in contact fields (phone, address, city, Twitter, LinkedIn, Facebook, website), or email, URL and consent fields. The built-in `country` field is kept.
+- A v1 prompt gets people only through `roster.prompt_view`: a `P-` ref, a role and a job title. Never a name, email domain, company or Livestorm id.
+- A v1 page gets names only through `roster.display_people`, which fails closed: only a session whose profile is "public" lists anyone.
+
 ## Web hardening
 
 - Cookies are `HttpOnly`, `SameSite=Lax`, and `Secure` everywhere except plain-HTTP local development (on Render, TLS ends at the proxy, so `RENDER` alone turns it on).
