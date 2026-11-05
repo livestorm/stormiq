@@ -463,6 +463,25 @@ Buckets of 10% of session progress, labelled by their midpoint. Progress runs fr
 | 65–85% | Late |
 | ≥ 85% | Closing |
 
+### Session clock (v1 Report)
+
+v1 Report (behind `?ui=v1`, [brand.md](brand.md#the-v1-design-switch)). No page shows it yet. It puts every event of a session on one time base, where the stage mapping above stretches each source to 0–100% on its own. Code: `livestorm_app/record/clock.py` and `record/evidence.py`.
+
+| Term | Rule |
+|---|---|
+| Session time `t` | Seconds since the session's `started_at`. Chat messages and questions use their raw `created_at`, written answers their `responded_at`. Times are read as unix seconds or ISO dates; zero counts as missing |
+| No clock | A session without `started_at` has no clock, and nothing is placed on it. `estimated_started_at` is never used as the start |
+| Late start | `started_at − estimated_started_at` |
+| Session end `end_s` | `ended_at − started_at`. When `ended_at` is missing or not after the start, the session's `duration` |
+| Phase | Before when `t < 0`, after when `t > end_s`, live otherwise |
+| Minute | `floor(t / 60)` for a live event. Minutes run from 0 to `ceil(end_s / 60) − 1`, and empty ones count 0. An event exactly at `end_s` is in the last minute. Without an end, minutes run to the last live event |
+| Before and after | Events before the start (the waiting room) and after the end are counted apart, with the earliest and the latest time. They never shift the live minutes |
+| Lanes per minute | Audience chat, team chat (`from_team_member` or `from_guest_speaker`), questions, written answers, speaking seconds and words. Questions count as audience and written answers as team |
+| Speaking seconds | Split across minute borders; an utterance's words are split in proportion to its seconds in each minute. These lanes stay empty until the recording is aligned with the session clock |
+| Label | `mm:ss` into the session, with minutes counting past 59 (`125:30`). Before the start `−mm:ss`, after the end `+mm:ss`, both rounded up so a label never reads `−00:00` |
+| Evidence ids | Chat messages `C0001`, `C0002`… by `created_at`, then Livestorm id, then text. Questions `Q001`… the same way. Written answers (a question with response text) `A001`… by `responded_at`, then Livestorm id, then text. Items without a readable time come last. A message repeated across pages counts once; if its copies differ, the first copy is kept. The ids don't depend on the clock |
+| Has a link | The text holds a URL (`http://`, `https://` or `www.`), or the message's HTML links to one |
+
 ### Speaking burst detection
 
 Consecutive segments by the same speaker are merged into a burst when the gap between them is below the pause threshold (0.75s). Burst duration bins: 0–10s, 10–30s, 30–60s, 60s+.

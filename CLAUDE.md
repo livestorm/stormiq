@@ -34,7 +34,7 @@ StormIQ analyses finished Livestorm sessions. It fetches a session's details, ch
 | Path | What |
 |---|---|
 | `app.py` | Entry point: creates the FastAPI app and includes the routers |
-| `livestorm_app/` | Backend: HTTP routes (`routes/`), identity (`auth.py`), orchestration (`api_logic.py`), the Livestorm client (`livestorm/`), analytics (`analytics/`), prompts and generation (`ai/`), SQL (`db.py`), queue and worker. Rules in [`livestorm_app/CLAUDE.md`](livestorm_app/CLAUDE.md) |
+| `livestorm_app/` | Backend: HTTP routes (`routes/`), identity (`auth.py`), orchestration (`api_logic.py`), the Livestorm client (`livestorm/`), analytics (`analytics/`), the v1 session record (`record/`), prompts and generation (`ai/`), SQL (`db.py`), queue and worker. Rules in [`livestorm_app/CLAUDE.md`](livestorm_app/CLAUDE.md) |
 | `frontend/` | Vue SPA: the store (`src/store/workspace.js`), `src/api.js`, `src/views/`. Rules in [`frontend/CLAUDE.md`](frontend/CLAUDE.md) |
 | `prompts/` | Every AI prompt as plain text, tunable without code changes |
 | `tests/` | pytest, including the access-control route matrix |

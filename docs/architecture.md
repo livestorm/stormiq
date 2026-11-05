@@ -28,6 +28,7 @@ Browser ── Vue SPA ──/api──▶ web: FastAPI (app.py) ─────
 | `livestorm_app/api_logic.py` | Orchestration behind the routes: fetch flows, job starts and polls, workspace serialization, PDF builders, and the synchronous AI runners the worker calls |
 | `livestorm_app/livestorm/` | Livestorm REST API: `client.py` (the shared HTTP session, fetchers, error formatting) and `payloads.py` (JSON:API parsing, pagination, event and session pickers, the registrant join-link strip) |
 | `livestorm_app/analytics/` | The deterministic pipeline: `session_overview.py` (people, hero stats, distributions), `audience.py` (chat and questions tables), `transcript.py` (transcript insights), `cross_source.py` (session-stage timeline) |
+| `livestorm_app/record/` | The v1 Report's session record, as pure functions over cached payloads: `clock.py` (the session clock and minute bins), `evidence.py` (chat, questions and written answers with stable ids). Nothing in the classic app imports it |
 | `livestorm_app/ai/` | `prompts.py` (system prompts from `prompts/`), `llm_inputs.py` (what the model is sent), `generation.py` (analyses, recap, content, translation), `cover_image.py` |
 | `livestorm_app/pdf.py` | PDF rendering of AI outputs (reportlab) |
 | `livestorm_app/db.py` | Connection pool, schema bootstrap, every SQL query |
@@ -98,6 +99,12 @@ The deterministic analytics are pandas code in `livestorm_app/analytics/`. The e
 - `build_cross_source_insights(chat_df, questions_df, transcript_payload, transcript_insights=..., internal=...)`: the 10-bucket session-stage timeline and reaction moments, from audience chat only.
 - `build_chat_df_from_payload(payload)`: one row per chat message, keeping the `from_team_member` and `from_guest_speaker` flags. `split_audience_chat(chat_df, internal=...)` returns the audience messages and the number left out (what counts as audience: [product.md §13](product.md#13-glossary-of-metrics-and-formulas)). With `internal=True` it keeps every message.
 - `build_question_stats(questions_df)`: answered and unanswered split ([product.md §13](product.md#13-glossary-of-metrics-and-formulas)).
+
+The v1 Report gets its data from `livestorm_app/record/` instead, so the classic pipeline above doesn't change. Its first pieces:
+
+- `clock_base(session_payload)`: the session clock (`started_at`, the end, the late start). No `started_at` means no clock.
+- `audience_events(chat_payload, questions_payload, base)`: one row per chat message, question and written answer, with its evidence id (`C0001`, `Q001`, `A001`), session time, phase, minute, team flag and `has_link`. It reads the raw times and the chat's `html_content`.
+- `minute_bins(events, base=base)`: zero-filled per-minute lanes, plus the before and after edges.
 
 Every metric, chart and formula is documented once, in [product.md §13](product.md#13-glossary-of-metrics-and-formulas). Don't copy formulas elsewhere; link to it.
 

@@ -6,6 +6,8 @@ What has shipped, newest first. What's next is in [roadmap.md](roadmap.md).
 
 - **Registrant join links are never stored.** StormIQ doesn't need a registrant's personal join link, so the Livestorm fetchers drop `password_key` and `connection_link` before saving the session, chat and questions payloads. `scripts/strip_registrant_join_links.py` removes them from rows saved earlier, without bumping `updated_at` (`db.rewrite_base_payloads`). Nothing users see changes.
 - **Livestorm page size 50.** Chat, questions and event-session calls asked for 100 items per page; the API documents 50 as the maximum. The pagers now ask for 50 and stop when `meta.next_page` is null, even after a full page.
+- **Session clock.** `livestorm_app/record/` puts chat messages, questions and written answers on one time base: seconds since `started_at`, binned by minute, with the waiting room and anything after the end kept apart. Each item gets a stable evidence id (`C0001`, `Q001`, `A001`). No page uses it yet. Rules in [product.md §13](product.md#session-clock-v1-report).
+- **`scripts/diagnose_payload_shapes.py`** prints the shape of the payloads cached in a local database: key paths, JSON types, counts and enum-like values, never names, emails, text or URLs.
 
 ## November 2026: internal sessions
 
