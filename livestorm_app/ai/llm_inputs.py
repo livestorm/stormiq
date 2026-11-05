@@ -39,9 +39,15 @@ def build_derived_stats(
     session_payload: Optional[Dict[str, Any]] = None,
     *,
     internal: Optional[bool] = None,
+    session_chat_df: Optional[pd.DataFrame] = None,
 ) -> Dict[str, Any]:
     """`internal` is the session's `audience.is_internal_session` decision;
-    when it is None it is decided from `session_payload` (False without one)."""
+    when it is None it is decided from `session_payload` (False without one).
+
+    The session summary counts chat messages from `session_chat_df`, or
+    from `chat_df` when it is None (`session_overview.build_session_stats`).
+    Pass it when `chat_df` is left out although a chat is cached: an empty
+    cached chat counts 0, not the people's `messages_count`."""
     if internal is None:
         internal = session_is_internal(session_payload) if isinstance(session_payload, dict) else False
     stats: Dict[str, Any] = {}
@@ -53,28 +59,28 @@ def build_derived_stats(
         # Engagement stats are the audience's: team and guest-speaker
         # messages are counted apart, not as audience activity (except on
         # an internal session, where everyone counts).
-        chat_df, excluded_team_messages = split_audience_chat(chat_df, internal=internal)
+        audience_df, excluded_team_messages = split_audience_chat(chat_df, internal=internal)
         unique_authors = 0
-        if "author_id" in chat_df.columns:
-            author_series = chat_df["author_id"].fillna("").astype(str).str.strip()
+        if "author_id" in audience_df.columns:
+            author_series = audience_df["author_id"].fillna("").astype(str).str.strip()
             unique_authors = int(author_series[author_series != ""].nunique())
         chat_stats: Dict[str, Any] = {
-            "total_messages": int(len(chat_df.index)),
+            "total_messages": int(len(audience_df.index)),
             "unique_authors": unique_authors,
             "excluded_team_messages": excluded_team_messages,
         }
-        if "created_at" in chat_df.columns:
-            series = pd.to_datetime(chat_df["created_at"], utc=True, errors="coerce").dropna()
+        if "created_at" in audience_df.columns:
+            series = pd.to_datetime(audience_df["created_at"], utc=True, errors="coerce").dropna()
             if not series.empty:
                 chat_stats["time_range_utc"] = {
                     "start": series.min().strftime("%Y-%m-%d %H:%M:%S UTC"),
                     "end": series.max().strftime("%Y-%m-%d %H:%M:%S UTC"),
                 }
-        if "author_id" in chat_df.columns:
-            top_authors = chat_df["author_id"].value_counts().head(10)
+        if "author_id" in audience_df.columns:
+            top_authors = audience_df["author_id"].value_counts().head(10)
             chat_stats["top_authors_by_message_count"] = {str(idx): int(val) for idx, val in top_authors.items()}
-        if "text_content" in chat_df.columns:
-            text_lengths = chat_df["text_content"].fillna("").astype(str).str.len()
+        if "text_content" in audience_df.columns:
+            text_lengths = audience_df["text_content"].fillna("").astype(str).str.len()
             if len(text_lengths.index):
                 chat_stats["text_length"] = {
                     "avg_chars": float(round(text_lengths.mean(), 2)),
@@ -88,7 +94,12 @@ def build_derived_stats(
     if isinstance(transcript_payload, dict):
         stats["transcript"] = build_transcript_stats(transcript_payload)
     if isinstance(session_payload, dict):
-        stats["session"] = build_session_stats(session_payload, internal=internal)
+        session_chat = session_chat_df if isinstance(session_chat_df, pd.DataFrame) else chat_df
+        stats["session"] = build_session_stats(
+            session_payload,
+            internal=internal,
+            chat_df=session_chat if isinstance(session_chat, pd.DataFrame) else None,
+        )
     return stats
 
 

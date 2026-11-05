@@ -94,9 +94,9 @@ The rules for working in it are in [`frontend/CLAUDE.md`](../frontend/CLAUDE.md)
 
 The deterministic analytics are pandas code in `livestorm_app/analytics/`. The entry points:
 
-- `build_session_overview_data(session_payload)`: hero stats, people table, country, role and attendance distributions, and `internal_session`, the session's `audience.is_internal_session` decision ([product.md §13](product.md#13-glossary-of-metrics-and-formulas)).
+- `build_session_overview_data(session_payload, chat_df=...)`: hero stats, people table, country, role and attendance distributions, and `internal_session`, the session's `audience.is_internal_session` decision ([product.md §13](product.md#13-glossary-of-metrics-and-formulas)). Chat Messages counts `chat_df`, the cached chat; pass None only when no chat is cached.
 - `build_transcript_insights(transcript_payload)`: about 27 DataFrames (pace, airtime, pauses, named entities, segments, engagement scoring, key moments).
-- `build_cross_source_insights(chat_df, questions_df, transcript_payload, transcript_insights=..., internal=...)`: the 10-bucket session-stage timeline and reaction moments, from audience chat only.
+- `build_cross_source_insights(chat_df, questions_df, transcript_payload, transcript_insights=..., internal=...)`: the 10-bucket session-stage timeline and reaction moments, from audience chat only. It needs a transcript and chat or questions; a source passed as None counts 0.
 - `build_chat_df_from_payload(payload)`: one row per chat message, keeping the `from_team_member` and `from_guest_speaker` flags. `split_audience_chat(chat_df, internal=...)` returns the audience messages and the number left out (what counts as audience: [product.md §13](product.md#13-glossary-of-metrics-and-formulas)). With `internal=True` it keeps every message.
 - `build_question_stats(questions_df)`: answered and unanswered split ([product.md §13](product.md#13-glossary-of-metrics-and-formulas)).
 

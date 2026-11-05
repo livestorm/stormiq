@@ -78,7 +78,7 @@ Lists past Livestorm events in the connected workspace with paginated fetching, 
 
 - Title
 - Scheduling status (e.g. on air, finished, cancelled)
-- Number of sessions in the event
+- Number of sessions in the event ("n/a" when Livestorm doesn't send a count that is a non-negative integer; it has sent a negative one)
 - Last updated date
 
 Clicking an event expands it and shows a "Fetch sessions" action. Sessions are listed; selecting a session triggers the fetch of all four data sources for that session.
@@ -91,7 +91,7 @@ Clicking an event expands it and shows a "Fetch sessions" action. Sessions are l
 
 ### Hero metrics
 
-Six top-level cards pulled directly from the session payload:
+Six top-level cards, from the session payload (Chat Messages: from the cached chat, see [§13](#13-glossary-of-metrics-and-formulas)):
 
 | Metric | Source / formula |
 |---|---|
@@ -99,7 +99,7 @@ Six top-level cards pulled directly from the session payload:
 | Attendees | `attributes.attendees_count` |
 | Attendance Rate | `attendees_count / registrants_count × 100` |
 | Replay Viewers | Count of people with `has_viewed_replay = true` |
-| Chat Messages | Sum of `messages_count` across audience members (team members and guest speakers left out); the card says "Excludes your team (n)" with their message count. On an internal session everyone counts and the card says "Internal session: everyone counts" |
+| Chat Messages | Audience messages in the chat ([§13](#13-glossary-of-metrics-and-formulas)); the card says "Excludes your team (n)" with the number of team and guest-speaker messages. On an internal session everyone counts and the card says "Internal session: everyone counts" |
 | Questions | Sum of `questions_count` across people |
 
 ### Tab: Summary
@@ -275,7 +275,7 @@ Sections:
 
 ### Cross-Source Synthesis charts and tables
 
-When Cross-Source Synthesis is selected, two additional artefacts appear:
+When Cross-Source Synthesis is selected, two additional artefacts appear. Both need a transcript and either chat or questions: a session with chat but no questions (or the reverse) still gets them, and the missing source counts 0.
 
 #### Content Pace × Audience Activity chart
 A timeline split into 10 buckets representing 0–10%, 10–20%, … 90–100% of session progress. For each bucket:
@@ -411,10 +411,11 @@ Every PDF is headed by the StormIQ mark and ends each page with the "not an offi
 | Metric | Formula |
 |---|---|
 | Attendance rate | `attendees_count / registrants_count × 100` |
-| Person engagement score | `messages_count + (questions_count × 3) + (up_votes_count × 2)` |
+| Person engagement score | `messages_count + (questions_count × 3) + (up_votes_count × 2)`. `messages_count` is each person's own count from Livestorm, as in the People table's message count and the AI's `top_chatters`. It can be 0 for everyone even when the chat has messages; Chat Messages counts the chat instead |
 | Internal session | Team members (`role = team_member`, not guest speakers) are more than half of the attendees (`attended` true). When attendance is unknown or nobody attended, registrants are counted instead. No people: not internal. Decided once per session (`audience.is_internal_session`) |
 | Audience message | A chat message where neither `from_team_member` nor `from_guest_speaker` is true. Messages cached without these flags count as audience. On an internal session every message is an audience message |
-| Audience member | A person whose `role` is not `team_member` and who is not a guest speaker (`is_guest_speaker`). On an internal session everyone is an audience member. Used by Session Overview's Chat Messages and Most Engaged People |
+| Audience member | A person whose `role` is not `team_member` and who is not a guest speaker (`is_guest_speaker`). On an internal session everyone is an audience member. Used by Most Engaged People, and by Session Overview's Chat Messages when no chat is cached |
+| Chat Messages (Session Overview) | Number of audience messages in the cached chat; "Excludes your team (n)" counts the chat's other messages. Only when no chat is cached: the sum of `messages_count` over audience members, and over the other people for the team's count. The chat comes first because Livestorm sometimes reports `messages_count` 0 for every person although the chat has messages. The session summary sent to the AI counts the same way, an empty cached chat as 0 (`session_overview.build_session_stats`) |
 | Question coverage rate | `answered / total_questions × 100` (answered = has a responder, or `response_orally` is true; older payloads spell it `responded_orally`) |
 
 ### Transcript-level

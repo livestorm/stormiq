@@ -276,7 +276,13 @@ def _serialize_cached_session(session_id: str, cached_session: Dict[str, Any]) -
     questions_df = build_questions_df_from_payload(questions_payload) if isinstance(questions_payload, dict) else pd.DataFrame()
     transcript_text = build_transcript_display_text(transcript_payload) if isinstance(transcript_payload, dict) else ""
     transcript_insights = _cached_transcript_insights(session_id, cached_session)
-    session_overview = build_session_overview_data(session_payload) if isinstance(session_payload, dict) else {}
+    session_overview = (
+        # Chat Messages counts the cached chat; only without one does it
+        # fall back to the people's `messages_count`.
+        build_session_overview_data(session_payload, chat_df=chat_df if isinstance(chat_payload, dict) else None)
+        if isinstance(session_payload, dict)
+        else {}
+    )
     # Internal session (the team is most of the room): nothing is left out
     # of the audience. Decided once, from the people, for every chart.
     internal_session = bool(session_overview.get("internal_session", False))
@@ -1025,6 +1031,9 @@ def run_overall_analysis(api_analysis_key: str, session_id: str, output_language
                 transcript_payload=transcript_payload,
                 session_payload=session_payload if isinstance(session_payload, dict) else None,
                 internal=internal_session,
+                # The session summary counts the cached chat, even an empty
+                # one, as Session Overview's Chat Messages does.
+                session_chat_df=chat_df if isinstance(chat_payload, dict) else None,
             ),
             raw_payload=build_compact_chat_payload_for_llm(chat_df) if not chat_df.empty else None,
             questions_payload=build_compact_questions_payload_for_llm(questions_df) if not questions_df.empty else None,
