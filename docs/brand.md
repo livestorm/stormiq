@@ -188,3 +188,6 @@ colors: {
 - Not an official Livestorm product — do not use the Livestorm logo as the app logo
 - Use "StormIQ" as the app name
 - The app should feel brand-adjacent, not brand-impersonating
+- PDF exports are headed by the StormIQ mark, drawn in `pdf.py`: a `#0B42C3` circle with three ascending white rounded bars, then the wordmark "Storm" + "IQ" (IQ in `#0B42C3`). Their footer repeats the "not an official Livestorm product" notice (in French for French exports)
+- No real person's photo or likeness in the UI: decorative visuals are CSS shapes or StormIQ illustrations (the Surprise Me! tab shows a CSS spotlight)
+- Exported files are named `stormiq-…`, never `livestorm-…`

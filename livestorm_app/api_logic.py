@@ -38,6 +38,8 @@ from livestorm_app.ai.generation import (
     _bundle_has_all_sections,
     analyze_with_openai,
     generate_content_repurpose_bundle_with_openai,
+    is_placeholder_bundle,
+    missing_bundle_sections,
     translate_content_repurpose_bundle_with_openai,
     translate_markdown_with_openai,
 )
@@ -145,6 +147,16 @@ def _get_alternate_language_text(bundle: Any, target_language: str) -> Tuple[str
     return "", ""
 
 
+def _stored_content_bundles(cached: Dict[str, Any]) -> Dict[str, Any]:
+    """The stored content-repurposing bundles by language, without the
+    empty-transcript placeholder bundles earlier versions saved: those are
+    treated as missing, so they can be generated again."""
+    raw = cached.get("content_repurpose_bundle")
+    if not isinstance(raw, dict):
+        return {}
+    return {language: bundle for language, bundle in raw.items() if not is_placeholder_bundle(bundle)}
+
+
 def _get_alternate_language_bundle(bundle_by_language: Any, target_language: str) -> Tuple[str, Dict[str, str]]:
     if not isinstance(bundle_by_language, dict):
         return "", {}
@@ -247,7 +259,7 @@ def _serialize_outputs(cached_session: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "analysisBundle": _normalize_text_bundle(cached_session.get("analysis_bundle"), str(cached_session.get("analysis_md") or "")),
         "deepAnalysisBundle": _normalize_text_bundle(cached_session.get("deep_analysis_bundle"), str(cached_session.get("deep_analysis_md") or "")),
-        "contentRepurposeBundle": cached_session.get("content_repurpose_bundle") if isinstance(cached_session.get("content_repurpose_bundle"), dict) else {},
+        "contentRepurposeBundle": _stored_content_bundles(cached_session),
         "smartRecapBundle": _normalize_smart_recap_bundle(cached_session.get("smart_recap_bundle")),
     }
 
@@ -473,7 +485,7 @@ def list_workspace_sessions_data(organization_id: str) -> Dict[str, Any]:
     sessions: List[Dict[str, Any]] = []
     for row in rows:
         # The query returns only the session's attributes object, the event
-        # title and has-output flags (see db.list_workspace_sessions).
+        # title and language, and has-output flags (see db.list_workspace_sessions).
         attributes = row.get("session_attributes") if isinstance(row.get("session_attributes"), dict) else {}
         started_at_unix = attributes.get("started_at") or attributes.get("estimated_started_at")
         duration_seconds = attributes.get("duration")
@@ -499,7 +511,8 @@ def list_workspace_sessions_data(organization_id: str) -> Dict[str, Any]:
                 "attendeesCount": attributes.get("attendees_count"),
                 "registrantsCount": attributes.get("registrants_count"),
                 "schedulingStatus": attributes.get("status") or attributes.get("scheduling_status"),
-                "language": attributes.get("language"),
+                # Language belongs to the event; sessions have none.
+                "language": row.get("event_language") or None,
                 "hasTranscript": bool(row.get("has_transcript")),
                 "hasOverallAnalysis": bool(row.get("has_overall_analysis")),
                 "hasDeepAnalysis": bool(row.get("has_deep_analysis")),
@@ -1078,11 +1091,11 @@ def build_analysis_pdf(session_id: str, analysis_kind: str, language: str, *, or
     if kind == "overall":
         bundle = _normalize_text_bundle(cached.get("analysis_bundle"), str(cached.get("analysis_md") or ""))
         title = "Analyse globale" if is_french else "Overall Analysis"
-        filename = f"livestorm-overall-analysis-{language.lower()}-{session_id}.pdf"
+        filename = f"stormiq-overall-analysis-{language.lower()}-{session_id}.pdf"
     elif kind == "deep":
         bundle = _normalize_text_bundle(cached.get("deep_analysis_bundle"), str(cached.get("deep_analysis_md") or ""))
         title = "Analyse approfondie" if is_french else "Deep Analysis"
-        filename = f"livestorm-deep-analysis-{language.lower()}-{session_id}.pdf"
+        filename = f"stormiq-deep-analysis-{language.lower()}-{session_id}.pdf"
     else:
         raise RuntimeError("Unknown analysis kind. Expected `overall` or `deep`.")
 
@@ -1090,7 +1103,7 @@ def build_analysis_pdf(session_id: str, analysis_kind: str, language: str, *, or
     if not markdown:
         raise RuntimeError(f"No {kind} analysis is available yet for {language}.")
 
-    pdf_bytes = analysis_markdown_to_pdf_bytes(markdown, title=title)
+    pdf_bytes = analysis_markdown_to_pdf_bytes(markdown, title=title, language=language)
     return {"filename": filename, "content": pdf_bytes}
 
 
@@ -1186,7 +1199,7 @@ def build_smart_recap_pdf(session_id: str, tone: str, *, organization_id: OrgSco
         "surprise": "Smart Recap - Surprise",
     }
     title = title_map.get(tone_key, "Smart Recap")
-    filename = f"livestorm-smart-recap-{tone_key}-{session_id}.pdf"
+    filename = f"stormiq-smart-recap-{tone_key}-{session_id}.pdf"
     pdf_bytes = analysis_markdown_to_pdf_bytes(markdown, title=title)
     return {"filename": filename, "content": pdf_bytes}
 
@@ -1196,7 +1209,7 @@ def build_content_repurposing_pdf(session_id: str, language: str, item: str, *, 
     language_key = str(language or "English").strip() or "English"
     is_french = language_key.lower() == "french"
     item_key = str(item or "").strip().lower()
-    all_bundles = cached.get("content_repurpose_bundle") if isinstance(cached.get("content_repurpose_bundle"), dict) else {}
+    all_bundles = _stored_content_bundles(cached)
     language_bundle = all_bundles.get(language_key) if isinstance(all_bundles.get(language_key), dict) else {}
     markdown = str(language_bundle.get(item_key) or "").strip()
     if not markdown:
@@ -1210,8 +1223,8 @@ def build_content_repurposing_pdf(session_id: str, language: str, item: str, *, 
     }
     item_label = label_map.get(item_key, item_key.title())
     title = item_label
-    filename = f"livestorm-content-{language_key.lower()}-{item_key}-{session_id}.pdf"
-    pdf_bytes = analysis_markdown_to_pdf_bytes(markdown, title=title)
+    filename = f"stormiq-content-{language_key.lower()}-{item_key}-{session_id}.pdf"
+    pdf_bytes = analysis_markdown_to_pdf_bytes(markdown, title=title, language=language_key)
     return {"filename": filename, "content": pdf_bytes}
 
 
@@ -1221,7 +1234,7 @@ def run_content_repurposing(api_analysis_key: str, session_id: str, output_langu
     if not isinstance(transcript_payload, dict):
         raise RuntimeError("Content repurposing requires a transcript payload.")
 
-    all_bundles = cached.get("content_repurpose_bundle") if isinstance(cached.get("content_repurpose_bundle"), dict) else {}
+    all_bundles = _stored_content_bundles(cached)
     if str(output_language or "").strip() not in ("", "English"):
         english_bundle = all_bundles.get("English", {}) if isinstance(all_bundles, dict) else {}
         if not any(str(v or "").strip() for v in (english_bundle or {}).values()):
@@ -1243,7 +1256,7 @@ def run_content_repurposing(api_analysis_key: str, session_id: str, output_langu
             transcript_text=build_transcript_plain_text(transcript_payload),
         )
     if not isinstance(bundle, dict) or not _bundle_has_all_sections(bundle):
-        missing = [key for key in ("summary", "blog", "email", "social_media") if not str((bundle or {}).get(key) or "").strip()]
+        missing = missing_bundle_sections(bundle)
         raise RuntimeError(
             f"Content repurposing returned an incomplete result (missing: {', '.join(missing)}). Nothing was saved; please try again."
         )
@@ -1291,7 +1304,7 @@ def _extract_cached_ai_body(cached: Dict[str, Any], kind: str, language: str = "
         bundle = _normalize_smart_recap_bundle(cached.get("smart_recap_bundle"))
         return bundle.get(tone) if bundle.get(tone) else None
     if kind == "content_repurposing":
-        all_bundles = cached.get("content_repurpose_bundle") if isinstance(cached.get("content_repurpose_bundle"), dict) else {}
+        all_bundles = _stored_content_bundles(cached)
         language_bundle = all_bundles.get(language) if isinstance(all_bundles.get(language), dict) else {}
         # Repurposing has 4 sub-bundles; treat as complete when ALL four are present.
         required = {"summary", "blog", "email", "social_media"}

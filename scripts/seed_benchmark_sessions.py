@@ -221,7 +221,7 @@ def build_questions(rng: random.Random, n: int, people: List[Dict[str, Any]], st
                 "created_at": asked, "updated_at": asked, "responded_at": asked + 120 if answered else None,
                 "question_author_id": rng.choice(people)["id"],
                 "response_author_id": people[0]["id"] if answered else None,
-                "responded_orally": False, "session_id": "s", "event_id": "evt",
+                "response_orally": False, "session_id": "s", "event_id": "evt",
             },
         })
     return {"data": data, "included": people[:3], "pages_fetched": 1, "requested_page_size": 100}

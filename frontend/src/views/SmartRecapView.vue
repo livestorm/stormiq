@@ -92,8 +92,8 @@ const activeButtonLabel = "Generate";
       <AiJobProgress :job="state.aiJobs.smart_recap" flow="smart_recap" />
 
       <div class="smart-recap-result-shell">
-        <div v-if="activeTone === 'surprise'" class="smart-recap-result-art">
-          <img :src="'/brand-assets/icons/gc.png'" alt="Surprise Me artwork" class="smart-recap-result-art-image" />
+        <div v-if="activeTone === 'surprise'" class="smart-recap-result-art" aria-hidden="true">
+          <span class="smart-recap-result-art-spotlight"></span>
         </div>
         <RichMarkdownCard :body="displayBody" :empty-message="activeDescription" />
       </div>

@@ -28,10 +28,15 @@ const savingKey = ref(null);
 const settingsError = ref("");
 const settingsSuccess = ref("");
 
+// Claude 4.7 and later models take no `temperature`; llm_client sends it
+// only to the models that accept it (anthropic_accepts_temperature).
+// Models that think by default (Claude 5 and later) are not offered yet:
+// thinking counts toward max_tokens, and the flows' token budgets are sized
+// for models that answer directly.
 const ANTHROPIC_TEXT_MODELS = [
   { value: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5 — fast & cheap" },
   { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6 — balanced" },
-  { value: "claude-opus-4-7", label: "Claude Opus 4.7 — most capable" },
+  { value: "claude-opus-4-8", label: "Claude Opus 4.8 — most capable" },
 ];
 
 const OPENAI_TEXT_MODELS = [
@@ -41,10 +46,15 @@ const OPENAI_TEXT_MODELS = [
   { value: "gpt-4.1", label: "GPT-4.1 — capable, newer" },
 ];
 
+// gpt-image-1 was shut down on 2026-10-23. A saved gpt-image-1 setting is
+// sent as gpt-image-2 (cover_image.resolve_image_model), so show that.
 const IMAGE_MODELS = [
-  { value: "gpt-image-1", label: "gpt-image-1" },
   { value: "gpt-image-2", label: "gpt-image-2 (recommended)" },
 ];
+const activeImageModel = computed(() => {
+  const saved = settings.value.image_model;
+  return IMAGE_MODELS.some((m) => m.value === saved) ? saved : "gpt-image-2";
+});
 
 const activeProvider = computed(() => settings.value.llm_provider || "anthropic");
 const textModels = computed(() =>
@@ -513,7 +523,7 @@ onMounted(() => {
                 v-for="m in IMAGE_MODELS"
                 :key="m.value"
                 class="model-option"
-                :class="{ selected: (settings.image_model || 'gpt-image-2') === m.value }"
+                :class="{ selected: activeImageModel === m.value }"
                 :disabled="savingKey !== null"
                 @click="saveSetting('image_model', m.value)"
               >
@@ -521,7 +531,7 @@ onMounted(() => {
               </button>
             </div>
             <p class="model-card-current">
-              Active: <strong>{{ settings.image_model || "gpt-image-2" }}</strong>
+              Active: <strong>{{ activeImageModel }}</strong>
               <span v-if="savingKey === 'image_model'" class="saving-indicator"> — saving…</span>
             </p>
           </div>

@@ -1,5 +1,12 @@
 <script setup>
 import { buildCsv } from "../utils/csv";
+import {
+  excludedTeamLabel,
+  isQuestionAnswered,
+  messageSender,
+  splitAudienceChat,
+  uniqueAuthorCount,
+} from "../utils/audience";
 import { computed, ref } from "vue";
 import ActivityTimelineChartCard from "../components/charts/chat-questions/ActivityTimelineChartCard.vue";
 import BarChartCard from "../components/charts/shared/BarChartCard.vue";
@@ -49,10 +56,18 @@ const chatStats = computed(() => state.workspace?.stats?.chat || {});
 const questionStats = computed(() => state.workspace?.stats?.questions || {});
 const activityTimelineRowsRaw = computed(() => state.workspace?.tables?.chatQuestionsTimeline || []);
 
+// Engagement metrics count the audience only; the Chat tab lists every message.
+const chatSplit = computed(() => splitAudienceChat(chatRows.value));
+const audienceChatRows = computed(() => chatSplit.value.audience);
+const excludedTeamCount = computed(() => chatSplit.value.excludedTeam);
+const excludedTeamNote = computed(() => excludedTeamLabel(excludedTeamCount.value));
+// For Unique Chatters the count is people, not messages.
+const excludedTeamAuthorsNote = computed(() => excludedTeamLabel(chatSplit.value.excludedTeamAuthors));
+
 const avgMessageLength = computed(() => {
   const statValue = Number(chatStats.value?.text_length?.avg_chars || 0);
   if (statValue > 0) return statValue;
-  const lengths = chatRows.value
+  const lengths = audienceChatRows.value
     .map((row) => String(row?.text_content || ""))
     .filter((text) => text.length > 0)
     .map((text) => text.length);
@@ -61,15 +76,7 @@ const avgMessageLength = computed(() => {
   return total / lengths.length;
 });
 
-const uniqueChattersCount = computed(() => {
-  const statValue = Number(chatStats.value?.unique_authors || 0);
-  if (statValue > 0) return statValue;
-  return new Set(
-    chatRows.value
-      .map((row) => String(row?.author_id || "").trim())
-      .filter(Boolean),
-  ).size;
-});
+const uniqueChattersCount = computed(() => uniqueAuthorCount(audienceChatRows.value));
 
 const uniqueAskersCount = computed(() => {
   const statValue = Number(questionStats.value?.unique_askers || 0);
@@ -82,8 +89,8 @@ const uniqueAskersCount = computed(() => {
 });
 
 const topMetrics = computed(() => [
-  { label: "Messages", value: String(Number(chatStats.value?.total_messages || chatRows.value.length || 0)) },
-  { label: "Unique Chatters", value: String(uniqueChattersCount.value) },
+  { label: "Messages", value: String(audienceChatRows.value.length), hint: excludedTeamNote.value },
+  { label: "Unique Chatters", value: String(uniqueChattersCount.value), hint: excludedTeamAuthorsNote.value },
   { label: "Avg Msg Length", value: `${avgMessageLength.value.toFixed(1)} chars` },
   { label: "Questions", value: String(Number(questionStats.value?.total_questions || questionRows.value.length || 0)) },
   { label: "Unique Askers", value: String(uniqueAskersCount.value) },
@@ -92,6 +99,7 @@ const topMetrics = computed(() => [
 const chatTableRows = computed(() =>
   chatRows.value.map((row) => ({
     text_content: row.text_content,
+    from: messageSender(row),
     created_at: row.created_at,
     updated_at: row.updated_at,
     author_id: row.author_id,
@@ -100,6 +108,7 @@ const chatTableRows = computed(() =>
 
 const chatColumnLabels = {
   text_content: "Message",
+  from: "From",
   created_at: "Created At",
   updated_at: "Updated At",
   author_id: "Author ID",
@@ -107,6 +116,7 @@ const chatColumnLabels = {
 
 const chatColumnWidths = {
   text_content: "24rem",
+  from: "9rem",
   created_at: "14rem",
   updated_at: "14rem",
   author_id: "16rem",
@@ -143,7 +153,7 @@ const questionsColumnWidths = {
 
 const topChatContributorsRows = computed(() => {
   const counts = new Map();
-  for (const row of chatTableRows.value) {
+  for (const row of audienceChatRows.value) {
     const author = String(row.author_id || "").trim();
     if (!author) continue;
     counts.set(author, (counts.get(author) || 0) + 1);
@@ -183,7 +193,7 @@ const contributorsComparisonRows = computed(() => [
 const activityTimelineRows = computed(() => {
   const buckets = new Map();
 
-  for (const row of chatTableRows.value) {
+  for (const row of audienceChatRows.value) {
     const date = parseUtcDate(row.created_at);
     if (!date) continue;
     const minuteDate = new Date(date);
@@ -220,9 +230,9 @@ const activityTimelineRows = computed(() => {
 });
 
 const responseCoverageRows = computed(() => {
-  if (!questionsTableRows.value.length) return [];
-  const answered = questionsTableRows.value.filter((row) => String(row.responded_by || "").trim()).length;
-  const unanswered = Math.max(questionsTableRows.value.length - answered, 0);
+  if (!questionRows.value.length) return [];
+  const answered = questionRows.value.filter(isQuestionAnswered).length;
+  const unanswered = Math.max(questionRows.value.length - answered, 0);
   return [
     { status: "Answered", count: answered },
     { status: "Unanswered", count: unanswered },
@@ -282,6 +292,7 @@ const questionsHelperMessage = computed(() => {
         <article class="metric-card metric-card-hero" v-for="metric in topMetrics" :key="metric.label">
           <span class="metric-label">{{ metric.label }}</span>
           <strong class="metric-value">{{ metric.value }}</strong>
+          <span v-if="metric.hint" class="metric-hint">{{ metric.hint }}</span>
         </article>
       </div>
 
@@ -349,6 +360,7 @@ const questionsHelperMessage = computed(() => {
       </template>
 
       <template v-else-if="activeTab === 'contributors'">
+        <p v-if="excludedTeamNote" class="helper-text">{{ excludedTeamNote }}</p>
         <ContributorsComparisonChartCard
           title="Top Contributors (Messages vs Questions)"
           :rows="contributorsComparisonRows"
@@ -356,6 +368,7 @@ const questionsHelperMessage = computed(() => {
       </template>
 
       <template v-else-if="activeTab === 'activity'">
+        <p v-if="excludedTeamNote" class="helper-text">{{ excludedTeamNote }}</p>
         <ActivityTimelineChartCard
           title="Activity Over Time (UTC)"
           :rows="activityTimelineRows"

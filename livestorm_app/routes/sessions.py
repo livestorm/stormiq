@@ -154,7 +154,7 @@ def download_transcript_json(session_id: SessionId, caller: Caller = Depends(get
         content=json.dumps(payload, ensure_ascii=False, indent=2),
         media_type="application/json",
         headers={
-            "Content-Disposition": f'attachment; filename="livestorm-transcript-{session_id}.json"',
+            "Content-Disposition": f'attachment; filename="stormiq-transcript-{session_id}.json"',
             "Cache-Control": "private, no-store",
         },
     )

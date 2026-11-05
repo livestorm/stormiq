@@ -314,6 +314,19 @@ def test_card_list_reads_only_what_a_card_shows(test_database):
     assert cards["s2"]["eventTitle"] == "Untitled event" and cards["s2"]["sessionName"] == "Untitled session"
 
 
+def test_card_language_comes_from_the_event(test_database):
+    # Sessions have no `language` attribute; the event does.
+    db.upsert_cached_session(
+        "k", "s1", organization_id="org-a",
+        session_payload={"data": {"id": "s1", "attributes": {"name": "Demo"}}},
+        event_payload={"data": {"attributes": {"title": "Webinar", "language": "fr"}}},
+    )
+    db.upsert_cached_session("k", "s2", organization_id="org-a", session_payload={"data": {"id": "s2", "attributes": {}}})
+    cards = {c["sessionId"]: c for c in api_logic.list_workspace_sessions_data("org-a")["sessions"]}
+    assert cards["s1"]["language"] == "fr"
+    assert cards["s2"]["language"] is None
+
+
 def test_light_reads_follow_the_org_scope(test_database):
     db.upsert_cached_session("k", "s1", organization_id="org-a", analysis_bundle={"English": "# A"})
     assert db.fetch_session_fields("s1", ["analysis_bundle", "has_transcript"], organization_id="org-a") == {

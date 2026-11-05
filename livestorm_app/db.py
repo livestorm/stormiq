@@ -689,7 +689,7 @@ def list_workspace_sessions(organization_id: str) -> List[Dict[str, Any]]:
 
     Reverse-chronological by `updated_at`. Only what a card shows is read:
     the session's attributes object (not its attendee list), the event
-    title, and has-output flags computed in SQL. Payloads, transcripts and
+    title and language, and has-output flags computed in SQL. Payloads, transcripts and
     AI bundles stay in the database; a 2-hour session row is megabytes.
 
     Returns [] when the database is disabled, the organization_id is
@@ -711,6 +711,8 @@ def list_workspace_sessions(organization_id: str) -> List[Dict[str, Any]]:
                              THEN session_payload -> 'data' -> 'attributes' END AS session_attributes,
                         CASE WHEN jsonb_typeof(event_payload -> 'data' -> 'attributes') = 'object'
                              THEN event_payload -> 'data' -> 'attributes' ->> 'title' END AS event_title,
+                        CASE WHEN jsonb_typeof(event_payload -> 'data' -> 'attributes') = 'object'
+                             THEN event_payload -> 'data' -> 'attributes' ->> 'language' END AS event_language,
                         transcript_payload IS NOT NULL AS has_transcript,
                         {_has_content_sql("analysis_bundle")} AS has_overall_analysis,
                         {_has_content_sql("deep_analysis_bundle")} AS has_deep_analysis,

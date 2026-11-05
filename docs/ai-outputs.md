@@ -14,6 +14,8 @@ Markdown with 5 sections ([prompt](../prompts/analysis_base_prompt.txt)):
 
 Stored as `analysis_bundle: {English: "...", French: "..."}`. The legacy `analysis_md` column mirrors English only.
 
+Chat statistics sent to the model (`llm_inputs.build_derived_stats`) count audience messages only, with `excluded_team_messages` giving the number of team and guest-speaker messages left out. The chat messages themselves are sent with their `from_team_member` and `from_guest_speaker` flags, as the deep analysis already did. The session summary's `total_messages_count` and `participant_summary.top_chatters` leave team members and guest speakers out too, and each question carries `answered_by` and `answered_orally`.
+
 ## Deep Analysis
 
 Markdown with 10 sections, with the headings spelled exactly as in the [prompt](../prompts/analysis_deep_prompt.txt):
@@ -39,7 +41,7 @@ Markdown with `# Title` and `# Description`, in one of three tones: `professiona
 
 ## Content Repurposing
 
-Four assets generated together as one JSON bundle, from the transcript only ([prompt](../prompts/content_repurpose_bundle_prompt.txt)), then split. The call is retried up to twice when the bundle is incomplete or in the wrong language.
+Four assets generated together as one JSON bundle, from the transcript only ([prompt](../prompts/content_repurpose_bundle_prompt.txt)), then split. The call is retried up to twice when the bundle is incomplete or in the wrong language. An empty transcript makes no model call: `generation.generate_content_repurpose_bundle_with_openai` raises, and the job fails. A section holding the old empty-transcript placeholder ("Transcript is empty.") counts as missing (`generation.missing_bundle_sections`), and stored bundles made of it are treated as absent (`api_logic._stored_content_bundles`), so they can be generated again.
 
 - `summary`: 500–700 words
 - `blog`: 1,000–1,500 words, a standalone article
@@ -57,13 +59,13 @@ Stored as `content_repurpose_bundle: {English: {summary, blog, email, social_med
 
 ## Saving rules
 
-- **Only complete output is saved.** Empty output (`api_logic._require_generated_text`), output cut off at the token limit, or a content-repurposing bundle missing any of its four sections fails the job with a clear error and saves nothing.
+- **Only complete output is saved.** Empty output (`api_logic._require_generated_text`), output cut off at the token limit, a content-repurposing bundle missing any of its four sections, or content repurposing on an empty transcript fails the job with a clear error and saves nothing. No runner substitutes placeholder text.
 - **Truncation.** `llm_client.call_llm` checks why the model stopped (`stop_reason == "max_tokens"` on Anthropic, `finish_reason == "length"` on OpenAI). A truncated answer is retried once with double the token budget, capped at `TRUNCATION_RETRY_MAX_TOKENS` (16,000). If it's still cut off, `LLMOutputTruncated` is raised and nothing is saved.
 - **One entry at a time.** Each job writes only its own language or tone (`db.merge_cached_bundle_entry`), see [data-model.md](data-model.md#caching-rules).
 
 ## Exports
 
-Every stored AI output has a PDF route, rendered with reportlab in [`pdf.py`](../livestorm_app/pdf.py): overall and deep analysis per language, Smart Recap per tone, and each content asset per language.
+Every stored AI output has a PDF route, rendered with reportlab in [`pdf.py`](../livestorm_app/pdf.py): overall and deep analysis per language, Smart Recap per tone, and each content asset per language. Each PDF is headed by the StormIQ mark, drawn in code (never the Livestorm logo), and every page carries the footer `pdf.PDF_FOOTER_TEXT` (`pdf.PDF_FOOTER_TEXT_FR` for French exports), the app's "not an official Livestorm product" notice. `**bold**` renders as bold, `***bold italic***` as bold italic and `---` separators as a thin rule; other inline markdown is printed as text. Files are named `stormiq-…`.
 
 ## Prompts
 

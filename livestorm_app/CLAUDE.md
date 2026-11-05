@@ -41,6 +41,6 @@ The HTTP routes live in `routes/`, one module per area; `../app.py` creates the 
 | `test_data_integrity.py` | bundle writes, write failures, incomplete AI output |
 | `test_job_reliability.py` | dedupe, retries, timeouts, the transcript job lifecycle, cancellation |
 | `test_performance.py` | the insights cache, field reads, pools, the Redis cooldown, outputs-only polls |
-| `test_pure_functions.py` | metrics and formulas |
+| `test_pure_functions.py` | metrics and formulas, PDF rendering, the Anthropic request's `temperature` |
 
 `conftest.py` provides `test_database` (needs `TEST_DATABASE_URL`, local only) and `test_redis` (needs `TEST_REDIS_URL`, local, non-zero db index; it flushes that db). `make test-backend` sets both. Tests never call real providers: patch them at the module boundary, for example `monkeypatch.setattr("livestorm_app.transcript_client.fetch_session_transcript", fake)`.

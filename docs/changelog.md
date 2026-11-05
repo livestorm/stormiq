@@ -2,6 +2,18 @@
 
 What has shipped, newest first. What's next is in [roadmap.md](roadmap.md).
 
+## November 2026: fixes before the rebuild
+
+- **Audience-only chat metrics.** Chat from the team and guest speakers no longer counts as audience activity: Messages, Unique Chatters, Avg Msg Length, Top Contributors, Activity Over Time, the cross-source timeline, Session Overview's Chat Messages and the chat stats sent to the AI count the audience only, with "Excludes your team (n)" on the cards. The Chat tab still lists every message, with a "From" column.
+- **Session Overview.** Most Engaged People leaves out team members and guest speakers; Attendance By Country plots attendees, not registrants.
+- **Cross-source timeline.** The last chat message and the last question were always dropped (they fell in a 100% bucket past the end).
+- **Oral answers.** The questions field is read with the API's spelling (`response_orally`, falling back to `responded_orally`), and a question answered orally counts as answered, in the app and in what the AI sees.
+- **Card language.** The session-card API returns the event's language; it was read from the session, which has none. Cards don't show it yet.
+- **Content Repurposing on an empty transcript** fails the job instead of saving "Transcript is empty." four times. Bundles saved that way earlier are treated as missing, so they can be generated again.
+- **PDFs** carry the StormIQ mark instead of the Livestorm logo, a "not an official Livestorm product" footer (in French for French exports), real bold text and no literal `---` lines. Exports are named `stormiq-…` instead of `livestorm-…`.
+- **Models.** `temperature` is sent only to the Claude models that accept it, so Opus 4.7 and 4.8 work when chosen; Admin offers Opus 4.8 in place of 4.7. gpt-image-1, shut down by OpenAI, is gone from Admin, and a saved gpt-image-1 setting is sent as gpt-image-2.
+- **Surprise Me!** shows a CSS spotlight instead of an image.
+
 ## November 2026: structure
 
 - **#11 Module split.** `app.py` (776 lines) became the entry point plus one router per area in `livestorm_app/routes/`; `services.py` (3,000 lines) became `livestorm/` (API client), `analytics/`, `ai/` and `pdf.py`. Code moved verbatim: a before/after snapshot of workspaces, routes, the OpenAPI schema, prompts, LLM inputs and a PDF is byte-identical.

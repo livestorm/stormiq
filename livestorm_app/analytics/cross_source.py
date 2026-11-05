@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
+from livestorm_app.analytics.audience import split_audience_chat
 from livestorm_app.analytics.transcript import build_transcript_insights
 
 
@@ -22,6 +23,18 @@ def _normalize_series_to_progress(series: pd.Series) -> pd.Series:
     return timestamps.apply(
         lambda value: round(((value - min_ts).total_seconds() / duration_seconds) * 100, 2) if pd.notna(value) else None
     )
+
+
+def _bucket_start(value: Any, bucket_size_pct: int) -> Optional[int]:
+    """The bucket a progress percentage falls in. 100% (the last item of a
+    series) belongs to the last bucket, not to a bucket past the end. The last
+    bucket is the last start in range(0, 100, bucket_size_pct), which is also
+    right when the size does not divide 100."""
+    if pd.isna(value):
+        return None
+    bucket = int((float(value) // bucket_size_pct) * bucket_size_pct)
+    last_bucket = ((100 - 1) // bucket_size_pct) * bucket_size_pct
+    return min(bucket, last_bucket)
 
 
 def _format_session_stage_label(start_pct: float, end_pct: float) -> str:
@@ -68,7 +81,7 @@ def build_cross_source_insights(
         lambda value: round((float(value) / transcript_duration) * 100, 2) if pd.notna(value) and transcript_duration > 0 else None
     )
     working_segments["bucket_start_pct"] = working_segments["progress_pct"].apply(
-        lambda value: int((float(value) // bucket_size_pct) * bucket_size_pct) if pd.notna(value) else None
+        lambda value: _bucket_start(value, bucket_size_pct)
     )
 
     combined_frames: List[pd.DataFrame] = []
@@ -88,12 +101,14 @@ def build_cross_source_insights(
         )
         combined_frames.append(transcript_bins[["bucket_start_pct", "transcript_words", "transcript_segments", "transcript_wpm"]])
 
+    # Reactions are the audience's: team and guest-speaker messages are left out.
+    chat_df, _ = split_audience_chat(chat_df)
     if "created_at" in chat_df.columns:
         chat_progress = _normalize_series_to_progress(chat_df["created_at"])
         chat_working = chat_df.copy()
         chat_working["progress_pct"] = chat_progress
         chat_working["bucket_start_pct"] = chat_working["progress_pct"].apply(
-            lambda value: int((float(value) // bucket_size_pct) * bucket_size_pct) if pd.notna(value) else None
+            lambda value: _bucket_start(value, bucket_size_pct)
         )
         chat_bins = (
             chat_working.dropna(subset=["bucket_start_pct"])
@@ -111,7 +126,7 @@ def build_cross_source_insights(
         question_working = questions_df.copy()
         question_working["progress_pct"] = question_progress
         question_working["bucket_start_pct"] = question_working["progress_pct"].apply(
-            lambda value: int((float(value) // bucket_size_pct) * bucket_size_pct) if pd.notna(value) else None
+            lambda value: _bucket_start(value, bucket_size_pct)
         )
         question_bins = (
             question_working.dropna(subset=["bucket_start_pct"])

@@ -7,10 +7,12 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 from livestorm_app.analytics.audience import (
+    TEAM_MESSAGE_FLAGS,
     build_question_stats,
     clean_table_headers,
     flatten_message,
     flatten_question,
+    split_audience_chat,
 )
 from livestorm_app.analytics.session_overview import build_session_stats
 from livestorm_app.analytics.transcript import (
@@ -39,6 +41,9 @@ def build_derived_stats(
     stats: Dict[str, Any] = {}
 
     if isinstance(chat_df, pd.DataFrame):
+        # Engagement stats are the audience's: team and guest-speaker
+        # messages are counted apart, not as audience activity.
+        chat_df, excluded_team_messages = split_audience_chat(chat_df)
         unique_authors = 0
         if "author_id" in chat_df.columns:
             author_series = chat_df["author_id"].fillna("").astype(str).str.strip()
@@ -46,6 +51,7 @@ def build_derived_stats(
         chat_stats: Dict[str, Any] = {
             "total_messages": int(len(chat_df.index)),
             "unique_authors": unique_authors,
+            "excluded_team_messages": excluded_team_messages,
         }
         if "created_at" in chat_df.columns:
             series = pd.to_datetime(chat_df["created_at"], utc=True, errors="coerce").dropna()
@@ -59,11 +65,12 @@ def build_derived_stats(
             chat_stats["top_authors_by_message_count"] = {str(idx): int(val) for idx, val in top_authors.items()}
         if "text_content" in chat_df.columns:
             text_lengths = chat_df["text_content"].fillna("").astype(str).str.len()
-            chat_stats["text_length"] = {
-                "avg_chars": float(round(text_lengths.mean(), 2)),
-                "median_chars": float(round(text_lengths.median(), 2)),
-                "max_chars": int(text_lengths.max()) if len(text_lengths.index) else 0,
-            }
+            if len(text_lengths.index):
+                chat_stats["text_length"] = {
+                    "avg_chars": float(round(text_lengths.mean(), 2)),
+                    "median_chars": float(round(text_lengths.median(), 2)),
+                    "max_chars": int(text_lengths.max()),
+                }
         stats["chat"] = chat_stats
 
     if isinstance(questions_df, pd.DataFrame):
@@ -169,7 +176,12 @@ def build_deep_analysis_questions_payload_for_llm(questions_payload: Dict[str, A
             "created_at": flattened.get("created_at"),
             "question": question_text,
             "responded_at": flattened.get("responded_at"),
-            "responded_orally": flattened.get("responded_orally"),
+            # The API spec spells it `response_orally`; older payloads say `responded_orally`.
+            "responded_orally": (
+                flattened.get("response_orally")
+                if flattened.get("response_orally") is not None
+                else flattened.get("responded_orally")
+            ),
             "question_author_id": flattened.get("question_author_id"),
         }
         response = str(flattened.get("response") or "").strip()
@@ -179,7 +191,10 @@ def build_deep_analysis_questions_payload_for_llm(questions_payload: Dict[str, A
     return {"question_events": events}
 
 def build_compact_chat_payload_for_llm(chat_df: pd.DataFrame, max_rows: int = 150) -> Dict[str, Any]:
-    columns = [column for column in ["created_at", "author_id", "text_content"] if column in chat_df.columns]
+    columns = [
+        column for column in ["created_at", "author_id", "text_content", *TEAM_MESSAGE_FLAGS]
+        if column in chat_df.columns
+    ]
     return {
         "messages": chat_df.head(max_rows)[columns].fillna("").to_dict("records") if columns else [],
     }
@@ -187,7 +202,9 @@ def build_compact_chat_payload_for_llm(chat_df: pd.DataFrame, max_rows: int = 15
 
 def build_compact_questions_payload_for_llm(questions_df: pd.DataFrame, max_rows: int = 80) -> Dict[str, Any]:
     columns = [
-        column for column in ["asked_at", "asked_by", "question", "response"]
+        # `answered_by` and `answered_orally` let the model see a question
+        # answered live, which has no response text.
+        column for column in ["asked_at", "asked_by", "question", "response", "answered_by", "answered_orally"]
         if column in questions_df.columns
     ]
     return {
