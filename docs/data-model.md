@@ -42,6 +42,9 @@ session_cache (
 - `organization_id` is stamped from the requesting user's OAuth connection on first fetch, once their Livestorm credentials prove access ([security.md](security.md)). Rows cached before org scoping have a NULL org: only admins (and local-dev callers) can read them until a member of the org fetches the session again, which stamps the org.
 - `created_by_*` are kept on update (`COALESCE(NULLIF(col, ''), EXCLUDED.col)`), so the first writer's identity sticks when a teammate refetches.
 - The unique index on `session_id` alone means refetching a session from another account updates the same row.
+- `transcript_payload` is Gladia's result (`result`) plus StormIQ's normalized fields (`text`, `segments`, `subtitles`, …), built by `gladia/transcriber._normalize_transcription`. Gladia puts each word inside its utterance (`result.transcription.utterances[].words`), and classic reads them there (`analytics/transcript._extract_transcript_object`). The normalized top-level `words` list copies `result.transcription.words` only, so it is empty unless Gladia sends that list. Classic doesn't read it: it reads `result.transcription` whenever that exists.
+- `result.stormiq_chunks` lists the Gladia jobs a transcript was made of: `[{index, offset_s, duration_s, speaker_base, gladia_job_id}]`, one entry per 135-minute chunk, and one for a shorter recording. Times in the payload are on the whole recording's clock, and chunk `k`'s speakers are numbered from its `speaker_base` ([providers.md](providers.md#gladia-configuration)).
+- Transcripts saved before the merge fix (November 2026) have no `stormiq_chunks`. A long one also has an empty `result.transcription.words` list that hides its words from classic, words in later chunks that keep their chunk's own times, sentences and named entities for the first chunk only, and speaker numbers that restart in each chunk. They are not rewritten.
 
 ## `transcript_jobs`
 

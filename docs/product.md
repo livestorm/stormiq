@@ -127,6 +127,8 @@ Six top-level cards, from the session payload (Chat Messages: from the cached ch
 
 The transcript view requires a completed transcription job. If still running, a progress message is shown.
 
+**Recordings longer than 135 minutes** are transcribed in parts of up to 135 minutes, then joined into one transcript. Each part numbers its speakers on its own, so one person gets one speaker number per part. The speaker labels on the Transcript tab can give those numbers the same name, but charts and tables still list each number on its own. Long transcripts saved before the merge fix (November 2026) were joined without word timings, so their pauses come from segments, and their sentences and named entities stop after the first part. Their speaker numbers also restart in each part, so one number can cover different people, and its airtime share mixes them. They are not rewritten.
+
 ### Tab: Transcript
 - Full searchable transcript text
 - **Editable speaker labels** — speakers can be renamed; labels are persisted with the session and applied throughout the workspace

@@ -695,6 +695,33 @@ def test_gladia_polling_survives_brief_network_errors(monkeypatch):
     assert transcriber._poll_gladia_transcription("job", "k")["status"] == "done"
 
 
+def test_gladia_request_is_built_once_and_sent_as_recorded(monkeypatch, tmp_path):
+    audio = tmp_path / "chunk.wav"
+    audio.write_bytes(b"RIFF")
+    built: list = []
+    posted: list = []
+    real_build = transcriber._build_gladia_request
+
+    def counting_build(audio_url, gladia_options=None):
+        built.append(audio_url)
+        return real_build(audio_url, gladia_options)
+
+    def fake_json_request(*, method, url, api_key, payload=None):
+        posted.append((method, payload))
+        return {"id": "job-1"}
+
+    monkeypatch.setattr(transcriber, "_upload_audio_file", lambda path, key: {"audio_url": "https://gladia.example/a"})
+    monkeypatch.setattr(transcriber, "_build_gladia_request", counting_build)
+    monkeypatch.setattr(transcriber, "_json_request", fake_json_request)
+    monkeypatch.setattr(transcriber, "_poll_gladia_transcription", lambda job_id, api_key, **kwargs: {"status": "done"})
+
+    chunk = transcriber._transcribe_audio_file(audio, api_key="k", gladia_options={"diarization_config": {"max_speakers": 5}})
+
+    assert built == ["https://gladia.example/a"]
+    assert posted == [("POST", chunk["gladia_request"])]
+    assert chunk["gladia_request"]["diarization_config"]["max_speakers"] == 5
+
+
 def test_gladia_polling_gives_up_after_repeated_errors(monkeypatch):
     calls = {"n": 0}
 
