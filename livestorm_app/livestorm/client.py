@@ -226,6 +226,18 @@ def _page_size(requested: int) -> int:
 
 
 def fetch_chat_messages(key: str, session: str, page_size: int = DEFAULT_PAGE_SIZE) -> Dict[str, Any]:
+    """Every chat message of a session, each with its author's people link.
+
+    Every page asks for `include=people`, so each message carries
+    `relationships.people.data` (`{type: "people", id}`): its author's
+    people id, the key that joins it to the session's people
+    (`record/authors.py`). Its `author_id` attribute is another id. The
+    `included` people are dropped before returning, so the chat payload
+    keeps only each message's people id. In the one real session checked,
+    the session payload (`include=people` too) held every chat author; one
+    missing from it reads unresolved. Join links are stripped first all the
+    same.
+    """
     url = f"{API_BASE}/sessions/{session}/chat_messages"
     headers = build_headers(key)
     page_size = _page_size(page_size)
@@ -244,7 +256,7 @@ def fetch_chat_messages(key: str, session: str, page_size: int = DEFAULT_PAGE_SI
         resp = livestorm_get(
             url,
             headers=headers,
-            params={"page[number]": page_number, "page[size]": page_size},
+            params={"page[number]": page_number, "page[size]": page_size, "include": "people"},
         )
         resp.raise_for_status()
         payload = resp.json()
@@ -269,7 +281,9 @@ def fetch_chat_messages(key: str, session: str, page_size: int = DEFAULT_PAGE_SI
     final_payload["data"] = all_messages
     final_payload["pages_fetched"] = pages_fetched
     final_payload["requested_page_size"] = page_size
-    return strip_payload_join_links(final_payload)
+    stripped = strip_payload_join_links(final_payload)
+    # The people come with the session payload: never stored twice.
+    return {name: value for name, value in stripped.items() if name != "included"}
 
 
 def fetch_session_questions(key: str, session: str, page_size: int = DEFAULT_PAGE_SIZE) -> Dict[str, Any]:

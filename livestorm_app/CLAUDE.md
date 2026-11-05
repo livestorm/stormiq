@@ -24,7 +24,7 @@ The HTTP routes live in `routes/`, one module per area; `../app.py` creates the 
 **Outbound calls**
 - Every HTTP call has a timeout. Retry only failures where nothing was produced or billed; never retry a POST that starts paid work. → [docs/providers.md](../docs/providers.md)
 - The Livestorm HTTP session (`livestorm.client.livestorm_get`) is shared by all users: no cookies, no per-user state.
-- A Livestorm fetcher that returns people strips registrant join links before returning (`livestorm.payloads.strip_payload_join_links`); StormIQ never stores them. A pager asks for at most `config.LIVESTORM_MAX_PAGE_SIZE` (50) per page and stops when `meta.next_page` is null.
+- A Livestorm fetcher that returns people strips registrant join links before returning (`livestorm.payloads.strip_payload_join_links`); StormIQ never stores them. The chat fetcher asks for `include=people` only for each message's people link and drops the `included` people. A pager asks for at most `config.LIVESTORM_MAX_PAGE_SIZE` (50) per page and stops when `meta.next_page` is null.
 
 **Workspace reads**
 - Get transcript insights through `api_logic._cached_transcript_insights`, once per read, and copy a shared DataFrame before modifying it.
@@ -38,6 +38,7 @@ The HTTP routes live in `routes/`, one module per area; `../app.py` creates the 
 - Times come from the raw payload values (`created_at`, `responded_at`: unix seconds or ISO strings), read through `record.clock`, never from the formatted strings of the classic tables. A session without `started_at` has no clock: never fall back to `estimated_started_at`.
 - Evidence ids (`C0001`, `Q001`, `A001`) come only from `record.evidence.audience_events`. Anything that stores one also stores the Livestorm id. Rules: [docs/product.md §13](../docs/product.md#session-clock-v1-report).
 - v1 code reads person-level data only through `record/roster.py`, loaded by `record.inputs.load_record_inputs`; each people record is parsed by `livestorm.payloads.parse_person`. A person row keeps the email domain, never the address. A v1 prompt gets people only through `roster.prompt_view` (ref, role, job title); a page gets names only through `roster.display_people`, which fails closed. Roles never change for an internal session: read `Roster.meta.internal`. Rules: [docs/product.md §13](../docs/product.md#roster-v1-report).
+- Authors are joined to people only through `record.authors.resolve_authors`, by people id. Never match an author by name, message counts or order: an author that doesn't resolve stays unresolved and its coverage says so. A chat message's people id is its `relationships.people` link; its `author_id` is a different id, never a people id. Rules: [docs/product.md §13](../docs/product.md#authors-v1-report).
 
 ## Tests (`../tests/`)
 
@@ -50,7 +51,8 @@ The HTTP routes live in `routes/`, one module per area; `../app.py` creates the 
 | `test_gladia_merge.py` | merging a long recording's Gladia chunks (synthetic payloads), and what classic insights read from the result |
 | `test_performance.py` | the insights cache, field reads, pools, the Redis cooldown, outputs-only polls |
 | `test_pure_functions.py` | metrics and formulas, PDF rendering, the Anthropic request's `temperature`, the join-link strip, the Livestorm pagers |
-| `test_session_clock.py` | the session clock, its fallbacks, minute bins and evidence ids (`record/`); the payload shapes script's local-database check |
+| `test_session_clock.py` | the session clock, its fallbacks, minute bins and evidence ids (`record/`); the payload shapes script's local-database check and chat author check |
 | `test_roster.py` | `parse_person`, roles, organizers, channels, lead time, field definitions, `P-` refs, the prompt and display views, the record-inputs loader (`record/`); classic code never imports `record/` |
+| `test_authors.py` | chat, question and answer authors resolved to roster people, their coverage, roles raised by chat flags and written answers, the evidence table's author columns (`record/`); the chat fetcher's `include=people`; classic reading a fetched chat as before; the benchmark seed's chat shape |
 
 `conftest.py` provides `test_database` (needs `TEST_DATABASE_URL`, local only) and `test_redis` (needs `TEST_REDIS_URL`, local, non-zero db index; it flushes that db). `make test-backend` sets both. Tests never call real providers: patch them at the module boundary, for example `monkeypatch.setattr("livestorm_app.transcript_client.fetch_session_transcript", fake)`.

@@ -76,4 +76,5 @@ Comparative (2 sessions) and cumulative (up to 10) analysis. Depends on the card
 
 - A worker killed mid-job (OOM) blocks regenerating that output for about 2 hours ([jobs.md](jobs.md#timeouts-and-failures)).
 - Sessions cached before org scoping stay invisible to their org until someone refetches them.
+- Chats cached before StormIQ asked for `include=people` have no people links, so their authors stay unresolved in the v1 Report ([product.md §13](product.md#authors-v1-report)). No page fetches a cached chat again. To do: a worker job that fetches a cached session's base payloads again, so old chats get their links ([jobs.md](jobs.md)).
 - Only the latest version of each output is kept.

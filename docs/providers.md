@@ -49,6 +49,8 @@ The Livestorm HTTP session is shared by every user's requests, so it keeps no co
 
 Livestorm list calls (chat, questions, an event's sessions, the events list) ask for at most 50 items per page, the maximum the API documents (`config.LIVESTORM_MAX_PAGE_SIZE`). Some endpoints accept more today; StormIQ keeps to the documented limit. The pagers follow `meta.next_page` and stop when it is null, even after a full page: asking for a page past the last one returns HTTP 400. Only a payload without pagination metadata stops at the first short page.
 
+The chat call asks for `include=people`, so each message carries its author's people id (`relationships.people.data`). Livestorm doesn't document this link; it was observed on real data. The fetcher drops the `included` people before returning, since the session call asks for `include=people` too. In the one real session checked, the session's list held every chat author; one missing from it reads unresolved ([product.md §13](product.md#authors-v1-report)). The questions call asks for `include=asker,responder` and keeps those people.
+
 ## Gladia configuration
 
 `DEFAULT_GLADIA_OPTIONS` in [`gladia/transcriber.py`](../livestorm_app/gladia/transcriber.py):

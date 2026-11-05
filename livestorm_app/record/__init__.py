@@ -5,8 +5,10 @@
   with stable ids (`C0001`, `Q001`, `A001`).
 - `roster.py`: one row per person, with a role, a channel, a lead time and a
   ref (`P-…`); the only views of people a prompt or a page may get.
+- `authors.py`: chat, question and answer authors resolved to roster people
+  by people id, with honest coverage (an author never resolves by guess).
 - `inputs.py`: the single loader of a session's record inputs (payloads,
-  clock, roster).
+  clock, roster, authors).
 
 No database, network or web framework here. The classic workspace does not
 import this package. See docs/architecture.md.

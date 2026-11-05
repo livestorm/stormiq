@@ -12,7 +12,6 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import pytest
 
@@ -446,33 +445,18 @@ def test_has_link_reads_the_text_and_the_html_href():
     assert events.loc[3, "text"] == "only html & more"
 
 
-def test_is_team_comes_from_the_flags_unless_the_roster_knows_the_author():
+def test_is_team_comes_from_the_message_flags_without_authors():
     chat_payload = chat(
         {"author_id": "host", "from_team_member": True},
         {"author_id": "guest", "from_guest_speaker": "true"},
         {"author_id": "viewer"},
         {"author_id": "moderator"},
     )
-    questions_payload = questions({"question_author_id": "moderator"})
-    base = clock.clock_base(one_hour_session())
-
-    from_flags = evidence.audience_events(chat_payload, questions_payload, base)
-    assert from_flags["is_team"].tolist() == [True, True, False, False, False]
-
-    roster = {"moderator": True, "host": False}
-    from_roster = evidence.audience_events(chat_payload, questions_payload, base, roster=roster)
-    assert from_roster["is_team"].tolist() == [False, True, False, True, True]
-
-
-@pytest.mark.parametrize(
-    "value, expected",
-    [("false", False), ("TRUE", True), (np.True_, True), (np.False_, False), (np.nan, True), (pd.NA, True), (None, True), ("maybe", True)],
-    ids=["string-false", "string-true", "numpy-true", "numpy-false", "nan", "pd-na", "none", "other-string"],
-)
-def test_a_roster_value_that_is_not_a_boolean_leaves_the_message_flags(value, expected):
-    chat_payload = chat({"author_id": "host", "from_team_member": True})
-    events = evidence.audience_events(chat_payload, None, clock.clock_base(one_hour_session()), roster={"host": value})
-    assert events["is_team"].tolist() == [expected]
+    questions_payload = questions({"question_author_id": "moderator", "response": "Yes", "responded_at": at(60)})
+    events = evidence.audience_events(chat_payload, questions_payload, clock.clock_base(one_hour_session()))
+    assert events["is_team"].tolist() == [True, True, False, False, False, True]
+    assert events["author_ref"].isna().all()
+    # Resolving authors with the roster: tests/test_authors.py.
 
 
 def test_empty_payloads_give_an_empty_table_with_every_column():
@@ -535,3 +519,30 @@ def test_the_shapes_script_refuses_a_remote_hostaddr_from_the_environment(monkey
 )
 def test_the_shapes_script_classes_referrers_without_failing(value, expected):
     assert _shapes_script().referrer_class(value) == expected
+
+
+def test_the_shapes_script_checks_chat_authors_by_their_people_link(capsys):
+    people = [{"id": person_id, "type": "people", "attributes": {}} for person_id in ("p1", "p2")]
+    session_payload = {**one_hour_session(), "included": people}
+    chat_payload = chat(
+        {"author_id": "c-1"},
+        {"author_id": "c-2"},
+        {"author_id": "p2"},
+    )
+    chat_payload["data"][0]["relationships"] = {"people": {"data": {"type": "people", "id": "p1"}}}
+    chat_payload["data"][1]["relationships"] = {"people": {"data": {"type": "people", "id": "p9"}}}
+
+    _shapes_script().check_rows({"s1": {"session_payload": session_payload, "chat_payload": chat_payload}})
+
+    output = capsys.readouterr().out
+
+    def counts(heading):
+        lines = output.split(f"== {heading} ==")[1].split("==")[0].strip().splitlines()
+        return dict(line.strip().rsplit(": ", 1) for line in lines)
+
+    assert counts("Chat authors (people link) vs the session's people") == {
+        "in session people": "1",
+        "not in session people": "1",
+        "no people link (cached before include=people)": "1",
+    }
+    assert counts("Check: chat author_id is never a people id") == {"not a people id": "2", "equals a people id": "1"}

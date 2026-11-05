@@ -12,7 +12,10 @@ transcript), across the chosen sessions, it prints:
   (and the gap in seconds), the late start in seconds, and how many chat
   messages, questions and answers fall before, during and after the session;
 - referrer classes (Livestorm host, other host, empty), never the referrer;
-- how many chat and question authors match a person in the session's people.
+- how many chat messages link to a person in the session's people
+  (`relationships.people`, `evidence.people_link`), and how many question
+  askers match one. A message's `author_id` is not a people id: it is only
+  counted as a check that it never matches one.
 
 It never prints names, emails, message text, URLs or any other free-text
 value. Keys that are not lowercase identifiers print as `<key>`.
@@ -52,7 +55,7 @@ from livestorm_app.db import (  # noqa: E402
 )
 from livestorm_app.livestorm.payloads import extract_messages, extract_questions  # noqa: E402
 from livestorm_app.record.clock import clock_base, parse_time  # noqa: E402
-from livestorm_app.record.evidence import audience_events  # noqa: E402
+from livestorm_app.record.evidence import audience_events, people_link  # noqa: E402
 
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "postgres"}
 LOOPBACK_ADDRESSES = {"127.0.0.1", "::1"}
@@ -243,6 +246,7 @@ def check_rows(rows: Dict[str, Dict[str, Any]]) -> None:
 
     referrers: Counter = Counter()
     chat_authors: Counter = Counter()
+    chat_author_ids: Counter = Counter()
     question_authors: Counter = Counter()
     for row in rows.values():
         session_payload = row.get("session_payload")
@@ -253,8 +257,15 @@ def check_rows(rows: Dict[str, Dict[str, Any]]) -> None:
                 detail = (item.get("attributes") or {}).get("registrant_detail")
                 referrers[referrer_class(detail.get("referrer") if isinstance(detail, dict) else None)] += 1
         for message in extract_messages(row.get("chat_payload")):
-            author = str(((message or {}).get("attributes") or {}).get("author_id") or "").strip()
-            chat_authors["no author_id" if not author else "in session people" if author in people else "not in session people"] += 1
+            if not isinstance(message, dict):
+                continue
+            link = people_link(message)
+            chat_authors[
+                "no people link (cached before include=people)" if link is None
+                else "in session people" if link in people else "not in session people"
+            ] += 1
+            author_id = str((message.get("attributes") or {}).get("author_id") or "").strip()
+            chat_author_ids["no author_id" if not author_id else "equals a people id" if author_id in people else "not a people id"] += 1
         question_people = people | _people_ids(row.get("questions_payload"))
         for question in extract_questions(row.get("questions_payload")):
             author = str(((question or {}).get("attributes") or {}).get("question_author_id") or "").strip()
@@ -264,8 +275,10 @@ def check_rows(rows: Dict[str, Dict[str, Any]]) -> None:
 
     print("\n== Referrers (session people) ==")
     _print_counter(referrers)
-    print("\n== Chat authors vs the session's people ==")
+    print("\n== Chat authors (people link) vs the session's people ==")
     _print_counter(chat_authors)
+    print("\n== Check: chat author_id is never a people id ==")
+    _print_counter(chat_author_ids)
     print("\n== Question authors vs the session's and the questions' people ==")
     _print_counter(question_authors)
 

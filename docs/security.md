@@ -55,6 +55,8 @@ StormIQ never stores a registrant's personal join link; it doesn't need it.
 - `livestorm/client.py` removes both before a fetcher returns the session, chat or questions payload (`payloads.strip_payload_join_links`). So they never reach `session_cache`. Any new fetcher that returns people strips them the same way.
 - `scripts/strip_registrant_join_links.py` removes them from rows saved before this rule.
 
+StormIQ doesn't store the chat's people twice. The chat call asks for `include=people` only to get each message's people id; `fetch_chat_messages` drops the `included` people records. The session payload held every chat author in the one real session checked; an author missing from it reads unresolved and is never stored from the chat. The chat payload keeps the ids, not the people.
+
 ## What v1 code reads about people
 
 The cached session payload still holds each person's full Livestorm record, minus the join links, until StormIQ stores its own people rows in place of `include=people`. The v1 roster limits what v1 code reads from it. It is built in memory and is not stored (`payloads.parse_person`, `record/roster.py`):

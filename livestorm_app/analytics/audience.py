@@ -14,6 +14,13 @@ from livestorm_app.livestorm.payloads import (
 
 
 def flatten_message(msg: Dict[str, Any]) -> Dict[str, Any]:
+    """One chat message's id, type and attributes, as one flat row.
+
+    Relationships are left out. A message fetched with `include=people`
+    links to its author's people record (`relationships.people`); only the
+    v1 record reads that link (`record/authors.py`), so the classic chat
+    table, and the workspace response built from it, stay as they were.
+    """
     base: Dict[str, Any] = {}
     if not isinstance(msg, dict):
         return base
@@ -23,19 +30,6 @@ def flatten_message(msg: Dict[str, Any]) -> Dict[str, Any]:
     if isinstance(attrs, dict):
         for key, value in attrs.items():
             base[key] = value
-
-    rels = msg.get("relationships")
-    if isinstance(rels, dict):
-        for rel_name, rel_val in rels.items():
-            if isinstance(rel_val, dict) and "data" in rel_val:
-                rel_data = rel_val.get("data")
-                if isinstance(rel_data, dict):
-                    base[f"rel.{rel_name}.id"] = rel_data.get("id")
-                    base[f"rel.{rel_name}.type"] = rel_data.get("type")
-                elif isinstance(rel_data, list):
-                    base[f"rel.{rel_name}.ids"] = ",".join(
-                        [str(item.get("id")) for item in rel_data if isinstance(item, dict)]
-                    )
     return base
 
 
