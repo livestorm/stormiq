@@ -1,8 +1,11 @@
-"""Parse Livestorm API (JSON:API) payloads: records, pagination, the event and session pickers, and the join-link strip."""
+"""Parse Livestorm API (JSON:API) payloads: records, pagination, the event and session pickers, the join-link strip, and one person's facts."""
 
 from __future__ import annotations
 
+import math
+import re
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 import pandas as pd
 
@@ -69,6 +72,241 @@ def strip_payload_join_links(payload: Any) -> Any:
         if stripped is not value:
             changes[section] = stripped
     return {**payload, **changes} if changes else payload
+
+
+# ── One person ────────────────────────────────────────────────────────────
+#
+# `parse_person` turns one `people` record into the facts the v1 roster reads
+# (`record/roster.py`). It keeps what Livestorm says about the person and
+# leaves out what nothing uses or what v1 code must not read: the email
+# address (only its domain is kept), the full referrer URL (only its host),
+# phone, street address, city, social profiles, browser, OS, screen, IP city,
+# avatar, and the registrant join link.
+
+# Registration field types whose answers are kept. The API's other types
+# (email, avatar, url, consent) are not.
+ANSWER_FIELD_TYPES = ("text", "unique_select", "multiple_select")
+
+# Built-in registration fields that are never answers: the identity fields;
+# Livestorm's built-in contact fields (phone, street address, city and social
+# profiles), which StormIQ doesn't keep; and company and job title, which
+# have their own keys. `country` is the only built-in text field kept.
+NOT_ANSWER_FIELDS = (
+    "email",
+    "first_name",
+    "last_name",
+    "avatar",
+    "phone",
+    "address",
+    "city",
+    "twitter",
+    "linkedin",
+    "facebook",
+    "website",
+    "company",
+    "job_title",
+)
+
+PERSON_KEYS = (
+    "person_id",  # the Livestorm people id
+    "livestorm_role",  # `role`: "participant" or "team_member", as sent
+    "is_guest_speaker",
+    "session_role",  # as sent; "organizer" is the only value seen so far
+    "first_name",
+    "last_name",
+    "email_domain",  # lower-cased; never the address
+    "company",
+    "job_title",
+    "answers",  # {field slug: text, or a list of texts}, answer fields only
+    "registered_at",  # registrant_detail.created_at, as sent (unix seconds)
+    "registration_type",
+    "referrer_domain",  # the referrer's host, lower-cased, without "www."
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_term",
+    "utm_content",
+    "timezone",
+    "country_code",  # ip_country_code
+    "country_name",  # ip_country_name
+    "attended",
+    "attendance_duration_s",
+    "attendance_rate",  # Livestorm's 0-100 share of the session
+    "has_viewed_replay",
+    "replay_watched_at",  # replay_view_detail.watched_at, as sent
+    "ls_messages_count",
+    "ls_questions_count",
+    "ls_votes_count",
+    "ls_up_votes_count",
+    "ls_updated_at",  # the person's updated_at, as sent
+)
+
+_EMAIL = re.compile(r"^[^@\s]+@([^@\s]+)$")
+_HOST = re.compile(r"^[\w-]+(\.[\w-]+)+$")
+
+
+def _clean_text(value: Any) -> Optional[str]:
+    """A stripped string, or None. Numbers become text; anything else is None."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, (str, int, float)):
+        text = str(value).strip()
+        return text or None
+    return None
+
+
+def _flag_or_none(value: Any) -> Optional[bool]:
+    """True or False for a boolean or the string "true" or "false"; None otherwise."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return {"true": True, "false": False}.get(value.strip().lower())
+    return None
+
+
+def _number(value: Any) -> Optional[float]:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(str(value).strip()) if isinstance(value, str) else float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _whole(value: Any) -> Optional[int]:
+    number = _number(value)
+    return int(number) if number is not None else None
+
+
+def _raw_time(value: Any) -> Any:
+    """A payload time as sent (unix seconds, or an ISO string), or None.
+    Zero counts as missing: the API uses it for "not set"."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return value if math.isfinite(value) and value > 0 else None
+    if isinstance(value, str):
+        return value.strip() or None
+    return None
+
+
+def email_domain(value: Any) -> Optional[str]:
+    """The domain of an email address, lower-cased, or None. Never the address."""
+    text = _clean_text(value)
+    match = _EMAIL.match(text) if text else None
+    if match is None:
+        return None
+    return match.group(1).strip(".").lower() or None
+
+
+def referrer_domain(value: Any) -> Optional[str]:
+    """The host of a referrer URL (or of a bare host), lower-cased and without
+    "www.", or None. The rest of the URL is never kept: its query string can
+    hold personal values."""
+    text = _clean_text(value)
+    if not text:
+        return None
+    try:
+        host = urlparse(text if "//" in text else "//" + text).hostname or ""
+    except ValueError:  # a malformed URL, such as an unclosed IPv6 bracket
+        return None
+    host = host.strip(".").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    return host if _HOST.match(host) else None
+
+
+def is_answer_field(slug: Any, field_type: Any) -> bool:
+    """Whether a registration field's answer is kept: a text or select field
+    that is not in `NOT_ANSWER_FIELDS` (identity, contact, company, job title)."""
+    slug_text = _clean_text(slug)
+    type_text = (_clean_text(field_type) or "").lower()
+    return bool(slug_text) and slug_text.lower() not in NOT_ANSWER_FIELDS and type_text in ANSWER_FIELD_TYPES
+
+
+def _answer_value(value: Any) -> Any:
+    """A text answer, or a list of texts for a multiple select; None when empty."""
+    if isinstance(value, (list, tuple)):
+        texts = [text for text in (_clean_text(item) for item in value) if text]
+        return texts or None
+    return _clean_text(value)
+
+
+def parse_person(record: Any) -> Optional[Dict[str, Any]]:
+    """One Livestorm `people` record as a flat dict with the keys in `PERSON_KEYS`.
+
+    Never returns the email address, the full referrer URL, phone, street
+    address, city, social profiles, browser, OS, screen, IP city, avatar,
+    `password_key` or `connection_link`. A person
+    without `registrant_detail` gets None for everything it holds (and
+    `is_guest_speaker` False). Booleans may be sent as "true" or "false"
+    strings. None when the record is not an object or has no id. Pure: the
+    record is not changed.
+    """
+    if not isinstance(record, dict):
+        return None
+    person_id = _clean_text(record.get("id"))
+    if person_id is None:
+        return None
+    attributes = record.get("attributes")
+    attributes = attributes if isinstance(attributes, dict) else {}
+    detail = attributes.get("registrant_detail")
+    detail = detail if isinstance(detail, dict) else {}
+    replay = attributes.get("replay_view_detail")
+    replay = replay if isinstance(replay, dict) else {}
+    fields = detail.get("fields")
+    fields = fields if isinstance(fields, list) else []
+
+    field_values: Dict[str, Any] = {}
+    answers: Dict[str, Any] = {}
+    for field in fields:
+        if not isinstance(field, dict):
+            continue
+        slug = _clean_text(field.get("id"))
+        if slug is None:
+            continue
+        field_values.setdefault(slug.lower(), field.get("value"))
+        if slug not in answers and is_answer_field(slug, field.get("type")):
+            answer = _answer_value(field.get("value"))
+            if answer is not None:
+                answers[slug] = answer
+
+    return {
+        "person_id": person_id,
+        "livestorm_role": _clean_text(attributes.get("role")),
+        "is_guest_speaker": _flag_or_none(detail.get("is_guest_speaker")) is True,
+        "session_role": _clean_text(detail.get("session_role")),
+        "first_name": _clean_text(attributes.get("first_name")) or _clean_text(field_values.get("first_name")),
+        "last_name": _clean_text(attributes.get("last_name")) or _clean_text(field_values.get("last_name")),
+        "email_domain": email_domain(attributes.get("email")) or email_domain(field_values.get("email")),
+        "company": _clean_text(field_values.get("company")),
+        "job_title": _clean_text(field_values.get("job_title")),
+        "answers": answers,
+        "registered_at": _raw_time(detail.get("created_at")),
+        "registration_type": _clean_text(detail.get("registration_type")),
+        "referrer_domain": referrer_domain(detail.get("referrer")),
+        "utm_source": _clean_text(detail.get("utm_source")),
+        "utm_medium": _clean_text(detail.get("utm_medium")),
+        "utm_campaign": _clean_text(detail.get("utm_campaign")),
+        "utm_term": _clean_text(detail.get("utm_term")),
+        "utm_content": _clean_text(detail.get("utm_content")),
+        "timezone": _clean_text(attributes.get("timezone")) or _clean_text(detail.get("timezone")),
+        "country_code": _clean_text(detail.get("ip_country_code")),
+        "country_name": _clean_text(detail.get("ip_country_name")),
+        "attended": _flag_or_none(detail.get("attended")),
+        "attendance_duration_s": _whole(detail.get("attendance_duration")),
+        "attendance_rate": _number(detail.get("attendance_rate")),
+        "has_viewed_replay": _flag_or_none(detail.get("has_viewed_replay")),
+        "replay_watched_at": _raw_time(replay.get("watched_at")),
+        "ls_messages_count": _whole(attributes.get("messages_count")),
+        "ls_questions_count": _whole(attributes.get("questions_count")),
+        "ls_votes_count": _whole(attributes.get("votes_count")),
+        "ls_up_votes_count": _whole(attributes.get("up_votes_count")),
+        "ls_updated_at": _raw_time(attributes.get("updated_at")),
+    }
 
 
 def extract_messages(payload: Dict[str, Any]) -> List[Dict[str, Any]]:

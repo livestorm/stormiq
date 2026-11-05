@@ -26,9 +26,9 @@ Browser ── Vue SPA ──/api──▶ web: FastAPI (app.py) ─────
 | `livestorm_app/routes/` | HTTP routes, one module per area: `system`, `oauth`, `admin`, `workspace`, `sessions`, `ai`, `spa`; request bodies in `models.py`, shared helpers (session id type, error and PDF responses) in `common.py` |
 | `livestorm_app/auth.py` | Request identity (`Caller`), org read scope, local-dev mode ([security.md](security.md)) |
 | `livestorm_app/api_logic.py` | Orchestration behind the routes: fetch flows, job starts and polls, workspace serialization, PDF builders, and the synchronous AI runners the worker calls |
-| `livestorm_app/livestorm/` | Livestorm REST API: `client.py` (the shared HTTP session, fetchers, error formatting) and `payloads.py` (JSON:API parsing, pagination, event and session pickers, the registrant join-link strip) |
+| `livestorm_app/livestorm/` | Livestorm REST API: `client.py` (the shared HTTP session, fetchers, error formatting) and `payloads.py` (JSON:API parsing, pagination, event and session pickers, the registrant join-link strip, one person's facts for the v1 roster: `parse_person`) |
 | `livestorm_app/analytics/` | The deterministic pipeline: `session_overview.py` (people, hero stats, distributions), `audience.py` (chat and questions tables), `transcript.py` (transcript insights), `cross_source.py` (session-stage timeline) |
-| `livestorm_app/record/` | The v1 Report's session record, as pure functions over cached payloads: `clock.py` (the session clock and minute bins), `evidence.py` (chat, questions and written answers with stable ids). Nothing in the classic app imports it |
+| `livestorm_app/record/` | The v1 Report's session record, as pure functions over cached payloads: `clock.py` (the session clock and minute bins), `evidence.py` (chat, questions and written answers with stable ids), `roster.py` (one row per person: role, channel, lead time, `P-` ref; the prompt and display views), `inputs.py` (the single loader of a session's record inputs). Nothing in the classic app imports it |
 | `livestorm_app/ai/` | `prompts.py` (system prompts from `prompts/`), `llm_inputs.py` (what the model is sent), `generation.py` (analyses, recap, content, translation), `cover_image.py` |
 | `livestorm_app/pdf.py` | PDF rendering of AI outputs (reportlab) |
 | `livestorm_app/db.py` | Connection pool, schema bootstrap, every SQL query |
@@ -105,6 +105,8 @@ The v1 Report gets its data from `livestorm_app/record/` instead, so the classic
 - `clock_base(session_payload)`: the session clock (`started_at`, the end, the late start). No `started_at` means no clock.
 - `audience_events(chat_payload, questions_payload, base)`: one row per chat message, question and written answer, with its evidence id (`C0001`, `Q001`, `A001`), session time, phase, minute, team flag and `has_link`. It reads the raw times and the chat's `html_content`.
 - `minute_bins(events, base=base)`: zero-filled per-minute lanes, plus the before and after edges.
+- `roster_from_session_payload(session_payload, event_payload=...)`: one row per person from the cached `include=people` list (`payloads.parse_person`), with a role, an organizer flag, a channel, a lead-time bucket, the registration answers and a `P-` ref. Its meta holds the source, the coverage (partial for this list), counts by role and the internal flag (`audience.is_internal_session`). `prompt_view` and `display_people` are the only ways people leave it.
+- `load_record_inputs(cached, roster_rows=None)`: the payloads, clock and roster of one cached session row. Stored people rows (`RosterRows`) win over the include list when given; this is the only place that picks the people source.
 
 Every metric, chart and formula is documented once, in [product.md §13](product.md#13-glossary-of-metrics-and-formulas). Don't copy formulas elsewhere; link to it.
 
