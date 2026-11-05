@@ -360,8 +360,9 @@ def _transcribe_audio_file(
     if not isinstance(audio_url, str) or not audio_url.strip():
         raise RuntimeError("Gladia upload succeeded but no audio_url was returned.")
 
+    # Built once: the request we record is exactly the one we send.
     gladia_request = _build_gladia_request(audio_url, gladia_options)
-    started_job = _start_gladia_transcription(audio_url, api_key, gladia_options)
+    started_job = _start_gladia_transcription(gladia_request, api_key)
     job_id = started_job.get("id")
     if not isinstance(job_id, str) or not job_id.strip():
         raise RuntimeError("Gladia transcription request succeeded but no job id was returned.")
@@ -380,13 +381,13 @@ def _transcribe_audio_file(
     }
 
 
-def _start_gladia_transcription(audio_url: str, api_key: str, gladia_options: dict[str, Any] | None = None) -> dict[str, Any]:
-    payload = _build_gladia_request(audio_url, gladia_options)
+def _start_gladia_transcription(gladia_request: dict[str, Any], api_key: str) -> dict[str, Any]:
+    """POST a request built by `_build_gladia_request`. Never retried: it starts paid work."""
     return _json_request(
         method="POST",
         url=f"{GLADIA_API_BASE}{GLADIA_PRE_RECORDED_PATH}",
         api_key=api_key,
-        payload=payload,
+        payload=gladia_request,
     )
 
 
@@ -554,6 +555,92 @@ def _shift_timed_dict(entry: dict[str, Any], offset_seconds: float) -> dict[str,
     return shifted
 
 
+def _speaker_id(value: Any) -> int | None:
+    """A Gladia speaker number, or None for anything else (bools are not speakers)."""
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return None
+
+
+def _shift_speaker(entry: dict[str, Any], speaker_base: int) -> None:
+    speaker = _speaker_id(entry.get("speaker"))
+    if speaker is not None:
+        entry["speaker"] = speaker + speaker_base
+
+
+def _shift_utterance(utterance: dict[str, Any], offset_seconds: float, speaker_base: int) -> dict[str, Any]:
+    """A copy of a chunk's utterance (or sentence) on the whole recording's clock.
+
+    Shifts its `start` and `end` and those of every word inside it by the
+    chunk's offset, and moves its speaker number (and any word's) up by
+    `speaker_base`, so speakers from different chunks never share a number.
+    The input is not modified.
+    """
+    shifted = _shift_timed_dict(utterance, offset_seconds)
+    _shift_speaker(shifted, speaker_base)
+    words = utterance.get("words")
+    if isinstance(words, list):
+        shifted_words: list[Any] = []
+        for word in words:
+            if isinstance(word, dict):
+                shifted_word = _shift_timed_dict(word, offset_seconds)
+                _shift_speaker(shifted_word, speaker_base)
+                shifted_words.append(shifted_word)
+            else:
+                shifted_words.append(word)
+        shifted["words"] = shifted_words
+    return shifted
+
+
+def _dict_items(value: Any) -> list[dict[str, Any]]:
+    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+
+def _result_block_items(block: Any) -> list[dict[str, Any]] | None:
+    """The items of a Gladia result block (`{success, results}` or a plain list), or None."""
+    if isinstance(block, dict) and isinstance(block.get("results"), list):
+        return _dict_items(block["results"])
+    if isinstance(block, list):
+        return _dict_items(block)
+    return None
+
+
+def _merged_result_block(first_block: Any, items: list[dict[str, Any]]) -> Any:
+    """`items` in the shape of the first chunk's block."""
+    if isinstance(first_block, list):
+        return items
+    merged = dict(first_block)
+    merged["results"] = items
+    if "is_empty" in merged:
+        merged["is_empty"] = not items
+    return merged
+
+
+def _chunk_speaker_ids(*entry_lists: list[dict[str, Any]]) -> list[int]:
+    speakers: list[int] = []
+    for entries in entry_lists:
+        for entry in entries:
+            speaker = _speaker_id(entry.get("speaker"))
+            if speaker is not None:
+                speakers.append(speaker)
+    return speakers
+
+
+def _chunk_map_entry(chunk_result: dict[str, Any], *, index: int, offset_seconds: float, speaker_base: int) -> dict[str, Any]:
+    started_job = chunk_result.get("started_job")
+    gladia_result = chunk_result.get("gladia_result")
+    gladia_result = gladia_result if isinstance(gladia_result, dict) else {}
+    job_id = started_job.get("id") if isinstance(started_job, dict) else None
+    duration_seconds = _extract_duration_seconds(gladia_result)
+    return {
+        "index": index,
+        "offset_s": round(offset_seconds, 3),
+        "duration_s": round(duration_seconds, 3) if duration_seconds is not None else None,
+        "speaker_base": speaker_base,
+        "gladia_job_id": job_id or gladia_result.get("id"),
+    }
+
+
 def _parse_subtitle_timestamp(value: str) -> float | None:
     match = re.fullmatch(r"(?:(\d{2}):)?(\d{2}):(\d{2})[,.](\d{3})", value.strip())
     if not match:
@@ -674,11 +761,39 @@ def _extract_subtitles(gladia_payload: dict[str, Any]) -> list[dict[str, str]]:
 
 
 def _merge_chunk_results(chunk_results: list[dict[str, Any]]) -> dict[str, Any]:
+    """Combine the Gladia results of a recording's chunks into one payload.
+
+    A recording longer than GLADIA_MAX_AUDIO_CHUNK_SECONDS is transcribed in
+    chunks, and each chunk's result starts at 0 s with speakers numbered from
+    0. The merge puts everything on the whole recording's clock:
+
+    - utterances and the words inside them, sentences (with their words),
+      named entities and subtitle cues are shifted by the chunk's offset;
+    - each chunk's speakers get their own numbers, above the highest number
+      of the chunks before it (`_shift_utterance`);
+    - `transcription.words` is written only when a chunk had one, so an empty
+      list never hides the words inside the utterances;
+    - `billing_time` and `transcription_time` are summed, and the languages
+      of every chunk are kept.
+
+    `result.stormiq_chunks` records each chunk's index, offset, duration,
+    speaker base and Gladia job id, for one chunk as for several.
+    """
     if not chunk_results:
         raise RuntimeError("No chunk transcriptions were produced.")
 
     if len(chunk_results) == 1:
-        return dict(chunk_results[0]["gladia_result"])
+        single_payload = dict(chunk_results[0]["gladia_result"])
+        single_result = single_payload.get("result")
+        if isinstance(single_result, dict):
+            offset_seconds = float(chunk_results[0].get("offset_seconds") or 0.0)
+            single_payload["result"] = {
+                **single_result,
+                "stormiq_chunks": [
+                    _chunk_map_entry(chunk_results[0], index=1, offset_seconds=offset_seconds, speaker_base=0)
+                ],
+            }
+        return single_payload
 
     merged_payload = json.loads(json.dumps(chunk_results[0]["gladia_result"]))
     merged_payload["status"] = "done"
@@ -686,66 +801,100 @@ def _merge_chunk_results(chunk_results: list[dict[str, Any]]) -> dict[str, Any]:
     merged_text_parts: list[str] = []
     merged_utterances: list[dict[str, Any]] = []
     merged_words: list[dict[str, Any]] = []
-    merged_sentences: list[dict[str, Any]] = []
+    merged_transcription_sentences: list[dict[str, Any]] = []
+    merged_sentence_results: list[dict[str, Any]] = []
+    merged_entities: list[dict[str, Any]] = []
+    first_sentence_block: Any = None
+    first_entity_block: Any = None
+    merged_languages: list[str] = []
+    timing_totals: dict[str, float] = {}
+    chunk_map: list[dict[str, Any]] = []
     merged_subtitle_cues_by_format: dict[str, list[dict[str, Any]]] = {}
     merged_duration_seconds = 0.0
     detected_language: str | None = None
+    next_speaker_base = 0
 
-    for chunk_result in chunk_results:
+    for chunk_index, chunk_result in enumerate(chunk_results, start=1):
         chunk_payload = chunk_result["gladia_result"]
         offset_seconds = float(chunk_result.get("offset_seconds") or 0.0)
+        speaker_base = next_speaker_base
         duration_seconds = _extract_duration_seconds(chunk_payload) or 0.0
         merged_duration_seconds = max(merged_duration_seconds, offset_seconds + duration_seconds)
         if detected_language is None:
             detected_language = _extract_language(chunk_payload)
+        chunk_map.append(
+            _chunk_map_entry(chunk_result, index=chunk_index, offset_seconds=offset_seconds, speaker_base=speaker_base)
+        )
 
         result = chunk_payload.get("result")
-        transcription = result.get("transcription") if isinstance(result, dict) else None
-        if isinstance(transcription, dict):
-            full_transcript = str(transcription.get("full_transcript") or "").strip()
-            if full_transcript:
-                merged_text_parts.append(full_transcript)
+        result = result if isinstance(result, dict) else {}
+        transcription = result.get("transcription")
+        transcription = transcription if isinstance(transcription, dict) else {}
 
-            utterances = transcription.get("utterances")
-            if isinstance(utterances, list):
-                for utterance in utterances:
-                    if isinstance(utterance, dict):
-                        merged_utterances.append(_shift_timed_dict(utterance, offset_seconds))
+        utterances = _dict_items(transcription.get("utterances"))
+        words = _dict_items(transcription.get("words"))
+        transcription_sentences = _dict_items(transcription.get("sentences"))
+        sentence_items = _result_block_items(result.get("sentences"))
+        entity_items = _result_block_items(result.get("named_entity_recognition"))
 
-            words = transcription.get("words")
-            if isinstance(words, list):
-                for word in words:
-                    if isinstance(word, dict):
-                        merged_words.append(_shift_timed_dict(word, offset_seconds))
+        full_transcript = str(transcription.get("full_transcript") or "").strip()
+        if full_transcript:
+            merged_text_parts.append(full_transcript)
+        merged_utterances.extend(_shift_utterance(item, offset_seconds, speaker_base) for item in utterances)
+        merged_words.extend(_shift_utterance(item, offset_seconds, speaker_base) for item in words)
+        merged_transcription_sentences.extend(
+            _shift_utterance(item, offset_seconds, speaker_base) for item in transcription_sentences
+        )
+        if sentence_items is not None:
+            if first_sentence_block is None:
+                first_sentence_block = result.get("sentences")
+            merged_sentence_results.extend(
+                _shift_utterance(item, offset_seconds, speaker_base) for item in sentence_items
+            )
+        if entity_items is not None:
+            if first_entity_block is None:
+                first_entity_block = result.get("named_entity_recognition")
+            merged_entities.extend(_shift_timed_dict(item, offset_seconds) for item in entity_items)
 
-            sentences = transcription.get("sentences")
-            if isinstance(sentences, list):
-                for sentence in sentences:
-                    if isinstance(sentence, dict):
-                        merged_sentences.append(_shift_timed_dict(sentence, offset_seconds))
+        chunk_speakers = _chunk_speaker_ids(utterances, words, transcription_sentences, sentence_items or [])
+        if chunk_speakers:
+            next_speaker_base = max(next_speaker_base, speaker_base + max(chunk_speakers) + 1)
 
-            subtitles = transcription.get("subtitles")
-            if isinstance(subtitles, list):
-                for subtitle in subtitles:
-                    if not isinstance(subtitle, dict):
-                        continue
-                    subtitle_format = str(subtitle.get("format") or "").strip().lower()
-                    subtitle_text = str(subtitle.get("subtitles") or "").strip()
-                    if not subtitle_format or not subtitle_text:
-                        continue
-                    cues = _parse_subtitle_cues(subtitle_text)
-                    if not cues:
-                        continue
-                    shifted_cues = []
-                    for cue in cues:
-                        shifted_cues.append(
-                            {
-                                **cue,
-                                "start": float(cue.get("start") or 0.0) + offset_seconds,
-                                "end": float(cue.get("end") or 0.0) + offset_seconds,
-                            }
-                        )
-                    merged_subtitle_cues_by_format.setdefault(subtitle_format, []).extend(shifted_cues)
+        languages = transcription.get("languages")
+        if isinstance(languages, list):
+            for language in languages:
+                if isinstance(language, str) and language.strip() and language.strip() not in merged_languages:
+                    merged_languages.append(language.strip())
+
+        metadata = result.get("metadata")
+        if isinstance(metadata, dict):
+            for key in ("billing_time", "transcription_time"):
+                value = metadata.get(key)
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    timing_totals[key] = timing_totals.get(key, 0.0) + float(value)
+
+        subtitles = transcription.get("subtitles")
+        if isinstance(subtitles, list):
+            for subtitle in subtitles:
+                if not isinstance(subtitle, dict):
+                    continue
+                subtitle_format = str(subtitle.get("format") or "").strip().lower()
+                subtitle_text = str(subtitle.get("subtitles") or "").strip()
+                if not subtitle_format or not subtitle_text:
+                    continue
+                cues = _parse_subtitle_cues(subtitle_text)
+                if not cues:
+                    continue
+                shifted_cues = []
+                for cue in cues:
+                    shifted_cues.append(
+                        {
+                            **cue,
+                            "start": float(cue.get("start") or 0.0) + offset_seconds,
+                            "end": float(cue.get("end") or 0.0) + offset_seconds,
+                        }
+                    )
+                merged_subtitle_cues_by_format.setdefault(subtitle_format, []).extend(shifted_cues)
 
     merged_result = merged_payload.setdefault("result", {})
     if not isinstance(merged_result, dict):
@@ -761,9 +910,12 @@ def _merge_chunk_results(chunk_results: list[dict[str, Any]]) -> dict[str, Any]:
     for utterance_index, utterance in enumerate(merged_utterances, start=1):
         utterance["id"] = utterance_index
     merged_transcription["utterances"] = merged_utterances
-    merged_transcription["words"] = merged_words
-    if merged_sentences:
-        merged_transcription["sentences"] = merged_sentences
+    if merged_words:
+        merged_transcription["words"] = merged_words
+    else:
+        merged_transcription.pop("words", None)
+    if merged_transcription_sentences:
+        merged_transcription["sentences"] = merged_transcription_sentences
     if merged_subtitle_cues_by_format:
         merged_transcription["subtitles"] = [
             {
@@ -773,9 +925,14 @@ def _merge_chunk_results(chunk_results: list[dict[str, Any]]) -> dict[str, Any]:
             for subtitle_format, cues in merged_subtitle_cues_by_format.items()
             if cues
         ]
+    if first_sentence_block is not None:
+        merged_result["sentences"] = _merged_result_block(first_sentence_block, merged_sentence_results)
+    if first_entity_block is not None:
+        merged_result["named_entity_recognition"] = _merged_result_block(first_entity_block, merged_entities)
 
-    existing_languages = merged_transcription.get("languages")
-    if not existing_languages and detected_language:
+    if merged_languages:
+        merged_transcription["languages"] = merged_languages
+    elif not merged_transcription.get("languages") and detected_language:
         merged_transcription["languages"] = [detected_language]
 
     metadata = merged_result.setdefault("metadata", {})
@@ -783,8 +940,12 @@ def _merge_chunk_results(chunk_results: list[dict[str, Any]]) -> dict[str, Any]:
         metadata = {}
         merged_result["metadata"] = metadata
     metadata["audio_duration"] = merged_duration_seconds
+    for key, total in timing_totals.items():
+        metadata[key] = round(total, 3)
     if detected_language and not metadata.get("language"):
         metadata["language"] = detected_language
+
+    merged_result["stormiq_chunks"] = chunk_map
 
     file_data = merged_payload.get("file")
     if isinstance(file_data, dict):

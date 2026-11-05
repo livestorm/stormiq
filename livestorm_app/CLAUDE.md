@@ -45,7 +45,8 @@ The HTTP routes live in `routes/`, one module per area; `../app.py` creates the 
 | `test_access_control.py` | every session route × anonymous, other org, same org, admin |
 | `test_db_scope.py` | org-scoped SQL |
 | `test_data_integrity.py` | bundle writes, write failures, incomplete AI output, join links never saved, `rewrite_base_payloads` |
-| `test_job_reliability.py` | dedupe, retries, timeouts, the transcript job lifecycle, cancellation |
+| `test_job_reliability.py` | dedupe, retries, timeouts, the transcript job lifecycle, cancellation, the Gladia request built once |
+| `test_gladia_merge.py` | merging a long recording's Gladia chunks (synthetic payloads), and what classic insights read from the result |
 | `test_performance.py` | the insights cache, field reads, pools, the Redis cooldown, outputs-only polls |
 | `test_pure_functions.py` | metrics and formulas, PDF rendering, the Anthropic request's `temperature`, the join-link strip, the Livestorm pagers |
 | `test_session_clock.py` | the session clock, its fallbacks, minute bins and evidence ids (`record/`); the payload shapes script's local-database check |

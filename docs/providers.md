@@ -58,4 +58,14 @@ Livestorm list calls (chat, questions, an event's sessions, the events list) ask
 - sentence segmentation on;
 - subtitles on, in SRT and VTT.
 
-Gladia's standard plan accepts up to 135 minutes of audio per request, so longer recordings are split into 135-minute chunks (`_split_audio_file`), each transcribed as its own Gladia job, and the results are combined into one transcript. For debugging, `python -m livestorm_app.gladia.cli <session_id>` transcribes a Livestorm session from the command line and writes the JSON locally. It uses the keys in your environment and costs Gladia credit.
+Gladia's standard plan accepts up to 135 minutes of audio per request, so longer recordings are split into 135-minute chunks (`_split_audio_file`), each transcribed as its own Gladia job. Each chunk's request is built once (`_build_gladia_request`), and that same request is sent. The first chunk's request is stored as `request_payload`, and every chunk's Gladia job id is kept in `result.stormiq_chunks`.
+
+`_merge_chunk_results` combines the chunks into one transcript on the recording's clock. Each chunk's result starts at 0 s and numbers its speakers from 0, so the merge:
+
+- shifts utterances and the words inside them, sentences (with their words), named entities and subtitles by the chunk's offset;
+- gives each chunk's speakers their own numbers, above the highest number of the chunks before it (`_shift_utterance`). Gladia can't tell that two chunks heard the same person, so one person gets one number per chunk;
+- writes `result.transcription.words` only when a chunk had that list, so an empty list never hides the utterances' words;
+- sums `billing_time` and `transcription_time`, and keeps every chunk's languages;
+- records the chunks in `result.stormiq_chunks` ([data-model.md](data-model.md#session_cache)).
+
+For debugging, `python -m livestorm_app.gladia.cli <session_id>` transcribes a Livestorm session from the command line and writes the JSON locally. It uses the keys in your environment and costs Gladia credit.
