@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-from livestorm_app.analytics.audience import is_internal_session
+from livestorm_app.analytics.audience import audience_chat_mask, is_internal_session
 
 
 def extract_session_resource(session_payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -143,13 +143,25 @@ def audience_people_mask(people_df: pd.DataFrame, *, internal: bool = False) -> 
     return ~is_team & ~is_guest_speaker
 
 
-def build_session_stats(session_payload: Dict[str, Any], *, internal: Optional[bool] = None) -> Dict[str, Any]:
+def build_session_stats(
+    session_payload: Dict[str, Any],
+    *,
+    internal: Optional[bool] = None,
+    chat_df: Optional[pd.DataFrame] = None,
+) -> Dict[str, Any]:
     """`internal` is the session's `is_internal_session` decision; when it is
-    None it is decided here from the session's people."""
+    None it is decided here from the session's people.
+
+    `chat_df` is the session's chat (`audience.build_chat_df_from_payload`,
+    empty when the chat has no message), or None when no chat payload is
+    cached. With a chat, the message counts count the chat itself; without
+    one they fall back to the people's `messages_count`, which Livestorm
+    sometimes reports as 0 for everyone even when the chat has messages."""
     attributes = extract_session_attributes(session_payload)
     people_df = build_session_people_df(session_payload)
     if internal is None:
         internal = is_internal_session(people_df)
+    has_chat = isinstance(chat_df, pd.DataFrame)
 
     registrants_count = int(attributes.get("registrants_count") or 0)
     attendees_count = int(attributes.get("attendees_count") or 0)
@@ -171,15 +183,22 @@ def build_session_stats(session_payload: Dict[str, Any], *, internal: Optional[b
         stats["people_count"] = int(len(people_df.index))
         stats["attended_people_count"] = int(attended_mask.sum())
         stats["replay_viewers_count"] = int(people_df["has_viewed_replay"].fillna(False).astype(bool).sum())
-        # Chat messages are the audience's, as on the Chat page; the team's
-        # and guest speakers' messages are counted apart (none on an
-        # internal session, where everyone counts).
-        is_audience = audience_people_mask(people_df, internal=internal)
-        stats["total_messages_count"] = int(people_df.loc[is_audience, "messages_count"].sum())
-        stats["team_messages_count"] = int(people_df.loc[~is_audience, "messages_count"].sum())
+        if not has_chat:
+            # No chat cached: the people's own counts, split by audience member.
+            is_audience = audience_people_mask(people_df, internal=internal)
+            stats["total_messages_count"] = int(people_df.loc[is_audience, "messages_count"].sum())
+            stats["team_messages_count"] = int(people_df.loc[~is_audience, "messages_count"].sum())
         stats["total_questions_count"] = int(people_df["questions_count"].sum())
         stats["total_up_votes_count"] = int(people_df["up_votes_count"].sum())
         stats["unique_countries_count"] = int(people_df["ip_country_name"].fillna("").astype(str).str.strip().replace("", pd.NA).dropna().nunique())
+
+    if has_chat:
+        # Chat messages are the audience's, as on the Chat page; the team's
+        # and guest speakers' messages are counted apart (none on an
+        # internal session, where everyone counts).
+        is_audience_message = audience_chat_mask(chat_df, internal=internal)
+        stats["total_messages_count"] = int(is_audience_message.sum())
+        stats["team_messages_count"] = int((~is_audience_message).sum())
 
     return stats
 
@@ -272,13 +291,18 @@ def build_compact_session_payload_for_llm(
     return compact_payload
 
 
-def build_session_overview_data(session_payload: Dict[str, Any]) -> Dict[str, Any]:
+def build_session_overview_data(
+    session_payload: Dict[str, Any],
+    *,
+    chat_df: Optional[pd.DataFrame] = None,
+) -> Dict[str, Any]:
     """Also returns `internal_session`, the session's `is_internal_session`
-    decision, made once here so the workspace's other charts reuse it."""
+    decision, made once here so the workspace's other charts reuse it.
+    `chat_df`: as in `build_session_stats`."""
     attributes = extract_session_attributes(session_payload)
     people_df = build_session_people_df(session_payload)
     internal = is_internal_session(people_df)
-    stats = build_session_stats(session_payload, internal=internal)
+    stats = build_session_stats(session_payload, internal=internal, chat_df=chat_df)
 
     overview_rows = [
         {"label": "Status", "value": str(attributes.get("status") or "n/a")},

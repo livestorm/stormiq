@@ -141,6 +141,22 @@ def build_event_session_options(payload: Dict[str, Any]) -> List[Dict[str, str]]
     return options
 
 
+def _non_negative_count(value: Any) -> Optional[int]:
+    """`value` as a count: a non-negative integer (or a string of digits), else None.
+
+    Livestorm has returned a negative `sessions_count` for an event.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, str):
+        text = value.strip()
+        if text.isascii() and text.isdigit():
+            return int(text)
+    return None
+
+
 def build_workspace_event_options(payload: Dict[str, Any]) -> List[Dict[str, str]]:
     event_items = extract_events(payload)
     sortable: List[Dict[str, Any]] = []
@@ -160,18 +176,21 @@ def build_workspace_event_options(payload: Dict[str, Any]) -> List[Dict[str, str
     for row in sortable:
         attrs = row["attributes"]
         title = str(attrs.get("title") or "").strip() or "Untitled event"
-        sessions_count = attrs.get("sessions_count", "n/a")
+        # A count that isn't a non-negative integer (missing or negative) is
+        # left out of the label, and `sessions_count` says "n/a".
+        sessions_count = _non_negative_count(attrs.get("sessions_count"))
+        sessions_label = f" ({sessions_count} sessions)" if sessions_count is not None else ""
         updated_label = _format_unix_label(attrs.get("updated_at") or attrs.get("published_at") or attrs.get("created_at"))
         scheduling_status = str(attrs.get("scheduling_status") or "").strip()
         language = str(attrs.get("language") or "").strip()
         options.append(
             {
                 "id": row["id"],
-                "label": f"{title} ({sessions_count} sessions) · {updated_label}",
+                "label": f"{title}{sessions_label} · {updated_label}",
                 "title": title,
                 "scheduling_status": scheduling_status,
                 "language": language,
-                "sessions_count": str(sessions_count),
+                "sessions_count": str(sessions_count) if sessions_count is not None else "n/a",
                 "updated_label": updated_label,
             }
         )

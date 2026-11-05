@@ -499,7 +499,10 @@ def test_all_team_session_gives_the_model_all_chat_and_says_it_is_internal():
     assert stats["chat"]["total_messages"] == 3
     assert stats["chat"]["unique_authors"] == 2
     assert stats["chat"]["excluded_team_messages"] == 0
-    assert stats["session"]["total_messages_count"] == 10
+    # The session summary counts the chat itself, not the people's
+    # `messages_count` (which add up to 10 here).
+    assert stats["session"]["total_messages_count"] == 3
+    assert stats["session"]["team_messages_count"] == 0
     messages = llm_inputs.build_compact_chat_payload_for_llm(chat_df)["messages"]
     assert len(messages) == 3 and all(message["from_team_member"] is True for message in messages)
 
@@ -554,6 +557,8 @@ def test_public_webinar_still_leaves_the_team_out():
     stats = llm_inputs.build_derived_stats(chat_df=chat_df, session_payload=PUBLIC_WEBINAR)
     assert "internal_session" not in stats
     assert stats["chat"]["total_messages"] == 2 and stats["chat"]["excluded_team_messages"] == 3
+    # The session summary counts the whole chat: 2 audience, 3 team messages.
+    assert (stats["session"]["total_messages_count"], stats["session"]["team_messages_count"]) == (2, 3)
     assert stats == llm_inputs.build_derived_stats(chat_df=chat_df, session_payload=PUBLIC_WEBINAR, internal=False)
     workspace = api_logic._serialize_cached_session("s2", {
         "session_payload": PUBLIC_WEBINAR,
@@ -566,16 +571,8 @@ def test_public_webinar_still_leaves_the_team_out():
     assert _timeline_chat(workspace) == 2
 
 
-@pytest.mark.parametrize("run", [api_logic.run_overall_analysis, api_logic.run_deep_analysis], ids=["overall", "deep"])
-@pytest.mark.parametrize(
-    ("session_payload", "chat_payload", "internal", "excluded", "team"),
-    [
-        (ALL_TEAM_SESSION, ALL_TEAM_CHAT, True, 0, {"ana", "ben", "cid", "dee"}),
-        (PUBLIC_WEBINAR, MIXED_CHAT, False, 3, {"host", "moderator", "speaker"}),
-    ],
-    ids=["internal", "public"],
-)
-def test_ai_jobs_tell_the_model_who_the_audience_is(monkeypatch, run, session_payload, chat_payload, internal, excluded, team):
+def _run_ai_job(monkeypatch, run, session_payload, chat_payload) -> dict:
+    """Runs an AI job on a cached row and returns what the model was sent."""
     row = {
         "session_payload": session_payload,
         "chat_payload": chat_payload,
@@ -588,6 +585,20 @@ def test_ai_jobs_tell_the_model_who_the_audience_is(monkeypatch, run, session_pa
     monkeypatch.setattr(api_logic, "get_llm_model", lambda role: "test-model")
     monkeypatch.setattr(api_logic, "analyze_with_openai", lambda **kwargs: seen.update(kwargs) or "# Analysis")
     run("llm-key", "s1", "English")
+    return seen
+
+
+@pytest.mark.parametrize("run", [api_logic.run_overall_analysis, api_logic.run_deep_analysis], ids=["overall", "deep"])
+@pytest.mark.parametrize(
+    ("session_payload", "chat_payload", "internal", "excluded", "team"),
+    [
+        (ALL_TEAM_SESSION, ALL_TEAM_CHAT, True, 0, {"ana", "ben", "cid", "dee"}),
+        (PUBLIC_WEBINAR, MIXED_CHAT, False, 3, {"host", "moderator", "speaker"}),
+    ],
+    ids=["internal", "public"],
+)
+def test_ai_jobs_tell_the_model_who_the_audience_is(monkeypatch, run, session_payload, chat_payload, internal, excluded, team):
+    seen = _run_ai_job(monkeypatch, run, session_payload, chat_payload)
     stats = seen["derived_stats"]
     assert stats.get("internal_session", False) is internal
     assert stats["chat"]["excluded_team_messages"] == excluded
@@ -608,6 +619,150 @@ def test_the_last_bucket_is_right_when_the_size_does_not_divide_100():
     assert cross_source._bucket_start(95.0, 15) == 90
     assert cross_source._bucket_start(50.0, 15) == 45
     assert cross_source._bucket_start(float("nan"), 10) is None
+
+
+# ── Chat Messages counts the chat, not the people's messages_count ────────
+
+# An all-hands where Livestorm reports `messages_count` 0 for every person
+# although the chat has messages.
+ZERO_COUNT_ALL_HANDS = {
+    "data": {"id": "s3", "attributes": {"registrants_count": 3, "attendees_count": 3}},
+    "included": [
+        _person("ana", "team_member", 0, attended=True, country="France"),
+        _person("ben", "team_member", 0, attended=True, country="Spain"),
+        _person("cid", "team_member", 0, attended=True, country="France"),
+    ],
+}
+
+
+def _workspace(session_payload, chat_payload, questions_payload=None, transcript_payload=None) -> dict:
+    return api_logic._serialize_cached_session("s1", {
+        "session_payload": session_payload,
+        "chat_payload": chat_payload,
+        "questions_payload": questions_payload,
+        "transcript_payload": transcript_payload,
+    })
+
+
+def _message_counts(workspace: dict) -> tuple:
+    stats = workspace["stats"]["sessionOverview"]
+    return stats["total_messages_count"], stats["team_messages_count"]
+
+
+def test_chat_messages_counts_the_chat_when_every_person_says_zero():
+    chat_df = audience.build_chat_df_from_payload(ALL_TEAM_CHAT)
+    overview = session_overview.build_session_overview_data(ZERO_COUNT_ALL_HANDS, chat_df=chat_df)
+    assert overview["internal_session"] is True
+    assert overview["stats"]["total_messages_count"] == 3
+    assert overview["stats"]["team_messages_count"] == 0
+    assert _message_counts(_workspace(ZERO_COUNT_ALL_HANDS, ALL_TEAM_CHAT)) == (3, 0)
+
+
+def test_chat_messages_leaves_team_chat_out_of_a_public_session():
+    # The people say 5 audience and 24 team messages; the chat has 2 and 3.
+    assert _message_counts(_workspace(PUBLIC_WEBINAR, MIXED_CHAT)) == (2, 3)
+
+
+def test_chat_messages_falls_back_to_the_people_without_a_cached_chat():
+    assert _message_counts(_workspace(PUBLIC_WEBINAR, None)) == (5, 24)
+
+
+def test_an_empty_cached_chat_counts_no_message():
+    assert _message_counts(_workspace(PUBLIC_WEBINAR, _chat_payload([]))) == (0, 0)
+
+
+def test_the_model_sees_the_chat_count_in_the_session_summary():
+    chat_df = audience.build_chat_df_from_payload(ALL_TEAM_CHAT)
+    stats = llm_inputs.build_derived_stats(chat_df=chat_df, session_payload=ZERO_COUNT_ALL_HANDS)
+    assert stats["session"]["total_messages_count"] == stats["chat"]["total_messages"] == 3
+
+
+@pytest.mark.parametrize("run", [api_logic.run_overall_analysis, api_logic.run_deep_analysis], ids=["overall", "deep"])
+def test_ai_jobs_count_an_empty_cached_chat_as_no_message(monkeypatch, run):
+    # The people say 5 audience and 24 team messages; the cached chat has none.
+    session = _run_ai_job(monkeypatch, run, PUBLIC_WEBINAR, _chat_payload([]))["derived_stats"]["session"]
+    assert (session["total_messages_count"], session["team_messages_count"]) == (0, 0)
+
+
+def test_overall_analysis_falls_back_to_the_people_without_a_cached_chat(monkeypatch):
+    stats = _run_ai_job(monkeypatch, api_logic.run_overall_analysis, PUBLIC_WEBINAR, None)["derived_stats"]
+    assert "chat" not in stats
+    assert (stats["session"]["total_messages_count"], stats["session"]["team_messages_count"]) == (5, 24)
+
+
+def test_an_empty_cached_chat_adds_no_chat_block_for_the_overall_analysis(monkeypatch):
+    # The model's chat stats are unchanged: none for an empty chat.
+    assert "chat" not in _run_ai_job(monkeypatch, api_logic.run_overall_analysis, PUBLIC_WEBINAR, _chat_payload([]))["derived_stats"]
+
+
+# ── Cross-source timeline: chat or questions is enough ─────────────────────
+
+
+def test_a_chat_only_session_gets_its_timeline_and_reaction_moments():
+    chat_df = audience.build_chat_df_from_payload(ALL_TEAM_CHAT)
+    insights = cross_source.build_cross_source_insights(chat_df, None, _transcript(), internal=True)
+    timeline = insights["combined_timeline_df"]
+    assert len(timeline.index) == 10
+    assert timeline["chat_messages"].sum() == 3 and timeline["question_count"].sum() == 0
+    moments = insights["reaction_moments_df"]
+    assert moments["chat_messages"].sum() == 3 and moments["question_count"].sum() == 0
+
+
+def test_a_questions_only_session_gets_its_timeline():
+    questions_df = audience.build_questions_df_from_payload(_questions_payload({}, {}))
+    timeline = cross_source.build_cross_source_insights(None, questions_df, _transcript())["combined_timeline_df"]
+    assert timeline["question_count"].sum() == 2 and timeline["chat_messages"].sum() == 0
+
+
+def test_no_timeline_without_a_transcript_or_without_chat_and_questions():
+    chat_df = audience.build_chat_df_from_payload(ALL_TEAM_CHAT)
+    for insights in (
+        cross_source.build_cross_source_insights(chat_df, None, None),
+        cross_source.build_cross_source_insights(None, None, _transcript()),
+    ):
+        assert insights["combined_timeline_df"].empty and insights["reaction_moments_df"].empty
+
+
+def test_a_chat_only_workspace_has_its_timeline_and_reaction_moments():
+    workspace = _workspace(ZERO_COUNT_ALL_HANDS, ALL_TEAM_CHAT, _questions_payload(), _transcript())
+    assert _timeline_chat(workspace) == 3
+    assert sum(row["question_count"] for row in workspace["tables"]["chatQuestionsTimeline"]) == 0
+    moments = workspace["tables"]["chatQuestionReactionMoments"]
+    assert sum(row["chat_messages"] for row in moments) == 3
+
+
+# ── Event picker: only a real session count is shown ──────────────────────
+
+_NO_COUNT = object()
+
+
+def _event(sessions_count) -> dict:
+    attributes = {"title": "Quarterly update", "updated_at": 1_700_000_000}
+    if sessions_count is not _NO_COUNT:
+        attributes["sessions_count"] = sessions_count
+    return {"id": "e1", "type": "events", "attributes": attributes}
+
+
+@pytest.mark.parametrize(
+    ("sessions_count", "label_count", "field"),
+    [
+        (3, " (3 sessions)", "3"),
+        (0, " (0 sessions)", "0"),
+        ("4", " (4 sessions)", "4"),
+        (-2, "", "n/a"),
+        ("-1", "", "n/a"),
+        (None, "", "n/a"),
+        (_NO_COUNT, "", "n/a"),
+        (True, "", "n/a"),
+        (2.5, "", "n/a"),
+        ("many", "", "n/a"),
+    ],
+    ids=["count", "zero", "digit-string", "negative", "negative-string", "null", "missing", "bool", "float", "text"],
+)
+def test_event_picker_shows_only_a_real_session_count(sessions_count, label_count, field):
+    [option] = livestorm_payloads.build_workspace_event_options({"data": [_event(sessions_count)]})
+    assert option["label"] == f"Quarterly update{label_count} · 2023-11-14 22:13 UTC"
+    assert option["sessions_count"] == field
 
 
 # ── PDF details ────────────────────────────────────────────────────────────

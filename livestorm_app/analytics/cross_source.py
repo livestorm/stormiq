@@ -65,9 +65,17 @@ def build_cross_source_insights(
     second (expensive) `build_transcript_insights` pass; frames are copied
     before being modified. `internal` is the session's
     `audience.is_internal_session` decision: on an internal session every
-    chat message counts."""
-    if not isinstance(chat_df, pd.DataFrame) or not isinstance(questions_df, pd.DataFrame) or not isinstance(transcript_payload, dict):
+    chat message counts.
+
+    Needs a transcript and at least one of chat and questions. A missing
+    one (None, as callers pass for no rows) counts 0 in every bucket, so a
+    session with chat but no questions still gets its timeline."""
+    has_chat = isinstance(chat_df, pd.DataFrame)
+    has_questions = isinstance(questions_df, pd.DataFrame)
+    if not isinstance(transcript_payload, dict) or not (has_chat or has_questions):
         return {"combined_timeline_df": pd.DataFrame(), "reaction_moments_df": pd.DataFrame()}
+    chat_df = chat_df if has_chat else pd.DataFrame()
+    questions_df = questions_df if has_questions else pd.DataFrame()
 
     if transcript_insights is None:
         transcript_insights = build_transcript_insights(transcript_payload)

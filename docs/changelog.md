@@ -2,6 +2,12 @@
 
 What has shipped, newest first. What's next is in [roadmap.md](roadmap.md).
 
+## November 2026: all-hands fixes
+
+- **Chat Messages counts the chat.** Session Overview's Chat Messages added up each person's `messages_count`, which Livestorm sometimes reports as 0 for everyone even when the chat has messages. It now counts the audience messages in the cached chat, as the Chat page does, and uses `messages_count` only when no chat is cached ([product.md §13](product.md#13-glossary-of-metrics-and-formulas)). The session summary sent to the AI counts the same way, an empty cached chat as 0. A person's own message count (People table, Engagement Score) still comes from `messages_count`.
+- **Timelines with chat or questions alone.** Content Pace × Audience Activity and Segments With The Most Reactions were empty for a session with chat but no questions, or questions but no chat. A transcript and either source are now enough; the missing source counts 0.
+- **Event session count.** The event list showed Livestorm's `sessions_count` as sent, a negative number included. A count that isn't a non-negative integer is left out of the event label and shown as "n/a".
+
 ## November 2026: v1 foundation
 
 - **Registrant join links are never stored.** StormIQ doesn't need a registrant's personal join link, so the Livestorm fetchers drop `password_key` and `connection_link` before saving the session, chat and questions payloads. `scripts/strip_registrant_join_links.py` removes them from rows saved earlier, without bumping `updated_at` (`db.rewrite_base_payloads`). Nothing users see changes.
