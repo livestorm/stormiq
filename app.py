@@ -8,11 +8,9 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import AsyncIterator
 
 from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
 
 from livestorm_app.auth import LOCAL_DEV_ENV_VAR, local_dev_enabled, running_on_render
 from livestorm_app.config import load_env_file
@@ -24,9 +22,6 @@ from livestorm_app.timing import RequestTimingMiddleware
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-BRAND_ASSETS_DIR = Path(__file__).resolve().parent / "assets"
-
 
 load_env_file()
 
@@ -65,9 +60,6 @@ app = FastAPI(
 
 # One `timing ...` log line per API request (route template, status, ms, bytes).
 app.add_middleware(RequestTimingMiddleware)
-
-if BRAND_ASSETS_DIR.exists():
-    app.mount("/brand-assets", StaticFiles(directory=BRAND_ASSETS_DIR), name="brand-assets")
 
 # Routes match in registration order. Every new session route must take its
 # identity from livestorm_app.auth (tests/test_access_control.py checks it).

@@ -2,6 +2,12 @@
 
 What has shipped, newest first. What's next is in [roadmap.md](roadmap.md).
 
+## November 2026: redesign foundation
+
+- **The StormIQ mark replaces the Livestorm icon** in the classic sidebar, the compact top bar and the favicon (`public/favicon.svg`, with `favicon.ico` and `apple-touch-icon.png` for browsers and home screens that don't take SVG). In the classic sidebar it keeps its on-dark colours whatever the system theme. The Livestorm icon PNGs and the `/brand-assets` route that served them are gone.
+- **The v1 design, behind a switch.** `?ui=v1` turns it on per browser, `?ui=classic` turns it off; everyone else keeps the classic app. With it on, a top bar (StormIQ mark and Beta tag, Sessions, Add session, a light/dark toggle, the account menu) replaces the sidebar, the footer keeps the "not an official Livestorm product" notice, and the existing screens appear unchanged inside a dark frame until each is rebuilt.
+- **Design foundation**: Sora (OFL) as the typeface; `--siq-*` tokens for every colour role in light and dark, plus type, radius, spacing and motion; light and dark mode that follows the system until the user chooses; Lucide icons vendored in `Icon.vue`; base components for cards, card headers, stat cards, collapsible sections, status words, chips, buttons and the "Next time" tip bar. `/design` shows them all with fictional content ([brand.md](brand.md#the-v1-design)).
+
 ## November 2026: fixes before the rebuild
 
 - **Audience-only chat metrics.** Chat from the team and guest speakers no longer counts as audience activity: Messages, Unique Chatters, Avg Msg Length, Top Contributors, Activity Over Time, the cross-source timeline, Session Overview's Chat Messages and the chat stats sent to the AI count the audience only, with "Excludes your team (n)" on the cards. The Chat tab still lists every message, with a "From" column.

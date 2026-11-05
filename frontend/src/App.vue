@@ -3,6 +3,9 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
 import { api, onUnauthorized } from "./api";
 import SessionHero from "./components/SessionHero.vue";
+import StormIqMark from "./components/ui/StormIqMark.vue";
+import TopBar from "./components/ui/TopBar.vue";
+import { isV1 } from "./design/uiVersion";
 import { useWorkspace } from "./store/workspace";
 
 // Layout.
@@ -29,7 +32,9 @@ const {
 } = useWorkspace();
 const route = useRoute();
 const router = useRouter();
-const logoUrl = "/brand-assets/icons/Icon-Livestorm-Tertiary-Light.png";
+// The v1 design (opt-in with ?ui=v1, src/design/uiVersion.js) renders the
+// top-bar shell instead of the classic sidebar. Fixed for the page load.
+const v1 = isV1();
 const sidebarCollapsed = ref(false);
 const isCompactViewport = ref(false);
 const COMPACT_BREAKPOINT = 1100;
@@ -115,8 +120,42 @@ const connectedBadgeLabel = computed(
     "Connected",
 );
 
+// ── v1 shell ──────────────────────────────────────────────────────────────
+// Top-bar navigation, mapped onto the existing routes until the rebuilt
+// screens land: "Sessions" is the session list (and every session page),
+// "Add session" is Search.
+const v1NavItems = computed(() => {
+  const items = [
+    {
+      to: "/single-analysis",
+      label: "Sessions",
+      active: isOnSingleAnalysis.value,
+      // "page" on the list itself; "true" (the current section) on a session's pages.
+      current: route.path === "/single-analysis" ? "page" : isOnSingleAnalysis.value ? "true" : undefined,
+      disabled: !isAuthed.value,
+    },
+    { to: "/search", label: "Add session", icon: "plus", active: route.path === "/search", disabled: !isAuthed.value },
+  ];
+  if (state.auth?.isAdmin) items.push({ to: "/admin", label: "Admin", active: route.path === "/admin" });
+  return items;
+});
+
+const v1Account = computed(() => {
+  const user = state.auth?.connectedUser;
+  if (!user) return null;
+  const name = user.fullName || user.email || "Connected";
+  const detail = user.organizationName && user.organizationName !== name ? user.organizationName : "";
+  return { name, detail };
+});
+
+// Pages built for the v1 design (route meta `v1Native`) fill the page; every
+// other view keeps its classic dark styling inside a framed area until it is
+// rebuilt.
+const isV1NativeRoute = computed(() => Boolean(route.meta?.v1Native));
+const classicDesignHref = computed(() => `${route.path || "/"}?ui=classic`);
+
 function syncViewportMode() {
-  if (typeof window === "undefined") return;
+  if (typeof window === "undefined" || v1) return;
   const nextCompact = window.innerWidth <= COMPACT_BREAKPOINT;
   isCompactViewport.value = nextCompact;
   sidebarCollapsed.value = nextCompact;
@@ -217,7 +256,70 @@ function toggleSidebar() {
 </script>
 
 <template>
+  <div v-if="v1" class="siq-app">
+    <a class="siq-skip siq-fx" href="#siq-main">Skip to content</a>
+    <TopBar
+      :items="v1NavItems"
+      :account="v1Account"
+      :can-connect="isOAuthMode"
+      :local-mode="isLocalApiKeyMode"
+      :classic-href="classicDesignHref"
+      @connect="handleConnectClick"
+      @logout="handleLogoutClick"
+    />
+
+    <main id="siq-main" class="siq-main" tabindex="-1">
+      <p v-if="state.error" class="siq-alert" role="alert">{{ state.error }}</p>
+
+      <RouterView v-if="isV1NativeRoute" />
+      <template v-else>
+        <!-- Per-session tabs, as in the classic sidebar's sub-nav. -->
+        <nav v-if="isOnSessionDetail" class="siq-session-tabs" aria-label="Session sections">
+          <!-- `custom` so a disabled tab can refuse the click before the
+               router sees it (a plain @click on RouterLink runs after its
+               own navigate handler). -->
+          <RouterLink
+            v-for="tab in sessionTabs"
+            :key="tab.key"
+            v-slot="{ href, navigate }"
+            :to="tabHref(tab)"
+            custom
+          >
+            <a
+              :href="href"
+              class="siq-session-tab siq-fx"
+              :class="{ 'siq-session-tab-disabled': tabMeta(tab).disabled }"
+              :aria-current="tabIsActive(tab) ? 'page' : undefined"
+              :aria-disabled="tabMeta(tab).disabled ? 'true' : undefined"
+              @click="tabMeta(tab).disabled ? $event.preventDefault() : navigate($event)"
+            >
+              {{ tab.label }}
+              <span v-if="tabMeta(tab).loading" class="siq-session-tab-note">Loading</span>
+              <span v-else-if="tabMeta(tab).unavailable" class="siq-session-tab-note">Unavailable</span>
+            </a>
+          </RouterLink>
+        </nav>
+
+        <!-- Not rebuilt yet: the classic view, in its own dark frame. -->
+        <div class="siq-classic-frame" data-colors-semantic="dark">
+          <SessionHero v-if="isOnSessionOverview" />
+          <RouterView />
+        </div>
+      </template>
+    </main>
+
+    <footer class="siq-footer">
+      <p>
+        StormIQ is an early-access helper, not an official Livestorm product. Review outputs before relying on them.
+        <RouterLink to="/beta-info" class="siq-footer-link siq-fx">Read more</RouterLink>
+        ·
+        <a :href="classicDesignHref" class="siq-footer-link siq-fx">Use the classic design</a>
+      </p>
+    </footer>
+  </div>
+
   <div
+    v-else
     class="layout"
     data-colors-semantic="dark"
     :class="{
@@ -235,7 +337,7 @@ function toggleSidebar() {
 
     <aside class="sidebar" :class="{ collapsed: sidebarCollapsed, compact: isCompactViewport }">
       <div class="sidebar-brand" :class="{ collapsed: sidebarCollapsed }">
-        <img :src="logoUrl" alt="StormIQ" class="brand-logo" />
+        <StormIqMark :wordmark="false" :size="32" class="brand-logo" role="img" aria-label="StormIQ" />
         <div v-if="!sidebarCollapsed" class="brand-copy">
           <h1>StormIQ</h1>
         </div>
@@ -372,7 +474,7 @@ function toggleSidebar() {
           class="compact-topbar-logo-button"
           @click="toggleSidebar"
         >
-          <img :src="logoUrl" alt="StormIQ" class="compact-topbar-logo" />
+          <StormIqMark :wordmark="false" :size="38" class="compact-topbar-logo" role="img" aria-label="StormIQ" />
         </button>
       </div>
 
@@ -516,5 +618,166 @@ function toggleSidebar() {
 .sidebar-error {
   margin-top: 12px;
   padding: 0 14px;
+}
+</style>
+
+<style scoped>
+/* ── v1 shell (only rendered when the v1 switch is on) ─────────────────── */
+.siq-app {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--siq-page);
+  color: var(--siq-ink);
+  font-family: var(--siq-font);
+}
+
+.siq-skip {
+  position: absolute;
+  left: var(--siq-space-4);
+  top: -100px;
+  z-index: 50;
+  padding: var(--siq-space-2) var(--siq-space-4);
+  border-radius: var(--siq-radius-control);
+  background: var(--siq-card);
+  color: var(--siq-accent);
+}
+
+.siq-skip:focus {
+  top: var(--siq-space-2);
+}
+
+.siq-main {
+  flex: 1 0 auto;
+  width: 100%;
+  max-width: var(--siq-container);
+  margin: 0 auto;
+  padding: var(--siq-space-8) var(--siq-gutter) var(--siq-space-12);
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+.siq-main:focus {
+  outline: none;
+}
+
+.siq-alert {
+  margin: 0 0 var(--siq-space-6);
+  padding: var(--siq-space-3) var(--siq-space-4);
+  border-radius: var(--siq-radius-control);
+  background: var(--siq-low-tint);
+  color: var(--siq-low);
+  font-size: var(--siq-text-ui);
+  line-height: var(--siq-text-ui-lh);
+}
+
+.siq-session-tabs {
+  display: flex;
+  gap: var(--siq-space-1);
+  margin-bottom: var(--siq-space-6);
+  overflow-x: auto;
+  box-shadow: inset 0 -1px 0 var(--siq-hairline);
+}
+
+.siq-session-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--siq-space-2);
+  flex: none;
+  min-height: 52px;
+  padding: 0 var(--siq-space-3);
+  color: var(--siq-ink-2);
+  font-size: var(--siq-text-ui);
+  line-height: var(--siq-text-ui-lh);
+  font-weight: var(--siq-weight-medium);
+  text-decoration: none;
+}
+
+.siq-session-tab:hover {
+  color: var(--siq-ink);
+}
+
+.siq-session-tab[aria-current="page"] {
+  color: var(--siq-ink);
+  box-shadow: inset 0 -2px 0 var(--siq-accent);
+}
+
+/* The row scrolls sideways, which clips anything drawn outside it: draw the
+   focus ring inside the tab. */
+.siq-session-tab:focus-visible {
+  outline-offset: -3px;
+}
+
+.siq-session-tab-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.siq-session-tab-note {
+  font-size: var(--siq-text-caption);
+  line-height: var(--siq-text-caption-lh);
+  font-weight: var(--siq-weight-regular);
+  color: var(--siq-muted);
+}
+
+/* Classic views keep their dark styling until each is rebuilt. */
+.siq-classic-frame {
+  color-scheme: dark;
+  padding: var(--siq-space-6);
+  border-radius: var(--siq-radius-card);
+  background: var(--color-surface-neutral-100);
+  color: var(--color-text-neutral-base);
+  font-family: "Object Sans", Inter, system-ui, sans-serif;
+  min-width: 0;
+}
+
+.siq-footer {
+  box-shadow: inset 0 1px 0 var(--siq-hairline);
+}
+
+.siq-footer p {
+  max-width: var(--siq-container);
+  margin: 0 auto;
+  padding: var(--siq-space-5) var(--siq-gutter);
+  box-sizing: border-box;
+  font-size: var(--siq-text-caption);
+  line-height: var(--siq-text-caption-lh);
+  color: var(--siq-muted);
+}
+
+.siq-footer-link {
+  color: var(--siq-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  border-radius: var(--siq-radius-inline);
+}
+
+.siq-footer-link:hover {
+  color: var(--siq-accent-hover);
+}
+
+/* Windows High Contrast drops box-shadows: mark the current tab with a border. */
+@media (forced-colors: active) {
+  .siq-session-tabs {
+    border-bottom: 1px solid CanvasText;
+  }
+
+  .siq-session-tab[aria-current="page"] {
+    border-bottom: 2px solid Highlight;
+  }
+}
+
+@media (max-width: 720px) {
+  .siq-main {
+    padding: var(--siq-space-6) var(--siq-space-4) var(--siq-space-8);
+  }
+
+  .siq-classic-frame {
+    padding: var(--siq-space-4);
+  }
+
+  .siq-footer p {
+    padding: var(--siq-space-4);
+  }
 }
 </style>

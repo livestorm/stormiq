@@ -28,7 +28,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app.py ./
 COPY README.md ./
-COPY assets ./assets
 COPY prompts ./prompts
 COPY livestorm_app ./livestorm_app
 COPY --from=frontend-build /app/frontend/dist ./frontend/dist

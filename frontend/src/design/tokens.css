@@ -1,0 +1,307 @@
+/*
+ * StormIQ design tokens (the v1 design). docs/brand.md explains every role.
+ *
+ * Everything here is either a `--siq-` custom property (unused by the classic
+ * UI) or scoped to `:root[data-ui="v1"]`, so the classic stylesheet
+ * (`src/styles.css`) behaves exactly as before when the v1 switch is off.
+ *
+ * Light is the default. Dark applies when the user chose it
+ * (`data-theme="dark"`) or when the system prefers it and the user hasn't
+ * chosen light. Both dark blocks sit inside `@media screen`, so print stays
+ * light.
+ */
+
+@font-face {
+  font-family: "Sora";
+  src: url("/fonts/Sora-Variable-latin.woff2") format("woff2");
+  font-weight: 100 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  /* ── Colour roles, light ─────────────────────────────────────────────── */
+  --siq-ground: #ffffff;
+  --siq-surface: #f6f8f9;
+  --siq-surface-2: #eaeef1;
+  --siq-topbar: #ffffff;
+  --siq-input: #ffffff;
+  --siq-selected-bg: #f0f4ff;
+  --siq-selected-ink: #0b42c3;
+  --siq-ink: #12262b;
+  --siq-ink-2: #4d5b66;
+  --siq-muted: #5d6d79;
+  --siq-border: #8094a3;
+  --siq-border-hover: #5d6d79;
+  --siq-hairline: rgba(18, 38, 43, 0.1);
+  --siq-hairline-row: rgba(18, 38, 43, 0.08);
+  --siq-hairline-head: rgba(18, 38, 43, 0.14);
+  --siq-nontext: #8094a3;
+  --siq-cta: #0b42c3;
+  --siq-cta-hover: #05299e;
+  --siq-cta-ink: #ffffff;
+  --siq-accent: #0b42c3;
+  --siq-accent-hover: #05299e;
+  --siq-focus: #0b42c3;
+  --siq-notice: #f0f4ff;
+  --siq-good: #0c7c59;
+  --siq-good-fill: #17a679;
+  --siq-good-tint: #f3fcfb;
+  --siq-fair: #916308;
+  --siq-fair-fill: #d3a20d;
+  --siq-fair-tint: #fff4d1;
+  --siq-low: #be3a37;
+  --siq-low-fill: #be3a37;
+  --siq-low-tint: #fdf7f7;
+  --siq-mark-fill: #0b42c3;
+  --siq-mark-iq: #0b42c3;
+  --siq-mark-bars: #ffffff;
+  --siq-s1: #0b54fe;
+  --siq-s2: #de7835;
+  --siq-s3: #0c7c59;
+  --siq-other: #a4b5c1;
+  --siq-ridge-fill: rgba(18, 38, 43, 0.07);
+  --siq-img-outline: rgba(0, 0, 0, 0.1);
+
+  /* Cards (owner feedback: fewer walls of text) */
+  --siq-page: #f6f8f9;
+  --siq-card: #ffffff;
+  --siq-card-shadow: 0 1px 2px rgba(13, 22, 38, 0.04), 0 4px 12px rgba(13, 22, 38, 0.05);
+  --siq-card-hover: #f6f8f9; /* hover rows inside a card (= surface) */
+
+  /* ── Type ────────────────────────────────────────────────────────────── */
+  --siq-font: "Sora", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --siq-weight-regular: 400;
+  --siq-weight-medium: 500;
+  --siq-weight-semibold: 600;
+  /* size / line height pairs */
+  --siq-text-display: 40px; /* page and session titles, big numbers */
+  --siq-text-display-lh: 48px;
+  --siq-text-headline: 28px; /* finding headlines */
+  --siq-text-headline-lh: 36px;
+  --siq-text-section: 24px; /* section titles, finding headline in a card */
+  --siq-text-section-lh: 32px;
+  --siq-text-stat: 32px; /* stat callouts */
+  --siq-text-stat-lh: 40px;
+  --siq-text-card-title: 18px;
+  --siq-text-card-title-lh: 24px;
+  --siq-text-body: 18px; /* summaries, finding bodies */
+  --siq-text-body-lh: 30px;
+  --siq-text-lead: 16px;
+  --siq-text-lead-lh: 24px;
+  --siq-text-ui: 14px;
+  --siq-text-ui-lh: 20px;
+  --siq-text-small: 13px;
+  --siq-text-small-lh: 18px;
+  --siq-text-caption: 12px; /* captions, source lines, short labels */
+  --siq-text-caption-lh: 16px;
+  --siq-text-nav: 15px; /* top-bar navigation */
+  --siq-text-nav-lh: 20px;
+  --siq-text-tag: 11px; /* the "Beta" tag */
+  --siq-text-tag-lh: 16px;
+  --siq-text-reading-lh: 22px; /* 14px text read as prose ("How we know") */
+  --siq-label-tracking: 0.06em;
+
+  /* ── Shape and space ─────────────────────────────────────────────────── */
+  --siq-radius-control: 12px; /* buttons, inputs, tip bars, popovers */
+  --siq-radius-tile: 10px; /* icon tiles */
+  --siq-radius-card: 16px; /* cards and panels */
+  --siq-radius-pill: 999px; /* chips, badges */
+  --siq-radius-inline: 6px; /* focus ring of an inline link or timestamp */
+  --siq-space-1: 4px;
+  --siq-space-2: 8px;
+  --siq-space-3: 12px;
+  --siq-space-4: 16px;
+  --siq-space-5: 20px;
+  --siq-space-6: 24px;
+  --siq-space-8: 32px;
+  --siq-space-12: 48px;
+  --siq-space-16: 64px;
+  --siq-target: 40px; /* minimum height of anything you can click */
+  --siq-topbar-height: 64px;
+  --siq-container: 1200px;
+  --siq-gutter: 32px;
+
+  /* ── Motion ──────────────────────────────────────────────────────────── */
+  --siq-duration: 200ms;
+  --siq-ease: cubic-bezier(0, 0, 0.2, 1);
+}
+
+@media screen {
+  :root[data-theme="dark"] {
+    --siq-ground: #091316;
+    --siq-surface: #0f1b1f;
+    --siq-surface-2: #182427;
+    --siq-topbar: #0f1b1f;
+    --siq-input: #0f1b1f;
+    --siq-selected-bg: #1c2a2e;
+    --siq-selected-ink: #ffffff;
+    --siq-ink: #ffffff;
+    --siq-ink-2: #ced0d0;
+    --siq-muted: #a4b5c1;
+    --siq-border: #5d6d79;
+    --siq-border-hover: #ced0d0;
+    --siq-hairline: rgba(255, 255, 255, 0.08);
+    --siq-hairline-row: rgba(255, 255, 255, 0.06);
+    --siq-hairline-head: rgba(255, 255, 255, 0.12);
+    --siq-nontext: #8094a3;
+    --siq-cta: #477580;
+    --siq-cta-hover: #335d67;
+    --siq-cta-ink: #ffffff;
+    --siq-accent: #88c0cd;
+    --siq-accent-hover: #b7d9e1;
+    --siq-focus: #88c0cd;
+    --siq-notice: rgba(136, 192, 205, 0.08);
+    --siq-good: #59d4c0;
+    --siq-good-fill: #2eb89a;
+    --siq-good-tint: rgba(46, 184, 154, 0.14);
+    --siq-fair: #fed348;
+    --siq-fair-fill: #fed348;
+    --siq-fair-tint: rgba(254, 211, 72, 0.14);
+    --siq-low: #eb9e9f;
+    --siq-low-fill: #e26f71;
+    --siq-low-tint: rgba(226, 111, 113, 0.14);
+    --siq-mark-fill: #447cfd;
+    --siq-mark-iq: #88c0cd;
+    --siq-s1: #447cfd;
+    --siq-s2: #cb4a1a;
+    --siq-s3: #0c7c59;
+    --siq-other: #8094a3;
+    --siq-ridge-fill: rgba(255, 255, 255, 0.1);
+    --siq-img-outline: rgba(255, 255, 255, 0.1);
+    --siq-page: #091316;
+    --siq-card: #0f1b1f;
+    --siq-card-shadow: 0 0 0 0 transparent; /* none: the hairline carries the edge */
+    --siq-card-hover: #182427; /* = surface-2: surface equals the card in dark */
+  }
+}
+
+/* The same dark values, for "follow the system". Keep both blocks in sync. */
+@media screen and (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --siq-ground: #091316;
+    --siq-surface: #0f1b1f;
+    --siq-surface-2: #182427;
+    --siq-topbar: #0f1b1f;
+    --siq-input: #0f1b1f;
+    --siq-selected-bg: #1c2a2e;
+    --siq-selected-ink: #ffffff;
+    --siq-ink: #ffffff;
+    --siq-ink-2: #ced0d0;
+    --siq-muted: #a4b5c1;
+    --siq-border: #5d6d79;
+    --siq-border-hover: #ced0d0;
+    --siq-hairline: rgba(255, 255, 255, 0.08);
+    --siq-hairline-row: rgba(255, 255, 255, 0.06);
+    --siq-hairline-head: rgba(255, 255, 255, 0.12);
+    --siq-nontext: #8094a3;
+    --siq-cta: #477580;
+    --siq-cta-hover: #335d67;
+    --siq-cta-ink: #ffffff;
+    --siq-accent: #88c0cd;
+    --siq-accent-hover: #b7d9e1;
+    --siq-focus: #88c0cd;
+    --siq-notice: rgba(136, 192, 205, 0.08);
+    --siq-good: #59d4c0;
+    --siq-good-fill: #2eb89a;
+    --siq-good-tint: rgba(46, 184, 154, 0.14);
+    --siq-fair: #fed348;
+    --siq-fair-fill: #fed348;
+    --siq-fair-tint: rgba(254, 211, 72, 0.14);
+    --siq-low: #eb9e9f;
+    --siq-low-fill: #e26f71;
+    --siq-low-tint: rgba(226, 111, 113, 0.14);
+    --siq-mark-fill: #447cfd;
+    --siq-mark-iq: #88c0cd;
+    --siq-s1: #447cfd;
+    --siq-s2: #cb4a1a;
+    --siq-s3: #0c7c59;
+    --siq-other: #8094a3;
+    --siq-ridge-fill: rgba(255, 255, 255, 0.1);
+    --siq-img-outline: rgba(255, 255, 255, 0.1);
+    --siq-page: #091316;
+    --siq-card: #0f1b1f;
+    --siq-card-shadow: 0 0 0 0 transparent; /* none: the hairline carries the edge */
+    --siq-card-hover: #182427; /* = surface-2: surface equals the card in dark */
+  }
+}
+
+/*
+ * The classic design is dark only. The StormIQ mark it shows (sidebar,
+ * compact top bar) keeps its on-dark colours whatever the system or saved
+ * theme, so it never fades into the classic dark surfaces.
+ */
+[data-colors-semantic="dark"] {
+  --siq-mark-fill: #447cfd;
+  --siq-mark-iq: #88c0cd;
+}
+
+/* ── v1 page basics (only when the v1 switch is on) ────────────────────── */
+
+:root[data-ui="v1"] {
+  color-scheme: light dark;
+  font-family: var(--siq-font);
+}
+
+/* Screen only, so the print rule below wins after an explicit dark choice. */
+@media screen {
+  :root[data-ui="v1"][data-theme="light"] {
+    color-scheme: light;
+  }
+
+  :root[data-ui="v1"][data-theme="dark"] {
+    color-scheme: dark;
+  }
+}
+
+:root[data-ui="v1"] body {
+  /* The classic shell scrolls inside its own panes; the v1 page scrolls. */
+  overflow: auto;
+  background: var(--siq-page);
+  color: var(--siq-ink);
+  font-family: var(--siq-font);
+  font-size: var(--siq-text-ui);
+  line-height: var(--siq-text-ui-lh);
+  font-weight: var(--siq-weight-regular);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+@media print {
+  :root[data-ui="v1"] {
+    color-scheme: light;
+  }
+}
+
+/* ── Shared interaction helpers for v1 components ──────────────────────── */
+
+/* Transitions on explicit properties only (never `all`). */
+.siq-fx {
+  transition-property: background-color, color, border-color, box-shadow, opacity;
+  transition-duration: var(--siq-duration);
+  transition-timing-function: var(--siq-ease);
+}
+
+.siq-fx:focus-visible {
+  outline: 2px solid var(--siq-focus);
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .siq-fx {
+    transition-duration: 0ms;
+  }
+}
+
+/* Visually hidden, still read by screen readers. */
+.siq-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}

@@ -6,13 +6,13 @@ What's next, in order. What has shipped is in [changelog.md](changelog.md).
 
 A full visual and UX overhaul that uses Livestorm's design language (colours, Object Sans, icons, radii, shadows, motion, writing voice) while the app stays **StormIQ**: its own name and mark, and the "not an official Livestorm product" notice ([brand.md](brand.md)).
 
-1. Prototype two directions for the key screens; choose one.
-2. Design tokens and base components: buttons, cards, accessible tabs, paginated tables, empty states, loading skeletons, toasts.
-3. The app shell and navigation, with a StormIQ mark in place of the Livestorm icon the sidebar uses today.
-4. Each screen, splitting the oversized views and `styles.css` along the way.
+1. ~~Prototype two directions for the key screens; choose one.~~ Done: the Winter direction, light and dark, in Sora.
+2. ~~Design tokens and the first base components~~ (cards, stat cards, collapsibles, status words, chips, buttons, tip bar) and ~~the app shell with the StormIQ mark~~: shipped behind the `?ui=v1` switch ([changelog](changelog.md)). Still to come: accessible tabs, paginated tables, empty states, loading skeletons, toasts.
+3. Each screen, rebuilt on the v1 components (the library, then the session Report, Transcript and Follow-up), splitting the oversized views and `styles.css` along the way.
+4. Turn v1 on for everyone and remove the switch and the classic styles.
 5. Rewrite [product.md](product.md) for the new navigation (it still describes the older Events-based flow).
 
-Object Sans is a licensed font and isn't in the repo; the web-font files have to come from Livestorm's brand kit.
+The v1 design uses Sora (open licence) instead of Object Sans, which is licensed and isn't in the repo, and Lucide icons instead of Livestorm's proprietary icon font ([brand.md](brand.md#the-v1-design)).
 
 ## 2. Card registry for Deep Analysis
 
