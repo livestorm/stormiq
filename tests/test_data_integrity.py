@@ -306,7 +306,13 @@ def _base_payloads() -> dict:
             "included": [_person_with_join_link("p1"), _person_with_join_link("p2")],
         },
         "chat_payload": {
-            "data": [{"id": "m1", "type": "chat_messages", "attributes": {"text": "Hi", "author_id": "p1", "created_at": 1700000000}}],
+            # As Livestorm sends it with include=people: the author is the
+            # people link; `author_id` is another id, not a people id.
+            "data": [{
+                "id": "m1", "type": "chat_messages",
+                "attributes": {"text": "Hi", "author_id": "c-0001", "created_at": 1700000000},
+                "relationships": {"people": {"data": {"type": "people", "id": "p1"}}},
+            }],
             "included": [_person_with_join_link("p1")],
             "meta": {"next_page": None},
         },
@@ -366,9 +372,13 @@ def test_a_base_fetch_never_saves_a_join_link(monkeypatch):
     for column in db.BASE_PAYLOAD_COLUMNS:
         assert _has_join_link(upstream[column]), f"the {column} fixture must hold a join link"
         assert not _has_join_link(saved[column]), column
-    for column in ("session_payload", "chat_payload", "questions_payload"):
+    for column in ("session_payload", "questions_payload"):
         detail = saved[column]["included"][0]["attributes"]["registrant_detail"]
         assert detail == {"attended": True, "fields": [{"id": "job_title", "value": "Tester"}]}, column
+    # The chat keeps each message's people link, not the people records.
+    assert "included" not in saved["chat_payload"]
+    assert saved["chat_payload"]["data"] == upstream["chat_payload"]["data"]
+    assert saved["chat_payload"]["data"][0]["relationships"] == {"people": {"data": {"type": "people", "id": "p1"}}}
 
 
 def test_rewriting_base_payloads_changes_nothing_else(test_database):

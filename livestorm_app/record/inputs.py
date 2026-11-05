@@ -2,7 +2,11 @@
 
 `load_record_inputs(cached)` takes a cached session row (the dict
 `db.fetch_cached_session` returns, read with the caller's scope) and gives
-one `RecordInputs`: the payloads, the session clock and the roster.
+one `RecordInputs`: the payloads, the session clock, the roster and the
+authors of the chat and the questions, resolved to roster people
+(`authors.resolve_authors`). The roster's roles are raised by what each
+person did: the team flags of the chat messages resolved to them, and the
+answers they wrote (`roster.escalate_roles`), except on an internal session.
 
 The roster comes from stored person rows when the caller has them
 (`roster_rows`), and from the session payload's `include=people` list
@@ -17,8 +21,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional
 
+from livestorm_app.record.authors import AuthorIndex, resolve_authors
 from livestorm_app.record.clock import ClockBase, clock_base
-from livestorm_app.record.roster import Roster, RosterRows, roster_from_rows, roster_from_session_payload
+from livestorm_app.record.roster import Roster, RosterRows, escalate_roles, roster_from_rows, roster_from_session_payload
 
 
 @dataclass(frozen=True)
@@ -29,6 +34,7 @@ class RecordInputs:
     session_id: str
     clock: ClockBase
     roster: Roster
+    authors: AuthorIndex
     session_payload: Mapping[str, Any]
     event_payload: Optional[Mapping[str, Any]]
     chat_payload: Optional[Mapping[str, Any]]
@@ -54,7 +60,8 @@ def load_record_inputs(cached: Mapping[str, Any], *, roster_rows: Optional[Roste
 
     `roster_rows`, when given, are the session's stored people and wins over
     the payload's `include=people` list. Missing payloads are None; a missing
-    session payload gives no clock and an empty roster.
+    session payload gives no clock and an empty roster, so no author
+    resolves.
     """
     if not isinstance(cached, Mapping):
         raise TypeError("load_record_inputs needs a cached session row")
@@ -69,14 +76,18 @@ def load_record_inputs(cached: Mapping[str, Any], *, roster_rows: Optional[Roste
         roster = roster_from_rows(roster_rows, session_id=session_id, session_attributes=attributes)
     else:
         roster = roster_from_session_payload(session_payload, event_payload=event_payload, session_id=session_id)
+    chat_payload = _mapping(cached.get("chat_payload"))
+    questions_payload = _mapping(cached.get("questions_payload"))
+    authors = resolve_authors(chat_payload, questions_payload, roster)
 
     return RecordInputs(
         session_id=session_id,
         clock=clock_base(session_payload),
-        roster=roster,
+        roster=escalate_roles(roster, authors.role_signals),
+        authors=authors,
         session_payload=session_payload,
         event_payload=event_payload,
-        chat_payload=_mapping(cached.get("chat_payload")),
-        questions_payload=_mapping(cached.get("questions_payload")),
+        chat_payload=chat_payload,
+        questions_payload=questions_payload,
         transcript_payload=_mapping(cached.get("transcript_payload")),
     )

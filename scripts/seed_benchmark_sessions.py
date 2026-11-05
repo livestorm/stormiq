@@ -196,16 +196,28 @@ def build_session_payload(session_id: str, event_id: str, duration_s: int, peopl
 
 
 def build_chat(rng: random.Random, n: int, people: List[Dict[str, Any]], started_at: int, duration_s: int) -> Dict[str, Any]:
-    data = [{
-        "id": f"m{i}", "type": "chat_messages",
-        "attributes": {
-            "text_content": " ".join(rng.choice(WORDS) for _ in range(rng.randint(3, 25))),
-            "html_content": "<p>…</p>", "created_at": started_at + rng.randint(0, duration_s),
-            "from_guest_speaker": False, "from_team_member": False,
-            "author_id": rng.choice(people)["id"], "session_id": "s", "event_id": "evt",
-        },
-    } for i in range(n)]
-    return {"data": data, "meta": {"record_count": n}, "pages_fetched": 1, "requested_page_size": 100}
+    """Chat messages in the shape the fetcher stores (`client.fetch_chat_messages`).
+
+    As in real payloads, a message's author is its people link
+    (`relationships.people.data`), and its `author_id` is another id: here a
+    random one per writer, drawn again in each session, unrelated to the
+    people ids. The included people are not stored with the chat.
+    """
+    writer_ids = {p["id"]: str(uuid.UUID(int=rng.getrandbits(128), version=4)) for p in people}
+    data = []
+    for i in range(n):
+        writer = rng.choice(people)["id"]
+        data.append({
+            "id": f"m{i}", "type": "chat_messages",
+            "attributes": {
+                "text_content": " ".join(rng.choice(WORDS) for _ in range(rng.randint(3, 25))),
+                "html_content": "<p>…</p>", "created_at": started_at + rng.randint(0, duration_s),
+                "from_guest_speaker": False, "from_team_member": False,
+                "author_id": writer_ids[writer], "session_id": "s", "event_id": "evt",
+            },
+            "relationships": {"people": {"data": {"type": "people", "id": writer}}},
+        })
+    return {"data": data, "meta": {"record_count": n}, "pages_fetched": 1, "requested_page_size": 50}
 
 
 def build_questions(rng: random.Random, n: int, people: List[Dict[str, Any]], started_at: int, duration_s: int) -> Dict[str, Any]:

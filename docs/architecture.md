@@ -103,10 +103,11 @@ The deterministic analytics are pandas code in `livestorm_app/analytics/`. The e
 The v1 Report gets its data from `livestorm_app/record/` instead, so the classic pipeline above doesn't change. Its first pieces:
 
 - `clock_base(session_payload)`: the session clock (`started_at`, the end, the late start). No `started_at` means no clock.
-- `audience_events(chat_payload, questions_payload, base)`: one row per chat message, question and written answer, with its evidence id (`C0001`, `Q001`, `A001`), session time, phase, minute, team flag and `has_link`. It reads the raw times and the chat's `html_content`.
+- `audience_events(chat_payload, questions_payload, base, authors=None)`: one row per chat message, question and written answer, with its evidence id (`C0001`, `Q001`, `A001`), session time, phase, minute, team flag, `has_link`, and the author's `P-` ref when `authors` resolved it. It reads the raw times and the chat's `html_content`.
 - `minute_bins(events, base=base)`: zero-filled per-minute lanes, plus the before and after edges.
 - `roster_from_session_payload(session_payload, event_payload=...)`: one row per person from the cached `include=people` list (`payloads.parse_person`), with a role, an organizer flag, a channel, a lead-time bucket, the registration answers and a `P-` ref. Its meta holds the source, the coverage (partial for this list), counts by role and the internal flag (`audience.is_internal_session`). `prompt_view` and `display_people` are the only ways people leave it.
-- `load_record_inputs(cached, roster_rows=None)`: the payloads, clock and roster of one cached session row. Stored people rows (`RosterRows`) win over the include list when given; this is the only place that picks the people source.
+- `resolve_authors(chat_payload, questions_payload, roster)` (`record/authors.py`): each chat, question and written-answer author resolved to a roster person by people id, never by guess, with coverage per source. A chat message's people id is its `relationships.people` link (`evidence.people_link`); its `author_id` is a different id. `roster.escalate_roles` raises roles with the team flags of the chat messages resolved to each person and the answers they wrote, except on an internal session. It reads the payloads through `evidence.chat_items` and `evidence.question_items`, as `audience_events` does.
+- `load_record_inputs(cached, roster_rows=None)`: the payloads, clock, roster and authors of one cached session row. Stored people rows (`RosterRows`) win over the include list when given; this is the only place that picks the people source.
 
 Every metric, chart and formula is documented once, in [product.md §13](product.md#13-glossary-of-metrics-and-formulas). Don't copy formulas elsewhere; link to it.
 

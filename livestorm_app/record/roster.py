@@ -17,10 +17,13 @@ in memory for `display_people`, which fails closed. A prompt gets people
 only through `prompt_view`.
 
 The rules (docs/product.md §13, "Roster"):
-- role: team, then guest speaker, then audience (`classify_role`). An
-  organizer (`session_role`) is a flag beside the role, never a role. In an
-  internal meeting everyone is team: the roster says so in its meta
-  (`internal`, counts by role) and never relabels anyone;
+- role: team, then guest speaker, then audience (`classify_role`). What a
+  person did can raise their role (`RoleSignals`, `escalate_roles`): the
+  team flags of their own chat messages, and writing an answer, once
+  `record/authors.py` resolves those items to them. Never on an internal
+  session. An organizer (`session_role`) is a flag beside the role, never a
+  role. In an internal meeting everyone is team: the roster says so in its
+  meta (`internal`, counts by role) and never relabels anyone;
 - channel: UTM source, then the referrer's host, then the registration type
   (`derive_channel`, `CHANNEL_RULE_VERSION`);
 - lead time: 24-hour periods from registration to `started_at`
@@ -37,7 +40,7 @@ from __future__ import annotations
 import hashlib
 import math
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Mapping, NamedTuple, Optional, Sequence, Tuple
 
@@ -56,6 +59,8 @@ ROLES = (TEAM, GUEST_SPEAKER, AUDIENCE)
 # Where a role came from.
 ROLE_FROM_LIVESTORM_ROLE = "livestorm_role"
 ROLE_FROM_GUEST_FLAG = "guest_speaker_flag"
+ROLE_FROM_CHAT_FLAG = "chat_flag"  # a team flag on the person's own chat message
+ROLE_FROM_WRITTEN_ANSWER = "written_answer"  # the person wrote an answer to a question
 ROLE_BY_DEFAULT = "default"
 
 ORGANIZER = "organizer"  # the only `session_role` value seen so far
@@ -96,7 +101,7 @@ ROSTER_COLUMNS = (
     "company",
     "job_title",
     "role",  # team | guest_speaker | audience
-    "role_source",  # livestorm_role | guest_speaker_flag | default
+    "role_source",  # livestorm_role | guest_speaker_flag | chat_flag | written_answer | default
     "livestorm_role",
     "is_guest_speaker",
     "session_role",  # as sent
@@ -192,20 +197,42 @@ def _count(value: Any) -> Optional[int]:
 # ── Role ────────────────────────────────────────────────────────────────────
 
 
-def classify_role(person: Mapping[str, Any]) -> Tuple[str, str]:
+class RoleSignals(NamedTuple):
+    """What a person did in the session that can raise their role
+    (`classify_role`). Only items resolved to the person count
+    (`record/authors.py`), never a guess."""
+
+    team_message: bool = False  # one of their chat messages is `from_team_member`
+    guest_message: bool = False  # one of their chat messages is `from_guest_speaker`
+    wrote_answer: bool = False  # they wrote an answer to a question: a team action
+
+
+NO_ROLE_SIGNALS = RoleSignals()
+
+
+def classify_role(person: Mapping[str, Any], signals: RoleSignals = NO_ROLE_SIGNALS) -> Tuple[str, str]:
     """(role, source) for one person row.
 
     Team when Livestorm's role is exactly `team_member` (surrounding spaces
-    aside), as the classic rules read it (`audience.is_internal_session`),
-    then guest speaker when `is_guest_speaker` is true, then audience. A team
-    member who is also a guest speaker is team. An unknown or missing role is
-    audience. Booleans may be the strings "true" or "false". `session_role`
-    plays no part: see `is_organizer`.
+    aside), as the classic rules read it (`audience.is_internal_session`).
+    Then team when one of the person's own chat messages is
+    `from_team_member`, or when they wrote an answer (`signals`). Then guest
+    speaker when `is_guest_speaker` is true, or when one of their messages
+    is `from_guest_speaker`. Then audience. A team member who is also a
+    guest speaker is team. An unknown or missing role is audience. Booleans
+    may be the strings "true" or "false". `session_role` plays no part: see
+    `is_organizer`.
     """
     if _text(person.get("livestorm_role")) == "team_member":
         return TEAM, ROLE_FROM_LIVESTORM_ROLE
+    if signals.team_message:
+        return TEAM, ROLE_FROM_CHAT_FLAG
+    if signals.wrote_answer:
+        return TEAM, ROLE_FROM_WRITTEN_ANSWER
     if _flag(person.get("is_guest_speaker")):
         return GUEST_SPEAKER, ROLE_FROM_GUEST_FLAG
+    if signals.guest_message:
+        return GUEST_SPEAKER, ROLE_FROM_CHAT_FLAG
     return AUDIENCE, ROLE_BY_DEFAULT
 
 
@@ -422,7 +449,8 @@ class RosterMeta:
       has one. `registrants_count` and `attendees_count` are the session's
       own counters, as sent.
     - `role_counts` and `attended_role_counts`: people per role, over
-      everyone and over attendees (`attended` true).
+      everyone and over attendees (`attended` true), after any role raised
+      by `escalate_roles`.
     - `internal`: the session is internal (`audience.is_internal_session`,
       the rule classic uses). Roles are never changed for it. That rule
       doesn't count a team member who is also a guest speaker as team,
@@ -681,6 +709,45 @@ def roster_from_rows(
         fields_source=rows.fields_source,
         synced_at=rows.synced_at,
     )
+
+
+def escalate_roles(roster: Roster, signals: Mapping[str, RoleSignals]) -> Roster:
+    """The roster with roles raised by what each person did (`classify_role`).
+
+    `signals` maps a person id to their `RoleSignals`: the team flags of the
+    chat messages resolved to them, and whether they wrote an answer
+    (`authors.AuthorIndex.role_signals`). A role only ever rises: audience
+    to guest speaker or team, guest speaker to team. The counts by role
+    follow; the internal flag doesn't change, since it reads Livestorm's own
+    roles (the classic rule). An internal session's roles never change, so
+    it is returned as is, and so is a roster with nothing to raise.
+    """
+    if roster.meta.internal or not signals or roster.people.empty:
+        return roster
+    people = roster.people
+    roles = list(people["role"])
+    sources = list(people["role_source"])
+    changed = False
+    for index, (person_id, livestorm_role, guest) in enumerate(
+        zip(people["person_id"], people["livestorm_role"], people["is_guest_speaker"], strict=True)
+    ):
+        person_signals = signals.get(person_id)
+        if person_signals is None or not any(person_signals):
+            continue
+        role, source = classify_role({"livestorm_role": livestorm_role, "is_guest_speaker": guest}, person_signals)
+        if (role, source) != (roles[index], sources[index]):
+            roles[index], sources[index] = role, source
+            changed = True
+    if not changed:
+        return roster
+    escalated = people.copy()
+    escalated["role"] = pd.Series(roles, index=people.index, dtype=object)
+    escalated["role_source"] = pd.Series(sources, index=people.index, dtype=object)
+    rows = [{"role": role} for role in roles]
+    attended = people["attended"].fillna(False).astype(bool)
+    attended_rows = [{"role": role} for role, came in zip(roles, attended, strict=True) if came]
+    meta = replace(roster.meta, role_counts=_role_counts(rows), attended_role_counts=_role_counts(attended_rows))
+    return Roster(people=escalated, meta=meta)
 
 
 # ── Views ───────────────────────────────────────────────────────────────────

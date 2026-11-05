@@ -9,12 +9,19 @@ with an evidence id on every row:
 - `A001`, ... for written answers (a question with response text), ordered by
   `(responded_at, livestorm_id, text)`.
 
-Ids depend on the payloads only, never on the clock, so two parses of the same
-payloads give the same ids. Payload order doesn't change them either, with one
-exception: when a Livestorm id repeats with different content, the first copy
-is kept. Each row keeps its Livestorm id: anything stored later should record
-both. Times are read from the raw payload values, never from the formatted
-strings of the classic tables.
+Ids depend on the payloads only, never on the clock or the authors, so two
+parses of the same payloads give the same ids. Payload order doesn't change
+them either, with one exception: when a Livestorm id repeats with different
+content, the first copy is kept. Each row keeps its Livestorm id: anything
+stored later should record both. Times are read from the raw payload values,
+never from the formatted strings of the classic tables.
+
+`chat_items` and `question_items` are the only readers of those payloads in
+`record/`: `audience_events` and `authors.resolve_authors` both read through
+them, so both count the same items and the same author ids. A chat
+message's author is its people link (`people_link`), never its `author_id`
+attribute, which is another id. Given an `authors.AuthorIndex`, each row
+also gets its author's `P-` ref when the author resolved to a person.
 
 Pure functions: no database, network or web framework.
 """
@@ -23,12 +30,16 @@ from __future__ import annotations
 
 import html
 import re
-from typing import Any, Dict, List, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, NamedTuple, Optional
 
 import pandas as pd
 
 from livestorm_app.livestorm.payloads import extract_messages, extract_questions
 from livestorm_app.record.clock import ClockBase, minute_index, parse_time, phase
+from livestorm_app.record.roster import GUEST_SPEAKER, TEAM
+
+if TYPE_CHECKING:
+    from livestorm_app.record.authors import Author, AuthorIndex
 
 CHAT = "chat"
 QUESTION = "question"
@@ -44,7 +55,8 @@ EVIDENCE_COLUMNS = (
     "phase",  # before | live | after; None without a clock
     "minute",  # the live minute; <NA> outside the live session
     "is_team",
-    "author_id",  # the Livestorm people id
+    "author_id",  # the author's people id (a chat message's people link); None without one
+    "author_ref",  # the author's P- ref when it resolved to a roster person (authors.py); None otherwise
     "text",
     "has_link",  # a URL in the text, or a link in html_content
 )
@@ -66,6 +78,7 @@ def _text(value: Any) -> str:
 
 
 def _clean_id(value: Any) -> Optional[str]:
+    """A Livestorm id as stripped text; None when missing, blank or a boolean."""
     if value is None or isinstance(value, bool):
         return None
     cleaned = str(value).strip()
@@ -103,22 +116,108 @@ def _unique_records(items: List[Any]) -> List[Mapping[str, Any]]:
     return records
 
 
-def _roster_flag(value: Any) -> Optional[bool]:
-    """A roster's team flag: a real boolean, or the string "true" or "false".
-    None for anything else (missing, NaN, `pd.NA`), so the default decides."""
-    if pd.api.types.is_bool(value):
-        return bool(value)
-    if isinstance(value, str):
-        return {"true": True, "false": False}.get(value.strip().lower())
-    return None
+# ── Items: the one reading of the chat and questions payloads ──────────────
 
 
-def _is_team(author_id: Optional[str], roster: Optional[Mapping[str, Any]], default: bool) -> bool:
-    if roster is not None and author_id is not None and author_id in roster:
-        flag = _roster_flag(roster[author_id])
-        if flag is not None:
-            return flag
-    return default
+class ChatItem(NamedTuple):
+    """One chat message, as the record reads it."""
+
+    livestorm_id: Optional[str]
+    created_at: Any  # as sent
+    author_id: Optional[str]  # the author's people id (`people_link`); None without one
+    team_flag: bool  # `from_team_member` (true, or the string "true")
+    guest_flag: bool  # `from_guest_speaker`
+    text: str  # `text_content`, or the text of `html_content`
+    markup: str  # `html_content`
+
+
+class QuestionItem(NamedTuple):
+    """One question and its written answer, as the record reads them."""
+
+    livestorm_id: Optional[str]
+    created_at: Any  # as sent
+    asker_id: Optional[str]  # `question_author_id`: a people id
+    text: str
+    responded_at: Any  # as sent
+    responder_id: Optional[str]  # `response_author_id`: a people id
+    response: str  # the written answer; "" when unanswered or answered orally only
+
+
+def people_link(record: Mapping[str, Any]) -> Optional[str]:
+    """A chat message's author as a people id: `relationships.people.data.id`,
+    whose `type` is "people".
+
+    Livestorm sends it when the chat is fetched with `include=people`
+    (`livestorm/client.fetch_chat_messages`). A chat cached before that has
+    no relationships, so this is None. The message's `author_id` attribute
+    is another id: it is never read as a people id.
+    """
+    relationships = record.get("relationships")
+    people = relationships.get("people") if isinstance(relationships, Mapping) else None
+    data = people.get("data") if isinstance(people, Mapping) else None
+    if not isinstance(data, Mapping) or _text(data.get("type")) != "people":
+        return None
+    return _clean_id(data.get("id"))
+
+
+def chat_items(chat_payload: Any) -> List[ChatItem]:
+    """The chat's messages in payload order; a repeated Livestorm id counts once."""
+    items = []
+    for record in _unique_records(extract_messages(chat_payload)):
+        attributes = _attributes(record)
+        markup = _text(attributes.get("html_content"))
+        team_flag, guest_flag = (_flag(attributes.get(name)) for name in TEAM_MESSAGE_FLAGS)
+        items.append(
+            ChatItem(
+                livestorm_id=_clean_id(record.get("id")),
+                created_at=attributes.get("created_at"),
+                author_id=people_link(record),
+                team_flag=team_flag,
+                guest_flag=guest_flag,
+                text=_text(attributes.get("text_content")) or _html_to_text(markup),
+                markup=markup,
+            )
+        )
+    return items
+
+
+def question_items(questions_payload: Any) -> List[QuestionItem]:
+    """The questions in payload order; a repeated Livestorm id counts once."""
+    items = []
+    for record in _unique_records(extract_questions(questions_payload)):
+        attributes = _attributes(record)
+        items.append(
+            QuestionItem(
+                livestorm_id=_clean_id(record.get("id")),
+                created_at=attributes.get("created_at"),
+                asker_id=_clean_id(attributes.get("question_author_id")),
+                text=_text(attributes.get("question")),
+                responded_at=attributes.get("responded_at"),
+                responder_id=_clean_id(attributes.get("response_author_id")),
+                response=_text(attributes.get("response")),
+            )
+        )
+    return items
+
+
+# ── The table ───────────────────────────────────────────────────────────────
+
+
+def _resolved(kind: str, author_id: Optional[str], authors: Optional[AuthorIndex]) -> Optional[Author]:
+    """The item's author when it resolved to a person, or None."""
+    if authors is None:
+        return None
+    author = authors.author(kind, author_id)
+    return author if author is not None and author.person_id is not None else None
+
+
+def _resolved_to_team(author: Optional[Author]) -> bool:
+    """True for an author resolved to a team member or a guest speaker."""
+    return author is not None and author.role in (TEAM, GUEST_SPEAKER)
+
+
+def _ref(author: Optional[Author]) -> Optional[str]:
+    return author.person_ref if author is not None else None
 
 
 def _row(kind: str, livestorm_id: Optional[str], raw_time: Any, base: ClockBase, **fields: Any) -> Dict[str, Any]:
@@ -150,64 +249,61 @@ def _assign_ids(rows: List[Dict[str, Any]], prefix: str, width: int) -> List[Dic
     return ordered
 
 
-def _chat_rows(chat_payload: Any, base: ClockBase, roster: Optional[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+def _chat_rows(chat_payload: Any, base: ClockBase, authors: Optional[AuthorIndex]) -> List[Dict[str, Any]]:
     rows = []
-    for record in _unique_records(extract_messages(chat_payload)):
-        attributes = _attributes(record)
-        markup = _text(attributes.get("html_content"))
-        text = _text(attributes.get("text_content")) or _html_to_text(markup)
-        author_id = _clean_id(attributes.get("author_id"))
-        flagged = any(_flag(attributes.get(flag)) for flag in TEAM_MESSAGE_FLAGS)
+    for item in chat_items(chat_payload):
         rows.append(
             _row(
                 CHAT,
-                _clean_id(record.get("id")),
-                attributes.get("created_at"),
+                item.livestorm_id,
+                item.created_at,
                 base,
-                is_team=_is_team(author_id, roster, flagged),
-                author_id=author_id,
-                text=text,
-                has_link=_has_link(text, markup),
+                # A chat message's own flags decide, resolved or not.
+                is_team=item.team_flag or item.guest_flag,
+                author_id=item.author_id,
+                author_ref=_ref(_resolved(CHAT, item.author_id, authors)),
+                text=item.text,
+                has_link=_has_link(item.text, item.markup),
             )
         )
     return _assign_ids(rows, "C", 4)
 
 
 def _question_and_answer_rows(
-    questions_payload: Any, base: ClockBase, roster: Optional[Mapping[str, Any]]
+    questions_payload: Any, base: ClockBase, authors: Optional[AuthorIndex]
 ) -> List[Dict[str, Any]]:
     questions = []
     answers = []
-    for record in _unique_records(extract_questions(questions_payload)):
-        attributes = _attributes(record)
-        livestorm_id = _clean_id(record.get("id"))
-        question_text = _text(attributes.get("question"))
-        asker_id = _clean_id(attributes.get("question_author_id"))
+    for item in question_items(questions_payload):
+        asker = _resolved(QUESTION, item.asker_id, authors)
         question = _row(
             QUESTION,
-            livestorm_id,
-            attributes.get("created_at"),
+            item.livestorm_id,
+            item.created_at,
             base,
-            is_team=_is_team(asker_id, roster, False),
-            author_id=asker_id,
-            text=question_text,
-            has_link=_has_link(question_text, question_text),
+            is_team=_resolved_to_team(asker),
+            author_id=item.asker_id,
+            author_ref=_ref(asker),
+            text=item.text,
+            has_link=_has_link(item.text, item.text),
         )
         questions.append(question)
 
-        response = _text(attributes.get("response"))
-        if not response:
+        if not item.response:
             continue  # unanswered, or answered orally only
-        responder_id = _clean_id(attributes.get("response_author_id"))
+        responder = _resolved(ANSWER, item.responder_id, authors)
         answer = _row(
             ANSWER,
-            livestorm_id,
-            attributes.get("responded_at"),
+            item.livestorm_id,
+            item.responded_at,
             base,
-            is_team=_is_team(responder_id, roster, True),  # the team answers questions
-            author_id=responder_id,
-            text=response,
-            has_link=_has_link(response, response),
+            # Always team, whatever the responder's role: one who reads as
+            # audience is most likely a team member registered as a participant.
+            is_team=True,
+            author_id=item.responder_id,
+            author_ref=_ref(responder),
+            text=item.response,
+            has_link=_has_link(item.response, item.response),
         )
         answer["_question"] = question
         answers.append(answer)
@@ -224,18 +320,26 @@ def audience_events(
     chat_payload: Any,
     questions_payload: Any,
     base: ClockBase,
-    roster: Optional[Mapping[str, Any]] = None,
+    authors: Optional[AuthorIndex] = None,
 ) -> pd.DataFrame:
     """Chat messages, questions and written answers as one table on the clock.
 
     Rows come in id order: chat, then questions, then answers. Columns are
-    `EVIDENCE_COLUMNS`. `is_team` comes from the message flags for chat, is
-    False for questions and True for answers. When `roster` maps an author's
-    Livestorm people id to True or False (a boolean, or the string "true" or
-    "false"), that decides instead. Any other roster value, such as a missing
-    one, leaves the default.
+    `EVIDENCE_COLUMNS`.
+
+    `is_team`: a chat message's own flags (`from_team_member` or
+    `from_guest_speaker`) decide, whether or not its author resolved. A
+    question is team when its asker resolved (`authors`, from
+    `authors.resolve_authors`) to a team member or a guest speaker, and not
+    team otherwise. A written answer is always team.
+
+    `author_id` is the author's people id: a chat message's people link
+    (`people_link`), a question's `question_author_id`, an answer's
+    `response_author_id`; None without one. `author_ref` is the resolved
+    author's `P-` ref, and None without `authors` or when the author didn't
+    resolve.
     """
-    rows = _chat_rows(chat_payload, base, roster) + _question_and_answer_rows(questions_payload, base, roster)
+    rows = _chat_rows(chat_payload, base, authors) + _question_and_answer_rows(questions_payload, base, authors)
     return pd.DataFrame(
         {
             "eid": pd.Series([row["eid"] for row in rows], dtype=object),
@@ -248,6 +352,7 @@ def audience_events(
             "minute": pd.Series([row["minute"] for row in rows], dtype="Int64"),
             "is_team": pd.Series([row["is_team"] for row in rows], dtype=bool),
             "author_id": pd.Series([row["author_id"] for row in rows], dtype=object),
+            "author_ref": pd.Series([row["author_ref"] for row in rows], dtype=object),
             "text": pd.Series([row["text"] for row in rows], dtype=object),
             "has_link": pd.Series([row["has_link"] for row in rows], dtype=bool),
         },
