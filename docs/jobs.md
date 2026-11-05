@@ -53,6 +53,8 @@ Four flows, each a queue-backed job:
 
 **The worker job** reads the active provider's key from its env, publishes stage-floor progress to Redis (`queued` → `loading_sources` → `building_prompt` → `analyzing`), runs the synchronous runner (`api_logic.run_overall_analysis` and the like) in `asyncio.to_thread`, and clears progress when it finishes or fails. Pollers read the durable cache first, so no "done" marker has to linger. Only complete output is saved (see [ai-outputs.md](ai-outputs.md)).
 
+The runner picks its model by job kind (`llm_client.get_llm_model`): `overall_analysis`, `deep_analysis`, `smart_recap`, `content_repurposing`, or `translation` for a French version ([providers.md](providers.md#which-model-a-job-uses)).
+
 Smart Recap is on demand only: nothing generates it automatically.
 
 ## Cover images

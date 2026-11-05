@@ -23,6 +23,8 @@ from typing import Any, Dict, List, Tuple
 
 import requests
 
+from livestorm_app.ai.models import catalog_model
+
 
 logger = logging.getLogger(__name__)
 
@@ -61,41 +63,12 @@ def get_llm_key() -> str:
     return key
 
 
-def get_llm_model(role: str) -> str:
-    """Return the model name for the active provider and generation role.
+def get_llm_model(kind: str) -> str:
+    """The model id an AI job kind uses on the active provider, for example
+    "overall_analysis" or "translation" (`ai.jobs.resolve_model`)."""
+    from livestorm_app.ai.jobs import resolve_model
 
-    Roles:
-      "default"     — overall analysis, deep analysis, content repurposing,
-                      translation (maps to the cheaper/faster model)
-      "smart_recap" — Smart Recap only (intentionally uses a stronger model)
-
-    DB settings take precedence over config constants:
-      llm_default_model      — model for "default" and "deep" roles
-      llm_smart_recap_model  — model for "smart_recap" role
-    """
-    from livestorm_app.config import (
-        DEFAULT_CLAUDE_MODEL,
-        DEFAULT_OPENAI_MODEL,
-        SMART_RECAP_CLAUDE_MODEL,
-        SMART_RECAP_OPENAI_MODEL,
-    )
-    from livestorm_app.db import get_setting
-
-    provider = get_provider()
-    is_recap = role == "smart_recap"
-    setting_key = "llm_smart_recap_model" if is_recap else "llm_default_model"
-
-    try:
-        db_model = get_setting(setting_key)
-        if db_model and db_model.strip():
-            return db_model.strip()
-    except Exception:
-        pass
-
-    # Config-constant fallback (env-var era defaults)
-    if provider == "anthropic":
-        return SMART_RECAP_CLAUDE_MODEL if is_recap else DEFAULT_CLAUDE_MODEL
-    return SMART_RECAP_OPENAI_MODEL if is_recap else DEFAULT_OPENAI_MODEL
+    return resolve_model(kind).model_id
 
 
 class LLMOutputTruncated(RuntimeError):
@@ -145,8 +118,10 @@ def call_llm(
 # (Opus 4.7/4.8, Opus 5/5.5, Sonnet 5/5.5, Haiku 5.5, Fable...). Models up to
 # 4.6 (Haiku 4.5, Sonnet 4.6, Opus 4.6 and older) accept it, but only on API
 # versions before 2026-10-21: from that version on, every model rejects it.
-# Unknown or newer ids get no temperature: leaving it out is always accepted,
-# sending it is not.
+# A catalog model answers from its row (`ai.models.ModelCaps.temperature_ok`).
+# An id outside the catalog (a setting saved before the catalog existed) keeps
+# the rule by version below, and unknown or newer ids get no temperature:
+# leaving it out is always accepted, sending it is not.
 _CLAUDE_VERSION_RE = re.compile(r"^claude-(?:opus|sonnet|haiku)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$")
 _LEGACY_CLAUDE_RE = re.compile(r"^claude-\d")  # claude-3-5-sonnet-..., claude-3-haiku-...
 _LAST_CLAUDE_VERSION_WITH_TEMPERATURE = (4, 6)
@@ -162,6 +137,14 @@ def anthropic_accepts_temperature(model: str, api_version: str = "") -> bool:
         api_version = ANTHROPIC_API_VERSION
     if str(api_version).strip() >= _FIRST_API_VERSION_WITHOUT_TEMPERATURE:  # ISO dates compare as strings
         return False
+    caps = catalog_model(model)
+    if caps is not None:
+        return caps.provider == "anthropic" and caps.temperature_ok
+    return claude_version_accepts_temperature(model)
+
+
+def claude_version_accepts_temperature(model: str) -> bool:
+    """The rule by version, for Anthropic ids outside the catalog."""
     name = str(model or "").strip().lower()
     if _LEGACY_CLAUDE_RE.match(name):
         return True

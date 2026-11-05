@@ -6,6 +6,7 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from livestorm_app.ai.jobs import InvalidModelSetting, check_model_setting, is_model_setting
 from livestorm_app.auth import (
     Caller,
     env_admin_emails,
@@ -71,19 +72,26 @@ def admin_get_settings(_caller: Caller = Depends(require_admin)) -> Dict[str, An
     return {"settings": get_all_settings()}
 
 
+# Settings saved as given (non-empty). `llm_provider` is checked where it is
+# read: llm_client.get_provider ignores any value but anthropic or openai.
+# `image_model` is sent as saved, except that an empty or retired id becomes
+# gpt-image-2 (cover_image.resolve_image_model).
+_PLAIN_SETTING_KEYS = {"llm_provider", "image_model"}
+
+
 @router.post("/api/admin/settings")
 def admin_update_setting(body: AdminSettingRequest, _caller: Caller = Depends(require_admin)) -> Dict[str, Any]:
-    allowed_keys = {
-        "llm_provider",
-        "llm_default_model",
-        "llm_smart_recap_model",
-        "image_model",
-    }
     key = str(body.key or "").strip()
-    if key not in allowed_keys:
+    if key not in _PLAIN_SETTING_KEYS and not is_model_setting(key):
         raise HTTPException(status_code=400, detail={"resource": "Setting", "message": f"Unknown setting key: {key}"})
     value = str(body.value or "").strip()
     if not value:
         raise HTTPException(status_code=400, detail={"resource": "Setting", "message": "Value cannot be empty."})
+    if is_model_setting(key):
+        # Model ids come from the catalog (ai/models.py), per job (ai/jobs.py).
+        try:
+            check_model_setting(key, value)
+        except InvalidModelSetting as exc:
+            raise HTTPException(status_code=400, detail={"resource": "Setting", "message": str(exc)}) from exc
     set_setting(key, value)
     return {"ok": True, "key": key, "value": value}
