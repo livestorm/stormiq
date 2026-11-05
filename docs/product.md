@@ -99,7 +99,7 @@ Six top-level cards pulled directly from the session payload:
 | Attendees | `attributes.attendees_count` |
 | Attendance Rate | `attendees_count / registrants_count × 100` |
 | Replay Viewers | Count of people with `has_viewed_replay = true` |
-| Chat Messages | Sum of `messages_count` across people |
+| Chat Messages | Sum of `messages_count` across audience members (team members and guest speakers left out); the card says "Excludes your team (n)" with their message count |
 | Questions | Sum of `questions_count` across people |
 
 ### Tab: Summary
@@ -107,7 +107,7 @@ Six top-level cards pulled directly from the session payload:
 
 ### Tab: People
 - **List of People** — name, email, country, city, attendance rate, role, company, job title, attendance duration, message count, question count, upvote count
-- **Most Engaged People** — top 12 sorted by engagement score
+- **Most Engaged People** — top 12 audience members sorted by engagement score; team members (`role = team_member`) and guest speakers (`is_guest_speaker`) are left out
   - **Engagement Score formula:**
     `messages_count + (questions_count × 3) + (up_votes_count × 2)`
 
@@ -115,7 +115,7 @@ Six top-level cards pulled directly from the session payload:
 
 | Chart | Type | Data |
 |---|---|---|
-| Attendance By Country | Bar | Top 12 countries by people count |
+| Attendance By Country | Bar | Top 12 countries by attendees (people with `attended = true`); countries with no attendee are left out |
 | People By Role | Pie | Distribution across owner, team member, moderator, guest speaker, participant, viewer |
 | Attendance Rate Distribution | Column | Bands: 0%, 1–25%, 26–50%, 51–75%, 76–100% |
 
@@ -201,27 +201,29 @@ Pause threshold for inclusion: gaps must be ≥ 0.75s to be flagged. Pauses are 
 
 ### Hero metrics
 
+Chat metrics count **audience messages** only ([§13](#13-glossary-of-metrics-and-formulas)). When the team or guest speakers wrote in the chat, the Messages card says "Excludes your team (n)" with the number of their messages, and the Unique Chatters card with the number of those people.
+
 | Metric | Formula |
 |---|---|
-| Messages | `len(chat_messages)` |
-| Unique Chatters | Count of distinct chat `author_id` |
-| Avg Msg Length | Mean character length of chat messages |
+| Messages | Number of audience messages |
+| Unique Chatters | Count of distinct `author_id` among audience messages |
+| Avg Msg Length | Mean character length of audience messages |
 | Questions | `len(questions)` |
 | Unique Askers | Count of distinct question `asked_by` |
 
 ### Tab: Chat
-Full chat thread with message text, created/updated timestamps, author ID.
+Full chat thread, team messages included: message text, who sent it ("From": Attendee, Team or Guest speaker), created/updated timestamps, author ID.
 
 ### Tab: Questions
 Submitted questions with: question text, asker, asked-at timestamp, responder, responded-at timestamp, response text.
 
 ### Tab: Top Contributors
-- **Top 10 chat contributors** by message count
+- **Top 10 chat contributors** by audience message count
 - **Top 10 question contributors** by question count
 - **Contributors Comparison** chart — side-by-side comparison
 
 ### Tab: Activity Over Time
-**Activity Timeline** — chat messages and questions bucketed by UTC minute across the session, plotted as parallel series.
+**Activity Timeline** — audience chat messages and questions bucketed by UTC minute across the session, plotted as parallel series.
 
 ### Tab: Question Response Coverage
 Three cards:
@@ -229,7 +231,7 @@ Three cards:
 - Unanswered
 - Coverage Rate — `answered / total_questions × 100`
 
-A question is "answered" if its `responded_by` field is non-empty.
+A question is "answered" if it has a responder or was answered orally (live).
 
 ---
 
@@ -280,7 +282,7 @@ A timeline split into 10 buckets representing 0–10%, 10–20%, … 90–100% o
 - `transcript_words` — total spoken words
 - `transcript_segments` — number of transcript segments
 - `transcript_wpm` — average words-per-minute
-- `chat_messages` — chat messages produced in that window
+- `chat_messages` — audience chat messages produced in that window
 - `question_count` — questions asked in that window
 
 Each bucket is also labelled with a session stage based on its midpoint:
@@ -372,7 +374,7 @@ Three platforms, each with one polished post + 2–4 hashtags + optional emoji:
 2. Facebook
 3. X / Twitter — capped at 280 characters
 
-All four assets are generated together. English is generated first; French is translated from it.
+All four assets are generated together. English is generated first; French is translated from it. A session whose transcript has no text can't be repurposed: the job fails and nothing is saved.
 
 ---
 
@@ -388,6 +390,8 @@ All four assets are generated together. English is generated first; French is tr
 | Content Repurposing bundle | PDF (per asset, per language) |
 
 All AI outputs are persisted to the session cache, so re-opening the workspace shows the previously generated content without re-running the model.
+
+Every PDF is headed by the StormIQ mark and ends each page with the "not an official Livestorm product" notice, in French for French exports. Bold text renders as bold (and `***bold italic***` as bold italic), and markdown separator lines (`---`) as a thin rule. Exported files are named `stormiq-…` (for example `stormiq-deep-analysis-english-<session>.pdf`).
 
 ---
 
@@ -408,7 +412,9 @@ All AI outputs are persisted to the session cache, so re-opening the workspace s
 |---|---|
 | Attendance rate | `attendees_count / registrants_count × 100` |
 | Person engagement score | `messages_count + (questions_count × 3) + (up_votes_count × 2)` |
-| Question coverage rate | `answered / total_questions × 100` (answered = `responded_by` is non-empty) |
+| Audience message | A chat message where neither `from_team_member` nor `from_guest_speaker` is true. Messages cached without these flags count as audience |
+| Audience member | A person whose `role` is not `team_member` and who is not a guest speaker (`is_guest_speaker`). Used by Session Overview's Chat Messages and Most Engaged People |
+| Question coverage rate | `answered / total_questions × 100` (answered = has a responder, or `response_orally` is true; older payloads spell it `responded_orally`) |
 
 ### Transcript-level
 
@@ -446,7 +452,7 @@ Component scaling:
 
 ### Session stage mapping (cross-source timeline)
 
-Buckets of 10% of session progress, labelled by their midpoint:
+Buckets of 10% of session progress, labelled by their midpoint. Progress runs from each source's first to its last item; an item at exactly 100% (the last message or question) belongs to the 90–100% bucket.
 
 | Midpoint | Stage label |
 |---|---|

@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import os
 import random
+import re
 import time
 from typing import Any, Dict, List, Tuple
 
@@ -140,6 +141,37 @@ def call_llm(
 
 # ── Anthropic ─────────────────────────────────────────────────────────────────
 
+# Claude 4.7 and later models reject a non-default `temperature` with a 400
+# (Opus 4.7/4.8, Opus 5/5.5, Sonnet 5/5.5, Haiku 5.5, Fable...). Models up to
+# 4.6 (Haiku 4.5, Sonnet 4.6, Opus 4.6 and older) accept it, but only on API
+# versions before 2026-10-21: from that version on, every model rejects it.
+# Unknown or newer ids get no temperature: leaving it out is always accepted,
+# sending it is not.
+_CLAUDE_VERSION_RE = re.compile(r"^claude-(?:opus|sonnet|haiku)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$")
+_LEGACY_CLAUDE_RE = re.compile(r"^claude-\d")  # claude-3-5-sonnet-..., claude-3-haiku-...
+_LAST_CLAUDE_VERSION_WITH_TEMPERATURE = (4, 6)
+_FIRST_API_VERSION_WITHOUT_TEMPERATURE = "2026-10-21"
+
+
+def anthropic_accepts_temperature(model: str, api_version: str = "") -> bool:
+    """Whether the Anthropic model accepts a non-default `temperature` on
+    `api_version` (default: the version this app sends, config.ANTHROPIC_API_VERSION)."""
+    if not api_version:
+        from livestorm_app.config import ANTHROPIC_API_VERSION
+
+        api_version = ANTHROPIC_API_VERSION
+    if str(api_version).strip() >= _FIRST_API_VERSION_WITHOUT_TEMPERATURE:  # ISO dates compare as strings
+        return False
+    name = str(model or "").strip().lower()
+    if _LEGACY_CLAUDE_RE.match(name):
+        return True
+    match = _CLAUDE_VERSION_RE.match(name)
+    if not match:
+        return False
+    version = (int(match.group(1)), int(match.group(2) or 0))
+    return version <= _LAST_CLAUDE_VERSION_WITH_TEMPERATURE
+
+
 def _call_anthropic(
     api_key: str,
     model: str,
@@ -156,9 +188,10 @@ def _call_anthropic(
     payload: Dict[str, Any] = {
         "model": model,
         "max_tokens": max_tokens,
-        "temperature": temperature,
         "messages": user_messages,
     }
+    if anthropic_accepts_temperature(model, ANTHROPIC_API_VERSION):
+        payload["temperature"] = temperature
     if system_parts:
         payload["system"] = "\n\n".join(system_parts)
 

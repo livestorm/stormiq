@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
 
 import pandas as pd
 
@@ -74,16 +74,70 @@ def format_unix_datetime_columns(df: pd.DataFrame) -> pd.DataFrame:
     return formatted
 
 
+# Per-message flags from the Livestorm chat API. A message carrying either one
+# was written by the host team or a guest speaker, not by the audience.
+TEAM_MESSAGE_FLAGS = ("from_team_member", "from_guest_speaker")
+
+
+def _is_true(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() == "true"
+
+
 def drop_unwanted_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop display noise and normalize the team flags to booleans.
+
+    The flags are kept: they decide which messages count as audience
+    activity. Cached payloads fetched before the flags were read may lack
+    them; those messages count as audience (False).
+    """
     cleaned = df.copy()
-    existing = [col for col in ["type", "from_guest_speaker", "from_team_member", "html_content"] if col in cleaned.columns]
+    existing = [col for col in ["type", "html_content"] if col in cleaned.columns]
     if existing:
         cleaned = cleaned.drop(columns=existing)
+    for flag in TEAM_MESSAGE_FLAGS:
+        if flag in cleaned.columns:
+            cleaned[flag] = cleaned[flag].apply(_is_true).astype(bool)
+        else:
+            cleaned[flag] = False
     return cleaned
+
+
+def audience_chat_mask(chat_df: pd.DataFrame) -> pd.Series:
+    """True for messages written by the audience (not the team or a guest speaker)."""
+    mask = pd.Series(True, index=chat_df.index)
+    for flag in TEAM_MESSAGE_FLAGS:
+        if flag in chat_df.columns:
+            mask &= ~chat_df[flag].apply(_is_true).astype(bool)
+    return mask
+
+
+def split_audience_chat(chat_df: pd.DataFrame) -> Tuple[pd.DataFrame, int]:
+    """Return (audience-only messages, number of team and guest-speaker messages left out)."""
+    if not isinstance(chat_df, pd.DataFrame) or chat_df.empty:
+        return chat_df, 0
+    mask = audience_chat_mask(chat_df)
+    return chat_df.loc[mask].copy(), int((~mask).sum())
+
+
+def _answered_orally_series(df: pd.DataFrame) -> pd.Series:
+    """Whether each question was answered live.
+
+    The API spec spells the field `response_orally`; older code and cached
+    payloads use `responded_orally`. The spec spelling wins when both exist.
+    """
+    result = pd.Series(False, index=df.index)
+    for column in ("responded_orally", "response_orally"):  # later wins
+        if column in df.columns:
+            values = df[column]
+            result = values.where(values.notna(), result).apply(_is_true)
+    return result.astype(bool)
 
 
 def clean_questions_table(df: pd.DataFrame) -> pd.DataFrame:
     cleaned = df.copy()
+    cleaned["answered_orally"] = _answered_orally_series(cleaned)
     existing = [
         col
         for col in [
@@ -93,6 +147,7 @@ def clean_questions_table(df: pd.DataFrame) -> pd.DataFrame:
             "question_author_id",
             "response_author_id",
             "responded_orally",
+            "response_orally",
             "updated_at",
         ]
         if col in cleaned.columns
@@ -150,9 +205,17 @@ def build_question_stats(questions_df: pd.DataFrame) -> Dict[str, Any]:
     elif "response_author_id" in questions_df.columns:
         responder_col = "response_author_id"
 
-    if responder_col is not None:
-        has_responder = questions_df[responder_col].fillna("").astype(str).str.strip() != ""
-        stats["answered_questions"] = int(has_responder.sum())
-        stats["unanswered_questions"] = int((~has_responder).sum())
+    # Answered = has a responder, or was answered orally (live).
+    oral_columns = [col for col in ("answered_orally", "response_orally", "responded_orally") if col in questions_df.columns]
+    if responder_col is not None or oral_columns:
+        answered = pd.Series(False, index=questions_df.index)
+        if responder_col is not None:
+            answered |= questions_df[responder_col].fillna("").astype(str).str.strip() != ""
+        if "answered_orally" in questions_df.columns:
+            answered |= questions_df["answered_orally"].apply(_is_true).astype(bool)
+        elif oral_columns:
+            answered |= _answered_orally_series(questions_df)
+        stats["answered_questions"] = int(answered.sum())
+        stats["unanswered_questions"] = int((~answered).sum())
 
     return stats

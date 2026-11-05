@@ -1,5 +1,6 @@
 <script setup>
 import { buildCsv } from "../utils/csv";
+import { excludedTeamLabel } from "../utils/audience";
 import { computed, ref } from "vue";
 import DataTable from "../components/DataTable.vue";
 import BarChartCard from "../components/charts/shared/BarChartCard.vue";
@@ -55,7 +56,11 @@ const topMetrics = computed(() => [
     value: stats.value.attendance_rate_pct != null ? `${stats.value.attendance_rate_pct}%` : "n/a",
   },
   { label: "Replay Viewers", value: stats.value.replay_viewers_count ?? "0" },
-  { label: "Chat Messages", value: stats.value.total_messages_count ?? "0" },
+  {
+    label: "Chat Messages",
+    value: stats.value.total_messages_count ?? "0",
+    hint: excludedTeamLabel(Number(stats.value.team_messages_count || 0)),
+  },
   { label: "Questions", value: stats.value.total_questions_count ?? "0" },
 ]);
 
@@ -144,6 +149,7 @@ const isOverviewLoading = computed(
         <article class="metric-card metric-card-hero" v-for="metric in topMetrics" :key="metric.label">
           <span class="metric-label">{{ metric.label }}</span>
           <strong class="metric-value">{{ metric.value }}</strong>
+          <span v-if="metric.hint" class="metric-hint">{{ metric.hint }}</span>
         </article>
       </div>
 
@@ -219,10 +225,10 @@ const isOverviewLoading = computed(
         <div class="overview-chart-grid">
           <BarChartCard
             title="Attendance By Country"
-            description="Top countries represented in the room."
+            description="Top countries among the people who attended."
             :rows="countryRows"
             label-key="ip_country_name"
-            value-key="people_count"
+            value-key="attendees"
           />
 
           <PieChartCard

@@ -23,7 +23,7 @@ SMART_RECAP_CLAUDE_MODEL = "claude-sonnet-4-6"
 # Cover image generation. The cover is built from the session's
 # Professional Smart Recap and rendered with the OpenAI Images API.
 # All three parameters can be overridden via env vars:
-#   IMAGE_MODEL   — e.g. gpt-image-1, gpt-image-2 (default: gpt-image-2)
+#   IMAGE_MODEL   — e.g. gpt-image-2 (default: gpt-image-2; gpt-image-1 was shut down)
 #   IMAGE_SIZE    — e.g. 1536x1024, 1024x1024      (default: 1536x1024)
 #   IMAGE_QUALITY — e.g. high, medium, low          (default: high)
 OPENAI_IMAGES_URL = "https://api.openai.com/v1/images/generations"

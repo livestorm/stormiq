@@ -527,7 +527,7 @@ function clearFilters() {
 }
 
 .single-analysis-card-cover {
-  /* Match gpt-image-1's 1536x1024 output so the cover renders the
+  /* Match the cover model's 1536x1024 output so the cover renders the
      entire generated image without crops. If we ever switch image
      models to a different aspect ratio, update this alongside
      COVER_IMAGE_SIZE in livestorm_app/config.py. */
@@ -610,7 +610,7 @@ function clearFilters() {
 }
 
 .single-analysis-row-cover {
-  /* Same 3:2 ratio as the grid view (gpt-image-1 native size). */
+  /* Same 3:2 ratio as the grid view (the cover's 1536x1024 size). */
   aspect-ratio: 3 / 2;
   border-radius: 6px;
   display: grid;

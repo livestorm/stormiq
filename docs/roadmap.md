@@ -60,6 +60,11 @@ Comparative (2 sessions) and cumulative (up to 10) analysis. Depends on the card
 - Per-user card preferences (hide, reorder) in a `user_card_preferences` table keyed by `oauth_connections.user_id`.
 - Empty-state cards inline, instead of hiding whole sections behind "Generate" buttons.
 
+## 5. Models
+
+- Replace the four OpenAI text models before OpenAI shuts them down on 2027-01-14 ([providers.md](providers.md#choosing-the-provider-and-models)).
+- Offer the Claude models that think by default (Claude 5 and later) once each flow has a larger token budget and an explicit effort setting.
+
 ## Maybe later
 
 - API-key rotation with failover.

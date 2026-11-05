@@ -14,6 +14,19 @@ from livestorm_app.config import (
     OPENAI_IMAGES_URL,
 )
 
+# Image models OpenAI has shut down (gpt-image-1 on 2026-10-23). A setting or
+# env var still naming one is replaced, so covers keep working.
+RETIRED_IMAGE_MODELS = {"gpt-image-1"}
+REPLACEMENT_IMAGE_MODEL = "gpt-image-2"
+
+
+def resolve_image_model(model: str) -> str:
+    """The image model to send: a retired id becomes its replacement."""
+    name = str(model or "").strip()
+    if not name or name.lower() in RETIRED_IMAGE_MODELS:
+        return REPLACEMENT_IMAGE_MODEL
+    return name
+
 
 def generate_cover_image_with_openai(
     api_key: str,
@@ -46,6 +59,7 @@ def generate_cover_image_with_openai(
             model = get_setting("image_model") or COVER_IMAGE_MODEL
         except Exception:
             model = COVER_IMAGE_MODEL
+    model = resolve_image_model(model)
 
     payload = {
         "model": model,

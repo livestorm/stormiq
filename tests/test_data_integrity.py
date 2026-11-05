@@ -159,6 +159,29 @@ def test_french_translation_does_not_touch_the_legacy_english_column(runner_back
     assert runner_backend == [(("s1", "analysis_bundle", "French", "Analyse FR"), {})]
 
 
+def test_an_empty_transcript_fails_content_repurposing(runner_backend, monkeypatch):
+    # Runs the real generator; only the transcript text is empty. It used to
+    # return "Transcript is empty." four times, which passed the
+    # completeness check and was saved as content.
+    def must_not_call(*args, **kwargs):
+        raise AssertionError("no model call for an empty transcript")
+
+    monkeypatch.setattr(api_logic, "build_transcript_plain_text", lambda payload: "  ")
+    monkeypatch.setattr(generation, "call_llm", must_not_call)
+    with pytest.raises(RuntimeError, match="transcript is empty"):
+        api_logic.run_content_repurposing("llm-key", "s1", "English")
+    assert runner_backend == []
+
+
+def test_a_placeholder_bundle_from_the_model_fails_the_job(runner_backend, monkeypatch):
+    # The model answering with the empty-transcript placeholder is not content.
+    placeholder = '{"summary":"Transcript is empty.","blog":"Transcript is empty.","email":"Transcript is empty.","social_media":"Transcript is empty."}'
+    monkeypatch.setattr(generation, "call_llm", lambda *args, **kwargs: placeholder)
+    with pytest.raises(RuntimeError, match="missing: summary, blog, email, social_media"):
+        api_logic.run_content_repurposing("llm-key", "s1", "English")
+    assert runner_backend == []
+
+
 def test_incomplete_repurposing_bundle_is_not_saved(runner_backend, monkeypatch):
     monkeypatch.setattr(
         api_logic,

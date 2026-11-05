@@ -11,8 +11,9 @@ Usage (requires OPENAI_API_KEY + DATABASE_URL in env):
     # See what would be generated, without spending money
     python scripts/backfill_cover_images.py --dry-run
 
-    # Apply. Cost ≈ $0.17 per cover at gpt-image-1 high quality
-    # (so ~$8 for 50 sessions). Each call takes 15-45s, so allow
+    # Apply. Each cover is one paid image call at IMAGE_QUALITY (high by
+    # default); check OpenAI's current price for IMAGE_MODEL before a large
+    # run. Each call takes 15-45s, so allow
     # ~25 minutes of script runtime for 50 sessions.
     python scripts/backfill_cover_images.py --yes
 

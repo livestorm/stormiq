@@ -796,6 +796,12 @@ textarea:focus,
   font-weight: 600;
 }
 
+.metric-hint {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--color-text-neutral-tertiary);
+}
+
 .section-tabs {
   display: flex;
   flex-wrap: wrap;
@@ -1154,12 +1160,14 @@ textarea:focus,
   pointer-events: none;
 }
 
-.smart-recap-result-art-image {
+/* A neutral spotlight for Surprise Me!: a plain CSS shape, no artwork. */
+.smart-recap-result-art-spotlight {
   display: block;
-  width: 132px;
-  height: auto;
-  object-fit: contain;
-  opacity: 0.96;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, var(--color-yellow) 0 18%, var(--color-brand-400) 46%, var(--color-brand-600) 100%);
+  box-shadow: 0 8px 24px rgba(11, 66, 195, 0.24);
 }
 
 .overview-chart-grid {

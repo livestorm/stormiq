@@ -34,4 +34,4 @@ From `frontend/`, or with `make web` and `make check` at the repo root:
 
 ## Tests
 
-Vitest, with fake timers for polls. `tests/workspace.test.js` mocks `api.js` and covers the store's async behaviour (scopes, aborts, polls, loading flags); `tests/api-and-csv.test.js` covers URL building, 401 handling and CSV escaping. Add or update a test with every store change.
+Vitest, with fake timers for polls. `tests/workspace.test.js` mocks `api.js` and covers the store's async behaviour (scopes, aborts, polls, loading flags); `tests/api-and-csv.test.js` covers URL building, 401 handling and CSV escaping. `tests/audience.test.js` covers the audience-only chat split and what counts as an answered question (`src/utils/audience.js`). Add or update a test with every store change.

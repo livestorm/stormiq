@@ -44,9 +44,32 @@ def parse_content_repurpose_bundle_response(response_text: str) -> Dict[str, str
     }
 
 
+# Text that earlier versions saved for an empty transcript. It is never
+# content: a section holding it counts as missing.
+EMPTY_TRANSCRIPT_PLACEHOLDER = "Transcript is empty."
+
+
+def _is_placeholder_section(value: Any) -> bool:
+    return str(value or "").strip().lower() == EMPTY_TRANSCRIPT_PLACEHOLDER.lower()
+
+
+def is_placeholder_bundle(bundle: Any) -> bool:
+    """Whether a stored bundle is the empty-transcript placeholder, not content."""
+    return isinstance(bundle, dict) and any(_is_placeholder_section(value) for value in bundle.values())
+
+
+def missing_bundle_sections(bundle: Any) -> List[str]:
+    """The sections of a content bundle that are absent, blank or placeholder text."""
+    bundle = bundle if isinstance(bundle, dict) else {}
+    return [
+        key
+        for key in ["summary", "blog", "email", "social_media"]
+        if not isinstance(bundle.get(key), str) or not bundle.get(key, "").strip() or _is_placeholder_section(bundle.get(key))
+    ]
+
+
 def _bundle_has_all_sections(bundle: Dict[str, str]) -> bool:
-    required_keys = ["summary", "blog", "email", "social_media"]
-    return all(isinstance(bundle.get(key), str) and bundle.get(key, "").strip() for key in required_keys)
+    return not missing_bundle_sections(bundle)
 
 
 def _bundle_language_looks_wrong(bundle: Dict[str, str], output_language: str) -> bool:
@@ -161,12 +184,9 @@ def generate_content_repurpose_bundle_with_openai(
 ) -> Dict[str, str]:
     transcript_text = str(transcript_text or "").strip()
     if not transcript_text:
-        return {
-            "summary": "Transcript is empty.",
-            "blog": "Transcript is empty.",
-            "email": "Transcript is empty.",
-            "social_media": "Transcript is empty.",
-        }
+        # Fail the job rather than return placeholder text, which would pass
+        # the completeness check and be saved as content.
+        raise RuntimeError("The transcript is empty, so there is nothing to repurpose. Nothing was saved.")
 
     messages: List[Dict[str, str]] = [
         {"role": "system", "content": build_content_repurpose_bundle_prompt()},

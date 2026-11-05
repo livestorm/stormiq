@@ -12,7 +12,7 @@ session_cache (
   session_id               TEXT NOT NULL,
   organization_id          TEXT,            -- Livestorm org that owns the session: the access boundary
   session_payload          JSONB,           -- raw Livestorm session response
-  event_payload            JSONB,           -- raw Livestorm event response (the session's parent), used for card titles
+  event_payload            JSONB,           -- raw Livestorm event response (the session's parent), used for card titles and language
   created_by_user_id       TEXT,            -- Livestorm user who first fetched the session (kept on update)
   created_by_email         TEXT,
   created_by_name          TEXT,

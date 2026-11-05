@@ -123,6 +123,18 @@ def build_session_people_df(session_payload: Dict[str, Any]) -> pd.DataFrame:
     return people_df
 
 
+def audience_people_mask(people_df: pd.DataFrame) -> pd.Series:
+    """True for audience members: not the host team (`role == "team_member"`)
+    and not a guest speaker (`is_guest_speaker`)."""
+    if people_df.empty:
+        return pd.Series(True, index=people_df.index, dtype=bool)
+    is_team = people_df["role"].fillna("").astype(str).str.strip().eq("team_member")
+    is_guest_speaker = people_df["is_guest_speaker"].apply(
+        lambda value: value is True or str(value or "").strip().lower() == "true"
+    )
+    return ~is_team & ~is_guest_speaker
+
+
 def build_session_stats(session_payload: Dict[str, Any]) -> Dict[str, Any]:
     attributes = extract_session_attributes(session_payload)
     people_df = build_session_people_df(session_payload)
@@ -147,7 +159,11 @@ def build_session_stats(session_payload: Dict[str, Any]) -> Dict[str, Any]:
         stats["people_count"] = int(len(people_df.index))
         stats["attended_people_count"] = int(attended_mask.sum())
         stats["replay_viewers_count"] = int(people_df["has_viewed_replay"].fillna(False).astype(bool).sum())
-        stats["total_messages_count"] = int(people_df["messages_count"].sum())
+        # Chat messages are the audience's, as on the Chat page; the team's
+        # and guest speakers' messages are counted apart.
+        is_audience = audience_people_mask(people_df)
+        stats["total_messages_count"] = int(people_df.loc[is_audience, "messages_count"].sum())
+        stats["team_messages_count"] = int(people_df.loc[~is_audience, "messages_count"].sum())
         stats["total_questions_count"] = int(people_df["questions_count"].sum())
         stats["total_up_votes_count"] = int(people_df["up_votes_count"].sum())
         stats["unique_countries_count"] = int(people_df["ip_country_name"].fillna("").astype(str).str.strip().replace("", pd.NA).dropna().nunique())
@@ -205,7 +221,9 @@ def build_compact_session_payload_for_llm(session_payload: Dict[str, Any], max_p
                 else None
             ),
             "replay_viewers": int(people_df["has_viewed_replay"].fillna(False).astype(bool).sum()),
-            "top_chatters": people_df.sort_values(
+            # Audience members only, so the host is never read as the most
+            # engaged attendee.
+            "top_chatters": people_df.loc[audience_people_mask(people_df)].sort_values(
                 by=["messages_count", "questions_count", "up_votes_count", "attendance_duration"],
                 ascending=[False, False, False, False],
             )
@@ -266,6 +284,8 @@ def build_session_overview_data(session_payload: Dict[str, Any]) -> Dict[str, An
             "engagement_top_df": empty_df,
         }
 
+    # "Attendance by country" counts attendees; `people_count` (registrants)
+    # is kept alongside for context.
     country_df = (
         people_df.assign(ip_country_name=people_df["ip_country_name"].fillna("").astype(str).str.strip())
         .loc[lambda df: df["ip_country_name"].ne("")]
@@ -274,7 +294,8 @@ def build_session_overview_data(session_payload: Dict[str, Any]) -> Dict[str, An
             people_count=("person_id", "size"),
             attendees=("attended", lambda series: int(series.fillna(False).astype(bool).sum())),
         )
-        .sort_values(by=["people_count", "attendees", "ip_country_name"], ascending=[False, False, True])
+        .loc[lambda df: df["attendees"] > 0]
+        .sort_values(by=["attendees", "people_count", "ip_country_name"], ascending=[False, False, True])
         .head(12)
     )
 
@@ -297,7 +318,9 @@ def build_session_overview_data(session_payload: Dict[str, Any]) -> Dict[str, An
         .agg(people_count=("person_id", "size"))
     )
 
-    engagement_top_df = people_df.sort_values(
+    # Most engaged people are audience members: the host team and guest
+    # speakers are left out.
+    engagement_top_df = people_df.loc[audience_people_mask(people_df)].sort_values(
         by=["engagement_score", "messages_count", "questions_count", "attendance_duration"],
         ascending=[False, False, False, False],
     ).head(12)

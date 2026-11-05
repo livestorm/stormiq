@@ -157,7 +157,7 @@ def backend(monkeypatch):
     monkeypatch.setattr(api_logic, "create_transcript_job", create_transcript_job)
     monkeypatch.setattr(api_logic, "read_progress", lambda *a, **k: None)
     monkeypatch.setattr(api_logic, "read_job_status_sync", lambda job_id: {"jobStatus": "running"})
-    monkeypatch.setattr(api_logic, "analysis_markdown_to_pdf_bytes", lambda markdown, title: markdown.encode())
+    monkeypatch.setattr(api_logic, "analysis_markdown_to_pdf_bytes", lambda markdown, title, language="English": markdown.encode())
     return fake
 
 
