@@ -59,10 +59,13 @@ def build_cross_source_insights(
     bucket_size_pct: int = 10,
     *,
     transcript_insights: Optional[Dict[str, Any]] = None,
+    internal: bool = False,
 ) -> Dict[str, Any]:
     """`transcript_insights` lets a caller that already built them skip a
     second (expensive) `build_transcript_insights` pass; frames are copied
-    before being modified."""
+    before being modified. `internal` is the session's
+    `audience.is_internal_session` decision: on an internal session every
+    chat message counts."""
     if not isinstance(chat_df, pd.DataFrame) or not isinstance(questions_df, pd.DataFrame) or not isinstance(transcript_payload, dict):
         return {"combined_timeline_df": pd.DataFrame(), "reaction_moments_df": pd.DataFrame()}
 
@@ -101,8 +104,9 @@ def build_cross_source_insights(
         )
         combined_frames.append(transcript_bins[["bucket_start_pct", "transcript_words", "transcript_segments", "transcript_wpm"]])
 
-    # Reactions are the audience's: team and guest-speaker messages are left out.
-    chat_df, _ = split_audience_chat(chat_df)
+    # Reactions are the audience's: team and guest-speaker messages are left
+    # out, except on an internal session.
+    chat_df, _ = split_audience_chat(chat_df, internal=internal)
     if "created_at" in chat_df.columns:
         chat_progress = _normalize_series_to_progress(chat_df["created_at"])
         chat_working = chat_df.copy()

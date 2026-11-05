@@ -6,6 +6,7 @@ breaks user-visible output when it regresses.
 
 from __future__ import annotations
 
+import pandas as pd
 import pytest
 
 from livestorm_app import api_logic, llm_client, pdf, progress, worker
@@ -412,6 +413,181 @@ def test_session_chat_count_and_top_chatters_leave_the_team_out():
     assert stats["team_messages_count"] == 70
     compact = session_overview.build_compact_session_payload_for_llm(payload)
     assert [row["full_name"] for row in compact["participant_summary"]["top_chatters"]] == ["ana"]
+
+
+# ── Internal sessions: when the team is the room, everyone counts ─────────
+
+
+def _people(*rows: tuple) -> pd.DataFrame:
+    return pd.DataFrame(rows, columns=["role", "attended", "is_guest_speaker"])
+
+
+@pytest.mark.parametrize(
+    ("people_df", "internal"),
+    [
+        (pd.DataFrame(), False),
+        (None, False),
+        (pd.DataFrame({"attended": [True, True]}), False),
+        (_people(("team_member", True, False), ("team_member", True, False)), True),
+        (_people(("team_member", True, False), ("participant", True, False)), False),
+        (_people(*[("team_member", True, False)] * 2, ("participant", True, False), *[("participant", False, False)] * 5), True),
+        (_people(*[("team_member", True, False)] * 2, *[("participant", True, False)] * 3), False),
+        (_people(("team_member", False, False), ("team_member", False, False), ("participant", False, False)), True),
+        (_people(("team_member", None, False), ("team_member", None, False), ("participant", None, False)), True),
+        (pd.DataFrame({"role": ["team_member", "team_member", "participant"]}), True),
+        (_people(("team_member", "true", "false"), ("team_member", "true", "false"), ("participant", "false", "false")), True),
+        (_people(("team_member", "false", "false"), ("team_member", "false", "false"), ("participant", "true", "false")), False),
+        (_people(("team_member", True, True), ("team_member", True, "true"), ("team_member", True, False)), False),
+        (_people(("guest_speaker", True, True), ("team_member", True, False), ("participant", True, False)), False),
+    ],
+    ids=[
+        "empty", "not-a-frame", "no-role-column", "all-team", "team-exactly-half",
+        "team-most-attendees-few-registrants", "team-under-half-of-attendees",
+        "nobody-attended-so-registrants", "attendance-unknown-so-registrants", "no-attended-column",
+        "string-guest-speaker-flags", "string-attended-flags", "guest-speakers-are-not-team", "guest-speaker-role",
+    ],
+)
+def test_internal_session_rule(people_df, internal):
+    assert audience.is_internal_session(people_df) is internal
+
+
+def test_internal_session_keeps_every_message():
+    chat_df = audience.build_chat_df_from_payload(MIXED_CHAT)
+    audience_df, excluded = audience.split_audience_chat(chat_df, internal=True)
+    assert len(audience_df.index) == 5 and excluded == 0
+    assert bool(audience.audience_chat_mask(chat_df, internal=True).all())
+    audience_df, excluded = audience.split_audience_chat(chat_df, internal=False)
+    assert len(audience_df.index) == 2 and excluded == 3, "a public session still leaves the team out"
+
+
+ALL_TEAM_SESSION = {
+    "data": {"id": "s1", "attributes": {"registrants_count": 4, "attendees_count": 3}},
+    "included": [
+        _person("ana", "team_member", 6, attended=True, country="France"),
+        _person("ben", "team_member", 3, attended=True, country="Spain"),
+        _person("cid", "team_member", 1, attended=True, country="France"),
+        _person("dee", "team_member", 0, attended=False, country="Italy"),
+    ],
+}
+
+ALL_TEAM_CHAT = _chat_payload([
+    _message("ana", 1_700_000_000, "Welcome everyone", from_team_member=True, from_guest_speaker=False),
+    _message("ben", 1_700_000_060, "Great quarter", from_team_member=True, from_guest_speaker=False),
+    _message("ana", 1_700_000_120, "Questions at the end", from_team_member=True, from_guest_speaker=False),
+])
+
+
+def test_all_team_session_counts_everyone_in_the_overview():
+    overview = session_overview.build_session_overview_data(ALL_TEAM_SESSION)
+    assert overview["internal_session"] is True
+    assert list(overview["engagement_top_df"]["person_id"]) == ["ana", "ben", "cid", "dee"]
+    assert overview["stats"]["total_messages_count"] == 10
+    assert overview["stats"]["team_messages_count"] == 0
+    compact = session_overview.build_compact_session_payload_for_llm(ALL_TEAM_SESSION)
+    assert [row["full_name"] for row in compact["participant_summary"]["top_chatters"]] == ["ana", "ben", "cid", "dee"]
+
+
+def test_all_team_session_gives_the_model_all_chat_and_says_it_is_internal():
+    chat_df = audience.build_chat_df_from_payload(ALL_TEAM_CHAT)
+    stats = llm_inputs.build_derived_stats(chat_df=chat_df, session_payload=ALL_TEAM_SESSION)
+    assert stats["internal_session"] is True
+    assert stats["chat"]["total_messages"] == 3
+    assert stats["chat"]["unique_authors"] == 2
+    assert stats["chat"]["excluded_team_messages"] == 0
+    assert stats["session"]["total_messages_count"] == 10
+    messages = llm_inputs.build_compact_chat_payload_for_llm(chat_df)["messages"]
+    assert len(messages) == 3 and all(message["from_team_member"] is True for message in messages)
+
+
+def test_internal_timeline_counts_team_chat():
+    chat_df = audience.build_chat_df_from_payload(ALL_TEAM_CHAT)
+    questions_df = audience.build_questions_df_from_payload(_questions_payload({}))
+    internal = cross_source.build_cross_source_insights(chat_df, questions_df, _transcript(), internal=True)
+    assert internal["combined_timeline_df"]["chat_messages"].sum() == 3
+    assert internal["reaction_moments_df"]["chat_messages"].sum() == 3
+    public = cross_source.build_cross_source_insights(chat_df, questions_df, _transcript(), internal=False)
+    assert public["combined_timeline_df"]["chat_messages"].sum() == 0
+
+
+def _timeline_chat(workspace: dict) -> float:
+    return sum(row["chat_messages"] for row in workspace["tables"]["chatQuestionsTimeline"])
+
+
+def test_all_team_workspace_carries_the_decision_for_the_spa():
+    workspace = api_logic._serialize_cached_session("s1", {
+        "session_payload": ALL_TEAM_SESSION,
+        "chat_payload": ALL_TEAM_CHAT,
+        "questions_payload": _questions_payload({}),
+        "transcript_payload": _transcript(),
+    })
+    assert workspace["meta"]["internalSession"] is True
+    assert workspace["stats"]["chat"]["total_messages"] == 3
+    assert len(workspace["tables"]["engagementTop"]) == 4
+    assert _timeline_chat(workspace) == 3
+
+
+# A typical public webinar: a host and a moderator, a guest speaker, 20
+# attendees out of 50 registrants. Nothing changes for it.
+PUBLIC_WEBINAR = {
+    "data": {"id": "s2", "attributes": {"registrants_count": 50, "attendees_count": 20}},
+    "included": [
+        _person("host", "team_member", 12, attended=True, country="France"),
+        _person("moderator", "team_member", 8, attended=True, country="France"),
+        _person("speaker", "participant", 4, attended=True, country="Spain", guest=True),
+        *[_person(f"p{i:02d}", "participant", 1 if i < 5 else 0, attended=i < 17, country="Italy") for i in range(47)],
+    ],
+}
+
+
+def test_public_webinar_still_leaves_the_team_out():
+    overview = session_overview.build_session_overview_data(PUBLIC_WEBINAR)
+    assert overview["internal_session"] is False
+    assert overview["stats"]["total_messages_count"] == 5
+    assert overview["stats"]["team_messages_count"] == 24
+    assert not {"host", "moderator", "speaker"} & set(overview["engagement_top_df"]["person_id"])
+    chat_df = audience.build_chat_df_from_payload(MIXED_CHAT)
+    stats = llm_inputs.build_derived_stats(chat_df=chat_df, session_payload=PUBLIC_WEBINAR)
+    assert "internal_session" not in stats
+    assert stats["chat"]["total_messages"] == 2 and stats["chat"]["excluded_team_messages"] == 3
+    assert stats == llm_inputs.build_derived_stats(chat_df=chat_df, session_payload=PUBLIC_WEBINAR, internal=False)
+    workspace = api_logic._serialize_cached_session("s2", {
+        "session_payload": PUBLIC_WEBINAR,
+        "chat_payload": MIXED_CHAT,
+        "questions_payload": _questions_payload({}),
+        "transcript_payload": _transcript(),
+    })
+    assert workspace["meta"]["internalSession"] is False
+    assert workspace["stats"]["chat"]["total_messages"] == 2
+    assert _timeline_chat(workspace) == 2
+
+
+@pytest.mark.parametrize("run", [api_logic.run_overall_analysis, api_logic.run_deep_analysis], ids=["overall", "deep"])
+@pytest.mark.parametrize(
+    ("session_payload", "chat_payload", "internal", "excluded", "team"),
+    [
+        (ALL_TEAM_SESSION, ALL_TEAM_CHAT, True, 0, {"ana", "ben", "cid", "dee"}),
+        (PUBLIC_WEBINAR, MIXED_CHAT, False, 3, {"host", "moderator", "speaker"}),
+    ],
+    ids=["internal", "public"],
+)
+def test_ai_jobs_tell_the_model_who_the_audience_is(monkeypatch, run, session_payload, chat_payload, internal, excluded, team):
+    row = {
+        "session_payload": session_payload,
+        "chat_payload": chat_payload,
+        "questions_payload": _questions_payload({}),
+        "transcript_payload": _transcript(),
+    }
+    seen: dict = {}
+    monkeypatch.setattr(api_logic, "fetch_cached_session", lambda key, sid, *, organization_id: dict(row))
+    monkeypatch.setattr(api_logic, "merge_cached_bundle_entry", lambda *args, **kwargs: None)
+    monkeypatch.setattr(api_logic, "get_llm_model", lambda role: "test-model")
+    monkeypatch.setattr(api_logic, "analyze_with_openai", lambda **kwargs: seen.update(kwargs) or "# Analysis")
+    run("llm-key", "s1", "English")
+    stats = seen["derived_stats"]
+    assert stats.get("internal_session", False) is internal
+    assert stats["chat"]["excluded_team_messages"] == excluded
+    top_chatters = {row["full_name"] for row in seen["session_payload"]["participant_summary"]["top_chatters"]}
+    assert bool(team & top_chatters) is internal
 
 
 def test_overall_analysis_sees_questions_answered_orally():

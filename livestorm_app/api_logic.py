@@ -87,6 +87,7 @@ from livestorm_app.analytics.session_overview import (
     build_compact_session_payload_for_llm,
     build_session_overview_data,
     extract_session_attributes,
+    session_is_internal,
 )
 logger = logging.getLogger(__name__)
 
@@ -276,17 +277,22 @@ def _serialize_cached_session(session_id: str, cached_session: Dict[str, Any]) -
     transcript_text = build_transcript_display_text(transcript_payload) if isinstance(transcript_payload, dict) else ""
     transcript_insights = _cached_transcript_insights(session_id, cached_session)
     session_overview = build_session_overview_data(session_payload) if isinstance(session_payload, dict) else {}
+    # Internal session (the team is most of the room): nothing is left out
+    # of the audience. Decided once, from the people, for every chart.
+    internal_session = bool(session_overview.get("internal_session", False))
     derived_stats = build_derived_stats(
         chat_df=chat_df if not chat_df.empty else None,
         questions_df=questions_df if not questions_df.empty else None,
         transcript_payload=transcript_payload if isinstance(transcript_payload, dict) else None,
         session_payload=session_payload if isinstance(session_payload, dict) else None,
+        internal=internal_session,
     )
     cross_source = build_cross_source_insights(
         chat_df=chat_df if not chat_df.empty else None,
         questions_df=questions_df if not questions_df.empty else None,
         transcript_payload=transcript_payload if isinstance(transcript_payload, dict) else None,
         transcript_insights=transcript_insights,
+        internal=internal_session,
     )
 
     # ── Hero metadata ──────────────────────────────────────────────────
@@ -319,6 +325,9 @@ def _serialize_cached_session(session_id: str, cached_session: Dict[str, Any]) -
         "durationLabel": _format_duration_label(duration_seconds_meta),
         "attendeesCount": session_attributes.get("attendees_count"),
         "registrantsCount": session_attributes.get("registrants_count"),
+        # The SPA counts everyone as audience when this is true
+        # (`audience.is_internal_session`); it doesn't decide it again.
+        "internalSession": internal_session,
         "generatedByUserId": str(cached_session.get("created_by_user_id") or "").strip(),
         "generatedByEmail": str(cached_session.get("created_by_email") or "").strip(),
         "generatedByName": str(cached_session.get("created_by_name") or "").strip(),
@@ -986,6 +995,7 @@ def run_overall_analysis(api_analysis_key: str, session_id: str, output_language
 
     chat_df = build_chat_df_from_payload(chat_payload) if isinstance(chat_payload, dict) else pd.DataFrame()
     questions_df = build_questions_df_from_payload(questions_payload) if isinstance(questions_payload, dict) else pd.DataFrame()
+    internal_session = session_is_internal(session_payload) if isinstance(session_payload, dict) else False
     selected_sources = ["transcript"]
     if isinstance(chat_payload, dict) and isinstance(questions_payload, dict):
         selected_sources.extend(["chat", "questions"])
@@ -1014,11 +1024,16 @@ def run_overall_analysis(api_analysis_key: str, session_id: str, output_language
                 questions_df=questions_df if not questions_df.empty else None,
                 transcript_payload=transcript_payload,
                 session_payload=session_payload if isinstance(session_payload, dict) else None,
+                internal=internal_session,
             ),
             raw_payload=build_compact_chat_payload_for_llm(chat_df) if not chat_df.empty else None,
             questions_payload=build_compact_questions_payload_for_llm(questions_df) if not questions_df.empty else None,
             transcript_text=build_transcript_plain_text(transcript_payload),
-            session_payload=build_compact_session_payload_for_llm(session_payload) if isinstance(session_payload, dict) else None,
+            session_payload=(
+                build_compact_session_payload_for_llm(session_payload, internal=internal_session)
+                if isinstance(session_payload, dict)
+                else None
+            ),
         )
 
     analysis_md = _require_generated_text(analysis_md, "overall analysis")
@@ -1041,6 +1056,7 @@ def run_deep_analysis(api_analysis_key: str, session_id: str, output_language: s
 
     chat_df = build_chat_df_from_payload(chat_payload)
     questions_df = build_questions_df_from_payload(questions_payload)
+    internal_session = session_is_internal(session_payload) if isinstance(session_payload, dict) else False
     deep_bundle = _normalize_text_bundle(cached.get("deep_analysis_bundle"), str(cached.get("deep_analysis_md") or ""))
     if str(output_language or "").strip() not in ("", "English") and not deep_bundle.get("English", "").strip():
         raise RuntimeError("Generate the English deep analysis first before translating.")
@@ -1066,11 +1082,16 @@ def run_deep_analysis(api_analysis_key: str, session_id: str, output_language: s
                 questions_df=questions_df,
                 transcript_payload=transcript_payload,
                 session_payload=session_payload if isinstance(session_payload, dict) else None,
+                internal=internal_session,
             ),
             raw_payload=build_deep_analysis_chat_payload_for_llm(chat_payload, max_rows=0),
             questions_payload=build_deep_analysis_questions_payload_for_llm(questions_payload, max_rows=0),
             transcript_payload=build_compact_transcript_payload_for_llm(transcript_payload, max_segments=800),
-            session_payload=build_compact_session_payload_for_llm(session_payload) if isinstance(session_payload, dict) else None,
+            session_payload=(
+                build_compact_session_payload_for_llm(session_payload, internal=internal_session)
+                if isinstance(session_payload, dict)
+                else None
+            ),
             max_tokens=5000,
         )
     deep_analysis_md = _require_generated_text(deep_analysis_md, "deep analysis")

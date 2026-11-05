@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  INTERNAL_SESSION_NOTE,
   excludedTeamLabel,
   isQuestionAnswered,
   messageSender,
@@ -43,6 +44,25 @@ describe("audience chat", () => {
   it("says how many team messages were left out", () => {
     expect(excludedTeamLabel(2)).toBe("Excludes your team (2)");
     expect(excludedTeamLabel(0)).toBe("");
+  });
+
+  it("keeps every message on an internal session", () => {
+    const { audience, excludedTeam, excludedTeamAuthors } = splitAudienceChat(chat, { internal: true });
+    expect(audience).toHaveLength(chat.length);
+    expect(excludedTeam).toBe(0);
+    expect(excludedTeamAuthors).toBe(0);
+    expect(uniqueAuthorCount(audience)).toBe(4);
+  });
+
+  it("leaves the team out when the session is not internal", () => {
+    expect(splitAudienceChat(chat, { internal: false }).excludedTeam).toBe(2);
+  });
+
+  it("says everyone counts on an internal session", () => {
+    expect(INTERNAL_SESSION_NOTE).toBe("Internal session: everyone counts");
+    expect(excludedTeamLabel(0, { internal: true })).toBe(INTERNAL_SESSION_NOTE);
+    expect(excludedTeamLabel(5, { internal: true })).toBe(INTERNAL_SESSION_NOTE);
+    expect(excludedTeamLabel(2, { internal: false })).toBe("Excludes your team (2)");
   });
 });
 

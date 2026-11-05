@@ -14,7 +14,7 @@ from livestorm_app.analytics.audience import (
     flatten_question,
     split_audience_chat,
 )
-from livestorm_app.analytics.session_overview import build_session_stats
+from livestorm_app.analytics.session_overview import build_session_stats, session_is_internal
 from livestorm_app.analytics.transcript import (
     _coerce_seconds,
     _extract_sentence_items,
@@ -37,13 +37,23 @@ def build_derived_stats(
     questions_df: Optional[pd.DataFrame] = None,
     transcript_payload: Optional[Dict[str, Any]] = None,
     session_payload: Optional[Dict[str, Any]] = None,
+    *,
+    internal: Optional[bool] = None,
 ) -> Dict[str, Any]:
+    """`internal` is the session's `audience.is_internal_session` decision;
+    when it is None it is decided from `session_payload` (False without one)."""
+    if internal is None:
+        internal = session_is_internal(session_payload) if isinstance(session_payload, dict) else False
     stats: Dict[str, Any] = {}
+    if internal:
+        # Tells the model why team messages count as audience activity.
+        stats["internal_session"] = True
 
     if isinstance(chat_df, pd.DataFrame):
         # Engagement stats are the audience's: team and guest-speaker
-        # messages are counted apart, not as audience activity.
-        chat_df, excluded_team_messages = split_audience_chat(chat_df)
+        # messages are counted apart, not as audience activity (except on
+        # an internal session, where everyone counts).
+        chat_df, excluded_team_messages = split_audience_chat(chat_df, internal=internal)
         unique_authors = 0
         if "author_id" in chat_df.columns:
             author_series = chat_df["author_id"].fillna("").astype(str).str.strip()
@@ -78,7 +88,7 @@ def build_derived_stats(
     if isinstance(transcript_payload, dict):
         stats["transcript"] = build_transcript_stats(transcript_payload)
     if isinstance(session_payload, dict):
-        stats["session"] = build_session_stats(session_payload)
+        stats["session"] = build_session_stats(session_payload, internal=internal)
     return stats
 
 

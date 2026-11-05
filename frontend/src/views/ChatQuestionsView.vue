@@ -56,13 +56,19 @@ const chatStats = computed(() => state.workspace?.stats?.chat || {});
 const questionStats = computed(() => state.workspace?.stats?.questions || {});
 const activityTimelineRowsRaw = computed(() => state.workspace?.tables?.chatQuestionsTimeline || []);
 
-// Engagement metrics count the audience only; the Chat tab lists every message.
-const chatSplit = computed(() => splitAudienceChat(chatRows.value));
+// Engagement metrics count the audience only (everyone, on an internal
+// session); the Chat tab lists every message.
+const internalSession = computed(() => Boolean(state.workspace?.meta?.internalSession));
+const chatSplit = computed(() => splitAudienceChat(chatRows.value, { internal: internalSession.value }));
 const audienceChatRows = computed(() => chatSplit.value.audience);
 const excludedTeamCount = computed(() => chatSplit.value.excludedTeam);
-const excludedTeamNote = computed(() => excludedTeamLabel(excludedTeamCount.value));
+const excludedTeamNote = computed(() =>
+  excludedTeamLabel(excludedTeamCount.value, { internal: internalSession.value })
+);
 // For Unique Chatters the count is people, not messages.
-const excludedTeamAuthorsNote = computed(() => excludedTeamLabel(chatSplit.value.excludedTeamAuthors));
+const excludedTeamAuthorsNote = computed(() =>
+  excludedTeamLabel(chatSplit.value.excludedTeamAuthors, { internal: internalSession.value })
+);
 
 const avgMessageLength = computed(() => {
   const statValue = Number(chatStats.value?.text_length?.avg_chars || 0);

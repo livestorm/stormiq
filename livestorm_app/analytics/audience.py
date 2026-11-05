@@ -104,20 +104,50 @@ def drop_unwanted_columns(df: pd.DataFrame) -> pd.DataFrame:
     return cleaned
 
 
-def audience_chat_mask(chat_df: pd.DataFrame) -> pd.Series:
-    """True for messages written by the audience (not the team or a guest speaker)."""
+def is_internal_session(people_df: pd.DataFrame) -> bool:
+    """True when the host team is more than half of the session's attendees.
+
+    In an internal meeting (an all-hands, say) everyone is a team member, so
+    leaving the team out would leave nothing. Team members are people with
+    `role == "team_member"`; guest speakers don't count as team. The count is
+    over attendees (`attended` true), or over every registrant when
+    attendance is unknown or nobody attended. An empty frame is not internal.
+    """
+    if not isinstance(people_df, pd.DataFrame) or people_df.empty or "role" not in people_df.columns:
+        return False
+    is_team = people_df["role"].fillna("").astype(str).str.strip().eq("team_member")
+    if "is_guest_speaker" in people_df.columns:
+        is_team &= ~people_df["is_guest_speaker"].apply(_is_true).astype(bool)
+    counted = pd.Series(True, index=people_df.index)
+    if "attended" in people_df.columns:
+        attended = people_df["attended"].apply(_is_true).astype(bool)
+        if attended.any():
+            counted = attended
+    return int((is_team & counted).sum()) * 2 > int(counted.sum())
+
+
+def audience_chat_mask(chat_df: pd.DataFrame, *, internal: bool = False) -> pd.Series:
+    """True for messages written by the audience (not the team or a guest speaker).
+
+    On an internal session (`is_internal_session`) every message counts.
+    """
     mask = pd.Series(True, index=chat_df.index)
+    if internal:
+        return mask
     for flag in TEAM_MESSAGE_FLAGS:
         if flag in chat_df.columns:
             mask &= ~chat_df[flag].apply(_is_true).astype(bool)
     return mask
 
 
-def split_audience_chat(chat_df: pd.DataFrame) -> Tuple[pd.DataFrame, int]:
-    """Return (audience-only messages, number of team and guest-speaker messages left out)."""
+def split_audience_chat(chat_df: pd.DataFrame, *, internal: bool = False) -> Tuple[pd.DataFrame, int]:
+    """Return (audience-only messages, number of team and guest-speaker messages left out).
+
+    On an internal session every message is kept and none is left out.
+    """
     if not isinstance(chat_df, pd.DataFrame) or chat_df.empty:
         return chat_df, 0
-    mask = audience_chat_mask(chat_df)
+    mask = audience_chat_mask(chat_df, internal=internal)
     return chat_df.loc[mask].copy(), int((~mask).sum())
 
 
