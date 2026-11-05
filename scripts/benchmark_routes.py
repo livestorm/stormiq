@@ -63,6 +63,7 @@ from livestorm_app.queue import get_redis_settings, transcription_job_id  # noqa
 ROUTES = [
     ("workspace, 10-min session", "/api/sessions/bench-short"),
     ("workspace, 2-h session", "/api/sessions/bench-long"),
+    ("v1 record, 2-h session", "/api/sessions/bench-long/record"),
     ("transcript poll (job running)", "/api/sessions/bench-pending/transcript-job"),
     ("AI job poll (job running)", "/api/sessions/bench-pending/deep-analysis/job?language=English"),
     ("card list (42 sessions)", "/api/workspace-sessions"),

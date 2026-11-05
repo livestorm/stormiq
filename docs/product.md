@@ -468,7 +468,7 @@ Buckets of 10% of session progress, labelled by their midpoint. Progress runs fr
 
 ### Session clock (v1 Report)
 
-v1 Report (behind `?ui=v1`, [brand.md](brand.md#the-v1-design-switch)). No page shows it yet. It puts every event of a session on one time base, where the stage mapping above stretches each source to 0–100% on its own. Code: `livestorm_app/record/clock.py` and `record/evidence.py`.
+v1 Report (behind `?ui=v1`, [brand.md](brand.md#the-v1-design-switch)). No page shows it yet; the record route sends it as `meta.clock` and the Pulse (`record.pulse`, [api.md](api.md#the-v1-record)). It puts every event of a session on one time base, where the stage mapping above stretches each source to 0–100% on its own. Code: `livestorm_app/record/clock.py` and `record/evidence.py`.
 
 | Term | Rule |
 |---|---|
@@ -479,7 +479,8 @@ v1 Report (behind `?ui=v1`, [brand.md](brand.md#the-v1-design-switch)). No page 
 | Phase | Before when `t < 0`, after when `t > end_s`, live otherwise |
 | Minute | `floor(t / 60)` for a live event. Minutes run from 0 to `ceil(end_s / 60) − 1`, and empty ones count 0. An event exactly at `end_s` is in the last minute. Without an end, minutes run to the last live event |
 | Before and after | Events before the start (the waiting room) and after the end are counted apart, with the earliest and the latest time. They never shift the live minutes |
-| Lanes per minute | Audience chat, team chat (`from_team_member` or `from_guest_speaker`), questions, written answers, speaking seconds and words. Questions have one lane, whoever asked; written answers have their own. Which items are team: [Authors](#authors-v1-report) |
+| Unplaced | Chat messages, questions and written answers with no session time: the session has no clock, or the item's time can't be read. Counted apart, in no minute and no edge |
+| Lanes per minute | Audience chat, team chat (`from_team_member` or `from_guest_speaker`), questions, written answers, speaking seconds and words. Questions have one lane, whoever asked; written answers have their own. Which items are team: [Authors](#authors-v1-report). On an internal session nobody is relabelled: its chat stays team chat, and the roster says the session is internal |
 | Speaking seconds | Split across minute borders; an utterance's words are split in proportion to its seconds in each minute. These lanes stay empty until the recording is aligned with the session clock |
 | Label | `mm:ss` into the session, with minutes counting past 59 (`125:30`). Before the start `−mm:ss`, after the end `+mm:ss`, both rounded up so a label never reads `−00:00` |
 | Evidence ids | Chat messages `C0001`, `C0002`… by `created_at`, then Livestorm id, then text. Questions `Q001`… the same way. Written answers (a question with response text) `A001`… by `responded_at`, then Livestorm id, then text. Items without a readable time come last. A message repeated across pages counts once; if its copies differ, the first copy is kept. The ids don't depend on the clock |

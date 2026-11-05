@@ -13,6 +13,8 @@ import dataclasses
 import json
 import random
 import re
+import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -892,26 +894,53 @@ def test_the_roster_meta_is_json_safe():
 
 RECORD_PACKAGE = ("livestorm_app", "record")
 
+# The one way in from outside `record/`: the v1 record route's loader
+# imports the package inside its own body, so it loads only when that route
+# runs, never at startup or on a classic read.
+RECORD_ENTRY_POINTS = {("livestorm_app", "api_logic"): {"get_session_record"}}
 
-def imports_record(source, module_parts):
-    """Whether Python source imports `livestorm_app.record`, absolutely or
-    relatively, or names it in a string (as `importlib` would).
+
+def _names_record(node, package):
+    """Whether one AST node imports `livestorm_app.record`, absolutely or
+    relatively, or names it in a string (as `importlib` would)."""
+    if isinstance(node, ast.Import):
+        targets = [tuple(alias.name.split(".")) for alias in node.names]
+    elif isinstance(node, ast.ImportFrom):
+        base = package[: len(package) - node.level + 1] if node.level else []
+        module = tuple(base + (node.module.split(".") if node.module else []))
+        targets = [module] + [module + (alias.name,) for alias in node.names]
+    elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+        targets = [tuple(node.value.split("."))] if node.value.startswith("livestorm_app.") else []
+    else:
+        return False
+    return any(target[: len(RECORD_PACKAGE)] == RECORD_PACKAGE for target in targets)
+
+
+def record_import_sites(source, module_parts):
+    """Where Python source imports `livestorm_app.record`: one entry per
+    import, the name of the top-level function whose body holds it, or None
+    anywhere else (module level, a class, a decorator or a default value).
     `module_parts` is the module's dotted name, split."""
     package = list(module_parts[:-1])
-    for node in ast.walk(ast.parse(source)):
-        if isinstance(node, ast.Import):
-            targets = [tuple(alias.name.split(".")) for alias in node.names]
-        elif isinstance(node, ast.ImportFrom):
-            base = package[: len(package) - node.level + 1] if node.level else []
-            module = tuple(base + (node.module.split(".") if node.module else []))
-            targets = [module] + [module + (alias.name,) for alias in node.names]
-        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
-            targets = [tuple(node.value.split("."))] if node.value.startswith("livestorm_app.") else []
+    sites = []
+    for statement in ast.parse(source).body:
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            inside = [node for part in statement.body for node in ast.walk(part)]
+            outside = [
+                node
+                for part in [*statement.decorator_list, statement.args, *([statement.returns] if statement.returns else [])]
+                for node in ast.walk(part)
+            ]
+            sites += [statement.name for node in inside if _names_record(node, package)]
+            sites += [None for node in outside if _names_record(node, package)]
         else:
-            continue
-        if any(target[: len(RECORD_PACKAGE)] == RECORD_PACKAGE for target in targets):
-            return True
-    return False
+            sites += [None for node in ast.walk(statement) if _names_record(node, package)]
+    return sites
+
+
+def imports_record(source, module_parts):
+    """Whether Python source imports `livestorm_app.record` anywhere."""
+    return bool(record_import_sites(source, module_parts))
 
 
 @pytest.mark.parametrize(
@@ -936,15 +965,68 @@ def test_the_import_guard_sees_every_form_of_import(source, module, expected):
     assert imports_record(source, tuple(module.split("."))) is expected
 
 
-def test_classic_code_does_not_import_the_record_package():
-    """A bug in `record/` must not be able to break a classic read."""
-    sources = [REPO_ROOT / "app.py"] + [
+@pytest.mark.parametrize(
+    "source, expected",
+    [
+        ("from livestorm_app.record import assemble", [None]),
+        ("def get_session_record():\n    from livestorm_app.record import assemble", ["get_session_record"]),
+        ("def get_session_record():\n    def inner():\n        import livestorm_app.record.clock", ["get_session_record"]),
+        ("@decorate('livestorm_app.record.x')\ndef get_session_record():\n    pass", [None]),
+        ("def get_session_record(x='livestorm_app.record.x'):\n    pass", [None]),
+        ("class Reader:\n    def get_session_record(self):\n        from livestorm_app.record import assemble", [None]),
+        ("def other():\n    from .record import inputs", ["other"]),
+    ],
+)
+def test_the_import_guard_knows_where_an_import_runs(source, expected):
+    assert record_import_sites(source, ("livestorm_app", "api_logic")) == expected
+
+
+def _classic_sources():
+    return [REPO_ROOT / "app.py"] + [
         path for path in (REPO_ROOT / "livestorm_app").rglob("*.py") if "record" not in path.relative_to(REPO_ROOT).parts
     ]
-    offenders = [
-        str(path.relative_to(REPO_ROOT))
-        for path in sources
-        if imports_record(path.read_text(encoding="utf-8"), path.relative_to(REPO_ROOT).with_suffix("").parts)
-    ]
+
+
+def test_classic_code_does_not_import_the_record_package():
+    """A bug in `record/` must not be able to break a classic read. Outside
+    `record/`, only the record route's loader imports it, inside its body."""
+    offenders = []
+    for path in _classic_sources():
+        parts = path.relative_to(REPO_ROOT).with_suffix("").parts
+        allowed = RECORD_ENTRY_POINTS.get(parts, set())
+        for site in record_import_sites(path.read_text(encoding="utf-8"), parts):
+            if site not in allowed:
+                offenders.append(f"{path.relative_to(REPO_ROOT)}: {site or 'outside a function'}")
     assert offenders == []
     assert roster_module.__name__ == "livestorm_app.record.roster"
+
+
+def test_the_record_entry_point_still_imports_the_package():
+    """Keeps the allowance above from outliving the code it allows."""
+    for parts, functions in RECORD_ENTRY_POINTS.items():
+        source = (REPO_ROOT / Path(*parts)).with_suffix(".py").read_text(encoding="utf-8")
+        assert set(record_import_sites(source, parts)) == functions
+
+
+def test_starting_the_app_and_reading_a_classic_workspace_never_loads_the_record():
+    """In a fresh process: the app starts and serves a classic workspace
+    without `livestorm_app.record` ever being imported."""
+    script = (
+        "import sys\n"
+        "sys.path[:0] = [sys.argv[1], sys.argv[2]]\n"
+        "import conftest\n"
+        "import synthetic_session as synthetic\n"
+        "assert synthetic.classic_workspace(synthetic.cached_row())['sessionId'] == synthetic.SESSION_ID\n"
+        "loaded = sorted(name for name in sys.modules if name.startswith('livestorm_app.record'))\n"
+        "assert loaded == [], loaded\n"
+        "assert synthetic.record_response()['record']['version'] == 1\n"
+        "assert 'livestorm_app.record.assemble' in sys.modules\n"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", script, str(REPO_ROOT), str(REPO_ROOT / "tests")],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        cwd=REPO_ROOT,
+    )
+    assert completed.returncode == 0, completed.stderr[-2000:]

@@ -1,0 +1,3843 @@
+{
+  "row": {
+    "account_key_hash": "synthetic-hash",
+    "session_id": "synthetic-webinar",
+    "organization_id": "synthetic-org",
+    "session_payload": {
+      "data": {
+        "id": "synthetic-webinar",
+        "type": "sessions",
+        "attributes": {
+          "event_id": "synthetic-event",
+          "status": "past",
+          "timezone": "Europe/Paris",
+          "name": "Synthetic webinar",
+          "attendees_count": 8,
+          "registrants_count": 10,
+          "duration": 1800,
+          "estimated_started_at": 1790845105,
+          "started_at": 1790845200,
+          "ended_at": 1790847000,
+          "created_at": 1788253200,
+          "updated_at": 1790847000
+        }
+      },
+      "included": [
+        {
+          "id": "p-host",
+          "type": "people",
+          "attributes": {
+            "created_at": 1788253200,
+            "updated_at": 1790847000,
+            "timezone": "Europe/Paris",
+            "first_name": "Nora",
+            "last_name": "Vale",
+            "email": "nora.vale@example.test",
+            "messages_count": 2,
+            "questions_count": 0,
+            "votes_count": 0,
+            "up_votes_count": 0,
+            "role": "team_member",
+            "avatar_link": null,
+            "registrant_detail": {
+              "event_id": "synthetic-event",
+              "session_id": "synthetic-webinar",
+              "created_at": 1788253200,
+              "updated_at": 1788253200,
+              "fields": [
+                {
+                  "id": "email",
+                  "type": "text",
+                  "value": "nora.vale@example.test",
+                  "required": true
+                },
+                {
+                  "id": "first_name",
+                  "type": "text",
+                  "value": "Nora",
+                  "required": true
+                },
+                {
+                  "id": "last_name",
+                  "type": "text",
+                  "value": "Vale",
+                  "required": true
+                },
+                {
+                  "id": "company",
+                  "type": "text",
+                  "value": "Example Co",
+                  "required": false
+                },
+                {
+                  "id": "job_title",
+                  "type": "text",
+                  "value": "Head of Events",
+                  "required": false
+                }
+              ],
+              "referrer": null,
+              "utm_source": null,
+              "utm_medium": null,
+              "utm_campaign": null,
+              "utm_term": null,
+              "utm_content": null,
+              "browser_name": "Firefox",
+              "os_name": "Linux",
+              "ip_city": "Exampleville",
+              "ip_country_code": "FR",
+              "ip_country_name": "France",
+              "attended": true,
+              "attendance_rate": 100,
+              "attendance_duration": 1800,
+              "has_viewed_replay": false,
+              "is_highlighted": false,
+              "is_guest_speaker": false,
+              "registration_type": null,
+              "session_role": "organizer",
+              "password_key": "synthetic-password-key",
+              "connection_link": "https://app.livestorm.test/p/x/live?key=synthetic-password-key"
+            }
+          }
+        },
+        {
+          "id": "p-cohost",
+          "type": "people",
+          "attributes": {
+            "created_at": 1788253200,
+            "updated_at": 1790847000,
+            "timezone": "Europe/Paris",
+            "first_name": "Ilan",
+            "last_name": "Moss",
+            "email": "ilan.moss@example.test",
+            "messages_count": 1,
+            "questions_count": 0,
+            "votes_count": 0,
+            "up_votes_count": 0,
+            "role": "team_member",
+            "avatar_link": null,
+            "registrant_detail": {
+              "event_id": "synthetic-event",
+              "session_id": "synthetic-webinar",
+              "created_at": 1788253200,
+              "updated_at": 1788253200,
+              "fields": [
+                {
+                  "id": "email",
+                  "type": "text",
+                  "value": "ilan.moss@example.test",
+                  "required": true
+                },
+                {
+                  "id": "first_name",
+                  "type": "text",
+                  "value": "Ilan",
+                  "required": true
+                },
+                {
+                  "id": "last_name",
+                  "type": "text",
+                  "value": "Moss",
+                  "required": true
+                },
+                {
+                  "id": "company",
+                  "type": "text",
+                  "value": "Example Co",
+                  "required": false
+                }
+              ],
+              "referrer": null,
+              "utm_source": null,
+              "utm_medium": null,
+              "utm_campaign": null,
+              "utm_term": null,
+              "utm_content": null,
+              "browser_name": "Firefox",
+              "os_name": "Linux",
+              "ip_city": "Exampleville",
+              "ip_country_code": "FR",
+              "ip_country_name": "France",
+              "attended": true,
+              "attendance_rate": 98,
+              "attendance_duration": 1764,
+              "has_viewed_replay": false,
+              "is_highlighted": false,
+              "is_guest_speaker": false,
+              "registration_type": null,
+              "session_role": null
+            }
+          }
+        },
+        {
+          "id": "p-guest",
+          "type": "people",
+          "attributes": {
+            "created_at": 1789981200,
+            "updated_at": 1790847000,
+            "timezone": "Europe/Paris",
+            "first_name": "Rhea",
+            "last_name": "Stone",
+            "email": "rhea.stone@example.test",
+            "messages_count": 1,
+            "questions_count": 0,
+            "votes_count": 0,
+            "up_votes_count": 0,
+            "role": "participant",
+            "avatar_link": null,
+            "registrant_detail": {
+              "event_id": "synthetic-event",
+              "session_id": "synthetic-webinar",
+              "created_at": 1789981200,
+              "updated_at": 1789981200,
+              "fields": [
+                {
+                  "id": "email",
+                  "type": "text",
+                  "value": "rhea.stone@example.test",
+                  "required": true
+                },
+                {
+                  "id": "first_name",
+                  "type": "text",
+                  "value": "Rhea",
+                  "required": true
+                },
+                {
+                  "id": "last_name",
+                  "type": "text",
+                  "value": "Stone",
+                  "required": true
+                },
+                {
+                  "id": "job_title",
+                  "type": "text",
+                  "value": "Analyst",
+                  "required": false
+                }
+              ],
+              "referrer": null,
+              "utm_source": null,
+              "utm_medium": null,
+              "utm_campaign": null,
+              "utm_term": null,
+              "utm_content": null,
+              "browser_name": "Firefox",
+              "os_name": "Linux",
+              "ip_city": "Exampleville",
+              "ip_country_code": "FR",
+              "ip_country_name": "France",
+              "attended": true,
+              "attendance_rate": 95,
+              "attendance_duration": 1710,
+              "has_viewed_replay": false,
+              "is_highlighted": false,
+              "is_guest_speaker": true,
+              "registration_type": null,
+              "session_role": null
+            }
+          }
+        },
+        {
+          "id": "p-aud-1",
+          "type": "people",
+          "attributes": {
+            "created_at": 1789808400,
+            "updated_at": 1790847000,
+            "timezone": "Europe/Paris",
+            "first_name": "Theo",
+            "last_name": "Park",
+            "email": "theo.park@example.test",
+            "messages_count": 3,
+            "questions_count": 1,
+            "votes_count": 0,
+            "up_votes_count": 2,
+            "role": "participant",
+            "avatar_link": null,
+            "registrant_detail": {
+              "event_id": "synthetic-event",
+              "session_id": "synthetic-webinar",
+              "created_at": 1789808400,
+              "updated_at": 1789808400,
+              "fields": [
+                {
+                  "id": "email",
+                  "type": "text",
+                  "value": "theo.park@example.test",
+                  "required": true
+                },
+                {
+                  "id": "first_name",
+                  "type": "text",
+                  "value": "Theo",
+                  "required": true
+                },
+                {
+                  "id": "last_name",
+                  "type": "text",
+                  "value": "Park",
+                  "required": true
+                },
+                {
+                  "id": "company",
+                  "type": "text",
+                  "value": "Sample Labs",
+                  "required": false
+                },
+                {
+                  "id": "job_title",
+                  "type": "text",
+                  "value": "Marketing lead",
+                  "required": false
+                },
+                {
+                  "id": "team_size",
+                  "type": "unique_select",
+                  "value": "11-50",
+                  "required": false
+                }
+              ],
+              "referrer": null,
+              "utm_source": "Newsletter",
+              "utm_medium": "Email",
+              "utm_campaign": "oct-launch",
+              "utm_term": null,
+              "utm_content": null,
+              "browser_name": "Firefox",
+              "os_name": "Linux",
+              "ip_city": "Exampleville",
+              "ip_country_code": "FR",
+              "ip_country_name": "France",
+              "attended": true,
+              "attendance_rate": 90,
+              "attendance_duration": 1620,
+              "has_viewed_replay": false,
+              "is_highlighted": false,
+              "is_guest_speaker": false,
+              "registration_type": null,
+              "session_role": null,
+              "password_key": "synthetic-password-key",
+              "connection_link": "https://app.livestorm.test/p/x/live?key=synthetic-password-key"
+            }
+          }
+        },
+        {
+          "id": "p-aud-2",
+          "type": "people",
+          "attributes": {
+            "created_at": 1790672400,
+            "updated_at": 1790847000,
+            "timezone": "Europe/Paris",
+            "first_name": "Mila",
+            "last_name": "Ford",
+            "email": "mila.ford@example.test",
+            "messages_count": 2,
+            "questions_count": 1,
+            "votes_count": 0,
+            "up_votes_count": 0,
+            "role": "participant",
+            "avatar_link": null,
+            "registrant_detail": {
+              "event_id": "synthetic-event",
+              "session_id": "synthetic-webinar",
+              "created_at": 1790672400,
+              "updated_at": 1790672400,
+              "fields": [
+                {
+                  "id": "email",
+                  "type": "text",
+                  "value": "mila.ford@example.test",
+                  "required": true
+                },
+                {
+                  "id": "first_name",
+                  "type": "text",
+                  "value": "Mila",
+                  "required": true
+                },
+                {
+                  "id": "last_name",
+                  "type": "text",
+                  "value": "Ford",
+                  "required": true
+                },
+                {
+                  "id": "team_size",
+                  "type": "unique_select",
+                  "value": "1-10",
+                  "required": false
+                }
+              ],
+              "referrer": "https://www.linkedin.example/feed/?trk=synthetic",
+              "utm_source": null,
+              "utm_medium": null,
+              "utm_campaign": null,
+              "utm_term": null,
+              "utm_content": null,
+              "browser_name": "Firefox",
+              "os_name": "Linux",
+              "ip_city": "Exampleville",
+              "ip_country_code": "DE",
+              "ip_country_name": "Germany",
+              "attended": true,
+              "attendance_rate": 80,
+              "attendance_duration": 1440,
+              "has_viewed_replay": false,
+              "is_highlighted": false,
+              "is_guest_speaker": false,
+              "registration_type": null,
+              "session_role": null
+            }
+          }
+        },
+        {
+          "id": "p-aud-3",
+          "type": "people",
+          "attributes": {
+            "created_at": 1790827200,
+            "updated_at": 1790847000,
+            "timezone": "Europe/Paris",
+            "first_name": "Sam",
+            "last_name": "Reed",
+            "email": "sam.reed@example.test",
+            "messages_count": 2,
+            "questions_count": 1,
+            "votes_count": 0,
+            "up_votes_count": 0,
+            "role": "participant",
+            "avatar_link": null,
+            "registrant_detail": {
+              "event_id": "synthetic-event",
+              "session_id": "synthetic-webinar",
+              "created_at": 1790827200,
+              "updated_at": 1790827200,
+              "fields": [
+                {
+                  "id": "email",
+                  "type": "text",
+                  "value": "sam.reed@example.test",
+                  "required": true
+                },
+                {
+                  "id": "first_name",
+                  "type": "text",
+                  "value": "Sam",
+                  "required": true
+                },
+                {
+                  "id": "last_name",
+                  "type": "text",
+                  "value": "Reed",
+                  "required": true
+                }
+              ],
+              "referrer": null,
+              "utm_source": null,
+              "utm_medium": null,
+              "utm_campaign": null,
+              "utm_term": null,
+              "utm_content": null,
+              "browser_name": "Firefox",
+              "os_name": "Linux",
+              "ip_city": "Exampleville",
+              "ip_country_code": "FR",
+              "ip_country_name": "France",
+              "attended": true,
+              "attendance_rate": 75,
+              "attendance_duration": 1350,
+              "has_viewed_replay": false,
+              "is_highlighted": false,
+              "is_guest_speaker": false,
+              "registration_type": "detailed",
+              "session_role": null
+            }
+          }
+        },
+        {
+          "id": "p-aud-4",
+          "type": "people",
+          "attributes": {
+            "created_at": 1790326800,
+            "updated_at": 1790847000,
+            "timezone": "Europe/Paris",
+            "first_name": "Lena",
+            "last_name": "Hart",
+            "email": "lena.hart@example.test",
+            "messages_count": 1,
+            "questions_count": 0,
+            "votes_count": 0,
+            "up_votes_count": 0,
+            "role": "participant",
+            "avatar_link": null,
+            "registrant_detail": {
+              "event_id": "synthetic-event",
+              "session_id": "synthetic-webinar",
+              "created_at": 1790326800,
+              "updated_at": 1790326800,
+              "fields": [
+                {
+                  "id": "email",
+                  "type": "text",
+                  "value": "lena.hart@example.test",
+                  "required": true
+                },
+                {
+                  "id": "first_name",
+                  "type": "text",
+                  "value": "Lena",
+                  "required": true
+                },
+                {
+                  "id": "last_name",
+                  "type": "text",
+                  "value": "Hart",
+                  "required": true
+                },
+                {
+                  "id": "team_size",
+                  "type": "unique_select",
+                  "value": "51-200",
+                  "required": false
+                }
+              ],
+              "referrer": null,
+              "utm_source": "partner",
+              "utm_medium": null,
+              "utm_campaign": null,
+              "utm_term": null,
+              "utm_content": null,
+              "browser_name": "Firefox",
+              "os_name": "Linux",
+              "ip_city": "Exampleville",
+              "ip_country_code": "US",
+              "ip_country_name": "United States",
+              "attended": true,
+              "attendance_rate": 60,
+              "attendance_duration": 1080,
+              "has_viewed_replay": false,
+              "is_highlighted": false,
+              "is_guest_speaker": false,
+              "registration_type": null,
+              "session_role": null
+            }
+          }
+        },
+        {
+          "id": "p-aud-5",
+          "type": "people",
+          "attributes": {
+            "created_at": 1790845320,
+            "updated_at": 1790847000,
+            "timezone": "Europe/Paris",
+            "first_name": "Omar",
+            "last_name": "Quinn",
+            "email": "omar.quinn@example.test",
+            "messages_count": 0,
+            "questions_count": 1,
+            "votes_count": 0,
+            "up_votes_count": 0,
+            "role": "participant",
+            "avatar_link": null,
+            "registrant_detail": {
+              "event_id": "synthetic-event",
+              "session_id": "synthetic-webinar",
+              "created_at": 1790845320,
+              "updated_at": 1790845320,
+              "fields": [
+                {
+                  "id": "email",
+                  "type": "text",
+                  "value": "omar.quinn@example.test",
+                  "required": true
+                },
+                {
+                  "id": "first_name",
+                  "type": "text",
+                  "value": "Omar",
+                  "required": true
+                },
+                {
+                  "id": "last_name",
+                  "type": "text",
+                  "value": "Quinn",
+                  "required": true
+                },
+                {
+                  "id": "company",
+                  "type": "text",
+                  "value": "Sample Labs",
+                  "required": false
+                }
+              ],
+              "referrer": null,
+              "utm_source": null,
+              "utm_medium": null,
+              "utm_campaign": null,
+              "utm_term": null,
+              "utm_content": null,
+              "browser_name": "Firefox",
+              "os_name": "Linux",
+              "ip_city": "Exampleville",
+              "ip_country_code": "FR",
+              "ip_country_name": "France",
+              "attended": true,
+              "attendance_rate": 40,
+              "attendance_duration": 720,
+              "has_viewed_replay": false,
+              "is_highlighted": false,
+              "is_guest_speaker": false,
+              "registration_type": null,
+              "session_role": null
+            }
+          }
+        },
+        {
+          "id": "p-aud-6",
+          "type": "people",
+          "attributes": {
+            "created_at": 1789117200,
+            "updated_at": 1790847000,
+            "timezone": "Europe/Paris",
+            "first_name": "Jade",
+            "last_name": "Bell",
+            "email": "jade.bell@example.test",
+            "messages_count": 0,
+            "questions_count": 0,
+            "votes_count": 0,
+            "up_votes_count": 0,
+            "role": "participant",
+            "avatar_link": null,
+            "registrant_detail": {
+              "event_id": "synthetic-event",
+              "session_id": "synthetic-webinar",
+              "created_at": 1789117200,
+              "updated_at": 1789117200,
+              "fields": [
+                {
+                  "id": "email",
+                  "type": "text",
+                  "value": "jade.bell@example.test",
+                  "required": true
+                },
+                {
+                  "id": "first_name",
+                  "type": "text",
+                  "value": "Jade",
+                  "required": true
+                },
+                {
+                  "id": "last_name",
+                  "type": "text",
+                  "value": "Bell",
+                  "required": true
+                }
+              ],
+              "referrer": null,
+              "utm_source": null,
+              "utm_medium": null,
+              "utm_campaign": null,
+              "utm_term": null,
+              "utm_content": null,
+              "browser_name": "Firefox",
+              "os_name": "Linux",
+              "ip_city": "Exampleville",
+              "ip_country_code": "US",
+              "ip_country_name": "United States",
+              "attended": false,
+              "attendance_rate": 0,
+              "attendance_duration": 0,
+              "has_viewed_replay": true,
+              "is_highlighted": false,
+              "is_guest_speaker": false,
+              "registration_type": null,
+              "session_role": null
+            }
+          }
+        },
+        {
+          "id": "p-aud-7",
+          "type": "people",
+          "attributes": {
+            "created_at": 1790758800,
+            "updated_at": 1790847000,
+            "timezone": "Europe/Paris",
+            "first_name": "Ravi",
+            "last_name": "Cole",
+            "email": "ravi.cole@example.test",
+            "messages_count": 0,
+            "questions_count": 0,
+            "votes_count": 0,
+            "up_votes_count": 0,
+            "role": "participant",
+            "avatar_link": null,
+            "registrant_detail": {
+              "event_id": "synthetic-event",
+              "session_id": "synthetic-webinar",
+              "created_at": 1790758800,
+              "updated_at": 1790758800,
+              "fields": [
+                {
+                  "id": "email",
+                  "type": "text",
+                  "value": "ravi.cole@example.test",
+                  "required": true
+                },
+                {
+                  "id": "first_name",
+                  "type": "text",
+                  "value": "Ravi",
+                  "required": true
+                },
+                {
+                  "id": "last_name",
+                  "type": "text",
+                  "value": "Cole",
+                  "required": true
+                }
+              ],
+              "referrer": null,
+              "utm_source": null,
+              "utm_medium": null,
+              "utm_campaign": null,
+              "utm_term": null,
+              "utm_content": null,
+              "browser_name": "Firefox",
+              "os_name": "Linux",
+              "ip_city": "Exampleville",
+              "ip_country_code": "FR",
+              "ip_country_name": "France",
+              "attended": false,
+              "attendance_rate": 0,
+              "attendance_duration": 0,
+              "has_viewed_replay": false,
+              "is_highlighted": false,
+              "is_guest_speaker": false,
+              "registration_type": null,
+              "session_role": null
+            }
+          }
+        }
+      ]
+    },
+    "chat_payload": {
+      "data": [
+        {
+          "id": "msg-001",
+          "type": "chat_messages",
+          "attributes": {
+            "text_content": "Hello everyone",
+            "html_content": "<p>Hello everyone</p>",
+            "created_at": 1790844900,
+            "author_id": "u-aud-1",
+            "from_team_member": false,
+            "from_guest_speaker": false,
+            "session_id": "synthetic-webinar",
+            "event_id": "synthetic-event"
+          }
+        },
+        {
+          "id": "msg-002",
+          "type": "chat_messages",
+          "attributes": {
+            "text_content": "Excited for this one",
+            "html_content": "<p>Excited for this one</p>",
+            "created_at": 1790845080,
+            "author_id": "u-aud-2",
+            "from_team_member": false,
+            "from_guest_speaker": false,
+            "session_id": "synthetic-webinar",
+            "event_id": "synthetic-event"
+          }
+        },
+        {
+          "id": "msg-003",
+          "type": "chat_messages",
+          "attributes": {
+            "text_content": "Welcome! We start in a minute.",
+            "html_content": "<p>Welcome! We start in a minute.</p>",
+            "created_at": 1790845140,
+            "author_id": "u-team-1",
+            "from_team_member": true,
+            "from_guest_speaker": false,
+            "session_id": "synthetic-webinar",
+            "event_id": "synthetic-event"
+          }
+        },
+        {
+          "id": "msg-004",
+          "type": "chat_messages",
+          "attributes": {
+            "text_content": "Can you hear us?",
+            "html_content": "<p>Can you hear us?</p>",
+            "created_at": 1790845170,
+            "author_id": "u-aud-3",
+            "from_team_member": false,
+            "from_guest_speaker": false,
+            "session_id": "synthetic-webinar",
+            "event_id": "synthetic-event"
+          }
+        },
+        {
+          "id": "msg-005",
+          "type": "chat_messages",
+          "attributes": {
+            "text_content": "Slides: https://example.test/slides",
+            "html_content": "<p>Slides: <a href=\"https://example.test/slides\">https://example.test/slides</a></p>",
+            "created_at": 1790845245,
+            "author_id": "u-team-1",
+            "from_team_member": true,
+            "from_guest_speaker": false,
+            "session_id": "synthetic-webinar",
+            "event_id": "synthetic-event"
+          }
+        },
+        {
+          "id": "msg-006",
+          "type": "chat_messages",
+          "attributes": {
+            "text_content": "Thanks!",
+            "html_content": "<p>Thanks!</p>",
+            "created_at": 1790845270,
+            "author_id": "u-aud-1",
+            "from_team_member": false,
+            "from_guest_speaker": false,
+            "session_id": "synthetic-webinar",
+            "event_id": "synthetic-event"
+          }
+        },
+        {
+          "id": "msg-007",
+          "type": "chat_messages",
+          "attributes": {
+            "text_content": "Great intro",
+            "html_content": "<p>Great intro</p>",
+            "created_at": 1790845330,
+            "author_id": "u-aud-2",
+            "from_team_member": false,
+            "from_guest_speaker": false,
+            "session_id": "synthetic-webinar",
+            "event_id": "synthetic-event"
+          }
+        },
+        {
+          "id": "msg-008",
+          "type": "chat_messages",
+          "attributes": {
+            "text_content": "What about pricing?",
+            "html_content": "<p>What about pricing?</p>",
+            "created_at": 1790845400,
+            "author_id": "u-aud-3",
+            "from_team_member": false,
+            "from_guest_speaker": false,
+            "session_id": "synthetic-webinar",
+            "event_id": "synthetic-event"
+          }
+        },
+        {
+          "id": "msg-009",
+          "type": "chat_messages",
+          "attributes": {
+            "text_content": "Happy to cover pricing later",
+            "html_content": "<p>Happy to cover pricing later</p>",
+            "created_at": 1790845460,
+            "author_id": "u-guest-1",
+            "from_team_member": false,
+            "from_guest_speaker": true,
+            "session_id": "synthetic-webinar",
+            "event_id": "synthetic-event"
+          }
+        },
+        {
+          "id": "msg-010",
+          "type": "chat_messages",
+          "attributes": {
+            "text_content": "This dashboard looks useful",
+            "html_content": "<p>This dashboard looks useful</p>",
+            "created_at": 1790845800,
+            "author_id": "u-aud-4",
+            "from_team_member": false,
+            "from_guest_speaker": false,
+            "session_id": "synthetic-webinar",
+            "event_id": "synthetic-event"
+          }
+        },
+        {
+          "id": "msg-011",
+          "type": "chat_messages",
+          "attributes": {
+            "text_content": "+1",
+            "html_content": "<p>+1</p>",
+            "created_at": 1790845815,
+            "author_id": "u-aud-1",
+            "from_team_member": false,
+            "from_guest_speaker": false,
+            "session_id": "synthetic-webinar",
+            "event_id": "synthetic-event"
+          }
+        },
+        {
+          "id": "msg-012",
+          "type": "chat_messages",
+          "attributes": {
+            "text_content": "Is there a replay?",
+            "html_content": "<p>Is there a replay?</p>",
+            "created_at": 1790846100,
+            "author_id": "u-aud-2",
+            "from_team_member": false,
+            "from_guest_speaker": false,
+            "session_id": "synthetic-webinar",
+            "event_id": "synthetic-event"
+          }
+        },
+        {
+          "id": "msg-013",
+          "type": "chat_messages",
+          "attributes": {
+            "text_content": "Yes, the replay link comes by email",
+            "html_content": "<p>Yes, the replay link comes by email</p>",
+            "created_at": 1790846105,
+            "author_id": "u-team-2",
+            "from_team_member": true,
+            "from_guest_speaker": false,
+            "session_id": "synthetic-webinar",
+            "event_id": "synthetic-event"
+          }
+        },
+        {
+          "id": "msg-014",
+          "type": "chat_messages",
+          "attributes": {
+            "text_content": "Love the export feature",
+            "html_content": "<p>Love the export feature</p>",
+            "created_at": 1790846400,
+            "author_id": "u-aud-1",
+            "from_team_member": false,
+            "from_guest_speaker": false,
+            "session_id": "synthetic-webinar",
+            "event_id": "synthetic-event"
+          }
+        },
+        {
+          "id": "msg-015",
+          "type": "chat_messages",
+          "attributes": {
+            "text_content": "Thank you all",
+            "html_content": "<p>Thank you all</p>",
+            "created_at": 1790846700,
+            "author_id": "u-aud-3",
+            "from_team_member": false,
+            "from_guest_speaker": false,
+            "session_id": "synthetic-webinar",
+            "event_id": "synthetic-event"
+          }
+        },
+        {
+          "id": "msg-016",
+          "type": "chat_messages",
+          "attributes": {
+            "text_content": "Bye!",
+            "html_content": "<p>Bye!</p>",
+            "created_at": 1790847000,
+            "author_id": "u-aud-2",
+            "from_team_member": false,
+            "from_guest_speaker": false,
+            "session_id": "synthetic-webinar",
+            "event_id": "synthetic-event"
+          }
+        },
+        {
+          "id": "msg-017",
+          "type": "chat_messages",
+          "attributes": {
+            "text_content": "See you next time",
+            "html_content": "<p>See you next time</p>",
+            "created_at": 1790847040,
+            "author_id": "u-aud-4",
+            "from_team_member": false,
+            "from_guest_speaker": false,
+            "session_id": "synthetic-webinar",
+            "event_id": "synthetic-event"
+          }
+        }
+      ],
+      "pages_fetched": 1,
+      "requested_page_size": 50
+    },
+    "questions_payload": {
+      "data": [
+        {
+          "id": "qst-001",
+          "type": "questions",
+          "attributes": {
+            "question": "Will the slides be shared?",
+            "created_at": 1790845155,
+            "updated_at": 1790845250,
+            "responded_at": 1790845250,
+            "response": "Yes, see the chat.",
+            "response_orally": false,
+            "question_author_id": "p-aud-1",
+            "response_author_id": "p-host",
+            "up_votes_count": 0,
+            "session_id": "synthetic-webinar",
+            "event_id": "synthetic-event"
+          }
+        },
+        {
+          "id": "qst-002",
+          "type": "questions",
+          "attributes": {
+            "question": "How does pricing work for teams?",
+            "created_at": 1790845500,
+            "updated_at": 1790845500,
+            "responded_at": null,
+            "response": null,
+            "response_orally": true,
+            "question_author_id": "p-aud-2",
+            "response_author_id": null,
+            "up_votes_count": 1,
+            "session_id": "synthetic-webinar",
+            "event_id": "synthetic-event"
+          }
+        },
+        {
+          "id": "qst-003",
+          "type": "questions",
+          "attributes": {
+            "question": "Can we export to CSV?",
+            "created_at": 1790845920,
+            "updated_at": 1790845960,
+            "responded_at": 1790845960,
+            "response": "Yes, from the Chat page.",
+            "response_orally": false,
+            "question_author_id": "p-aud-3",
+            "response_author_id": "p-host",
+            "up_votes_count": 0,
+            "session_id": "synthetic-webinar",
+            "event_id": "synthetic-event"
+          }
+        },
+        {
+          "id": "qst-004",
+          "type": "questions",
+          "attributes": {
+            "question": "Is there an API?",
+            "created_at": 1790846850,
+            "updated_at": 1790846850,
+            "responded_at": null,
+            "response": null,
+            "response_orally": false,
+            "question_author_id": "p-aud-5",
+            "response_author_id": null,
+            "up_votes_count": 0,
+            "session_id": "synthetic-webinar",
+            "event_id": "synthetic-event"
+          }
+        }
+      ],
+      "included": [
+        {
+          "id": "p-host",
+          "type": "people",
+          "attributes": {
+            "created_at": 1788253200,
+            "updated_at": 1790847000,
+            "timezone": "Europe/Paris",
+            "first_name": "Nora",
+            "last_name": "Vale",
+            "email": "nora.vale@example.test",
+            "messages_count": 2,
+            "questions_count": 0,
+            "votes_count": 0,
+            "up_votes_count": 0,
+            "role": "team_member",
+            "avatar_link": null,
+            "registrant_detail": {
+              "event_id": "synthetic-event",
+              "session_id": "synthetic-webinar",
+              "created_at": 1788253200,
+              "updated_at": 1788253200,
+              "fields": [
+                {
+                  "id": "email",
+                  "type": "text",
+                  "value": "nora.vale@example.test",
+                  "required": true
+                },
+                {
+                  "id": "first_name",
+                  "type": "text",
+                  "value": "Nora",
+                  "required": true
+                },
+                {
+                  "id": "last_name",
+                  "type": "text",
+                  "value": "Vale",
+                  "required": true
+                },
+                {
+                  "id": "company",
+                  "type": "text",
+                  "value": "Example Co",
+                  "required": false
+                },
+                {
+                  "id": "job_title",
+                  "type": "text",
+                  "value": "Head of Events",
+                  "required": false
+                }
+              ],
+              "referrer": null,
+              "utm_source": null,
+              "utm_medium": null,
+              "utm_campaign": null,
+              "utm_term": null,
+              "utm_content": null,
+              "browser_name": "Firefox",
+              "os_name": "Linux",
+              "ip_city": "Exampleville",
+              "ip_country_code": "FR",
+              "ip_country_name": "France",
+              "attended": true,
+              "attendance_rate": 100,
+              "attendance_duration": 1800,
+              "has_viewed_replay": false,
+              "is_highlighted": false,
+              "is_guest_speaker": false,
+              "registration_type": null,
+              "session_role": "organizer",
+              "password_key": "synthetic-password-key",
+              "connection_link": "https://app.livestorm.test/p/x/live?key=synthetic-password-key"
+            }
+          }
+        },
+        {
+          "id": "p-aud-1",
+          "type": "people",
+          "attributes": {
+            "created_at": 1789808400,
+            "updated_at": 1790847000,
+            "timezone": "Europe/Paris",
+            "first_name": "Theo",
+            "last_name": "Park",
+            "email": "theo.park@example.test",
+            "messages_count": 3,
+            "questions_count": 1,
+            "votes_count": 0,
+            "up_votes_count": 2,
+            "role": "participant",
+            "avatar_link": null,
+            "registrant_detail": {
+              "event_id": "synthetic-event",
+              "session_id": "synthetic-webinar",
+              "created_at": 1789808400,
+              "updated_at": 1789808400,
+              "fields": [
+                {
+                  "id": "email",
+                  "type": "text",
+                  "value": "theo.park@example.test",
+                  "required": true
+                },
+                {
+                  "id": "first_name",
+                  "type": "text",
+                  "value": "Theo",
+                  "required": true
+                },
+                {
+                  "id": "last_name",
+                  "type": "text",
+                  "value": "Park",
+                  "required": true
+                },
+                {
+                  "id": "company",
+                  "type": "text",
+                  "value": "Sample Labs",
+                  "required": false
+                },
+                {
+                  "id": "job_title",
+                  "type": "text",
+                  "value": "Marketing lead",
+                  "required": false
+                },
+                {
+                  "id": "team_size",
+                  "type": "unique_select",
+                  "value": "11-50",
+                  "required": false
+                }
+              ],
+              "referrer": null,
+              "utm_source": "Newsletter",
+              "utm_medium": "Email",
+              "utm_campaign": "oct-launch",
+              "utm_term": null,
+              "utm_content": null,
+              "browser_name": "Firefox",
+              "os_name": "Linux",
+              "ip_city": "Exampleville",
+              "ip_country_code": "FR",
+              "ip_country_name": "France",
+              "attended": true,
+              "attendance_rate": 90,
+              "attendance_duration": 1620,
+              "has_viewed_replay": false,
+              "is_highlighted": false,
+              "is_guest_speaker": false,
+              "registration_type": null,
+              "session_role": null,
+              "password_key": "synthetic-password-key",
+              "connection_link": "https://app.livestorm.test/p/x/live?key=synthetic-password-key"
+            }
+          }
+        },
+        {
+          "id": "p-aud-2",
+          "type": "people",
+          "attributes": {
+            "created_at": 1790672400,
+            "updated_at": 1790847000,
+            "timezone": "Europe/Paris",
+            "first_name": "Mila",
+            "last_name": "Ford",
+            "email": "mila.ford@example.test",
+            "messages_count": 2,
+            "questions_count": 1,
+            "votes_count": 0,
+            "up_votes_count": 0,
+            "role": "participant",
+            "avatar_link": null,
+            "registrant_detail": {
+              "event_id": "synthetic-event",
+              "session_id": "synthetic-webinar",
+              "created_at": 1790672400,
+              "updated_at": 1790672400,
+              "fields": [
+                {
+                  "id": "email",
+                  "type": "text",
+                  "value": "mila.ford@example.test",
+                  "required": true
+                },
+                {
+                  "id": "first_name",
+                  "type": "text",
+                  "value": "Mila",
+                  "required": true
+                },
+                {
+                  "id": "last_name",
+                  "type": "text",
+                  "value": "Ford",
+                  "required": true
+                },
+                {
+                  "id": "team_size",
+                  "type": "unique_select",
+                  "value": "1-10",
+                  "required": false
+                }
+              ],
+              "referrer": "https://www.linkedin.example/feed/?trk=synthetic",
+              "utm_source": null,
+              "utm_medium": null,
+              "utm_campaign": null,
+              "utm_term": null,
+              "utm_content": null,
+              "browser_name": "Firefox",
+              "os_name": "Linux",
+              "ip_city": "Exampleville",
+              "ip_country_code": "DE",
+              "ip_country_name": "Germany",
+              "attended": true,
+              "attendance_rate": 80,
+              "attendance_duration": 1440,
+              "has_viewed_replay": false,
+              "is_highlighted": false,
+              "is_guest_speaker": false,
+              "registration_type": null,
+              "session_role": null
+            }
+          }
+        },
+        {
+          "id": "p-aud-3",
+          "type": "people",
+          "attributes": {
+            "created_at": 1790827200,
+            "updated_at": 1790847000,
+            "timezone": "Europe/Paris",
+            "first_name": "Sam",
+            "last_name": "Reed",
+            "email": "sam.reed@example.test",
+            "messages_count": 2,
+            "questions_count": 1,
+            "votes_count": 0,
+            "up_votes_count": 0,
+            "role": "participant",
+            "avatar_link": null,
+            "registrant_detail": {
+              "event_id": "synthetic-event",
+              "session_id": "synthetic-webinar",
+              "created_at": 1790827200,
+              "updated_at": 1790827200,
+              "fields": [
+                {
+                  "id": "email",
+                  "type": "text",
+                  "value": "sam.reed@example.test",
+                  "required": true
+                },
+                {
+                  "id": "first_name",
+                  "type": "text",
+                  "value": "Sam",
+                  "required": true
+                },
+                {
+                  "id": "last_name",
+                  "type": "text",
+                  "value": "Reed",
+                  "required": true
+                }
+              ],
+              "referrer": null,
+              "utm_source": null,
+              "utm_medium": null,
+              "utm_campaign": null,
+              "utm_term": null,
+              "utm_content": null,
+              "browser_name": "Firefox",
+              "os_name": "Linux",
+              "ip_city": "Exampleville",
+              "ip_country_code": "FR",
+              "ip_country_name": "France",
+              "attended": true,
+              "attendance_rate": 75,
+              "attendance_duration": 1350,
+              "has_viewed_replay": false,
+              "is_highlighted": false,
+              "is_guest_speaker": false,
+              "registration_type": "detailed",
+              "session_role": null
+            }
+          }
+        },
+        {
+          "id": "p-aud-5",
+          "type": "people",
+          "attributes": {
+            "created_at": 1790845320,
+            "updated_at": 1790847000,
+            "timezone": "Europe/Paris",
+            "first_name": "Omar",
+            "last_name": "Quinn",
+            "email": "omar.quinn@example.test",
+            "messages_count": 0,
+            "questions_count": 1,
+            "votes_count": 0,
+            "up_votes_count": 0,
+            "role": "participant",
+            "avatar_link": null,
+            "registrant_detail": {
+              "event_id": "synthetic-event",
+              "session_id": "synthetic-webinar",
+              "created_at": 1790845320,
+              "updated_at": 1790845320,
+              "fields": [
+                {
+                  "id": "email",
+                  "type": "text",
+                  "value": "omar.quinn@example.test",
+                  "required": true
+                },
+                {
+                  "id": "first_name",
+                  "type": "text",
+                  "value": "Omar",
+                  "required": true
+                },
+                {
+                  "id": "last_name",
+                  "type": "text",
+                  "value": "Quinn",
+                  "required": true
+                },
+                {
+                  "id": "company",
+                  "type": "text",
+                  "value": "Sample Labs",
+                  "required": false
+                }
+              ],
+              "referrer": null,
+              "utm_source": null,
+              "utm_medium": null,
+              "utm_campaign": null,
+              "utm_term": null,
+              "utm_content": null,
+              "browser_name": "Firefox",
+              "os_name": "Linux",
+              "ip_city": "Exampleville",
+              "ip_country_code": "FR",
+              "ip_country_name": "France",
+              "attended": true,
+              "attendance_rate": 40,
+              "attendance_duration": 720,
+              "has_viewed_replay": false,
+              "is_highlighted": false,
+              "is_guest_speaker": false,
+              "registration_type": null,
+              "session_role": null
+            }
+          }
+        }
+      ],
+      "pages_fetched": 1,
+      "requested_page_size": 50
+    },
+    "transcript_payload": {
+      "id": "synthetic-gladia-job",
+      "status": "done",
+      "kind": "pre-recorded",
+      "file": {
+        "audio_duration": 1800.0
+      },
+      "result": {
+        "metadata": {
+          "audio_duration": 1800.0,
+          "number_of_distinct_channels": 1,
+          "billing_time": 1800.0
+        },
+        "transcription": {
+          "languages": [
+            "en"
+          ],
+          "full_transcript": "welcome everyone thanks for joining us today today we look at the new dashboard and the export happy to be here let me share my screen pricing works per team and scales with seats yes you can export everything to csv thank you all see you next time",
+          "utterances": [
+            {
+              "start": 3.0,
+              "end": 6.05,
+              "speaker": 0,
+              "channel": 0,
+              "confidence": 0.92,
+              "language": "en",
+              "text": "welcome everyone thanks for joining us today",
+              "words": [
+                {
+                  "word": " welcome",
+                  "start": 3.0,
+                  "end": 3.35,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " everyone",
+                  "start": 3.45,
+                  "end": 3.8,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " thanks",
+                  "start": 3.9,
+                  "end": 4.25,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " for",
+                  "start": 4.35,
+                  "end": 4.7,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " joining",
+                  "start": 4.8,
+                  "end": 5.15,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " us",
+                  "start": 5.25,
+                  "end": 5.6,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " today",
+                  "start": 5.7,
+                  "end": 6.05,
+                  "confidence": 0.92
+                }
+              ]
+            },
+            {
+              "start": 12.0,
+              "end": 16.4,
+              "speaker": 0,
+              "channel": 0,
+              "confidence": 0.92,
+              "language": "en",
+              "text": "today we look at the new dashboard and the export",
+              "words": [
+                {
+                  "word": " today",
+                  "start": 12.0,
+                  "end": 12.35,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " we",
+                  "start": 12.45,
+                  "end": 12.8,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " look",
+                  "start": 12.9,
+                  "end": 13.25,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " at",
+                  "start": 13.35,
+                  "end": 13.7,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " the",
+                  "start": 13.8,
+                  "end": 14.15,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " new",
+                  "start": 14.25,
+                  "end": 14.6,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " dashboard",
+                  "start": 14.7,
+                  "end": 15.05,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " and",
+                  "start": 15.15,
+                  "end": 15.5,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " the",
+                  "start": 15.6,
+                  "end": 15.95,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " export",
+                  "start": 16.05,
+                  "end": 16.4,
+                  "confidence": 0.92
+                }
+              ]
+            },
+            {
+              "start": 60.0,
+              "end": 63.95,
+              "speaker": 1,
+              "channel": 0,
+              "confidence": 0.92,
+              "language": "en",
+              "text": "happy to be here let me share my screen",
+              "words": [
+                {
+                  "word": " happy",
+                  "start": 60.0,
+                  "end": 60.35,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " to",
+                  "start": 60.45,
+                  "end": 60.8,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " be",
+                  "start": 60.9,
+                  "end": 61.25,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " here",
+                  "start": 61.35,
+                  "end": 61.7,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " let",
+                  "start": 61.8,
+                  "end": 62.15,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " me",
+                  "start": 62.25,
+                  "end": 62.6,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " share",
+                  "start": 62.7,
+                  "end": 63.05,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " my",
+                  "start": 63.15,
+                  "end": 63.5,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " screen",
+                  "start": 63.6,
+                  "end": 63.95,
+                  "confidence": 0.92
+                }
+              ]
+            },
+            {
+              "start": 300.0,
+              "end": 303.5,
+              "speaker": 1,
+              "channel": 0,
+              "confidence": 0.92,
+              "language": "en",
+              "text": "pricing works per team and scales with seats",
+              "words": [
+                {
+                  "word": " pricing",
+                  "start": 300.0,
+                  "end": 300.35,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " works",
+                  "start": 300.45,
+                  "end": 300.8,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " per",
+                  "start": 300.9,
+                  "end": 301.25,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " team",
+                  "start": 301.35,
+                  "end": 301.7,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " and",
+                  "start": 301.8,
+                  "end": 302.15,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " scales",
+                  "start": 302.25,
+                  "end": 302.6,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " with",
+                  "start": 302.7,
+                  "end": 303.05,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " seats",
+                  "start": 303.15,
+                  "end": 303.5,
+                  "confidence": 0.92
+                }
+              ]
+            },
+            {
+              "start": 760.0,
+              "end": 763.05,
+              "speaker": 0,
+              "channel": 0,
+              "confidence": 0.92,
+              "language": "en",
+              "text": "yes you can export everything to csv",
+              "words": [
+                {
+                  "word": " yes",
+                  "start": 760.0,
+                  "end": 760.35,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " you",
+                  "start": 760.45,
+                  "end": 760.8,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " can",
+                  "start": 760.9,
+                  "end": 761.25,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " export",
+                  "start": 761.35,
+                  "end": 761.7,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " everything",
+                  "start": 761.8,
+                  "end": 762.15,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " to",
+                  "start": 762.25,
+                  "end": 762.6,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " csv",
+                  "start": 762.7,
+                  "end": 763.05,
+                  "confidence": 0.92
+                }
+              ]
+            },
+            {
+              "start": 1700.0,
+              "end": 1703.05,
+              "speaker": 0,
+              "channel": 0,
+              "confidence": 0.92,
+              "language": "en",
+              "text": "thank you all see you next time",
+              "words": [
+                {
+                  "word": " thank",
+                  "start": 1700.0,
+                  "end": 1700.35,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " you",
+                  "start": 1700.45,
+                  "end": 1700.8,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " all",
+                  "start": 1700.9,
+                  "end": 1701.25,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " see",
+                  "start": 1701.35,
+                  "end": 1701.7,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " you",
+                  "start": 1701.8,
+                  "end": 1702.15,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " next",
+                  "start": 1702.25,
+                  "end": 1702.6,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " time",
+                  "start": 1702.7,
+                  "end": 1703.05,
+                  "confidence": 0.92
+                }
+              ]
+            }
+          ]
+        },
+        "sentences": {
+          "success": true,
+          "is_empty": false,
+          "results": [
+            {
+              "sentence": "welcome everyone thanks for joining us today",
+              "start": 3.0,
+              "end": 6.05,
+              "speaker": 0,
+              "channel": 0,
+              "confidence": 0.92,
+              "language": "en",
+              "words": [
+                {
+                  "word": " welcome",
+                  "start": 3.0,
+                  "end": 3.35,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " everyone",
+                  "start": 3.45,
+                  "end": 3.8,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " thanks",
+                  "start": 3.9,
+                  "end": 4.25,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " for",
+                  "start": 4.35,
+                  "end": 4.7,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " joining",
+                  "start": 4.8,
+                  "end": 5.15,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " us",
+                  "start": 5.25,
+                  "end": 5.6,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " today",
+                  "start": 5.7,
+                  "end": 6.05,
+                  "confidence": 0.92
+                }
+              ]
+            },
+            {
+              "sentence": "today we look at the new dashboard and the export",
+              "start": 12.0,
+              "end": 16.4,
+              "speaker": 0,
+              "channel": 0,
+              "confidence": 0.92,
+              "language": "en",
+              "words": [
+                {
+                  "word": " today",
+                  "start": 12.0,
+                  "end": 12.35,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " we",
+                  "start": 12.45,
+                  "end": 12.8,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " look",
+                  "start": 12.9,
+                  "end": 13.25,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " at",
+                  "start": 13.35,
+                  "end": 13.7,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " the",
+                  "start": 13.8,
+                  "end": 14.15,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " new",
+                  "start": 14.25,
+                  "end": 14.6,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " dashboard",
+                  "start": 14.7,
+                  "end": 15.05,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " and",
+                  "start": 15.15,
+                  "end": 15.5,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " the",
+                  "start": 15.6,
+                  "end": 15.95,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " export",
+                  "start": 16.05,
+                  "end": 16.4,
+                  "confidence": 0.92
+                }
+              ]
+            },
+            {
+              "sentence": "happy to be here let me share my screen",
+              "start": 60.0,
+              "end": 63.95,
+              "speaker": 1,
+              "channel": 0,
+              "confidence": 0.92,
+              "language": "en",
+              "words": [
+                {
+                  "word": " happy",
+                  "start": 60.0,
+                  "end": 60.35,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " to",
+                  "start": 60.45,
+                  "end": 60.8,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " be",
+                  "start": 60.9,
+                  "end": 61.25,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " here",
+                  "start": 61.35,
+                  "end": 61.7,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " let",
+                  "start": 61.8,
+                  "end": 62.15,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " me",
+                  "start": 62.25,
+                  "end": 62.6,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " share",
+                  "start": 62.7,
+                  "end": 63.05,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " my",
+                  "start": 63.15,
+                  "end": 63.5,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " screen",
+                  "start": 63.6,
+                  "end": 63.95,
+                  "confidence": 0.92
+                }
+              ]
+            },
+            {
+              "sentence": "pricing works per team and scales with seats",
+              "start": 300.0,
+              "end": 303.5,
+              "speaker": 1,
+              "channel": 0,
+              "confidence": 0.92,
+              "language": "en",
+              "words": [
+                {
+                  "word": " pricing",
+                  "start": 300.0,
+                  "end": 300.35,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " works",
+                  "start": 300.45,
+                  "end": 300.8,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " per",
+                  "start": 300.9,
+                  "end": 301.25,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " team",
+                  "start": 301.35,
+                  "end": 301.7,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " and",
+                  "start": 301.8,
+                  "end": 302.15,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " scales",
+                  "start": 302.25,
+                  "end": 302.6,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " with",
+                  "start": 302.7,
+                  "end": 303.05,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " seats",
+                  "start": 303.15,
+                  "end": 303.5,
+                  "confidence": 0.92
+                }
+              ]
+            },
+            {
+              "sentence": "yes you can export everything to csv",
+              "start": 760.0,
+              "end": 763.05,
+              "speaker": 0,
+              "channel": 0,
+              "confidence": 0.92,
+              "language": "en",
+              "words": [
+                {
+                  "word": " yes",
+                  "start": 760.0,
+                  "end": 760.35,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " you",
+                  "start": 760.45,
+                  "end": 760.8,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " can",
+                  "start": 760.9,
+                  "end": 761.25,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " export",
+                  "start": 761.35,
+                  "end": 761.7,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " everything",
+                  "start": 761.8,
+                  "end": 762.15,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " to",
+                  "start": 762.25,
+                  "end": 762.6,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " csv",
+                  "start": 762.7,
+                  "end": 763.05,
+                  "confidence": 0.92
+                }
+              ]
+            },
+            {
+              "sentence": "thank you all see you next time",
+              "start": 1700.0,
+              "end": 1703.05,
+              "speaker": 0,
+              "channel": 0,
+              "confidence": 0.92,
+              "language": "en",
+              "words": [
+                {
+                  "word": " thank",
+                  "start": 1700.0,
+                  "end": 1700.35,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " you",
+                  "start": 1700.45,
+                  "end": 1700.8,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " all",
+                  "start": 1700.9,
+                  "end": 1701.25,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " see",
+                  "start": 1701.35,
+                  "end": 1701.7,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " you",
+                  "start": 1701.8,
+                  "end": 1702.15,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " next",
+                  "start": 1702.25,
+                  "end": 1702.6,
+                  "confidence": 0.92
+                },
+                {
+                  "word": " time",
+                  "start": 1702.7,
+                  "end": 1703.05,
+                  "confidence": 0.92
+                }
+              ]
+            }
+          ]
+        },
+        "named_entity_recognition": {
+          "success": true,
+          "is_empty": true,
+          "results": []
+        }
+      },
+      "provider": "gladia",
+      "source_video": "recording.mp4",
+      "extracted_audio": null,
+      "model": "gladia-v2-pre-recorded",
+      "requested_model": "gladia-v2-pre-recorded",
+      "timestamped": true,
+      "created_at": "2026-10-01T10:00:00+00:00",
+      "text": "welcome everyone thanks for joining us today today we look at the new dashboard and the export happy to be here let me share my screen pricing works per team and scales with seats yes you can export everything to csv thank you all see you next time",
+      "language": "en",
+      "duration_seconds": 1800.0,
+      "segments": [
+        {
+          "id": 1,
+          "start": 3.0,
+          "end": 6.05,
+          "speaker": 0,
+          "confidence": 0.92,
+          "text": "welcome everyone thanks for joining us today"
+        },
+        {
+          "id": 2,
+          "start": 12.0,
+          "end": 16.4,
+          "speaker": 0,
+          "confidence": 0.92,
+          "text": "today we look at the new dashboard and the export"
+        },
+        {
+          "id": 3,
+          "start": 60.0,
+          "end": 63.95,
+          "speaker": 1,
+          "confidence": 0.92,
+          "text": "happy to be here let me share my screen"
+        },
+        {
+          "id": 4,
+          "start": 300.0,
+          "end": 303.5,
+          "speaker": 1,
+          "confidence": 0.92,
+          "text": "pricing works per team and scales with seats"
+        },
+        {
+          "id": 5,
+          "start": 760.0,
+          "end": 763.05,
+          "speaker": 0,
+          "confidence": 0.92,
+          "text": "yes you can export everything to csv"
+        },
+        {
+          "id": 6,
+          "start": 1700.0,
+          "end": 1703.05,
+          "speaker": 0,
+          "confidence": 0.92,
+          "text": "thank you all see you next time"
+        }
+      ],
+      "words": [],
+      "subtitles": [],
+      "session_id": "synthetic-webinar"
+    },
+    "transcript_speaker_names": {
+      "0": "Host",
+      "1": "Guest"
+    },
+    "analysis_md": null,
+    "analysis_bundle": {
+      "English": "# Synthetic analysis\n\nThe audience asked about pricing and exports."
+    },
+    "deep_analysis_md": null,
+    "deep_analysis_bundle": {},
+    "content_repurpose_bundle": {
+      "English": {
+        "summary": "A summary.",
+        "blog": "A blog post.",
+        "email": "An email.",
+        "social_media": "A post."
+      }
+    },
+    "smart_recap_bundle": {
+      "professional": "# Recap\n\nA synthetic recap."
+    },
+    "event_payload": {
+      "data": {
+        "id": "synthetic-event",
+        "type": "events",
+        "attributes": {
+          "title": "Synthetic Product Webinar",
+          "language": "en",
+          "fields": [
+            {
+              "id": "email",
+              "type": "text",
+              "order": 0,
+              "required": true
+            },
+            {
+              "id": "first_name",
+              "type": "text",
+              "order": 1,
+              "required": true
+            },
+            {
+              "id": "last_name",
+              "type": "text",
+              "order": 2,
+              "required": true
+            },
+            {
+              "id": "company",
+              "type": "text",
+              "order": 3,
+              "required": false
+            },
+            {
+              "id": "job_title",
+              "type": "text",
+              "order": 4,
+              "required": false
+            },
+            {
+              "id": "team_size",
+              "type": "unique_select",
+              "order": 5,
+              "required": false
+            }
+          ]
+        }
+      }
+    },
+    "has_cover_image": false,
+    "cover_image_mime": null,
+    "cover_image_generated_at": null,
+    "created_by_user_id": "synthetic-user",
+    "created_by_email": "creator@example.test",
+    "created_by_name": "Synthetic Creator",
+    "created_at": "2026-10-01T10:00:00+00:00",
+    "updated_at": "2026-10-02T08:30:00+00:00"
+  },
+  "workspace": {
+    "sessionId": "synthetic-webinar",
+    "updatedAt": "2026-10-02T08:30:00Z",
+    "speakerNames": {
+      "0": "Host",
+      "1": "Guest"
+    },
+    "meta": {
+      "eventTitle": "Synthetic Product Webinar",
+      "sessionName": "Synthetic webinar",
+      "startedAtUnix": 1790845200,
+      "startedAtLabel": "Oct 01, 2026 09:00 UTC",
+      "durationSeconds": 1800,
+      "durationLabel": "30m",
+      "attendeesCount": 8,
+      "registrantsCount": 10,
+      "internalSession": false,
+      "generatedByUserId": "synthetic-user",
+      "generatedByEmail": "creator@example.test",
+      "generatedByName": "Synthetic Creator",
+      "generatedAtIso": "2026-10-01T10:00:00+00:00",
+      "generatedAtLabel": "Oct 01, 2026",
+      "hasCoverImage": false,
+      "coverImageMime": "image/png",
+      "coverImageGeneratedAt": ""
+    },
+    "payloads": {
+      "transcript": {
+        "subtitles": [],
+        "language": "en",
+        "durationSeconds": 1800.0
+      }
+    },
+    "tables": {
+      "chat": [
+        {
+          "id": "msg-001",
+          "text_content": "Hello everyone",
+          "created_at": "2026-10-01 08:55:00 UTC",
+          "author_id": "u-aud-1",
+          "from_team_member": false,
+          "from_guest_speaker": false,
+          "session_id": "synthetic-webinar",
+          "event_id": "synthetic-event"
+        },
+        {
+          "id": "msg-002",
+          "text_content": "Excited for this one",
+          "created_at": "2026-10-01 08:58:00 UTC",
+          "author_id": "u-aud-2",
+          "from_team_member": false,
+          "from_guest_speaker": false,
+          "session_id": "synthetic-webinar",
+          "event_id": "synthetic-event"
+        },
+        {
+          "id": "msg-003",
+          "text_content": "Welcome! We start in a minute.",
+          "created_at": "2026-10-01 08:59:00 UTC",
+          "author_id": "u-team-1",
+          "from_team_member": true,
+          "from_guest_speaker": false,
+          "session_id": "synthetic-webinar",
+          "event_id": "synthetic-event"
+        },
+        {
+          "id": "msg-004",
+          "text_content": "Can you hear us?",
+          "created_at": "2026-10-01 08:59:30 UTC",
+          "author_id": "u-aud-3",
+          "from_team_member": false,
+          "from_guest_speaker": false,
+          "session_id": "synthetic-webinar",
+          "event_id": "synthetic-event"
+        },
+        {
+          "id": "msg-005",
+          "text_content": "Slides: https://example.test/slides",
+          "created_at": "2026-10-01 09:00:45 UTC",
+          "author_id": "u-team-1",
+          "from_team_member": true,
+          "from_guest_speaker": false,
+          "session_id": "synthetic-webinar",
+          "event_id": "synthetic-event"
+        },
+        {
+          "id": "msg-006",
+          "text_content": "Thanks!",
+          "created_at": "2026-10-01 09:01:10 UTC",
+          "author_id": "u-aud-1",
+          "from_team_member": false,
+          "from_guest_speaker": false,
+          "session_id": "synthetic-webinar",
+          "event_id": "synthetic-event"
+        },
+        {
+          "id": "msg-007",
+          "text_content": "Great intro",
+          "created_at": "2026-10-01 09:02:10 UTC",
+          "author_id": "u-aud-2",
+          "from_team_member": false,
+          "from_guest_speaker": false,
+          "session_id": "synthetic-webinar",
+          "event_id": "synthetic-event"
+        },
+        {
+          "id": "msg-008",
+          "text_content": "What about pricing?",
+          "created_at": "2026-10-01 09:03:20 UTC",
+          "author_id": "u-aud-3",
+          "from_team_member": false,
+          "from_guest_speaker": false,
+          "session_id": "synthetic-webinar",
+          "event_id": "synthetic-event"
+        },
+        {
+          "id": "msg-009",
+          "text_content": "Happy to cover pricing later",
+          "created_at": "2026-10-01 09:04:20 UTC",
+          "author_id": "u-guest-1",
+          "from_team_member": false,
+          "from_guest_speaker": true,
+          "session_id": "synthetic-webinar",
+          "event_id": "synthetic-event"
+        },
+        {
+          "id": "msg-010",
+          "text_content": "This dashboard looks useful",
+          "created_at": "2026-10-01 09:10:00 UTC",
+          "author_id": "u-aud-4",
+          "from_team_member": false,
+          "from_guest_speaker": false,
+          "session_id": "synthetic-webinar",
+          "event_id": "synthetic-event"
+        },
+        {
+          "id": "msg-011",
+          "text_content": "+1",
+          "created_at": "2026-10-01 09:10:15 UTC",
+          "author_id": "u-aud-1",
+          "from_team_member": false,
+          "from_guest_speaker": false,
+          "session_id": "synthetic-webinar",
+          "event_id": "synthetic-event"
+        },
+        {
+          "id": "msg-012",
+          "text_content": "Is there a replay?",
+          "created_at": "2026-10-01 09:15:00 UTC",
+          "author_id": "u-aud-2",
+          "from_team_member": false,
+          "from_guest_speaker": false,
+          "session_id": "synthetic-webinar",
+          "event_id": "synthetic-event"
+        },
+        {
+          "id": "msg-013",
+          "text_content": "Yes, the replay link comes by email",
+          "created_at": "2026-10-01 09:15:05 UTC",
+          "author_id": "u-team-2",
+          "from_team_member": true,
+          "from_guest_speaker": false,
+          "session_id": "synthetic-webinar",
+          "event_id": "synthetic-event"
+        },
+        {
+          "id": "msg-014",
+          "text_content": "Love the export feature",
+          "created_at": "2026-10-01 09:20:00 UTC",
+          "author_id": "u-aud-1",
+          "from_team_member": false,
+          "from_guest_speaker": false,
+          "session_id": "synthetic-webinar",
+          "event_id": "synthetic-event"
+        },
+        {
+          "id": "msg-015",
+          "text_content": "Thank you all",
+          "created_at": "2026-10-01 09:25:00 UTC",
+          "author_id": "u-aud-3",
+          "from_team_member": false,
+          "from_guest_speaker": false,
+          "session_id": "synthetic-webinar",
+          "event_id": "synthetic-event"
+        },
+        {
+          "id": "msg-016",
+          "text_content": "Bye!",
+          "created_at": "2026-10-01 09:30:00 UTC",
+          "author_id": "u-aud-2",
+          "from_team_member": false,
+          "from_guest_speaker": false,
+          "session_id": "synthetic-webinar",
+          "event_id": "synthetic-event"
+        },
+        {
+          "id": "msg-017",
+          "text_content": "See you next time",
+          "created_at": "2026-10-01 09:30:40 UTC",
+          "author_id": "u-aud-4",
+          "from_team_member": false,
+          "from_guest_speaker": false,
+          "session_id": "synthetic-webinar",
+          "event_id": "synthetic-event"
+        }
+      ],
+      "questions": [
+        {
+          "id": "qst-001",
+          "question": "Will the slides be shared?",
+          "response": "Yes, see the chat.",
+          "asked_by": "Theo Park",
+          "answered_by": "Nora Vale",
+          "asked_at": "2026-10-01 08:59:15 UTC",
+          "responded_at": "2026-10-01 09:00:50 UTC",
+          "up_votes_count": 0,
+          "answered_orally": false
+        },
+        {
+          "id": "qst-002",
+          "question": "How does pricing work for teams?",
+          "response": null,
+          "asked_by": "Mila Ford",
+          "answered_by": null,
+          "asked_at": "2026-10-01 09:05:00 UTC",
+          "responded_at": null,
+          "up_votes_count": 1,
+          "answered_orally": true
+        },
+        {
+          "id": "qst-003",
+          "question": "Can we export to CSV?",
+          "response": "Yes, from the Chat page.",
+          "asked_by": "Sam Reed",
+          "answered_by": "Nora Vale",
+          "asked_at": "2026-10-01 09:12:00 UTC",
+          "responded_at": "2026-10-01 09:12:40 UTC",
+          "up_votes_count": 0,
+          "answered_orally": false
+        },
+        {
+          "id": "qst-004",
+          "question": "Is there an API?",
+          "response": null,
+          "asked_by": "Omar Quinn",
+          "answered_by": null,
+          "asked_at": "2026-10-01 09:27:30 UTC",
+          "responded_at": null,
+          "up_votes_count": 0,
+          "answered_orally": false
+        }
+      ],
+      "overview": [
+        {
+          "label": "Status",
+          "value": "past"
+        },
+        {
+          "label": "Timezone",
+          "value": "Europe/Paris"
+        },
+        {
+          "label": "Session Name",
+          "value": "Synthetic webinar"
+        },
+        {
+          "label": "Started At",
+          "value": "2026-10-01 09:00:00 UTC"
+        },
+        {
+          "label": "Ended At",
+          "value": "2026-10-01 09:30:00 UTC"
+        },
+        {
+          "label": "Duration",
+          "value": "30m"
+        },
+        {
+          "label": "Registrants",
+          "value": "10"
+        },
+        {
+          "label": "Attendees",
+          "value": "8"
+        },
+        {
+          "label": "Attendance Rate",
+          "value": "80.0%"
+        }
+      ],
+      "people": [
+        {
+          "person_id": "p-host",
+          "role": "team_member",
+          "first_name": "Nora",
+          "last_name": "Vale",
+          "full_name": "Nora Vale",
+          "email": "nora.vale@example.test",
+          "company": "Example Co",
+          "job_title": "Head of Events",
+          "timezone": "Europe/Paris",
+          "attended": true,
+          "attendance_rate": 100,
+          "attendance_duration": 1800,
+          "attendance_duration_label": "30m",
+          "has_viewed_replay": false,
+          "registration_type": null,
+          "is_guest_speaker": false,
+          "session_role": "organizer",
+          "browser_name": "Firefox",
+          "os_name": "Linux",
+          "ip_city": "Exampleville",
+          "ip_country_code": "FR",
+          "ip_country_name": "France",
+          "messages_count": 2,
+          "questions_count": 0,
+          "votes_count": 0,
+          "up_votes_count": 0,
+          "engagement_score": 2
+        },
+        {
+          "person_id": "p-cohost",
+          "role": "team_member",
+          "first_name": "Ilan",
+          "last_name": "Moss",
+          "full_name": "Ilan Moss",
+          "email": "ilan.moss@example.test",
+          "company": "Example Co",
+          "job_title": null,
+          "timezone": "Europe/Paris",
+          "attended": true,
+          "attendance_rate": 98,
+          "attendance_duration": 1764,
+          "attendance_duration_label": "29m 24s",
+          "has_viewed_replay": false,
+          "registration_type": null,
+          "is_guest_speaker": false,
+          "session_role": null,
+          "browser_name": "Firefox",
+          "os_name": "Linux",
+          "ip_city": "Exampleville",
+          "ip_country_code": "FR",
+          "ip_country_name": "France",
+          "messages_count": 1,
+          "questions_count": 0,
+          "votes_count": 0,
+          "up_votes_count": 0,
+          "engagement_score": 1
+        },
+        {
+          "person_id": "p-guest",
+          "role": "participant",
+          "first_name": "Rhea",
+          "last_name": "Stone",
+          "full_name": "Rhea Stone",
+          "email": "rhea.stone@example.test",
+          "company": null,
+          "job_title": "Analyst",
+          "timezone": "Europe/Paris",
+          "attended": true,
+          "attendance_rate": 95,
+          "attendance_duration": 1710,
+          "attendance_duration_label": "28m 30s",
+          "has_viewed_replay": false,
+          "registration_type": null,
+          "is_guest_speaker": true,
+          "session_role": null,
+          "browser_name": "Firefox",
+          "os_name": "Linux",
+          "ip_city": "Exampleville",
+          "ip_country_code": "FR",
+          "ip_country_name": "France",
+          "messages_count": 1,
+          "questions_count": 0,
+          "votes_count": 0,
+          "up_votes_count": 0,
+          "engagement_score": 1
+        },
+        {
+          "person_id": "p-aud-1",
+          "role": "participant",
+          "first_name": "Theo",
+          "last_name": "Park",
+          "full_name": "Theo Park",
+          "email": "theo.park@example.test",
+          "company": "Sample Labs",
+          "job_title": "Marketing lead",
+          "timezone": "Europe/Paris",
+          "attended": true,
+          "attendance_rate": 90,
+          "attendance_duration": 1620,
+          "attendance_duration_label": "27m",
+          "has_viewed_replay": false,
+          "registration_type": null,
+          "is_guest_speaker": false,
+          "session_role": null,
+          "browser_name": "Firefox",
+          "os_name": "Linux",
+          "ip_city": "Exampleville",
+          "ip_country_code": "FR",
+          "ip_country_name": "France",
+          "messages_count": 3,
+          "questions_count": 1,
+          "votes_count": 0,
+          "up_votes_count": 2,
+          "engagement_score": 10
+        },
+        {
+          "person_id": "p-aud-2",
+          "role": "participant",
+          "first_name": "Mila",
+          "last_name": "Ford",
+          "full_name": "Mila Ford",
+          "email": "mila.ford@example.test",
+          "company": null,
+          "job_title": null,
+          "timezone": "Europe/Paris",
+          "attended": true,
+          "attendance_rate": 80,
+          "attendance_duration": 1440,
+          "attendance_duration_label": "24m",
+          "has_viewed_replay": false,
+          "registration_type": null,
+          "is_guest_speaker": false,
+          "session_role": null,
+          "browser_name": "Firefox",
+          "os_name": "Linux",
+          "ip_city": "Exampleville",
+          "ip_country_code": "DE",
+          "ip_country_name": "Germany",
+          "messages_count": 2,
+          "questions_count": 1,
+          "votes_count": 0,
+          "up_votes_count": 0,
+          "engagement_score": 5
+        },
+        {
+          "person_id": "p-aud-3",
+          "role": "participant",
+          "first_name": "Sam",
+          "last_name": "Reed",
+          "full_name": "Sam Reed",
+          "email": "sam.reed@example.test",
+          "company": null,
+          "job_title": null,
+          "timezone": "Europe/Paris",
+          "attended": true,
+          "attendance_rate": 75,
+          "attendance_duration": 1350,
+          "attendance_duration_label": "22m 30s",
+          "has_viewed_replay": false,
+          "registration_type": "detailed",
+          "is_guest_speaker": false,
+          "session_role": null,
+          "browser_name": "Firefox",
+          "os_name": "Linux",
+          "ip_city": "Exampleville",
+          "ip_country_code": "FR",
+          "ip_country_name": "France",
+          "messages_count": 2,
+          "questions_count": 1,
+          "votes_count": 0,
+          "up_votes_count": 0,
+          "engagement_score": 5
+        },
+        {
+          "person_id": "p-aud-4",
+          "role": "participant",
+          "first_name": "Lena",
+          "last_name": "Hart",
+          "full_name": "Lena Hart",
+          "email": "lena.hart@example.test",
+          "company": null,
+          "job_title": null,
+          "timezone": "Europe/Paris",
+          "attended": true,
+          "attendance_rate": 60,
+          "attendance_duration": 1080,
+          "attendance_duration_label": "18m",
+          "has_viewed_replay": false,
+          "registration_type": null,
+          "is_guest_speaker": false,
+          "session_role": null,
+          "browser_name": "Firefox",
+          "os_name": "Linux",
+          "ip_city": "Exampleville",
+          "ip_country_code": "US",
+          "ip_country_name": "United States",
+          "messages_count": 1,
+          "questions_count": 0,
+          "votes_count": 0,
+          "up_votes_count": 0,
+          "engagement_score": 1
+        },
+        {
+          "person_id": "p-aud-5",
+          "role": "participant",
+          "first_name": "Omar",
+          "last_name": "Quinn",
+          "full_name": "Omar Quinn",
+          "email": "omar.quinn@example.test",
+          "company": "Sample Labs",
+          "job_title": null,
+          "timezone": "Europe/Paris",
+          "attended": true,
+          "attendance_rate": 40,
+          "attendance_duration": 720,
+          "attendance_duration_label": "12m",
+          "has_viewed_replay": false,
+          "registration_type": null,
+          "is_guest_speaker": false,
+          "session_role": null,
+          "browser_name": "Firefox",
+          "os_name": "Linux",
+          "ip_city": "Exampleville",
+          "ip_country_code": "FR",
+          "ip_country_name": "France",
+          "messages_count": 0,
+          "questions_count": 1,
+          "votes_count": 0,
+          "up_votes_count": 0,
+          "engagement_score": 3
+        },
+        {
+          "person_id": "p-aud-6",
+          "role": "participant",
+          "first_name": "Jade",
+          "last_name": "Bell",
+          "full_name": "Jade Bell",
+          "email": "jade.bell@example.test",
+          "company": null,
+          "job_title": null,
+          "timezone": "Europe/Paris",
+          "attended": false,
+          "attendance_rate": 0,
+          "attendance_duration": 0,
+          "attendance_duration_label": "0s",
+          "has_viewed_replay": true,
+          "registration_type": null,
+          "is_guest_speaker": false,
+          "session_role": null,
+          "browser_name": "Firefox",
+          "os_name": "Linux",
+          "ip_city": "Exampleville",
+          "ip_country_code": "US",
+          "ip_country_name": "United States",
+          "messages_count": 0,
+          "questions_count": 0,
+          "votes_count": 0,
+          "up_votes_count": 0,
+          "engagement_score": 0
+        },
+        {
+          "person_id": "p-aud-7",
+          "role": "participant",
+          "first_name": "Ravi",
+          "last_name": "Cole",
+          "full_name": "Ravi Cole",
+          "email": "ravi.cole@example.test",
+          "company": null,
+          "job_title": null,
+          "timezone": "Europe/Paris",
+          "attended": false,
+          "attendance_rate": 0,
+          "attendance_duration": 0,
+          "attendance_duration_label": "0s",
+          "has_viewed_replay": false,
+          "registration_type": null,
+          "is_guest_speaker": false,
+          "session_role": null,
+          "browser_name": "Firefox",
+          "os_name": "Linux",
+          "ip_city": "Exampleville",
+          "ip_country_code": "FR",
+          "ip_country_name": "France",
+          "messages_count": 0,
+          "questions_count": 0,
+          "votes_count": 0,
+          "up_votes_count": 0,
+          "engagement_score": 0
+        }
+      ],
+      "country": [
+        {
+          "ip_country_name": "France",
+          "people_count": 7,
+          "attendees": 6
+        },
+        {
+          "ip_country_name": "United States",
+          "people_count": 2,
+          "attendees": 1
+        },
+        {
+          "ip_country_name": "Germany",
+          "people_count": 1,
+          "attendees": 1
+        }
+      ],
+      "role": [
+        {
+          "role": "participant",
+          "people_count": 8
+        },
+        {
+          "role": "team_member",
+          "people_count": 2
+        }
+      ],
+      "attendanceDistribution": [
+        {
+          "attendance_band": "0%",
+          "people_count": 2
+        },
+        {
+          "attendance_band": "1-25%",
+          "people_count": 0
+        },
+        {
+          "attendance_band": "26-50%",
+          "people_count": 1
+        },
+        {
+          "attendance_band": "51-75%",
+          "people_count": 2
+        },
+        {
+          "attendance_band": "76-100%",
+          "people_count": 5
+        }
+      ],
+      "engagementTop": [
+        {
+          "person_id": "p-aud-1",
+          "role": "participant",
+          "first_name": "Theo",
+          "last_name": "Park",
+          "full_name": "Theo Park",
+          "email": "theo.park@example.test",
+          "company": "Sample Labs",
+          "job_title": "Marketing lead",
+          "timezone": "Europe/Paris",
+          "attended": true,
+          "attendance_rate": 90,
+          "attendance_duration": 1620,
+          "attendance_duration_label": "27m",
+          "has_viewed_replay": false,
+          "registration_type": null,
+          "is_guest_speaker": false,
+          "session_role": null,
+          "browser_name": "Firefox",
+          "os_name": "Linux",
+          "ip_city": "Exampleville",
+          "ip_country_code": "FR",
+          "ip_country_name": "France",
+          "messages_count": 3,
+          "questions_count": 1,
+          "votes_count": 0,
+          "up_votes_count": 2,
+          "engagement_score": 10
+        },
+        {
+          "person_id": "p-aud-2",
+          "role": "participant",
+          "first_name": "Mila",
+          "last_name": "Ford",
+          "full_name": "Mila Ford",
+          "email": "mila.ford@example.test",
+          "company": null,
+          "job_title": null,
+          "timezone": "Europe/Paris",
+          "attended": true,
+          "attendance_rate": 80,
+          "attendance_duration": 1440,
+          "attendance_duration_label": "24m",
+          "has_viewed_replay": false,
+          "registration_type": null,
+          "is_guest_speaker": false,
+          "session_role": null,
+          "browser_name": "Firefox",
+          "os_name": "Linux",
+          "ip_city": "Exampleville",
+          "ip_country_code": "DE",
+          "ip_country_name": "Germany",
+          "messages_count": 2,
+          "questions_count": 1,
+          "votes_count": 0,
+          "up_votes_count": 0,
+          "engagement_score": 5
+        },
+        {
+          "person_id": "p-aud-3",
+          "role": "participant",
+          "first_name": "Sam",
+          "last_name": "Reed",
+          "full_name": "Sam Reed",
+          "email": "sam.reed@example.test",
+          "company": null,
+          "job_title": null,
+          "timezone": "Europe/Paris",
+          "attended": true,
+          "attendance_rate": 75,
+          "attendance_duration": 1350,
+          "attendance_duration_label": "22m 30s",
+          "has_viewed_replay": false,
+          "registration_type": "detailed",
+          "is_guest_speaker": false,
+          "session_role": null,
+          "browser_name": "Firefox",
+          "os_name": "Linux",
+          "ip_city": "Exampleville",
+          "ip_country_code": "FR",
+          "ip_country_name": "France",
+          "messages_count": 2,
+          "questions_count": 1,
+          "votes_count": 0,
+          "up_votes_count": 0,
+          "engagement_score": 5
+        },
+        {
+          "person_id": "p-aud-5",
+          "role": "participant",
+          "first_name": "Omar",
+          "last_name": "Quinn",
+          "full_name": "Omar Quinn",
+          "email": "omar.quinn@example.test",
+          "company": "Sample Labs",
+          "job_title": null,
+          "timezone": "Europe/Paris",
+          "attended": true,
+          "attendance_rate": 40,
+          "attendance_duration": 720,
+          "attendance_duration_label": "12m",
+          "has_viewed_replay": false,
+          "registration_type": null,
+          "is_guest_speaker": false,
+          "session_role": null,
+          "browser_name": "Firefox",
+          "os_name": "Linux",
+          "ip_city": "Exampleville",
+          "ip_country_code": "FR",
+          "ip_country_name": "France",
+          "messages_count": 0,
+          "questions_count": 1,
+          "votes_count": 0,
+          "up_votes_count": 0,
+          "engagement_score": 3
+        },
+        {
+          "person_id": "p-aud-4",
+          "role": "participant",
+          "first_name": "Lena",
+          "last_name": "Hart",
+          "full_name": "Lena Hart",
+          "email": "lena.hart@example.test",
+          "company": null,
+          "job_title": null,
+          "timezone": "Europe/Paris",
+          "attended": true,
+          "attendance_rate": 60,
+          "attendance_duration": 1080,
+          "attendance_duration_label": "18m",
+          "has_viewed_replay": false,
+          "registration_type": null,
+          "is_guest_speaker": false,
+          "session_role": null,
+          "browser_name": "Firefox",
+          "os_name": "Linux",
+          "ip_city": "Exampleville",
+          "ip_country_code": "US",
+          "ip_country_name": "United States",
+          "messages_count": 1,
+          "questions_count": 0,
+          "votes_count": 0,
+          "up_votes_count": 0,
+          "engagement_score": 1
+        },
+        {
+          "person_id": "p-aud-6",
+          "role": "participant",
+          "first_name": "Jade",
+          "last_name": "Bell",
+          "full_name": "Jade Bell",
+          "email": "jade.bell@example.test",
+          "company": null,
+          "job_title": null,
+          "timezone": "Europe/Paris",
+          "attended": false,
+          "attendance_rate": 0,
+          "attendance_duration": 0,
+          "attendance_duration_label": "0s",
+          "has_viewed_replay": true,
+          "registration_type": null,
+          "is_guest_speaker": false,
+          "session_role": null,
+          "browser_name": "Firefox",
+          "os_name": "Linux",
+          "ip_city": "Exampleville",
+          "ip_country_code": "US",
+          "ip_country_name": "United States",
+          "messages_count": 0,
+          "questions_count": 0,
+          "votes_count": 0,
+          "up_votes_count": 0,
+          "engagement_score": 0
+        },
+        {
+          "person_id": "p-aud-7",
+          "role": "participant",
+          "first_name": "Ravi",
+          "last_name": "Cole",
+          "full_name": "Ravi Cole",
+          "email": "ravi.cole@example.test",
+          "company": null,
+          "job_title": null,
+          "timezone": "Europe/Paris",
+          "attended": false,
+          "attendance_rate": 0,
+          "attendance_duration": 0,
+          "attendance_duration_label": "0s",
+          "has_viewed_replay": false,
+          "registration_type": null,
+          "is_guest_speaker": false,
+          "session_role": null,
+          "browser_name": "Firefox",
+          "os_name": "Linux",
+          "ip_city": "Exampleville",
+          "ip_country_code": "FR",
+          "ip_country_name": "France",
+          "messages_count": 0,
+          "questions_count": 0,
+          "votes_count": 0,
+          "up_votes_count": 0,
+          "engagement_score": 0
+        }
+      ],
+      "transcriptSegments": [
+        {
+          "segment_id": null,
+          "start_seconds": 3.0,
+          "end_seconds": 6.05,
+          "start_label": "00:03",
+          "duration_seconds": 3.05,
+          "text": "welcome everyone thanks for joining us today",
+          "speaker": "0",
+          "word_count": 7,
+          "words_per_second": 2.3,
+          "minute_bucket": 0,
+          "minute_label": "00:00"
+        },
+        {
+          "segment_id": null,
+          "start_seconds": 12.0,
+          "end_seconds": 16.4,
+          "start_label": "00:12",
+          "duration_seconds": 4.4,
+          "text": "today we look at the new dashboard and the export",
+          "speaker": "0",
+          "word_count": 10,
+          "words_per_second": 2.27,
+          "minute_bucket": 0,
+          "minute_label": "00:00"
+        },
+        {
+          "segment_id": null,
+          "start_seconds": 60.0,
+          "end_seconds": 63.95,
+          "start_label": "01:00",
+          "duration_seconds": 3.95,
+          "text": "happy to be here let me share my screen",
+          "speaker": "1",
+          "word_count": 9,
+          "words_per_second": 2.28,
+          "minute_bucket": 1,
+          "minute_label": "01:00"
+        },
+        {
+          "segment_id": null,
+          "start_seconds": 300.0,
+          "end_seconds": 303.5,
+          "start_label": "05:00",
+          "duration_seconds": 3.5,
+          "text": "pricing works per team and scales with seats",
+          "speaker": "1",
+          "word_count": 8,
+          "words_per_second": 2.29,
+          "minute_bucket": 5,
+          "minute_label": "05:00"
+        },
+        {
+          "segment_id": null,
+          "start_seconds": 760.0,
+          "end_seconds": 763.05,
+          "start_label": "12:40",
+          "duration_seconds": 3.05,
+          "text": "yes you can export everything to csv",
+          "speaker": "0",
+          "word_count": 7,
+          "words_per_second": 2.3,
+          "minute_bucket": 12,
+          "minute_label": "12:00"
+        },
+        {
+          "segment_id": null,
+          "start_seconds": 1700.0,
+          "end_seconds": 1703.05,
+          "start_label": "28:20",
+          "duration_seconds": 3.05,
+          "text": "thank you all see you next time",
+          "speaker": "0",
+          "word_count": 7,
+          "words_per_second": 2.3,
+          "minute_bucket": 28,
+          "minute_label": "28:00"
+        }
+      ],
+      "transcriptNumbers": [],
+      "transcriptSpeakers": [
+        {
+          "speaker": "0",
+          "speaking_seconds": 13.55,
+          "segments": 4,
+          "words": 31,
+          "speaking_label": "00:13",
+          "share_pct": 64.5
+        },
+        {
+          "speaker": "1",
+          "speaking_seconds": 7.45,
+          "segments": 2,
+          "words": 17,
+          "speaking_label": "00:07",
+          "share_pct": 35.5
+        }
+      ],
+      "transcriptSpeakerTurns": [
+        {
+          "segment_id": null,
+          "start_seconds": 3.0,
+          "end_seconds": 6.05,
+          "start_label": "00:03",
+          "duration_seconds": 3.05,
+          "text": "welcome everyone thanks for joining us today",
+          "speaker": "0",
+          "word_count": 7,
+          "words_per_second": 2.3,
+          "minute_bucket": 0,
+          "minute_label": "00:00",
+          "excerpt": "welcome everyone thanks for joining us today"
+        },
+        {
+          "segment_id": null,
+          "start_seconds": 12.0,
+          "end_seconds": 16.4,
+          "start_label": "00:12",
+          "duration_seconds": 4.4,
+          "text": "today we look at the new dashboard and the export",
+          "speaker": "0",
+          "word_count": 10,
+          "words_per_second": 2.27,
+          "minute_bucket": 0,
+          "minute_label": "00:00",
+          "excerpt": "today we look at the new dashboard and the export"
+        },
+        {
+          "segment_id": null,
+          "start_seconds": 60.0,
+          "end_seconds": 63.95,
+          "start_label": "01:00",
+          "duration_seconds": 3.95,
+          "text": "happy to be here let me share my screen",
+          "speaker": "1",
+          "word_count": 9,
+          "words_per_second": 2.28,
+          "minute_bucket": 1,
+          "minute_label": "01:00",
+          "excerpt": "happy to be here let me share my screen"
+        },
+        {
+          "segment_id": null,
+          "start_seconds": 300.0,
+          "end_seconds": 303.5,
+          "start_label": "05:00",
+          "duration_seconds": 3.5,
+          "text": "pricing works per team and scales with seats",
+          "speaker": "1",
+          "word_count": 8,
+          "words_per_second": 2.29,
+          "minute_bucket": 5,
+          "minute_label": "05:00",
+          "excerpt": "pricing works per team and scales with seats"
+        },
+        {
+          "segment_id": null,
+          "start_seconds": 760.0,
+          "end_seconds": 763.05,
+          "start_label": "12:40",
+          "duration_seconds": 3.05,
+          "text": "yes you can export everything to csv",
+          "speaker": "0",
+          "word_count": 7,
+          "words_per_second": 2.3,
+          "minute_bucket": 12,
+          "minute_label": "12:00",
+          "excerpt": "yes you can export everything to csv"
+        },
+        {
+          "segment_id": null,
+          "start_seconds": 1700.0,
+          "end_seconds": 1703.05,
+          "start_label": "28:20",
+          "duration_seconds": 3.05,
+          "text": "thank you all see you next time",
+          "speaker": "0",
+          "word_count": 7,
+          "words_per_second": 2.3,
+          "minute_bucket": 28,
+          "minute_label": "28:00",
+          "excerpt": "thank you all see you next time"
+        }
+      ],
+      "transcriptSilence": [
+        {
+          "silence_start_seconds": 0.0,
+          "silence_end_seconds": 3.0,
+          "silence_start_label": "00:00",
+          "silence_end_label": "00:03",
+          "gap_seconds": 3.0,
+          "pause_type": "Strong silence",
+          "speaker_transition": false,
+          "bucket_start_seconds": 0,
+          "bucket_label": "00:00"
+        },
+        {
+          "silence_start_seconds": 6.05,
+          "silence_end_seconds": 12.0,
+          "silence_start_label": "00:06",
+          "silence_end_label": "00:12",
+          "gap_seconds": 5.95,
+          "pause_type": "Strong silence",
+          "speaker_transition": false,
+          "bucket_start_seconds": 0,
+          "bucket_label": "00:00"
+        },
+        {
+          "silence_start_seconds": 16.4,
+          "silence_end_seconds": 60.0,
+          "silence_start_label": "00:16",
+          "silence_end_label": "01:00",
+          "gap_seconds": 43.6,
+          "pause_type": "Strong silence",
+          "speaker_transition": true,
+          "bucket_start_seconds": 0,
+          "bucket_label": "00:00"
+        },
+        {
+          "silence_start_seconds": 63.95,
+          "silence_end_seconds": 300.0,
+          "silence_start_label": "01:03",
+          "silence_end_label": "05:00",
+          "gap_seconds": 236.05,
+          "pause_type": "Strong silence",
+          "speaker_transition": false,
+          "bucket_start_seconds": 60,
+          "bucket_label": "01:00"
+        },
+        {
+          "silence_start_seconds": 303.5,
+          "silence_end_seconds": 760.0,
+          "silence_start_label": "05:03",
+          "silence_end_label": "12:40",
+          "gap_seconds": 456.5,
+          "pause_type": "Strong silence",
+          "speaker_transition": true,
+          "bucket_start_seconds": 300,
+          "bucket_label": "05:00"
+        },
+        {
+          "silence_start_seconds": 763.05,
+          "silence_end_seconds": 1700.0,
+          "silence_start_label": "12:43",
+          "silence_end_label": "28:20",
+          "gap_seconds": 936.95,
+          "pause_type": "Strong silence",
+          "speaker_transition": false,
+          "bucket_start_seconds": 720,
+          "bucket_label": "12:00"
+        },
+        {
+          "silence_start_seconds": 1703.05,
+          "silence_end_seconds": 1800.0,
+          "silence_start_label": "28:23",
+          "silence_end_label": "30:00",
+          "gap_seconds": 96.95,
+          "pause_type": "Strong silence",
+          "speaker_transition": false,
+          "bucket_start_seconds": 1680,
+          "bucket_label": "28:00"
+        }
+      ],
+      "transcriptPauseTypes": [
+        {
+          "pause_type": "Strong silence",
+          "count": 7,
+          "total_gap_seconds": 1779.0
+        }
+      ],
+      "transcriptPauseDistribution": [
+        {
+          "duration_bin": "0.75-1s",
+          "count": 0
+        },
+        {
+          "duration_bin": "1-2s",
+          "count": 0
+        },
+        {
+          "duration_bin": "2-3s",
+          "count": 0
+        },
+        {
+          "duration_bin": "3s+",
+          "count": 7
+        }
+      ],
+      "transcriptUtteranceDistribution": [
+        {
+          "duration_bin": "0-5s",
+          "count": 6
+        },
+        {
+          "duration_bin": "5-10s",
+          "count": 0
+        },
+        {
+          "duration_bin": "10-20s",
+          "count": 0
+        },
+        {
+          "duration_bin": "20-30s",
+          "count": 0
+        },
+        {
+          "duration_bin": "30s+",
+          "count": 0
+        }
+      ],
+      "transcriptTimeline": [
+        {
+          "minute_bucket": 0,
+          "word_count": 17.0,
+          "speaking_seconds": 7.45,
+          "segment_count": 2,
+          "minute_label": "00:00",
+          "words_per_minute": 136.9
+        },
+        {
+          "minute_bucket": 1,
+          "word_count": 9.0,
+          "speaking_seconds": 3.95,
+          "segment_count": 1,
+          "minute_label": "01:00",
+          "words_per_minute": 136.7
+        },
+        {
+          "minute_bucket": 5,
+          "word_count": 8.0,
+          "speaking_seconds": 3.5,
+          "segment_count": 1,
+          "minute_label": "05:00",
+          "words_per_minute": 137.1
+        },
+        {
+          "minute_bucket": 12,
+          "word_count": 7.0,
+          "speaking_seconds": 3.05,
+          "segment_count": 1,
+          "minute_label": "12:00",
+          "words_per_minute": 137.7
+        },
+        {
+          "minute_bucket": 28,
+          "word_count": 7.0,
+          "speaking_seconds": 3.05,
+          "segment_count": 1,
+          "minute_label": "28:00",
+          "words_per_minute": 137.7
+        }
+      ],
+      "transcriptBursts": [
+        {
+          "speaker": "0",
+          "start_seconds": 3.0,
+          "end_seconds": 6.05,
+          "word_count": 7,
+          "duration_seconds": 3.05,
+          "start_label": "00:03",
+          "burst_duration_bin": "0-10s"
+        },
+        {
+          "speaker": "0",
+          "start_seconds": 12.0,
+          "end_seconds": 16.4,
+          "word_count": 10,
+          "duration_seconds": 4.4,
+          "start_label": "00:12",
+          "burst_duration_bin": "0-10s"
+        },
+        {
+          "speaker": "1",
+          "start_seconds": 60.0,
+          "end_seconds": 63.95,
+          "word_count": 9,
+          "duration_seconds": 3.95,
+          "start_label": "01:00",
+          "burst_duration_bin": "0-10s"
+        },
+        {
+          "speaker": "1",
+          "start_seconds": 300.0,
+          "end_seconds": 303.5,
+          "word_count": 8,
+          "duration_seconds": 3.5,
+          "start_label": "05:00",
+          "burst_duration_bin": "0-10s"
+        },
+        {
+          "speaker": "0",
+          "start_seconds": 760.0,
+          "end_seconds": 763.05,
+          "word_count": 7,
+          "duration_seconds": 3.05,
+          "start_label": "12:40",
+          "burst_duration_bin": "0-10s"
+        },
+        {
+          "speaker": "0",
+          "start_seconds": 1700.0,
+          "end_seconds": 1703.05,
+          "word_count": 7,
+          "duration_seconds": 3.05,
+          "start_label": "28:20",
+          "burst_duration_bin": "0-10s"
+        }
+      ],
+      "transcriptBurstDistribution": [
+        {
+          "burst_duration_bin": "0-10s",
+          "count": 6
+        },
+        {
+          "burst_duration_bin": "10-30s",
+          "count": 0
+        },
+        {
+          "burst_duration_bin": "30-60s",
+          "count": 0
+        },
+        {
+          "burst_duration_bin": "60s+",
+          "count": 0
+        }
+      ],
+      "chatQuestionsTimeline": [
+        {
+          "bucket_start_pct": 0,
+          "transcript_words": 26.0,
+          "transcript_segments": 3.0,
+          "transcript_wpm": 137.0,
+          "chat_messages": 2.0,
+          "question_count": 1.0,
+          "bucket_end_pct": 10,
+          "progress_window": "0-10%",
+          "session_stage": "Opening (0-10%)"
+        },
+        {
+          "bucket_start_pct": 10,
+          "transcript_words": 8.0,
+          "transcript_segments": 1.0,
+          "transcript_wpm": 137.4,
+          "chat_messages": 2.0,
+          "question_count": 0.0,
+          "bucket_end_pct": 20,
+          "progress_window": "10-20%",
+          "session_stage": "Early (10-20%)"
+        },
+        {
+          "bucket_start_pct": 20,
+          "transcript_words": 0.0,
+          "transcript_segments": 0.0,
+          "transcript_wpm": 0.0,
+          "chat_messages": 2.0,
+          "question_count": 1.0,
+          "bucket_end_pct": 30,
+          "progress_window": "20-30%",
+          "session_stage": "Early (20-30%)"
+        },
+        {
+          "bucket_start_pct": 30,
+          "transcript_words": 0.0,
+          "transcript_segments": 0.0,
+          "transcript_wpm": 0.0,
+          "chat_messages": 0.0,
+          "question_count": 0.0,
+          "bucket_end_pct": 40,
+          "progress_window": "30-40%",
+          "session_stage": "Middle (30-40%)"
+        },
+        {
+          "bucket_start_pct": 40,
+          "transcript_words": 7.0,
+          "transcript_segments": 1.0,
+          "transcript_wpm": 138.0,
+          "chat_messages": 2.0,
+          "question_count": 1.0,
+          "bucket_end_pct": 50,
+          "progress_window": "40-50%",
+          "session_stage": "Middle (40-50%)"
+        },
+        {
+          "bucket_start_pct": 50,
+          "transcript_words": 0.0,
+          "transcript_segments": 0.0,
+          "transcript_wpm": 0.0,
+          "chat_messages": 1.0,
+          "question_count": 0.0,
+          "bucket_end_pct": 60,
+          "progress_window": "50-60%",
+          "session_stage": "Middle (50-60%)"
+        },
+        {
+          "bucket_start_pct": 60,
+          "transcript_words": 0.0,
+          "transcript_segments": 0.0,
+          "transcript_wpm": 0.0,
+          "chat_messages": 0.0,
+          "question_count": 0.0,
+          "bucket_end_pct": 70,
+          "progress_window": "60-70%",
+          "session_stage": "Late (60-70%)"
+        },
+        {
+          "bucket_start_pct": 70,
+          "transcript_words": 0.0,
+          "transcript_segments": 0.0,
+          "transcript_wpm": 0.0,
+          "chat_messages": 1.0,
+          "question_count": 0.0,
+          "bucket_end_pct": 80,
+          "progress_window": "70-80%",
+          "session_stage": "Late (70-80%)"
+        },
+        {
+          "bucket_start_pct": 80,
+          "transcript_words": 0.0,
+          "transcript_segments": 0.0,
+          "transcript_wpm": 0.0,
+          "chat_messages": 1.0,
+          "question_count": 0.0,
+          "bucket_end_pct": 90,
+          "progress_window": "80-90%",
+          "session_stage": "Closing (80-90%)"
+        },
+        {
+          "bucket_start_pct": 90,
+          "transcript_words": 7.0,
+          "transcript_segments": 1.0,
+          "transcript_wpm": 138.0,
+          "chat_messages": 2.0,
+          "question_count": 1.0,
+          "bucket_end_pct": 100,
+          "progress_window": "90-100%",
+          "session_stage": "Closing (90-100%)"
+        }
+      ],
+      "chatQuestionReactionMoments": [
+        {
+          "bucket_start_pct": 0,
+          "transcript_words_x": 26.0,
+          "transcript_segments_x": 3.0,
+          "transcript_wpm": 137.0,
+          "chat_messages": 2.0,
+          "question_count": 1.0,
+          "bucket_end_pct": 10,
+          "progress_window": "0-10%",
+          "session_stage": "Opening (0-10%)",
+          "start_seconds": 3.0,
+          "start_label": "00:03",
+          "speaker": "0",
+          "transcript_excerpt": "welcome everyone thanks for joining us today today we look at the new dashboard and the export happy to be here let me share my screen",
+          "transcript_segments_y": 3.0,
+          "transcript_words_y": 26.0,
+          "total_reactions": 3.0,
+          "excerpt": "welcome everyone thanks for joining us today today we look at the new dashboard and the export happy to be here let me s..."
+        },
+        {
+          "bucket_start_pct": 40,
+          "transcript_words_x": 7.0,
+          "transcript_segments_x": 1.0,
+          "transcript_wpm": 138.0,
+          "chat_messages": 2.0,
+          "question_count": 1.0,
+          "bucket_end_pct": 50,
+          "progress_window": "40-50%",
+          "session_stage": "Middle (40-50%)",
+          "start_seconds": 760.0,
+          "start_label": "12:40",
+          "speaker": "0",
+          "transcript_excerpt": "yes you can export everything to csv",
+          "transcript_segments_y": 1.0,
+          "transcript_words_y": 7.0,
+          "total_reactions": 3.0,
+          "excerpt": "yes you can export everything to csv"
+        },
+        {
+          "bucket_start_pct": 90,
+          "transcript_words_x": 7.0,
+          "transcript_segments_x": 1.0,
+          "transcript_wpm": 138.0,
+          "chat_messages": 2.0,
+          "question_count": 1.0,
+          "bucket_end_pct": 100,
+          "progress_window": "90-100%",
+          "session_stage": "Closing (90-100%)",
+          "start_seconds": 1700.0,
+          "start_label": "28:20",
+          "speaker": "0",
+          "transcript_excerpt": "thank you all see you next time",
+          "transcript_segments_y": 1.0,
+          "transcript_words_y": 7.0,
+          "total_reactions": 3.0,
+          "excerpt": "thank you all see you next time"
+        },
+        {
+          "bucket_start_pct": 10,
+          "transcript_words_x": 8.0,
+          "transcript_segments_x": 1.0,
+          "transcript_wpm": 137.4,
+          "chat_messages": 2.0,
+          "question_count": 0.0,
+          "bucket_end_pct": 20,
+          "progress_window": "10-20%",
+          "session_stage": "Early (10-20%)",
+          "start_seconds": 300.0,
+          "start_label": "05:00",
+          "speaker": "1",
+          "transcript_excerpt": "pricing works per team and scales with seats",
+          "transcript_segments_y": 1.0,
+          "transcript_words_y": 8.0,
+          "total_reactions": 2.0,
+          "excerpt": "pricing works per team and scales with seats"
+        }
+      ]
+    },
+    "stats": {
+      "sessionOverview": {
+        "status": "past",
+        "timezone": "Europe/Paris",
+        "duration_seconds": 1800,
+        "duration_label": "30m",
+        "registrants_count": 10,
+        "attendees_count": 8,
+        "attendance_rate_pct": 80.0,
+        "started_at_utc": "2026-10-01 09:00:00 UTC",
+        "ended_at_utc": "2026-10-01 09:30:00 UTC",
+        "people_count": 10,
+        "attended_people_count": 8,
+        "replay_viewers_count": 1,
+        "total_questions_count": 4,
+        "total_up_votes_count": 2,
+        "unique_countries_count": 3,
+        "total_messages_count": 13,
+        "team_messages_count": 4
+      },
+      "transcriptSummary": {
+        "total_segments": 6,
+        "total_words": 48,
+        "avg_words_per_minute": 137.1,
+        "total_speaking_seconds": 21.0,
+        "full_span_seconds": 1700.05,
+        "silence_count": 7,
+        "total_silence_seconds": 1779.0,
+        "longest_silence_seconds": 936.95,
+        "avg_pause_seconds": 254.14,
+        "pause_count_over_1s": 7,
+        "pause_timing_source": "word",
+        "global_wpm": 137.1,
+        "min_wpm": 136.2,
+        "max_wpm": 138.0,
+        "avg_response_seconds": 250.05,
+        "interruption_count": 0,
+        "filler_total": 0,
+        "entity_count": 0,
+        "kpi_mentions": 0,
+        "avg_confidence": 0.92,
+        "avg_sentence_length": 8.0,
+        "avg_engagement_score": 42.4,
+        "avg_clarity_score": 40.2,
+        "avg_cognitive_load_index": 37.9,
+        "low_energy_zone_count": 5,
+        "top_term": "export",
+        "dominant_segment_style": "Quick hits"
+      },
+      "chat": {
+        "total_messages": 13,
+        "unique_authors": 4,
+        "excluded_team_messages": 4,
+        "time_range_utc": {
+          "start": "2026-10-01 08:55:00 UTC",
+          "end": "2026-10-01 09:30:40 UTC"
+        },
+        "top_authors_by_message_count": {
+          "u-aud-1": 4,
+          "u-aud-2": 4,
+          "u-aud-3": 3,
+          "u-aud-4": 2
+        },
+        "text_length": {
+          "avg_chars": 14.69,
+          "median_chars": 16.0,
+          "max_chars": 27
+        }
+      },
+      "questions": {
+        "total_questions": 4,
+        "unique_askers": 4,
+        "top_askers_by_question_count": {
+          "Theo Park": 1,
+          "Mila Ford": 1,
+          "Sam Reed": 1,
+          "Omar Quinn": 1
+        },
+        "answered_questions": 3,
+        "unanswered_questions": 1
+      }
+    },
+    "text": {
+      "transcriptDisplay": "[00:03] welcome everyone thanks for joining us today\n[00:12] today we look at the new dashboard and the export\n[01:00] happy to be here let me share my screen\n[05:00] pricing works per team and scales with seats\n[12:40] yes you can export everything to csv\n[28:20] thank you all see you next time"
+    },
+    "outputs": {
+      "analysisBundle": {
+        "English": "# Synthetic analysis\n\nThe audience asked about pricing and exports."
+      },
+      "deepAnalysisBundle": {},
+      "contentRepurposeBundle": {
+        "English": {
+          "summary": "A summary.",
+          "blog": "A blog post.",
+          "email": "An email.",
+          "social_media": "A post."
+        }
+      },
+      "smartRecapBundle": {
+        "professional": "# Recap\n\nA synthetic recap."
+      }
+    }
+  }
+}
