@@ -46,18 +46,25 @@ Browser ── Vue SPA ──/api──▶ web: FastAPI (app.py) ─────
 
 ## Frontend code
 
-A Vue 3 single-page app built by Vite into `frontend/dist`, which FastAPI serves in production. In development, `npm run dev` proxies `/api` and `/brand-assets` to uvicorn. Dependencies are only `vue` and `vue-router`; charts are hand-built components.
+A Vue 3 single-page app built by Vite into `frontend/dist`, which FastAPI serves in production. In development, `npm run dev` proxies `/api` to uvicorn. Dependencies are only `vue` and `vue-router`; charts are hand-built components.
+
+Two designs live side by side while the redesign ships: the classic app (sidebar, `src/styles.css`) and the v1 design (top bar, light and dark, `src/design/` and `src/components/ui/`), chosen per browser with `?ui=v1` / `?ui=classic` and off by default ([brand.md](brand.md#the-v1-design-switch)).
 
 | Path | What it does |
 |---|---|
-| `src/App.vue` | Shell: sidebar navigation, top bar, the 401 handler |
+| `index.html` | Entry page; an inline script applies the v1 switch and a saved theme before first paint |
+| `src/main.js` | Resolves the design switch (`initUiVersion`), loads the stylesheets, mounts the app |
+| `src/App.vue` | Shell: the classic sidebar or, with the v1 switch on, the v1 top bar; the 401 handler |
 | `src/router.js` | Routes; every view but the session list is lazy-loaded |
 | `src/store/workspace.js` | The single reactive store (no Pinia): state, loaders, job polling |
 | `src/api.js` | `fetch` wrappers for `/api/*` |
 | `src/views/` | One file per route |
 | `src/components/` | `DataTable`, markdown cards, `AiJobProgress`, `SessionHero`, `KeyMomentsTimeline`, and chart cards under `charts/` |
 | `src/utils/csv.js` | CSV export for every table |
-| `src/styles.css` | Global styles |
+| `src/styles.css` | Global styles of the classic design |
+| `src/design/` | The v1 design system: `tokens.css` (every `--siq-*` token for light and dark, Sora), `uiVersion.js` (the switch), `theme.js` and `useTheme.js` (light/dark) |
+| `src/components/ui/` | v1 base components: `TopBar`, `ThemeToggle`, `Card`, `CardHeader`, `IconTile`, `StatCard`, `Collapsible`, `StatusWord`, `Chip`, `UiButton`, `TipBar`, `Icon` (vendored Lucide icons), `StormIqMark` |
+| `public/` | Copied as-is into the build root: the StormIQ mark as `favicon.svg`, `favicon.ico` and `apple-touch-icon.png`, and `fonts/` (Sora and its licence) |
 | `tests/` | Vitest |
 
 The rules for working in it are in [`frontend/CLAUDE.md`](../frontend/CLAUDE.md).
@@ -78,6 +85,7 @@ The rules for working in it are in [`frontend/CLAUDE.md`](../frontend/CLAUDE.md)
 | `/cross-analysis` | Placeholder for cross-session analysis ([roadmap](roadmap.md)) | — |
 | `/admin` | Users, admins, cached sessions, model settings | admin |
 | `/auth/callback`, `/beta-info` | OAuth landing, beta notice | — |
+| `/design` | The v1 component gallery: tokens, type, icons, every base component, with fictional sample content (noindex) | the v1 switch |
 
 `/single-analysis/:sessionId/...` is the sharing contract: a teammate in the same Livestorm org can open any such link and land on that tab with the cached workspace loaded. Older paths (`/events`, `/transcript`, …) redirect to their new equivalents.
 

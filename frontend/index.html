@@ -3,11 +3,36 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="icon" type="image/png" href="/brand-assets/icons/Icon-Livestorm-Primary.png" />
+    <link rel="icon" href="/favicon.ico" sizes="32x32" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <title>StormIQ</title>
+    <script>
+      // Before first paint: the v1 design switch and a saved theme choice, so
+      // the page doesn't flash the wrong layout or colours. Mirrors
+      // src/design/uiVersion.js and src/design/theme.js (same keys).
+      (function () {
+        var root = document.documentElement;
+        var storage = null;
+        var ui = null;
+        try { storage = window.localStorage; } catch (e) { storage = null; }
+        try { ui = new URLSearchParams(window.location.search).get("ui"); } catch (e) { ui = null; }
+        ui = String(ui || "").trim().toLowerCase();
+        if (ui !== "v1" && ui !== "classic") {
+          try { ui = storage && storage.getItem("stormiq:ui"); } catch (e) { ui = null; }
+        }
+        if (ui === "v1") root.setAttribute("data-ui", "v1");
+        try {
+          var theme = storage && storage.getItem("stormiq:theme");
+          if (theme === "light" || theme === "dark") root.setAttribute("data-theme", theme);
+        } catch (e) {
+          // No saved choice: follow the system.
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="app"></div>
     <script type="module" src="/src/main.js"></script>
   </body>
-  </html>
+</html>

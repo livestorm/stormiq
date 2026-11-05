@@ -19,4 +19,10 @@ export default [
       "no-unused-vars": ["error", { caughtErrors: "none", argsIgnorePattern: "^_", varsIgnorePattern: "^_" }],
     },
   },
+  {
+    // The design system's base components have short names (Card, Chip,
+    // Icon…); none collides with an HTML element ("Button" is UiButton).
+    files: ["src/components/ui/**/*.vue"],
+    rules: { "vue/multi-word-component-names": "off" },
+  },
 ];

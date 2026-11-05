@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from "vue-router";
 import SingleAnalysisListView from "./views/SingleAnalysisListView.vue";
+import { isV1 } from "./design/uiVersion";
 import { useWorkspace } from "./store/workspace";
 
 // The landing page (session list) ships in the entry bundle; every other
@@ -16,6 +17,7 @@ const ContentRepurposingView = () => import("./views/ContentRepurposingView.vue"
 const AuthCallbackView = () => import("./views/AuthCallbackView.vue");
 const BetaNoticeView = () => import("./views/BetaNoticeView.vue");
 const AdminView = () => import("./views/AdminView.vue");
+const DesignGalleryView = () => import("./views/DesignGalleryView.vue");
 
 // Routing.
 //
@@ -93,6 +95,16 @@ const routes = [
   { path: "/beta-info", component: BetaNoticeView },
   { path: "/auth/callback", component: AuthCallbackView },
   { path: "/admin", component: AdminView },
+
+  // ── v1 design ───────────────────────────────────────────────────────────
+  // The component gallery, for reviewing the design foundation in light and
+  // dark. Only reachable with the v1 switch on (?ui=v1); fictional content.
+  {
+    path: "/design",
+    component: DesignGalleryView,
+    meta: { v1Native: true },
+    beforeEnter: () => (isV1() ? true : { path: "/" }),
+  },
 ];
 
 export default createRouter({

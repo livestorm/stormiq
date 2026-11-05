@@ -4,7 +4,7 @@ A companion application for Livestorm that turns a finished session into a struc
 
 This document describes what the app does, the data it produces, and the formulas behind each metric and chart.
 
-> The navigation and routes described here (the Events list, `/session-overview`…) predate the current Search and Single Analysis pages ([architecture.md](architecture.md#pages)) and will be rewritten with the redesign. The views, charts and formulas are current.
+> The navigation and routes described here (the Events list, `/session-overview`…) predate the current Search and Single Analysis pages ([architecture.md](architecture.md#pages)) and will be rewritten with the redesign. The views, charts and formulas are current. The redesign can be previewed with `?ui=v1` ([brand.md](brand.md#the-v1-design-switch)): a top bar replaces the sidebar, with a light and dark mode; the views themselves are unchanged so far.
 
 ---
 
@@ -61,7 +61,7 @@ The app does not record sessions. It analyses sessions that already exist in Liv
 
 Two paths are supported:
 
-- **Livestorm OAuth** — the user is redirected to Livestorm, authorises the app, and is sent back with a server-side session cookie. The connected user's identity is shown in the sidebar.
+- **Livestorm OAuth** — the user is redirected to Livestorm, authorises the app, and is sent back with a server-side session cookie. The connected user's identity is shown in the sidebar (in the v1 design, on the top bar's account button).
 - **API key fallback** — only for local development: the operator must explicitly turn on local-development mode and configure an `LS_API_KEY`. It is never available in production.
 
 Access is scoped to the user's Livestorm organization: teammates in the same organization share cached sessions and analyses, while sessions from other organizations are not visible at all, not even through a shared link. Without a Livestorm connection, no session data is accessible.

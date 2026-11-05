@@ -21,8 +21,8 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Backend code only. No app.py (worker doesn't serve HTTP), no
-# frontend/dist, no assets/. The worker reads Postgres and Redis, calls
+# Backend code only. No app.py (worker doesn't serve HTTP) and no
+# frontend/dist. The worker reads Postgres and Redis, calls
 # the LLM providers and Gladia, and writes results back.
 COPY livestorm_app ./livestorm_app
 COPY prompts ./prompts

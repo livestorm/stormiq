@@ -11,7 +11,7 @@ StormIQ analyses finished Livestorm sessions. It fetches a session's details, ch
 3. **Slow or paid work runs only in the worker**, as arq jobs with deterministic ids, never inside a web request. arq retries nothing; users retry from the UI. → [jobs](docs/jobs.md)
 4. **Never lose or corrupt an output.** Write bundle columns one entry at a time (`db.merge_cached_bundle_entry`), let database writes raise, and save only complete AI output. → [data model](docs/data-model.md), [AI outputs](docs/ai-outputs.md)
 5. **Every outbound call has a timeout**, and only failures where nothing was billed are retried. → [providers](docs/providers.md)
-6. **Brand-adjacent, never brand-impersonating.** StormIQ uses Livestorm's design language but has its own name and mark: never use the Livestorm logo as the app's logo (the sidebar still shows a Livestorm icon; the redesign replaces it), and keep the "not an official Livestorm product" notice. → [brand](docs/brand.md)
+6. **Brand-adjacent, never brand-impersonating.** StormIQ uses Livestorm's design language but has its own name and mark: never use the Livestorm logo or icon as the app's logo (the app, the favicon and PDFs use the StormIQ mark: `StormIqMark.vue`, `public/favicon.svg`, `pdf.py`), and keep the "not an official Livestorm product" notice. → [brand](docs/brand.md)
 7. **The repository is public.** No secrets, customer data or details of unfixed vulnerabilities in code, commits, PRs or docs. `docs/improvement-plan.md` is local-only (listed in `.git/info/exclude`): never commit it.
 8. **Local means local.** Development and tests use the compose Postgres (port 5433) and Redis; test fixtures and benchmark scripts refuse other hosts. Never print values from `.env`.
 

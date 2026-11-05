@@ -6,7 +6,7 @@ A Vue 3 single-page app (Composition API, `<script setup>`) with vue-router, bui
 
 From `frontend/`, or with `make web` and `make check` at the repo root:
 
-- `npm run dev`: Vite on :5173, proxying `/api` and `/brand-assets` to the API on :8000
+- `npm run dev`: Vite on :5173, proxying `/api` to the API on :8000
 - `npm test`: Vitest (`tests/`)
 - `npm run lint`: ESLint
 - `npm run build`: production build
@@ -30,8 +30,20 @@ From `frontend/`, or with `make web` and `make check` at the repo root:
 - Routes are in `src/router.js`. Every view except the session list is lazy-loaded; keep it that way so the first page stays small.
 - `/single-analysis/:sessionId/...` is a sharing contract. Don't break existing paths; add a redirect when one moves.
 - CSV downloads go through `src/utils/csv.js` (`buildCsv`, `escapeCsvCell`). Text cells starting with `=`, `+`, `-`, `@`, tab or CR get a leading `'`, because chat and questions are written by attendees.
-- Styling follows [docs/brand.md](../docs/brand.md): Livestorm's design language, StormIQ's own identity. Never use the Livestorm logo as the app logo (`App.vue` still shows a Livestorm icon in the sidebar and top bar; the redesign replaces it with a StormIQ mark).
+- Styling follows [docs/brand.md](../docs/brand.md): Livestorm's design language, StormIQ's own identity. Never use the Livestorm logo or icon as the app logo: the app, the favicons (`public/favicon.svg`, `favicon.ico`, `apple-touch-icon.png`) and PDFs use the StormIQ mark (`components/ui/StormIqMark.vue`).
+
+## Design system (the v1 redesign)
+
+The redesign ships screen by screen behind a switch, off by default, so production users keep the classic app until they opt in.
+
+- **The switch.** `?ui=v1` turns the v1 design on and remembers it in this browser; `?ui=classic` turns it off (`src/design/uiVersion.js`, applied once in `main.js`; `isV1()` reads it). It sets `<html data-ui="v1">`. With it on, `App.vue` renders the top-bar shell (`components/ui/TopBar.vue`) instead of the sidebar; views not rebuilt yet render unchanged inside a dark frame. A route built for v1 sets `meta: { v1Native: true }` and fills the page. The account menu and the footer link back to the classic design.
+- **Where it lives.** Tokens, the Sora `@font-face` and v1 page basics: `src/design/tokens.css`. Theme: `src/design/theme.js` (pure) and `useTheme.js` (Vue). Base components: `src/components/ui/` (`Card`, `CardHeader`, `IconTile`, `StatCard`, `Collapsible`, `StatusWord`, `Chip`, `UiButton`, `TipBar`, `Icon`, `StormIqMark`, `ThemeToggle`, `TopBar`). Sora is in `public/fonts/` with its licence. Every component is shown at `/design` (v1 only).
+- **Rule for new UI: tokens only.** Colours, type sizes, radii, spacing and motion come from `--siq-*` custom properties; no raw hex, rgb or named colours in components (the token file is the one place for values). Never touch `src/styles.css` for v1 work. Shared v1 classes (components, `tokens.css`) start with `siq-`; a view's own scoped classes can use a short prefix of their own (the gallery uses `g-`). `styles.css` still loads under v1 and its element selectors (`a`, `button`, `input`, `select`, `textarea`) don't care about class names: they style the classic views inside the v1 frame, so a v1 form control must set its own font, colours, border, height and `select` chevron instead of inheriting the classic dark ones.
+- **Theme.** Light and dark come from the same tokens. The page follows the system until the user clicks the toggle; the choice is saved in `localStorage` (`stormiq:theme`). `index.html` applies the saved switch and theme before first paint (keep it in sync with `uiVersion.js` and `theme.js`; `tests/design.test.js` runs the inline script and checks it agrees with them). Print stays light. In the classic design the mark keeps its on-dark colours (`[data-colors-semantic="dark"]` in `tokens.css`).
+- **Less reading.** Prefer cards with an icon-tile header, stat cards and icon bullets to paragraphs; put anything longer than two lines in a `Collapsible`. Status is always icon + word (`StatusWord`), never colour alone.
+- **Icons** are Lucide paths vendored in `Icon.vue` (licence in `components/ui/LICENSE-lucide.txt`); Livestorm's icon font is proprietary and can't be in this public repo. Add an icon by copying its SVG children from Lucide into `ICONS`.
+- **Accessibility.** 40px targets (`--siq-target`), focus rings from `.siq-fx:focus-visible` (drawn inside, `outline-offset: -3px`, wherever a parent clips: a scrolling tab row, a flush card), transitions on named properties only (never `transition: all`), and `prefers-reduced-motion` honoured. Edges and current-item marks drawn with `box-shadow` also need a `@media (forced-colors: active)` border, because High Contrast removes shadows. A link that must not navigate while disabled uses `RouterLink`'s `custom` slot (a plain `@click` on `RouterLink` runs after it navigates).
 
 ## Tests
 
-Vitest, with fake timers for polls. `tests/workspace.test.js` mocks `api.js` and covers the store's async behaviour (scopes, aborts, polls, loading flags); `tests/api-and-csv.test.js` covers URL building, 401 handling and CSV escaping. `tests/audience.test.js` covers the audience-only chat split and what counts as an answered question (`src/utils/audience.js`). Add or update a test with every store change.
+Vitest, with fake timers for polls. `tests/workspace.test.js` mocks `api.js` and covers the store's async behaviour (scopes, aborts, polls, loading flags); `tests/api-and-csv.test.js` covers URL building, 401 handling and CSV escaping. `tests/audience.test.js` covers the audience-only chat split and what counts as an answered question (`src/utils/audience.js`). `tests/design.test.js` covers the v1 switch and the theme (defaults, persistence, query params, storage that throws, the system preference), the `index.html` pre-paint script against both, and `useTheme`. Add or update a test with every store change.

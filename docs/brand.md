@@ -1,8 +1,131 @@
-# Brand Reference — Livestorm
+# Brand
+
+StormIQ is a Livestorm-adjacent tool: it uses Livestorm's design language (colours, radii, voice) and should feel native to the Livestorm ecosystem, but it has its own name and mark and is not a Livestorm product.
+
+Two designs live in the app while the redesign ships screen by screen:
+
+- **v1** (the redesign, opt-in): described first, below. New UI is built only with it.
+- **Classic** (what users see by default): the [Livestorm brand reference](#livestorm-brand-reference-classic-design) further down, implemented in `frontend/src/styles.css`.
+
+---
+
+## The v1 design
+
+### The v1 design switch
+
+The v1 design is off by default. `?ui=v1` on any URL turns it on and remembers it in that browser; `?ui=classic` turns it off (`frontend/src/design/uiVersion.js`; the choice is a `localStorage` convenience under `stormiq:ui`, and the switch still works for the page load when storage is blocked). With it on, the app shows the v1 top bar instead of the sidebar; screens not rebuilt yet appear unchanged inside a dark frame. `/design` shows every token and component in the current theme, with fictional sample content; it is reachable only with the switch on and is not indexed.
+
+### Typeface: Sora
+
+Sora (SIL Open Font License 1.1) is the free typeface closest to Object Sans: at 400 it has the same line width, and unlike Object Sans it has tabular figures, so tables and counters line up. One variable file, `frontend/public/fonts/Sora-Variable-latin.woff2` (weights 100–800, Latin, Latin-1, Œ/œ and €, so every French character), with its licence in `Sora-OFL.txt` beside it. Stack: `"Sora", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif` (`--siq-font`). Use weights 400, 500 and 600 only. The classic design keeps its own font stack.
+
+### Colour tokens
+
+Every colour is a CSS custom property in `frontend/src/design/tokens.css`, named `--siq-<role>`. Components use roles, never raw colours. Light is the default; dark applies with `data-theme="dark"` on `<html>`, or when the system prefers dark and the user hasn't chosen light. Text roles pass WCAG 4.5:1 on the surfaces they're used on; borders, focus rings and meaningful fills pass 3:1.
+
+| Role | Used for | Light | Dark |
+|---|---|---|---|
+| `page` | page background | `#F6F8F9` | `#091316` |
+| `card` | content cards | `#FFFFFF` | `#0F1B1F` |
+| `card-shadow` | card elevation, with a 1px `hairline` inset | `0 1px 2px rgba(13,22,38,0.04), 0 4px 12px rgba(13,22,38,0.05)` | `0 0 0 0 transparent`: no shadow, the hairline carries the edge. Never `none`: components write `var(--siq-card-shadow), inset 0 0 0 1px …`, and `none` inside a list makes the whole declaration invalid, so the hairline would go too |
+| `card-hover` | hover rows inside a card | `#F6F8F9` | `#182427` |
+| `ground` | chart backgrounds off a card | `#FFFFFF` | `#091316` |
+| `surface` | panels, popovers, sunken areas | `#F6F8F9` | `#0F1B1F` |
+| `surface-2` | tracks, count badges, hover on controls | `#EAEEF1` | `#182427` |
+| `topbar` | top bar (plus a bottom hairline) | `#FFFFFF` | `#0F1B1F` |
+| `input` | field backgrounds | `#FFFFFF` | `#0F1B1F` |
+| `selected-bg` / `selected-ink` | icon tiles, avatar, selected segment | `#F0F4FF` / `#0B42C3` | `#1C2A2E` / `#FFFFFF` |
+| `ink` | headings, body | `#12262B` | `#FFFFFF` |
+| `ink-2` | secondary text, inactive nav and tabs | `#4D5B66` | `#CED0D0` |
+| `muted` | captions, labels, placeholders | `#5D6D79` | `#A4B5C1` |
+| `border` / `border-hover` | control borders | `#8094A3` / `#5D6D79` | `#5D6D79` / `#CED0D0` |
+| `hairline`, `hairline-row`, `hairline-head` | dividers, table rows, table headers | `rgba(18,38,43,0.10 / 0.08 / 0.14)` | `rgba(255,255,255,0.08 / 0.06 / 0.12)` |
+| `nontext` | rings, empty tracks | `#8094A3` | `#8094A3` |
+| `cta` / `cta-hover` / `cta-ink` | primary button | `#0B42C3` / `#05299E` / white | `#477580` / `#335D67` / white |
+| `accent` / `accent-hover` | links, active tab and nav indicator | `#0B42C3` / `#05299E` | `#88C0CD` / `#B7D9E1` |
+| `focus` | focus ring (2px, offset 3px) | `#0B42C3` | `#88C0CD` |
+| `notice` | quiet notices, the "Next time" tip bar | `#F0F4FF` | `rgba(136,192,205,0.08)` |
+| `good` / `good-fill` / `good-tint` | status text / marks / backgrounds | `#0C7C59` / `#17A679` / `#F3FCFB` | `#59D4C0` / `#2EB89A` / `rgba(46,184,154,0.14)` |
+| `fair` / `fair-fill` / `fair-tint` | | `#916308` / `#D3A20D` / `#FFF4D1` | `#FED348` / `#FED348` / `rgba(254,211,72,0.14)` |
+| `low` / `low-fill` / `low-tint` | | `#BE3A37` / `#BE3A37` / `#FDF7F7` | `#EB9E9F` / `#E26F71` / `rgba(226,111,113,0.14)` |
+| `s1`, `s2`, `s3`, `other` | chart series: audience, questions, host team, reference and "Other" | `#0B54FE`, `#DE7835`, `#0C7C59`, `#A4B5C1` | `#447CFD`, `#CB4A1A`, `#0C7C59`, `#8094A3` |
+| `mark-fill` / `mark-iq` / `mark-bars` | the StormIQ mark | `#0B42C3` / `#0B42C3` / white | `#447CFD` / `#88C0CD` / white |
+| `ridge-fill`, `img-outline` | the session ridge, outlines on images | `rgba(18,38,43,0.07)`, `rgba(0,0,0,0.1)` | `rgba(255,255,255,0.10)`, `rgba(255,255,255,0.1)` |
+
+Rules: on light surfaces CTAs and links are Livestorm Blue; on dark surfaces CTAs are Winter Green 700. The light `fair-fill` is below 3:1 on white, so a status fill never stands alone: it always has its value and an icon + word beside it. Charts use at most three series plus "Other", with direct labels; text is never in a series colour. An entity keeps its colour everywhere.
+
+### Type, shape, space, motion
+
+| Token | Size / line height | Used for |
+|---|---|---|
+| `--siq-text-display` | 40/48, 400 | page and session titles, big numbers in stat cards |
+| `--siq-text-headline` | 28/36 | finding headlines |
+| `--siq-text-section` | 24/32 | section titles; a finding's headline inside a card |
+| `--siq-text-stat` | 32/40 | stat callouts |
+| `--siq-text-card-title` | 18/24, 500 | card titles |
+| `--siq-text-body` | 18/30 | summaries |
+| `--siq-text-lead` | 16/24 | lead lines |
+| `--siq-text-ui` | 14/20 | UI text |
+| `--siq-text-small` | 13/18 | labels, sub-lines |
+| `--siq-text-caption` | 12/16 | captions, source lines; uppercase labels with `--siq-label-tracking` |
+| `--siq-text-nav` | 15/20, 500 | top-bar navigation |
+| `--siq-text-tag` | 11/16, 500 | the "Beta" tag |
+| `--siq-text-reading-lh` | 22 | line height for 14px text read as prose ("How we know") |
+
+Numbers that line up use `font-variant-numeric: tabular-nums`; headings use `text-wrap: balance`. Radii: 12px controls (`--siq-radius-control`), 10px icon tiles, 16px cards, 999px chips, 6px around inline links and timestamps (`--siq-radius-inline`, so their focus ring is rounded). Spacing steps: 4, 8, 12, 16, 20, 24, 32, 48, 64 (`--siq-space-*`). The main container is 1200px wide with 32px gutters (16px on phones). Anything clickable is at least 40px tall (`--siq-target`), timestamps in evidence rows included. Transitions name their properties (colour, background, border, shadow, opacity) over 200ms `cubic-bezier(0,0,0.2,1)`, never `transition: all`, and drop to 0ms under `prefers-reduced-motion`.
+
+### Cards, not walls of text
+
+Users read long reports, so the v1 screens lean on cards, icons and collapsible sections:
+
+- **Cards** (`Card`): `card` background, 16px radius, `card-shadow` plus a 1px `hairline` inset, 24px padding (32px for the page's lead card). 16–24px between cards. Never a card inside a card: inside one, separate parts with a hairline and space.
+- **Card header** (`CardHeader`): a 36×36 icon tile (`selected-bg`, glyph in `selected-ink`), the title (18/24, 500), and on the right a status word, a count badge or actions.
+- **Stat cards** (`StatCard`): icon tile, label, one big tabular number, a one-line sub-line (two lines on phones), and an info button that opens how the number is computed, with its status word. 24px padding, like every card.
+- **Collapsible sections** (`Collapsible`): real `<details>`/`<summary>`. As a card, the summary row is the card header plus a one-line takeaway and a key-number chip; a chevron points down when closed and up when open. On phones the takeaway gets two lines and the chip moves under it. As a link ("How we know", "Evidence (3)"), it is a quiet accent toggle. The card title is a heading inside `<summary>`; some screen readers flatten a summary's content, so the title may be missing from heading navigation there (it is still announced as the toggle's name). Where the page outline matters, put a section heading above a group of collapsibles.
+- **A card that asks for your check** (`Card tone="fair"`): `fair-tint` background; the icon tile and the "Needs your check" pill inside it sit on the `card` colour so they keep their shape.
+- **Text budget**: no visible paragraph longer than two lines on a report's front page; anything longer goes into a collapsible. Prefer stat callouts (a big number and a short label) and icon bullets (icon + one line) to sentences full of numbers.
+- **"Next time"** (`TipBar`): `notice` background, 12px radius, a target icon and one line.
+- **Status words** (`StatusWord`), always icon + word, never colour alone: **Measured** (check, `good`), **Estimated** (info, `muted`), **Needs your check** (shield, `fair` on `fair-tint`).
+- **Chips and badges** (`Chip`): small pills, outlined (`neutral`), count badges (`count`), key numbers (`accent`) and status tints.
+- **Buttons** (`UiButton`): primary (`cta`, one per view), secondary (outlined), ghost (accent text) and icon-only (40×40, with an `aria-label`).
+
+### Icons
+
+Livestorm's icon font is proprietary and can't ship in this public repository, so v1 uses [Lucide](https://lucide.dev) (ISC licence; portions from Feather, MIT): a stroke icon set close to Livestorm's in weight and shape. The icons are vendored as SVG data in `frontend/src/components/ui/Icon.vue` (no runtime dependency), with the licence in `LICENSE-lucide.txt` beside it. Icons inherit `currentColor` and are decorative (`aria-hidden`) unless given a label. One meaning per icon, used the same way everywhere:
+
+| Meaning | Icon | Meaning | Icon |
+|---|---|---|---|
+| questions | `message-circle` | chapters | `list` |
+| open question | `help-circle` | the record | `file-text` |
+| audience | `users` | "Next time" | `target` |
+| show-up | `user-check` | evidence, timestamp | `play` |
+| time in the room, wait gap | `timer` | method | `settings` |
+| the moment, a surge | `zap` | checked, Measured | `check` |
+| the Pulse | `activity` | Estimated, definitions | `info` |
+| channels | `share-2` | download / copy | `download` / `copy` |
+| lead time, sessions | `calendar` | Surprise Me! | `star` |
+| segments | `pie-chart` | wrote in chat or Q&A | `pen-line` |
+| the room | `presentation` | Needs your check | `shield` |
+| view as table | `table` | | |
+
+Plus the UI basics: chevrons, `x`, `plus`, `search`, `lock`, `menu`, `refresh-cw`, `external-link`, `more-horizontal`, `log-in`, `log-out`, `sun`, `moon`.
+
+### Light and dark mode
+
+The page follows the system (`prefers-color-scheme`) until the user clicks the theme toggle in the top bar; that saves an explicit choice in the browser (`stormiq:theme`), which wins over the system until cleared. The toggle is a 40×40 icon button whose label names the action ("Switch to dark mode" / "Switch to light mode"). An inline script in `index.html` applies a saved choice before first paint, so there is no flash. `color-scheme` follows the theme so form controls and scrollbars match. Images keep their colours in both modes, with the `img-outline`. Printing and PDF exports stay light, even after an explicit dark choice.
+
+In Windows High Contrast (`forced-colors: active`) the browser removes box-shadows, which v1 uses for card edges, the active tab and the account menu, so each component draws real borders there instead (`CanvasText`, and `Highlight` for the current page or tab).
+
+### The StormIQ mark
+
+A circle (`mark-fill`) with three ascending white rounded bars, then the wordmark "Storm" + "IQ" (IQ in `mark-iq`), Sora 600 at 18/24, followed in the top bar by a small "Beta" tag. It is drawn by `StormIqMark.vue` in the app (both designs), by `frontend/public/favicon.svg` as the favicon (with `favicon.ico` and `apple-touch-icon.png` rendered from the same geometry for browsers and home screens that don't take SVG), and by `pdf.py` on PDFs. The classic design is dark only, so there the mark always uses its on-dark colours (`#447CFD` disc, `#88C0CD` IQ) whatever the theme. It is never the Livestorm logo or icon.
+
+---
+
+## Livestorm brand reference (classic design)
 
 > Source: https://brand.livestorm.co
-> This app is a Livestorm-adjacent tool and should feel visually native to the Livestorm ecosystem.
-> Do not invent colors, fonts, or styles. Use only what is defined here.
+> The classic design (`frontend/src/styles.css`) follows this reference. Do not invent colors, fonts, or styles there; use only what is defined here. The v1 design above takes its values from the same palette.
 
 ---
 
@@ -185,7 +308,7 @@ colors: {
 
 ## What this app is NOT
 
-- Not an official Livestorm product — do not use the Livestorm logo as the app logo
+- Not an official Livestorm product — do not use the Livestorm logo or icon as the app logo; the app, the favicon and PDFs use the StormIQ mark
 - Use "StormIQ" as the app name
 - The app should feel brand-adjacent, not brand-impersonating
 - PDF exports are headed by the StormIQ mark, drawn in `pdf.py`: a `#0B42C3` circle with three ascending white rounded bars, then the wordmark "Storm" + "IQ" (IQ in `#0B42C3`). Their footer repeats the "not an official Livestorm product" notice (in French for French exports)
