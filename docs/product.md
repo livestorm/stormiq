@@ -99,7 +99,7 @@ Six top-level cards pulled directly from the session payload:
 | Attendees | `attributes.attendees_count` |
 | Attendance Rate | `attendees_count / registrants_count × 100` |
 | Replay Viewers | Count of people with `has_viewed_replay = true` |
-| Chat Messages | Sum of `messages_count` across audience members (team members and guest speakers left out); the card says "Excludes your team (n)" with their message count |
+| Chat Messages | Sum of `messages_count` across audience members (team members and guest speakers left out); the card says "Excludes your team (n)" with their message count. On an internal session everyone counts and the card says "Internal session: everyone counts" |
 | Questions | Sum of `questions_count` across people |
 
 ### Tab: Summary
@@ -107,7 +107,7 @@ Six top-level cards pulled directly from the session payload:
 
 ### Tab: People
 - **List of People** — name, email, country, city, attendance rate, role, company, job title, attendance duration, message count, question count, upvote count
-- **Most Engaged People** — top 12 audience members sorted by engagement score; team members (`role = team_member`) and guest speakers (`is_guest_speaker`) are left out
+- **Most Engaged People** — top 12 audience members sorted by engagement score; team members (`role = team_member`) and guest speakers (`is_guest_speaker`) are left out, except on an internal session ([§13](#13-glossary-of-metrics-and-formulas))
   - **Engagement Score formula:**
     `messages_count + (questions_count × 3) + (up_votes_count × 2)`
 
@@ -201,7 +201,7 @@ Pause threshold for inclusion: gaps must be ≥ 0.75s to be flagged. Pauses are 
 
 ### Hero metrics
 
-Chat metrics count **audience messages** only ([§13](#13-glossary-of-metrics-and-formulas)). When the team or guest speakers wrote in the chat, the Messages card says "Excludes your team (n)" with the number of their messages, and the Unique Chatters card with the number of those people.
+Chat metrics count **audience messages** only ([§13](#13-glossary-of-metrics-and-formulas)). When the team or guest speakers wrote in the chat, the Messages card says "Excludes your team (n)" with the number of their messages, and the Unique Chatters card with the number of those people. On an internal session, such as a company all-hands, every message counts: the cards, Top Contributors and Activity Over Time say "Internal session: everyone counts".
 
 | Metric | Formula |
 |---|---|
@@ -412,8 +412,9 @@ Every PDF is headed by the StormIQ mark and ends each page with the "not an offi
 |---|---|
 | Attendance rate | `attendees_count / registrants_count × 100` |
 | Person engagement score | `messages_count + (questions_count × 3) + (up_votes_count × 2)` |
-| Audience message | A chat message where neither `from_team_member` nor `from_guest_speaker` is true. Messages cached without these flags count as audience |
-| Audience member | A person whose `role` is not `team_member` and who is not a guest speaker (`is_guest_speaker`). Used by Session Overview's Chat Messages and Most Engaged People |
+| Internal session | Team members (`role = team_member`, not guest speakers) are more than half of the attendees (`attended` true). When attendance is unknown or nobody attended, registrants are counted instead. No people: not internal. Decided once per session (`audience.is_internal_session`) |
+| Audience message | A chat message where neither `from_team_member` nor `from_guest_speaker` is true. Messages cached without these flags count as audience. On an internal session every message is an audience message |
+| Audience member | A person whose `role` is not `team_member` and who is not a guest speaker (`is_guest_speaker`). On an internal session everyone is an audience member. Used by Session Overview's Chat Messages and Most Engaged People |
 | Question coverage rate | `answered / total_questions × 100` (answered = has a responder, or `response_orally` is true; older payloads spell it `responded_orally`) |
 
 ### Transcript-level

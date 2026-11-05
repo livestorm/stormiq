@@ -2,6 +2,10 @@
 
 What has shipped, newest first. What's next is in [roadmap.md](roadmap.md).
 
+## November 2026: internal sessions
+
+- **Internal sessions count everyone.** Audience-only chat metrics left nothing on an internal meeting, such as an all-hands, where everyone is a team member: Messages, Unique Chatters, Avg Msg Length, Top Contributors, Activity Over Time, the cross-source timeline, Most Engaged People and the chat stats sent to the AI dropped to zero, with "Excludes your team (n)". When team members are more than half of the attendees ([product.md §13](product.md#13-glossary-of-metrics-and-formulas)), nothing is left out, the cards say "Internal session: everyone counts" and the AI is told the session is internal. Public sessions are unchanged.
+
 ## November 2026: redesign foundation
 
 - **The StormIQ mark replaces the Livestorm icon** in the classic sidebar, the compact top bar and the favicon (`public/favicon.svg`, with `favicon.ico` and `apple-touch-icon.png` for browsers and home screens that don't take SVG). In the classic sidebar it keeps its on-dark colours whatever the system theme. The Livestorm icon PNGs and the `/brand-assets` route that served them are gone.

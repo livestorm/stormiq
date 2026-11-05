@@ -93,10 +93,10 @@ The rules for working in it are in [`frontend/CLAUDE.md`](../frontend/CLAUDE.md)
 
 The deterministic analytics are pandas code in `livestorm_app/analytics/`. The entry points:
 
-- `build_session_overview_data(session_payload)`: hero stats, people table, country, role and attendance distributions.
+- `build_session_overview_data(session_payload)`: hero stats, people table, country, role and attendance distributions, and `internal_session`, the session's `audience.is_internal_session` decision ([product.md §13](product.md#13-glossary-of-metrics-and-formulas)).
 - `build_transcript_insights(transcript_payload)`: about 27 DataFrames (pace, airtime, pauses, named entities, segments, engagement scoring, key moments).
-- `build_cross_source_insights(chat_df, questions_df, transcript_payload, transcript_insights=...)`: the 10-bucket session-stage timeline and reaction moments, from audience chat only.
-- `build_chat_df_from_payload(payload)`: one row per chat message, keeping the `from_team_member` and `from_guest_speaker` flags. `split_audience_chat(chat_df)` returns the audience messages and the number left out (what counts as audience: [product.md §13](product.md#13-glossary-of-metrics-and-formulas)).
+- `build_cross_source_insights(chat_df, questions_df, transcript_payload, transcript_insights=..., internal=...)`: the 10-bucket session-stage timeline and reaction moments, from audience chat only.
+- `build_chat_df_from_payload(payload)`: one row per chat message, keeping the `from_team_member` and `from_guest_speaker` flags. `split_audience_chat(chat_df, internal=...)` returns the audience messages and the number left out (what counts as audience: [product.md §13](product.md#13-glossary-of-metrics-and-formulas)). With `internal=True` it keeps every message.
 - `build_question_stats(questions_df)`: answered and unanswered split ([product.md §13](product.md#13-glossary-of-metrics-and-formulas)).
 
 Every metric, chart and formula is documented once, in [product.md §13](product.md#13-glossary-of-metrics-and-formulas). Don't copy formulas elsewhere; link to it.
@@ -109,4 +109,5 @@ Opening a session is the hottest path. These rules keep a 2-hour session around 
 - **Polls and job starts read only what they need.** `db.fetch_session_fields(session_id, [fields], organization_id=...)` reads allow-listed columns or flags, with the same scope rules as `fetch_cached_session`. The transcript poll reads `has_transcript`; AI polls and starts read their own bundle column. The full row is loaded only to return a finished result.
 - **The card list never loads payloads.** `db.list_workspace_sessions` selects the session attributes, the event title and language, and has-output flags computed in SQL (`db._has_content_sql`).
 - **No raw upstream payloads in the workspace.** The serialized workspace carries derived tables, the display transcript and AI outputs. `payloads.transcript` is `{subtitles, language, durationSeconds}` (or null); the full transcript is a separate download (`/transcript.json`). Add a table back only when a view needs it.
+- **The internal-session decision is made once per read.** `api_logic._serialize_cached_session` takes it from `build_session_overview_data`, passes it to `build_derived_stats` and `build_cross_source_insights`, and sends it as `meta.internalSession`; the SPA (`frontend/src/utils/audience.js`) uses it rather than deciding again.
 - **System settings** are cached for 60 s per process.

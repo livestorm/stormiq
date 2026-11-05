@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
+
+from livestorm_app.analytics.audience import is_internal_session
 
 
 def extract_session_resource(session_payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -123,10 +125,16 @@ def build_session_people_df(session_payload: Dict[str, Any]) -> pd.DataFrame:
     return people_df
 
 
-def audience_people_mask(people_df: pd.DataFrame) -> pd.Series:
+def session_is_internal(session_payload: Dict[str, Any]) -> bool:
+    """Whether the session is internal (`audience.is_internal_session`), from its people."""
+    return is_internal_session(build_session_people_df(session_payload))
+
+
+def audience_people_mask(people_df: pd.DataFrame, *, internal: bool = False) -> pd.Series:
     """True for audience members: not the host team (`role == "team_member"`)
-    and not a guest speaker (`is_guest_speaker`)."""
-    if people_df.empty:
+    and not a guest speaker (`is_guest_speaker`). On an internal session
+    (`audience.is_internal_session`) everyone is audience."""
+    if people_df.empty or internal:
         return pd.Series(True, index=people_df.index, dtype=bool)
     is_team = people_df["role"].fillna("").astype(str).str.strip().eq("team_member")
     is_guest_speaker = people_df["is_guest_speaker"].apply(
@@ -135,9 +143,13 @@ def audience_people_mask(people_df: pd.DataFrame) -> pd.Series:
     return ~is_team & ~is_guest_speaker
 
 
-def build_session_stats(session_payload: Dict[str, Any]) -> Dict[str, Any]:
+def build_session_stats(session_payload: Dict[str, Any], *, internal: Optional[bool] = None) -> Dict[str, Any]:
+    """`internal` is the session's `is_internal_session` decision; when it is
+    None it is decided here from the session's people."""
     attributes = extract_session_attributes(session_payload)
     people_df = build_session_people_df(session_payload)
+    if internal is None:
+        internal = is_internal_session(people_df)
 
     registrants_count = int(attributes.get("registrants_count") or 0)
     attendees_count = int(attributes.get("attendees_count") or 0)
@@ -160,8 +172,9 @@ def build_session_stats(session_payload: Dict[str, Any]) -> Dict[str, Any]:
         stats["attended_people_count"] = int(attended_mask.sum())
         stats["replay_viewers_count"] = int(people_df["has_viewed_replay"].fillna(False).astype(bool).sum())
         # Chat messages are the audience's, as on the Chat page; the team's
-        # and guest speakers' messages are counted apart.
-        is_audience = audience_people_mask(people_df)
+        # and guest speakers' messages are counted apart (none on an
+        # internal session, where everyone counts).
+        is_audience = audience_people_mask(people_df, internal=internal)
         stats["total_messages_count"] = int(people_df.loc[is_audience, "messages_count"].sum())
         stats["team_messages_count"] = int(people_df.loc[~is_audience, "messages_count"].sum())
         stats["total_questions_count"] = int(people_df["questions_count"].sum())
@@ -171,7 +184,13 @@ def build_session_stats(session_payload: Dict[str, Any]) -> Dict[str, Any]:
     return stats
 
 
-def build_compact_session_payload_for_llm(session_payload: Dict[str, Any], max_people: int = 40) -> Dict[str, Any]:
+def build_compact_session_payload_for_llm(
+    session_payload: Dict[str, Any],
+    max_people: int = 40,
+    *,
+    internal: Optional[bool] = None,
+) -> Dict[str, Any]:
+    """`internal`: as in `build_session_stats`."""
     attributes = extract_session_attributes(session_payload)
     compact_payload: Dict[str, Any] = {
         "session": {
@@ -189,6 +208,8 @@ def build_compact_session_payload_for_llm(session_payload: Dict[str, Any], max_p
     }
 
     people_df = build_session_people_df(session_payload)
+    if internal is None:
+        internal = is_internal_session(people_df)
     if not people_df.empty:
         attended_df = people_df.loc[people_df["attended"].fillna(False).astype(bool)].copy()
         compact_payload["participant_summary"] = {
@@ -222,8 +243,8 @@ def build_compact_session_payload_for_llm(session_payload: Dict[str, Any], max_p
             ),
             "replay_viewers": int(people_df["has_viewed_replay"].fillna(False).astype(bool).sum()),
             # Audience members only, so the host is never read as the most
-            # engaged attendee.
-            "top_chatters": people_df.loc[audience_people_mask(people_df)].sort_values(
+            # engaged attendee (everyone, on an internal session).
+            "top_chatters": people_df.loc[audience_people_mask(people_df, internal=internal)].sort_values(
                 by=["messages_count", "questions_count", "up_votes_count", "attendance_duration"],
                 ascending=[False, False, False, False],
             )
@@ -252,9 +273,12 @@ def build_compact_session_payload_for_llm(session_payload: Dict[str, Any], max_p
 
 
 def build_session_overview_data(session_payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Also returns `internal_session`, the session's `is_internal_session`
+    decision, made once here so the workspace's other charts reuse it."""
     attributes = extract_session_attributes(session_payload)
     people_df = build_session_people_df(session_payload)
-    stats = build_session_stats(session_payload)
+    internal = is_internal_session(people_df)
+    stats = build_session_stats(session_payload, internal=internal)
 
     overview_rows = [
         {"label": "Status", "value": str(attributes.get("status") or "n/a")},
@@ -282,6 +306,7 @@ def build_session_overview_data(session_payload: Dict[str, Any]) -> Dict[str, An
             "role_df": empty_df,
             "attendance_distribution_df": empty_df,
             "engagement_top_df": empty_df,
+            "internal_session": internal,
         }
 
     # "Attendance by country" counts attendees; `people_count` (registrants)
@@ -319,8 +344,8 @@ def build_session_overview_data(session_payload: Dict[str, Any]) -> Dict[str, An
     )
 
     # Most engaged people are audience members: the host team and guest
-    # speakers are left out.
-    engagement_top_df = people_df.loc[audience_people_mask(people_df)].sort_values(
+    # speakers are left out, except on an internal session.
+    engagement_top_df = people_df.loc[audience_people_mask(people_df, internal=internal)].sort_values(
         by=["engagement_score", "messages_count", "questions_count", "attendance_duration"],
         ascending=[False, False, False, False],
     ).head(12)
@@ -333,4 +358,5 @@ def build_session_overview_data(session_payload: Dict[str, Any]) -> Dict[str, An
         "role_df": role_df,
         "attendance_distribution_df": attendance_distribution_df,
         "engagement_top_df": engagement_top_df,
+        "internal_session": internal,
     }

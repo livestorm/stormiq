@@ -59,7 +59,9 @@ const topMetrics = computed(() => [
   {
     label: "Chat Messages",
     value: stats.value.total_messages_count ?? "0",
-    hint: excludedTeamLabel(Number(stats.value.team_messages_count || 0)),
+    hint: excludedTeamLabel(Number(stats.value.team_messages_count || 0), {
+      internal: Boolean(state.workspace?.meta?.internalSession),
+    }),
   },
   { label: "Questions", value: stats.value.total_questions_count ?? "0" },
 ]);
