@@ -7,8 +7,13 @@ TEST_DATABASE_URL). Everything else runs on fakes.
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
+import importlib.util
+import json
 import threading
+from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
@@ -16,6 +21,8 @@ from livestorm_app import api_logic, db, llm_client, worker
 from livestorm_app.ai import generation
 from livestorm_app.db import ALL_ORGS
 from livestorm_app.gladia import transcriber
+from livestorm_app.livestorm import client as livestorm_client
+from livestorm_app.livestorm import payloads as livestorm_payloads
 
 
 def _row(session_id: str) -> dict:
@@ -265,3 +272,243 @@ def test_transcription_is_marked_error_when_saving_fails(monkeypatch):
         asyncio.run(worker.run_transcription({}, "job-1", "s1"))
     assert statuses[-1][0] == "error"
     assert ("completed", None) not in statuses
+
+
+# ── Registrant join links are never stored ─────────────────────────────────
+#
+# Synthetic payloads only. A person's `registrant_detail` holds a personal
+# join link (`password_key`, `connection_link`) that StormIQ doesn't need.
+
+JOIN_LINK_KEYS = ("password_key", "connection_link")
+OLD_UPDATED_AT = datetime(2026, 1, 2, 3, 4, 5, 678901, tzinfo=timezone.utc)
+
+
+def _person_with_join_link(person_id: str) -> dict:
+    return {
+        "id": person_id,
+        "type": "people",
+        "attributes": {
+            "first_name": "Test",
+            "registrant_detail": {
+                "attended": True,
+                "fields": [{"id": "job_title", "value": "Tester"}],
+                "password_key": f"pk-{person_id}",
+                "connection_link": f"https://example.test/join/{person_id}?key=pk-{person_id}",
+            },
+        },
+    }
+
+
+def _base_payloads() -> dict:
+    return {
+        "session_payload": {
+            "data": {"id": "s1", "type": "sessions", "attributes": {"event_id": "e1", "status": "past"}},
+            "included": [_person_with_join_link("p1"), _person_with_join_link("p2")],
+        },
+        "chat_payload": {
+            "data": [{"id": "m1", "type": "chat_messages", "attributes": {"text": "Hi", "author_id": "p1", "created_at": 1700000000}}],
+            "included": [_person_with_join_link("p1")],
+            "meta": {"next_page": None},
+        },
+        "questions_payload": {
+            "data": [{"id": "q1", "type": "questions", "attributes": {"question": "Why?", "created_at": 1700000100}}],
+            "included": [_person_with_join_link("p2")],
+            "meta": {"next_page": None},
+        },
+    }
+
+
+def _has_join_link(value) -> bool:
+    text = json.dumps(value)
+    return any(key in text for key in JOIN_LINK_KEYS)
+
+
+def _whole_row(session_id: str) -> dict:
+    with db.get_db_connection() as conn:
+        return dict(conn.execute("SELECT * FROM session_cache WHERE session_id = %s", (session_id,)).fetchone())
+
+
+def _set_updated_at(session_id: str, value: datetime) -> None:
+    with db.get_db_connection() as conn:
+        conn.execute("UPDATE session_cache SET updated_at = %s WHERE session_id = %s", (value, session_id))
+
+
+def test_a_base_fetch_never_saves_a_join_link(monkeypatch):
+    upstream = _base_payloads()
+    responses = {
+        "/sessions/s1": upstream["session_payload"],
+        "/sessions/s1/chat_messages": upstream["chat_payload"],
+        "/sessions/s1/questions": upstream["questions_payload"],
+        "/events/e1": {"data": {"id": "e1", "type": "events", "attributes": {"title": "Event"}}},
+    }
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return copy.deepcopy(self.payload)
+
+    def fake_get(url, *, headers, params=None):
+        return FakeResponse(responses[url.split("/v1", 1)[1]])
+
+    saved: dict = {}
+    monkeypatch.setattr(livestorm_client, "livestorm_get", fake_get)
+    monkeypatch.setattr(api_logic, "upsert_cached_session", lambda key, sid, **fields: saved.update(fields))
+    monkeypatch.setattr(api_logic, "fetch_cached_session", lambda key, sid, *, organization_id: dict(saved))
+    monkeypatch.setattr(api_logic, "_serialize_cached_session", lambda sid, cached: {"sessionId": sid})
+
+    api_logic.fetch_session_base_data("Bearer t", "s1", force_refresh=True, read_scope="org-a", organization_id="org-a")
+
+    for column in db.BASE_PAYLOAD_COLUMNS:
+        assert _has_join_link(upstream[column]), f"the {column} fixture must hold a join link"
+        assert not _has_join_link(saved[column]), column
+    for column in ("session_payload", "chat_payload", "questions_payload"):
+        detail = saved[column]["included"][0]["attributes"]["registrant_detail"]
+        assert detail == {"attended": True, "fields": [{"id": "job_title", "value": "Tester"}]}, column
+
+
+def test_rewriting_base_payloads_changes_nothing_else(test_database):
+    db.upsert_cached_session(
+        "key-a",
+        "sess-a",
+        organization_id="org-a",
+        created_by_email="owner@example.test",
+        transcript_payload={"text": "x"},
+        analysis_bundle={"English": "EN"},
+        cover_image_bytes=b"png-bytes",
+        cover_image_mime="image/png",
+        **_base_payloads(),
+    )
+    _set_updated_at("sess-a", OLD_UPDATED_AT)
+    before = _whole_row("sess-a")
+    stripped = {column: livestorm_payloads.strip_payload_join_links(before[column]) for column in db.BASE_PAYLOAD_COLUMNS}
+
+    assert db.rewrite_base_payloads("sess-a", expected_updated_at=before["updated_at"], **stripped) is True
+
+    after = _whole_row("sess-a")
+    assert after["updated_at"] == OLD_UPDATED_AT, "a rewrite must not reorder the library"
+    for column in db.BASE_PAYLOAD_COLUMNS:
+        assert after[column] == stripped[column]
+        assert not _has_join_link(after[column])
+    others = set(before) - set(db.BASE_PAYLOAD_COLUMNS)
+    assert {key: after[key] for key in others} == {key: before[key] for key in others}
+
+
+def test_a_rewrite_never_overwrites_a_newer_save(test_database):
+    db.upsert_cached_session("key-a", "sess-a", **_base_payloads())
+    read = db.scan_base_payloads("", 10)[0]
+    newer = {"data": {"id": "s1", "type": "sessions", "attributes": {"status": "past", "name": "refetched"}}}
+    db.upsert_cached_session("key-a", "sess-a", session_payload=newer)
+
+    stale = livestorm_payloads.strip_payload_join_links(read["session_payload"])
+    assert db.rewrite_base_payloads("sess-a", expected_updated_at=read["updated_at"], session_payload=stale) is False
+    assert _row("sess-a")["session_payload"] == newer
+    assert db.rewrite_base_payloads("sess-missing", expected_updated_at=read["updated_at"], session_payload=stale) is False
+
+
+def test_scanning_base_payloads_walks_every_row_in_batches(test_database):
+    for session_id in ("sess-c", "sess-a", "sess-b"):
+        db.upsert_cached_session("key-a", session_id, organization_id=f"org-{session_id}", **_base_payloads())
+    first = db.scan_base_payloads("", 2)
+    second = db.scan_base_payloads(first[-1]["session_id"], 2)
+    assert [row["session_id"] for row in first + second] == ["sess-a", "sess-b", "sess-c"]
+    assert db.scan_base_payloads("sess-c", 2) == []
+    assert set(first[0]) == {"session_id", "updated_at", *db.BASE_PAYLOAD_COLUMNS}
+
+
+@pytest.mark.parametrize(
+    "payloads",
+    [{}, {"transcript_payload": {}}, {"session_payload": None}, {"chat_payload": ["not", "an", "object"]}],
+    ids=["nothing", "other-column", "null", "not-an-object"],
+)
+def test_rewrite_base_payloads_rejects_anything_but_base_payload_objects(payloads):
+    with pytest.raises(ValueError):
+        db.rewrite_base_payloads("sess-a", expected_updated_at=OLD_UPDATED_AT, **payloads)
+
+
+def test_rewrite_base_payloads_raises_when_the_database_write_fails(monkeypatch):
+    def broken_connection():
+        raise ConnectionError("database unreachable")
+
+    monkeypatch.setattr(db, "database_enabled", lambda: True)
+    monkeypatch.setattr(db, "get_db_connection", broken_connection)
+    with pytest.raises(RuntimeError, match="Could not rewrite"):
+        db.rewrite_base_payloads("sess-a", expected_updated_at=OLD_UPDATED_AT, session_payload={"data": {}})
+
+
+def _join_link_script():
+    path = Path(__file__).resolve().parents[1] / "scripts" / "strip_registrant_join_links.py"
+    spec = importlib.util.spec_from_file_location("strip_registrant_join_links", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_join_link_backfill_writes_only_when_applied(test_database):
+    script = _join_link_script()
+    clean = {column: livestorm_payloads.strip_payload_join_links(value) for column, value in _base_payloads().items()}
+    db.upsert_cached_session("key-a", "sess-links", organization_id="org-a", **_base_payloads())
+    db.upsert_cached_session("key-a", "sess-clean", organization_id="org-a", **clean)
+    for session_id in ("sess-links", "sess-clean"):
+        _set_updated_at(session_id, OLD_UPDATED_AT)
+    clean_before = _whole_row("sess-clean")
+
+    lines: list = []
+    totals = script.run(apply=False, batch_size=1, out=lines.append)
+    assert totals == {"scanned": 2, "to_clean": 1, "cleaned": 0, "changed_since_read": 0}
+    assert lines == ["would clean sess-links: session_payload=2 chat_payload=1 questions_payload=1"]
+    assert _has_join_link(_whole_row("sess-links")["session_payload"]), "a dry run writes nothing"
+
+    lines.clear()
+    totals = script.run(apply=True, batch_size=1, out=lines.append)
+    assert totals == {"scanned": 2, "to_clean": 1, "cleaned": 1, "changed_since_read": 0}
+    assert lines == ["cleaned sess-links: session_payload=2 chat_payload=1 questions_payload=1"]
+    cleaned = _whole_row("sess-links")
+    assert {column: cleaned[column] for column in db.BASE_PAYLOAD_COLUMNS} == clean
+    assert cleaned["updated_at"] == OLD_UPDATED_AT
+    assert _whole_row("sess-clean") == clean_before
+
+    assert script.run(apply=True, out=lines.append)["to_clean"] == 0, "a second run finds nothing to do"
+
+
+def test_the_join_link_backfill_skips_a_row_saved_since_it_was_read(test_database, monkeypatch, capsys):
+    script = _join_link_script()
+    db.upsert_cached_session("key-a", "sess-links", organization_id="org-a", **_base_payloads())
+    _set_updated_at("sess-links", OLD_UPDATED_AT)
+    newer_saves = iter(datetime(2026, 2, 1, 0, 0, second, tzinfo=timezone.utc) for second in range(10))
+
+    def saved_in_between(session_id, **kwargs):
+        # A fetch or an AI result is saved between the scan and the rewrite.
+        _set_updated_at(session_id, next(newer_saves))
+        return db.rewrite_base_payloads(session_id, **kwargs)
+
+    monkeypatch.setattr(script, "rewrite_base_payloads", saved_in_between)
+
+    lines: list = []
+    totals = script.run(apply=True, out=lines.append)
+    assert totals == {"scanned": 1, "to_clean": 1, "cleaned": 0, "changed_since_read": 1}
+    assert lines == ["skipped sess-links: saved again since it was read; run the script again"]
+    assert _has_join_link(_whole_row("sess-links")["session_payload"]), "a skipped row is left for the next run"
+
+    monkeypatch.setattr("sys.argv", ["strip_registrant_join_links.py", "--apply"])
+    assert script.main() == 2, "a skipped row makes the script exit non-zero"
+    assert capsys.readouterr().out.splitlines()[-1] == (
+        "Applied: scanned 1 session(s); 1 held join links; cleaned 0; skipped 1 saved again since read."
+    )
+
+
+def test_the_join_link_backfill_refuses_a_remote_database(monkeypatch):
+    script = _join_link_script()
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@db.example.test:5432/app")
+    with pytest.raises(SystemExit) as refused:
+        script._require_database(allow_remote=False)
+    assert "db.example.test" not in str(refused.value.code), "the refusal must not print the URL"
+    script._require_database(allow_remote=True)
+
+    monkeypatch.setenv("DATABASE_URL", "")
+    with pytest.raises(SystemExit):
+        script._require_database(allow_remote=True)

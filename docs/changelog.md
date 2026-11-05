@@ -2,6 +2,11 @@
 
 What has shipped, newest first. What's next is in [roadmap.md](roadmap.md).
 
+## November 2026: v1 foundation
+
+- **Registrant join links are never stored.** StormIQ doesn't need a registrant's personal join link, so the Livestorm fetchers drop `password_key` and `connection_link` before saving the session, chat and questions payloads. `scripts/strip_registrant_join_links.py` removes them from rows saved earlier, without bumping `updated_at` (`db.rewrite_base_payloads`). Nothing users see changes.
+- **Livestorm page size 50.** Chat, questions and event-session calls asked for 100 items per page; the API documents 50 as the maximum. The pagers now ask for 50 and stop when `meta.next_page` is null, even after a full page.
+
 ## November 2026: internal sessions
 
 - **Internal sessions count everyone.** Audience-only chat metrics left nothing on an internal meeting, such as an all-hands, where everyone is a team member: Messages, Unique Chatters, Avg Msg Length, Top Contributors, Activity Over Time, the cross-source timeline, Most Engaged People and the chat stats sent to the AI dropped to zero, with "Excludes your team (n)". When team members are more than half of the attendees ([product.md §13](product.md#13-glossary-of-metrics-and-formulas)), nothing is left out, the cards say "Internal session: everyone counts" and the AI is told the session is internal. Public sessions are unchanged.

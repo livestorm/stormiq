@@ -47,6 +47,14 @@ The backend uses these secrets and never sends them to the browser: `CLAUDE_API_
 - `session_cache.account_key_hash` is the SHA-256 of the first writer's Livestorm credential, set on insert and never updated. It is informational; `organization_id` is the access boundary. Rows written before November 2026 may hold the hash of an LLM provider key instead; that can't be repaired and doesn't affect access.
 - Error responses are `{resource, message, details: {resource, status_code?}}`. Upstream URLs and response bodies are logged server-side only.
 
+## Data StormIQ doesn't keep
+
+StormIQ never stores a registrant's personal join link; it doesn't need it.
+
+- Livestorm returns one for each person: `password_key` and `connection_link` in `attributes.registrant_detail`.
+- `livestorm/client.py` removes both before a fetcher returns the session, chat or questions payload (`payloads.strip_payload_join_links`). So they never reach `session_cache`. Any new fetcher that returns people strips them the same way.
+- `scripts/strip_registrant_join_links.py` removes them from rows saved before this rule.
+
 ## Web hardening
 
 - Cookies are `HttpOnly`, `SameSite=Lax`, and `Secure` everywhere except plain-HTTP local development (on Render, TLS ends at the proxy, so `RENDER` alone turns it on).

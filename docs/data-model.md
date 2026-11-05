@@ -11,7 +11,7 @@ session_cache (
   account_key_hash         TEXT NOT NULL,   -- sha256 of the first writer's Livestorm credential (insert-only, informational)
   session_id               TEXT NOT NULL,
   organization_id          TEXT,            -- Livestorm org that owns the session: the access boundary
-  session_payload          JSONB,           -- raw Livestorm session response
+  session_payload          JSONB,           -- Livestorm session response with its people, minus registrant join links
   event_payload            JSONB,           -- raw Livestorm event response (the session's parent), used for card titles and language
   created_by_user_id       TEXT,            -- Livestorm user who first fetched the session (kept on update)
   created_by_email         TEXT,
@@ -19,8 +19,8 @@ session_cache (
   cover_image_bytes        BYTEA,           -- AI-generated cover (PNG)
   cover_image_mime         TEXT,            -- defaults to image/png
   cover_image_generated_at TIMESTAMPTZ,
-  chat_payload             JSONB,           -- raw chat messages
-  questions_payload        JSONB,           -- raw questions
+  chat_payload             JSONB,           -- Livestorm chat messages
+  questions_payload        JSONB,           -- Livestorm questions with askers and responders, minus registrant join links
   transcript_payload       JSONB,           -- full Gladia transcript
   transcript_speaker_names JSONB,           -- { raw_speaker_id: human_label }
   analysis_md              TEXT,            -- legacy: English overall analysis only
@@ -116,8 +116,9 @@ Admin-editable overrides for provider and model selection (`/api/admin/settings`
 - **Cache first.** Every fetch route checks `session_cache` before calling Livestorm or Gladia. `force_refresh: true` is the only bypass. Entries never expire.
 - **One row holds the latest of everything.** There is no history of analyses: regenerating an output replaces that language's (or tone's) entry.
 - **Bundle columns are written one entry at a time.** AI runners never rewrite a whole bundle: `db.merge_cached_bundle_entry(session_id, column, key, value)` sets one language or tone with a single `jsonb_set` UPDATE, so concurrent jobs on the same session (English and French, or two recap tones) can't erase each other's results. Never write a bundle column with `upsert_cached_session` from a worker job.
-- **Writes fail loudly.** `upsert_cached_session` and `merge_cached_bundle_entry` raise on database errors; a job is only `completed` once its result is saved.
-- **Every write bumps `updated_at`.** The in-process transcript-insights cache is keyed on it ([architecture.md](architecture.md#reading-a-workspace)).
+- **Writes fail loudly.** `upsert_cached_session`, `merge_cached_bundle_entry` and `rewrite_base_payloads` raise on database errors; a job is only `completed` once its result is saved.
+- **No registrant join links.** The session, chat and questions payloads are saved without each person's `password_key` and `connection_link` ([security.md](security.md#data-stormiq-doesnt-keep)). Every other key Livestorm returns is kept.
+- **Every write bumps `updated_at`.** The in-process transcript-insights cache is keyed on it ([architecture.md](architecture.md#reading-a-workspace)). The one exception is `db.rewrite_base_payloads`, for maintenance scripts. It replaces base payloads without bumping `updated_at`, so the library keeps its order. It writes only if `updated_at` still matches the value the script read, so it never overwrites a newer save. Use it only for changes nothing in the app reads, such as removing join links. `db.scan_base_payloads` reads the rows for it in batches.
 
 ## Connections
 

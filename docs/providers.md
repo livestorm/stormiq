@@ -47,6 +47,8 @@ Every outbound call has a timeout. Retries are limited to failures that almost a
 
 The Livestorm HTTP session is shared by every user's requests, so it keeps no cookies.
 
+Livestorm list calls (chat, questions, an event's sessions, the events list) ask for at most 50 items per page, the maximum the API documents (`config.LIVESTORM_MAX_PAGE_SIZE`). Some endpoints accept more today; StormIQ keeps to the documented limit. The pagers follow `meta.next_page` and stop when it is null, even after a full page: asking for a page past the last one returns HTTP 400. Only a payload without pagination metadata stops at the first short page.
+
 ## Gladia configuration
 
 `DEFAULT_GLADIA_OPTIONS` in [`gladia/transcriber.py`](../livestorm_app/gladia/transcriber.py):

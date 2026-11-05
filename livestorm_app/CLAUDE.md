@@ -24,6 +24,7 @@ The HTTP routes live in `routes/`, one module per area; `../app.py` creates the 
 **Outbound calls**
 - Every HTTP call has a timeout. Retry only failures where nothing was produced or billed; never retry a POST that starts paid work. → [docs/providers.md](../docs/providers.md)
 - The Livestorm HTTP session (`livestorm.client.livestorm_get`) is shared by all users: no cookies, no per-user state.
+- A Livestorm fetcher that returns people strips registrant join links before returning (`livestorm.payloads.strip_payload_join_links`); StormIQ never stores them. A pager asks for at most `config.LIVESTORM_MAX_PAGE_SIZE` (50) per page and stops when `meta.next_page` is null.
 
 **Workspace reads**
 - Get transcript insights through `api_logic._cached_transcript_insights`, once per read, and copy a shared DataFrame before modifying it.
@@ -38,9 +39,9 @@ The HTTP routes live in `routes/`, one module per area; `../app.py` creates the 
 |---|---|
 | `test_access_control.py` | every session route × anonymous, other org, same org, admin |
 | `test_db_scope.py` | org-scoped SQL |
-| `test_data_integrity.py` | bundle writes, write failures, incomplete AI output |
+| `test_data_integrity.py` | bundle writes, write failures, incomplete AI output, join links never saved, `rewrite_base_payloads` |
 | `test_job_reliability.py` | dedupe, retries, timeouts, the transcript job lifecycle, cancellation |
 | `test_performance.py` | the insights cache, field reads, pools, the Redis cooldown, outputs-only polls |
-| `test_pure_functions.py` | metrics and formulas, PDF rendering, the Anthropic request's `temperature` |
+| `test_pure_functions.py` | metrics and formulas, PDF rendering, the Anthropic request's `temperature`, the join-link strip, the Livestorm pagers |
 
 `conftest.py` provides `test_database` (needs `TEST_DATABASE_URL`, local only) and `test_redis` (needs `TEST_REDIS_URL`, local, non-zero db index; it flushes that db). `make test-backend` sets both. Tests never call real providers: patch them at the module boundary, for example `monkeypatch.setattr("livestorm_app.transcript_client.fetch_session_transcript", fake)`.

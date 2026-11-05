@@ -16,15 +16,18 @@ from livestorm_app.analytics.audience import (
 from livestorm_app.config import (
     API_BASE,
     DEFAULT_PAGE_SIZE,
+    LIVESTORM_MAX_PAGE_SIZE,
     MAX_PAGES,
     START_PAGE_NUMBER,
 )
 from livestorm_app.livestorm.payloads import (
     _extract_next_page,
+    _states_last_page,
     extract_events,
     extract_messages,
     extract_questions,
     extract_sessions,
+    strip_payload_join_links,
 )
 
 
@@ -213,9 +216,19 @@ def build_request_exception_debug_details(exc: requests.RequestException, resour
     return details
 
 
+def _page_size(requested: int) -> int:
+    """Never ask Livestorm for more than its maximum page size.
+
+    A larger value would come back as a short page, and the pagers' "short
+    page means last page" fallback would then stop too early.
+    """
+    return min(int(requested), LIVESTORM_MAX_PAGE_SIZE)
+
+
 def fetch_chat_messages(key: str, session: str, page_size: int = DEFAULT_PAGE_SIZE) -> Dict[str, Any]:
     url = f"{API_BASE}/sessions/{session}/chat_messages"
     headers = build_headers(key)
+    page_size = _page_size(page_size)
 
     page_number = START_PAGE_NUMBER
     pages_fetched = 0
@@ -249,19 +262,20 @@ def fetch_chat_messages(key: str, session: str, page_size: int = DEFAULT_PAGE_SI
                 break
             page_number = next_page
             continue
-        if len(messages) < page_size:
+        if _states_last_page(payload) or len(messages) < page_size:
             break
         page_number += 1
 
     final_payload["data"] = all_messages
     final_payload["pages_fetched"] = pages_fetched
     final_payload["requested_page_size"] = page_size
-    return final_payload
+    return strip_payload_join_links(final_payload)
 
 
 def fetch_session_questions(key: str, session: str, page_size: int = DEFAULT_PAGE_SIZE) -> Dict[str, Any]:
     url = f"{API_BASE}/sessions/{session}/questions"
     headers = build_headers(key)
+    page_size = _page_size(page_size)
 
     page_number = START_PAGE_NUMBER
     pages_fetched = 0
@@ -306,7 +320,7 @@ def fetch_session_questions(key: str, session: str, page_size: int = DEFAULT_PAG
                 break
             page_number = next_page
             continue
-        if len(page_questions) < page_size:
+        if _states_last_page(payload) or len(page_questions) < page_size:
             break
         page_number += 1
 
@@ -314,7 +328,7 @@ def fetch_session_questions(key: str, session: str, page_size: int = DEFAULT_PAG
     final_payload["included"] = list(all_included.values())
     final_payload["pages_fetched"] = pages_fetched
     final_payload["requested_page_size"] = page_size
-    return final_payload
+    return strip_payload_join_links(final_payload)
 
 
 def fetch_session_details(key: str, session: str) -> Dict[str, Any]:
@@ -325,7 +339,7 @@ def fetch_session_details(key: str, session: str) -> Dict[str, Any]:
     )
     resp.raise_for_status()
     payload = resp.json()
-    return payload if isinstance(payload, dict) else {"data": payload}
+    return strip_payload_join_links(payload if isinstance(payload, dict) else {"data": payload})
 
 
 def fetch_event_details(key: str, event_id: str) -> Dict[str, Any]:
@@ -347,6 +361,7 @@ def fetch_event_details(key: str, event_id: str) -> Dict[str, Any]:
 def fetch_event_past_sessions(key: str, event: str, page_size: int = DEFAULT_PAGE_SIZE) -> Dict[str, Any]:
     url = f"{API_BASE}/events/{event}/sessions"
     headers = build_headers(key)
+    page_size = _page_size(page_size)
 
     page_number = START_PAGE_NUMBER
     pages_fetched = 0
@@ -380,7 +395,7 @@ def fetch_event_past_sessions(key: str, event: str, page_size: int = DEFAULT_PAG
                 break
             page_number = next_page
             continue
-        if len(page_sessions) < page_size:
+        if _states_last_page(payload) or len(page_sessions) < page_size:
             break
         page_number += 1
 
@@ -399,6 +414,7 @@ def fetch_workspace_events_page(
 ) -> Dict[str, Any]:
     url = f"{API_BASE}/events"
     headers = build_headers(key)
+    page_size = _page_size(page_size)
     params: Dict[str, Any] = {"page[number]": page_number, "page[size]": page_size}
     normalized_title = str(title or "").strip()
     normalized_status = str(scheduling_status or "").strip()

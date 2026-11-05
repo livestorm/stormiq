@@ -1,10 +1,13 @@
-"""Pure-function tests: parsing, progress stages, AI-job gating, metrics, PDFs, the LLM request.
+"""Pure-function tests: parsing, progress stages, AI-job gating, metrics, PDFs, the LLM request, Livestorm payloads and pagers.
 
 No database, Redis or network. These pin down behaviour that silently
 breaks user-visible output when it regresses.
 """
 
 from __future__ import annotations
+
+import copy
+import json
 
 import pandas as pd
 import pytest
@@ -13,6 +16,8 @@ from livestorm_app import api_logic, llm_client, pdf, progress, worker
 from livestorm_app.ai import generation, llm_inputs, prompts
 from livestorm_app.analytics import audience, cross_source, session_overview
 from livestorm_app.analytics import transcript as transcript_analytics
+from livestorm_app.livestorm import client as livestorm_client
+from livestorm_app.livestorm import payloads as livestorm_payloads
 
 
 # ── Content repurposing: LLM JSON bundle parsing ──────────────────────────
@@ -656,3 +661,211 @@ def test_a_retired_image_model_is_replaced(saved, sent):
     from livestorm_app.ai import cover_image
 
     assert cover_image.resolve_image_model(saved) == sent
+
+
+# ── Livestorm payloads: registrant join links are never kept ───────────────
+#
+# Synthetic payloads in the shapes the API returns: the session with
+# `include=people`, chat messages, questions with `include=asker,responder`,
+# and a page of people.
+
+JOIN_LINK_KEYS = ("password_key", "connection_link")
+
+
+def _registrant(person_id: str, *, join_link: bool = True) -> dict:
+    detail = {
+        "attended": True,
+        "attendance_rate": 80,
+        "fields": [{"id": "company", "type": "text", "value": "Example Co"}],
+        "referrer": "https://example.test/landing",
+        "registration_type": "detailed",
+    }
+    if join_link:
+        detail["password_key"] = f"pk-{person_id}"
+        detail["connection_link"] = f"https://example.test/join/{person_id}?key=pk-{person_id}"
+    return {
+        "id": person_id,
+        "type": "people",
+        "attributes": {"first_name": "Test", "last_name": person_id, "role": "participant", "registrant_detail": detail},
+        "relationships": {},
+    }
+
+
+def _session_payload() -> dict:
+    return {
+        "data": {"id": "s1", "type": "sessions", "attributes": {"event_id": "e1", "status": "past", "registrants_count": 3}},
+        "included": [_registrant("p1"), _registrant("p2", join_link=False), {"id": "p3", "type": "people", "attributes": {}}],
+    }
+
+
+def _chat_payload_with_people() -> dict:
+    return {
+        "data": [{"id": "m1", "type": "chat_messages", "attributes": {"text": "Hello", "author_id": "p1", "created_at": 1700000000}}],
+        "included": [_registrant("p1")],
+        "meta": {"current_page": 0, "next_page": None},
+        "pages_fetched": 1,
+    }
+
+
+def _questions_payload_with_people() -> dict:
+    return {
+        "data": [
+            {
+                "id": "q1",
+                "type": "questions",
+                "attributes": {"question": "Why?", "question_author_id": "p1", "created_at": 1700000100},
+                "relationships": {"asker": {"data": {"id": "p1", "type": "people"}}},
+            }
+        ],
+        "included": [_registrant("p1"), _registrant("p4")],
+        "pages_fetched": 1,
+    }
+
+
+def _people_page() -> dict:
+    return {"data": [_registrant("p5"), _registrant("p6", join_link=False)], "meta": {"record_count": 2, "next_page": None}}
+
+
+def _one_person() -> dict:
+    return {"data": _registrant("p7")}
+
+
+def _expected_without_join_links(payload: dict) -> dict:
+    expected = copy.deepcopy(payload)
+    for section in ("data", "included"):
+        value = expected.get(section)
+        for record in value if isinstance(value, list) else [value]:
+            detail = ((record or {}).get("attributes") or {}).get("registrant_detail")
+            if isinstance(detail, dict):
+                for key in JOIN_LINK_KEYS:
+                    detail.pop(key, None)
+    return expected
+
+
+PAYLOAD_SHAPES = pytest.mark.parametrize(
+    "build",
+    [_session_payload, _chat_payload_with_people, _questions_payload_with_people, _people_page, _one_person],
+    ids=["session", "chat", "questions", "people-page", "one-person"],
+)
+
+
+@PAYLOAD_SHAPES
+def test_the_strip_removes_join_links_and_keeps_every_other_key(build):
+    payload = build()
+    stripped = livestorm_payloads.strip_payload_join_links(payload)
+    assert stripped == _expected_without_join_links(payload)
+    assert not any(key in json.dumps(stripped) for key in JOIN_LINK_KEYS)
+
+
+@PAYLOAD_SHAPES
+def test_the_strip_is_pure_and_idempotent(build):
+    payload = build()
+    original = copy.deepcopy(payload)
+    once = livestorm_payloads.strip_payload_join_links(payload)
+    assert payload == original, "the input must not be changed"
+    twice = livestorm_payloads.strip_payload_join_links(once)
+    assert twice == once
+    assert twice is once, "a clean payload comes back as the same object"
+
+
+@pytest.mark.parametrize("payload", [None, "text", 3, {}, {"data": None}, {"data": [None, "x"]}, [], {"meta": {"next_page": None}}])
+def test_the_strip_leaves_anything_without_people_alone(payload):
+    assert livestorm_payloads.strip_payload_join_links(payload) is payload
+
+
+def test_the_record_strip_ignores_records_without_a_registrant_detail():
+    for record in ({"id": "p1"}, {"attributes": None}, {"attributes": {"registrant_detail": "n/a"}}, _registrant("p1", join_link=False)):
+        assert livestorm_payloads.strip_registrant_join_link(record) is record
+
+
+# ── Livestorm pagers: 50 per page, following meta.next_page ────────────────
+
+
+class _FakeLivestormResponse:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self._payload
+
+
+def _fake_livestorm(monkeypatch, pages: dict, *, included: dict | None = None) -> list:
+    """Serve `pages[number] = (item_count, next_page)` and record each request's params.
+
+    A `next_page` of `...` serves the page without pagination metadata.
+    """
+    calls: list = []
+
+    def fake_get(url, *, headers, params=None):
+        calls.append(dict(params or {}))
+        number = (params or {}).get("page[number]", 0)
+        count, next_page = pages[number]
+        payload = {"data": [{"id": f"r{number}-{i}", "type": "chat_messages", "attributes": {}} for i in range(count)]}
+        if next_page is not ...:
+            payload["meta"] = {"current_page": number, "next_page": next_page}
+        if included and number in included:
+            payload["included"] = included[number]
+        return _FakeLivestormResponse(payload)
+
+    monkeypatch.setattr(livestorm_client, "livestorm_get", fake_get)
+    return calls
+
+
+LIVESTORM_PAGERS = pytest.mark.parametrize(
+    "pager",
+    [livestorm_client.fetch_chat_messages, livestorm_client.fetch_session_questions, livestorm_client.fetch_event_past_sessions],
+    ids=["chat", "questions", "event-sessions"],
+)
+
+
+@LIVESTORM_PAGERS
+@pytest.mark.parametrize(
+    ("pages", "expected_numbers", "expected_items"),
+    [
+        ({0: (50, 1), 1: (50, 2), 2: (3, None)}, [0, 1, 2], 103),
+        ({0: (50, None)}, [0], 50),
+        ({0: (50, ...), 1: (10, ...)}, [0, 1], 60),
+    ],
+    ids=["follows-next-page", "stops-when-next-page-is-null", "no-metadata-stops-on-a-short-page"],
+)
+def test_every_pager_asks_for_50_and_follows_next_page(monkeypatch, pager, pages, expected_numbers, expected_items):
+    calls = _fake_livestorm(monkeypatch, pages)
+    payload = pager("Bearer t", "id-1")
+    assert [call["page[number]"] for call in calls] == expected_numbers
+    assert {call["page[size]"] for call in calls} == {50}
+    assert len(payload["data"]) == expected_items
+    assert payload["pages_fetched"] == len(expected_numbers)
+    assert payload["requested_page_size"] == 50
+
+
+def test_the_questions_pager_strips_join_links_from_every_page(monkeypatch):
+    calls = _fake_livestorm(
+        monkeypatch,
+        {0: (50, 1), 1: (2, None)},
+        included={0: [_registrant("p1")], 1: [_registrant("p2")]},
+    )
+    payload = livestorm_client.fetch_session_questions("Bearer t", "s1")
+    assert {call["page[size]"] for call in calls} == {50}
+    assert {call["include"] for call in calls} == {"asker,responder"}
+    assert sorted(person["id"] for person in payload["included"]) == ["p1", "p2"]
+    assert not any(key in json.dumps(payload) for key in JOIN_LINK_KEYS)
+    assert payload["included"][0]["attributes"]["registrant_detail"]["fields"][0]["value"] == "Example Co"
+
+
+def test_session_details_come_back_without_join_links(monkeypatch):
+    monkeypatch.setattr(livestorm_client, "livestorm_get", lambda url, *, headers, params=None: _FakeLivestormResponse(_session_payload()))
+    payload = livestorm_client.fetch_session_details("Bearer t", "s1")
+    assert payload == _expected_without_join_links(_session_payload())
+
+
+@pytest.mark.parametrize(("requested", "sent"), [(100, 50), (50, 50), (20, 20)])
+def test_no_pager_asks_livestorm_for_more_than_50(monkeypatch, requested, sent):
+    calls = _fake_livestorm(monkeypatch, {0: (0, None)})
+    livestorm_client.fetch_chat_messages("Bearer t", "s1", page_size=requested)
+    livestorm_client.fetch_session_questions("Bearer t", "s1", page_size=requested)
+    livestorm_client.fetch_event_past_sessions("Bearer t", "e1", page_size=requested)
+    livestorm_client.fetch_workspace_events_page("Bearer t", page_size=requested)
+    assert [call["page[size]"] for call in calls] == [sent] * 4

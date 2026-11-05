@@ -1,10 +1,74 @@
-"""Parse Livestorm API (JSON:API) payloads: records, pagination, and the event and session pickers."""
+"""Parse Livestorm API (JSON:API) payloads: records, pagination, the event and session pickers, and the join-link strip."""
 
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
+
+
+# ── Registrant join links ─────────────────────────────────────────────────
+#
+# Each registrant has a personal join link: `password_key` and
+# `connection_link` in a person's `attributes.registrant_detail`. StormIQ
+# never stores a registrant's personal join link; it doesn't need it. The
+# fetchers in `client.py` strip it before returning a payload, so it never
+# reaches the database. `scripts/strip_registrant_join_links.py` cleans rows
+# saved before that.
+
+REGISTRANT_JOIN_LINK_KEYS = ("password_key", "connection_link")
+
+
+def strip_registrant_join_link(record: Any) -> Any:
+    """Return one JSON:API resource object without its registrant join link.
+
+    Removes only `attributes.registrant_detail.password_key` and
+    `attributes.registrant_detail.connection_link`; every other key is kept.
+    In practice the record is a `people` resource, but any record with a
+    `registrant_detail` is cleaned. Pure: the input is never changed. A
+    record with nothing to remove is returned as is (the same object).
+    """
+    if not isinstance(record, dict):
+        return record
+    attributes = record.get("attributes")
+    if not isinstance(attributes, dict):
+        return record
+    detail = attributes.get("registrant_detail")
+    if not isinstance(detail, dict) or not any(key in detail for key in REGISTRANT_JOIN_LINK_KEYS):
+        return record
+    kept = {key: value for key, value in detail.items() if key not in REGISTRANT_JOIN_LINK_KEYS}
+    return {**record, "attributes": {**attributes, "registrant_detail": kept}}
+
+
+def _strip_records(records: List[Any]) -> List[Any]:
+    stripped = [strip_registrant_join_link(record) for record in records]
+    return records if all(new is old for new, old in zip(stripped, records, strict=True)) else stripped
+
+
+def strip_payload_join_links(payload: Any) -> Any:
+    """Return a Livestorm payload with every registrant join link removed.
+
+    Cleans each record in `data` (one object or a list) and in `included`,
+    which covers the session (`include=people`), chat and questions
+    payloads. Every other key is kept. Pure and idempotent. A payload with
+    nothing to remove is returned as is (the same object).
+    """
+    if isinstance(payload, list):
+        return _strip_records(payload)
+    if not isinstance(payload, dict):
+        return payload
+    changes: Dict[str, Any] = {}
+    for section in ("data", "included"):
+        value = payload.get(section)
+        if isinstance(value, list):
+            stripped = _strip_records(value)
+        elif isinstance(value, dict):
+            stripped = strip_registrant_join_link(value)
+        else:
+            continue
+        if stripped is not value:
+            changes[section] = stripped
+    return {**payload, **changes} if changes else payload
 
 
 def extract_messages(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -173,3 +237,14 @@ def _extract_next_page(payload: Dict[str, Any]) -> Optional[int]:
         if raw.isdigit():
             return int(raw)
     return None
+
+
+def _states_last_page(payload: Dict[str, Any]) -> bool:
+    """True when the payload's pagination says there is no next page.
+
+    The API sends `next_page: null` on the last page, and asking for a page
+    past the last one returns HTTP 400. So a pager stops here even when the
+    page is full. Only a payload without pagination metadata falls back to
+    "a short page is the last page".
+    """
+    return "next_page" in _extract_pagination(payload) and _extract_next_page(payload) is None
