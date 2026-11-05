@@ -33,6 +33,11 @@ The HTTP routes live in `routes/`, one module per area; `../app.py` creates the 
 **Errors**
 - Return `{resource, message, details}`. Log upstream URLs and bodies server-side; never return them.
 
+**The v1 record (`record/`)**
+- New code for the v1 Report goes in `record/`: pure functions over cached payloads, with no database, network or FastAPI. Classic code (`analytics/`, `api_logic`) doesn't import it, so a bug there can't break a classic read.
+- Times come from the raw payload values (`created_at`, `responded_at`: unix seconds or ISO strings), read through `record.clock`, never from the formatted strings of the classic tables. A session without `started_at` has no clock: never fall back to `estimated_started_at`.
+- Evidence ids (`C0001`, `Q001`, `A001`) come only from `record.evidence.audience_events`. Anything that stores one also stores the Livestorm id. Rules: [docs/product.md §13](../docs/product.md#session-clock-v1-report).
+
 ## Tests (`../tests/`)
 
 | File | Covers |
@@ -43,5 +48,6 @@ The HTTP routes live in `routes/`, one module per area; `../app.py` creates the 
 | `test_job_reliability.py` | dedupe, retries, timeouts, the transcript job lifecycle, cancellation |
 | `test_performance.py` | the insights cache, field reads, pools, the Redis cooldown, outputs-only polls |
 | `test_pure_functions.py` | metrics and formulas, PDF rendering, the Anthropic request's `temperature`, the join-link strip, the Livestorm pagers |
+| `test_session_clock.py` | the session clock, its fallbacks, minute bins and evidence ids (`record/`); the payload shapes script's local-database check |
 
 `conftest.py` provides `test_database` (needs `TEST_DATABASE_URL`, local only) and `test_redis` (needs `TEST_REDIS_URL`, local, non-zero db index; it flushes that db). `make test-backend` sets both. Tests never call real providers: patch them at the module boundary, for example `monkeypatch.setattr("livestorm_app.transcript_client.fetch_session_transcript", fake)`.
