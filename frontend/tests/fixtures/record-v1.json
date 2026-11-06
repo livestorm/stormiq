@@ -1,0 +1,267 @@
+{
+  "sessionId": "synthetic-webinar",
+  "updatedAt": "2026-10-02T08:30:00Z",
+  "meta": {
+    "clock": {
+      "startedAtUnix": 1790845200,
+      "endS": 1800,
+      "endSource": "ended_at",
+      "lateStartS": 95,
+      "timezone": "Europe/Paris",
+      "alignment": null
+    }
+  },
+  "record": {
+    "version": 1,
+    "roster": {
+      "source": "session_include",
+      "complete": null,
+      "coverage": "partial",
+      "peopleCount": 10,
+      "recordCount": null,
+      "syncedAt": null,
+      "internal": false
+    },
+    "pulse": {
+      "lanes": [
+        "audienceChat",
+        "teamChat",
+        "questions",
+        "answers"
+      ],
+      "minutes": [
+        {
+          "minute": 0,
+          "audienceChat": 0,
+          "teamChat": 1,
+          "questions": 0,
+          "answers": 1
+        },
+        {
+          "minute": 1,
+          "audienceChat": 1,
+          "teamChat": 0,
+          "questions": 0,
+          "answers": 0
+        },
+        {
+          "minute": 2,
+          "audienceChat": 1,
+          "teamChat": 0,
+          "questions": 0,
+          "answers": 0
+        },
+        {
+          "minute": 3,
+          "audienceChat": 1,
+          "teamChat": 0,
+          "questions": 0,
+          "answers": 0
+        },
+        {
+          "minute": 4,
+          "audienceChat": 0,
+          "teamChat": 1,
+          "questions": 0,
+          "answers": 0
+        },
+        {
+          "minute": 5,
+          "audienceChat": 0,
+          "teamChat": 0,
+          "questions": 1,
+          "answers": 0
+        },
+        {
+          "minute": 6,
+          "audienceChat": 0,
+          "teamChat": 0,
+          "questions": 0,
+          "answers": 0
+        },
+        {
+          "minute": 7,
+          "audienceChat": 0,
+          "teamChat": 0,
+          "questions": 0,
+          "answers": 0
+        },
+        {
+          "minute": 8,
+          "audienceChat": 0,
+          "teamChat": 0,
+          "questions": 0,
+          "answers": 0
+        },
+        {
+          "minute": 9,
+          "audienceChat": 0,
+          "teamChat": 0,
+          "questions": 0,
+          "answers": 0
+        },
+        {
+          "minute": 10,
+          "audienceChat": 2,
+          "teamChat": 0,
+          "questions": 0,
+          "answers": 0
+        },
+        {
+          "minute": 11,
+          "audienceChat": 0,
+          "teamChat": 0,
+          "questions": 0,
+          "answers": 0
+        },
+        {
+          "minute": 12,
+          "audienceChat": 0,
+          "teamChat": 0,
+          "questions": 1,
+          "answers": 1
+        },
+        {
+          "minute": 13,
+          "audienceChat": 0,
+          "teamChat": 0,
+          "questions": 0,
+          "answers": 0
+        },
+        {
+          "minute": 14,
+          "audienceChat": 0,
+          "teamChat": 0,
+          "questions": 0,
+          "answers": 0
+        },
+        {
+          "minute": 15,
+          "audienceChat": 1,
+          "teamChat": 1,
+          "questions": 0,
+          "answers": 0
+        },
+        {
+          "minute": 16,
+          "audienceChat": 0,
+          "teamChat": 0,
+          "questions": 0,
+          "answers": 0
+        },
+        {
+          "minute": 17,
+          "audienceChat": 0,
+          "teamChat": 0,
+          "questions": 0,
+          "answers": 0
+        },
+        {
+          "minute": 18,
+          "audienceChat": 0,
+          "teamChat": 0,
+          "questions": 0,
+          "answers": 0
+        },
+        {
+          "minute": 19,
+          "audienceChat": 0,
+          "teamChat": 0,
+          "questions": 0,
+          "answers": 0
+        },
+        {
+          "minute": 20,
+          "audienceChat": 1,
+          "teamChat": 0,
+          "questions": 0,
+          "answers": 0
+        },
+        {
+          "minute": 21,
+          "audienceChat": 0,
+          "teamChat": 0,
+          "questions": 0,
+          "answers": 0
+        },
+        {
+          "minute": 22,
+          "audienceChat": 0,
+          "teamChat": 0,
+          "questions": 0,
+          "answers": 0
+        },
+        {
+          "minute": 23,
+          "audienceChat": 0,
+          "teamChat": 0,
+          "questions": 0,
+          "answers": 0
+        },
+        {
+          "minute": 24,
+          "audienceChat": 0,
+          "teamChat": 0,
+          "questions": 0,
+          "answers": 0
+        },
+        {
+          "minute": 25,
+          "audienceChat": 1,
+          "teamChat": 0,
+          "questions": 0,
+          "answers": 0
+        },
+        {
+          "minute": 26,
+          "audienceChat": 0,
+          "teamChat": 0,
+          "questions": 0,
+          "answers": 0
+        },
+        {
+          "minute": 27,
+          "audienceChat": 0,
+          "teamChat": 0,
+          "questions": 1,
+          "answers": 0
+        },
+        {
+          "minute": 28,
+          "audienceChat": 0,
+          "teamChat": 0,
+          "questions": 0,
+          "answers": 0
+        },
+        {
+          "minute": 29,
+          "audienceChat": 1,
+          "teamChat": 0,
+          "questions": 0,
+          "answers": 0
+        }
+      ],
+      "edges": {
+        "before": {
+          "counts": {
+            "audienceChat": 3,
+            "teamChat": 1,
+            "questions": 1,
+            "answers": 0
+          },
+          "firstT": -300
+        },
+        "after": {
+          "counts": {
+            "audienceChat": 1,
+            "teamChat": 0,
+            "questions": 0,
+            "answers": 0
+          },
+          "lastT": 1840
+        }
+      },
+      "unplaced": 0
+    }
+  }
+}

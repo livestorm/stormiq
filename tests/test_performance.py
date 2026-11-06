@@ -342,6 +342,137 @@ def test_light_reads_only_accept_known_fields():
         db.fetch_session_fields("s1", ["has_transcript", "1; DROP TABLE session_cache"], organization_id="org-a")
 
 
+def test_the_record_reads_its_payloads_from_postgres_in_scope(test_database, monkeypatch):
+    from synthetic_session import ORGANIZATION_ID, SESSION_ID, cached_row, record_response
+
+    monkeypatch.setattr(api_logic, "_record_cache", api_logic.OrderedDict())
+    row = cached_row()
+    db.upsert_cached_session(
+        "k", SESSION_ID, organization_id=ORGANIZATION_ID,
+        **{field: row[field] for field in ("session_payload", "event_payload", "chat_payload", "questions_payload", "transcript_payload")},
+    )
+    stored = api_logic.get_session_record(SESSION_ID, organization_id=ORGANIZATION_ID)
+    expected = record_response(row)
+    assert {key: stored[key] for key in ("sessionId", "meta", "record")} == {key: expected[key] for key in ("sessionId", "meta", "record")}
+    assert stored["updatedAt"] is not None
+    for outsider in ("org-b", ""):
+        with pytest.raises(api_logic.SessionNotFoundError):
+            api_logic.get_session_record(SESSION_ID, organization_id=outsider)
+
+
+# ── The v1 record cache ─────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def record_reads(monkeypatch):
+    """Counts the record's reads and builds over the synthetic session.
+
+    `rows` maps a session id to its row; `reads` lists the fields of every
+    `fetch_session_fields` call; `builds` counts each costly step."""
+    from livestorm_app.record import assemble, inputs
+    from synthetic_session import SESSION_ID, cached_row
+
+    state = {"rows": {SESSION_ID: cached_row()}, "reads": [], "builds": {}}
+
+    def read(session_id, fields, *, organization_id):
+        state["reads"].append(tuple(fields))
+        row = state["rows"].get(session_id)
+        return {field: row.get(field) for field in fields} if row is not None and organization_id == "org-a" else None
+
+    def counted(module, name):
+        real = getattr(module, name)
+
+        def wrapper(*args, **kwargs):
+            state["builds"][name] = state["builds"].get(name, 0) + 1
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(module, name, wrapper)
+
+    for module, name in ((inputs, "clock_base"), (inputs, "roster_from_session_payload"), (assemble, "audience_events"), (assemble, "minute_bins")):
+        counted(module, name)
+    monkeypatch.setattr(api_logic, "fetch_session_fields", read)
+    monkeypatch.setattr(api_logic, "_record_cache", api_logic.OrderedDict())
+    return state
+
+
+def _read_record(state):
+    from synthetic_session import SESSION_ID
+
+    return api_logic.get_session_record(SESSION_ID, organization_id="org-a")
+
+
+ONCE = {"clock_base": 1, "roster_from_session_payload": 1, "audience_events": 1, "minute_bins": 1}
+
+
+def test_a_record_read_builds_the_clock_roster_and_bins_once(record_reads):
+    _read_record(record_reads)
+    assert record_reads["builds"] == ONCE
+    # The scope check, then the base payloads: never the transcript or the outputs.
+    assert record_reads["reads"] == [("updated_at",), api_logic.RECORD_FIELDS]
+    assert set(api_logic.RECORD_FIELDS) <= set(db._SESSION_FIELD_SQL)
+    assert "transcript_payload" not in api_logic.RECORD_FIELDS
+
+
+def test_a_second_record_read_hits_the_cache(record_reads):
+    first = _read_record(record_reads)
+    record_reads["reads"].clear()
+    assert _read_record(record_reads) == first
+    assert record_reads["builds"] == ONCE
+    assert record_reads["reads"] == [("updated_at",)], "a cache hit reads the row's version only"
+
+
+def test_a_new_row_version_misses_the_record_cache(record_reads):
+    from synthetic_session import SESSION_ID
+
+    _read_record(record_reads)
+    row = record_reads["rows"][SESSION_ID]
+    record_reads["rows"][SESSION_ID] = {**row, "updated_at": row["updated_at"] + timedelta(seconds=1)}
+    second = _read_record(record_reads)
+    assert record_reads["builds"] == {name: 2 for name in ONCE}
+    assert second["updatedAt"] == row["updated_at"] + timedelta(seconds=1)
+    assert [key[1] for key in api_logic._record_cache if key[0] == SESSION_ID] == [second["updatedAt"]], "older versions are dropped"
+
+
+def test_a_changed_roster_version_misses_the_record_cache(record_reads, monkeypatch):
+    _read_record(record_reads)
+    monkeypatch.setattr(api_logic, "_record_input_versions", lambda session_id, *, organization_id: (2, None))
+    _read_record(record_reads)
+    assert record_reads["builds"] == {name: 2 for name in ONCE}
+    monkeypatch.setattr(api_logic, "_record_input_versions", lambda session_id, *, organization_id: (2, "fingerprint"))
+    _read_record(record_reads)
+    assert record_reads["builds"] == {name: 3 for name in ONCE}
+
+
+def test_a_record_without_a_row_version_is_not_cached(record_reads):
+    from synthetic_session import SESSION_ID
+
+    record_reads["rows"][SESSION_ID]["updated_at"] = None
+    _read_record(record_reads)
+    _read_record(record_reads)
+    assert record_reads["builds"] == {name: 2 for name in ONCE}
+    assert len(api_logic._record_cache) == 0
+
+
+def test_the_record_cache_is_bounded(record_reads):
+    from synthetic_session import SESSION_ID
+
+    row = record_reads["rows"][SESSION_ID]
+    for index in range(api_logic.RECORD_CACHE_SIZE + 3):
+        record_reads["rows"][f"s{index}"] = row
+        api_logic.get_session_record(f"s{index}", organization_id="org-a")
+    assert len(api_logic._record_cache) == api_logic.RECORD_CACHE_SIZE
+
+
+def test_an_out_of_scope_record_read_stops_at_the_scope_check(record_reads):
+    from synthetic_session import SESSION_ID
+
+    for session_id, scope in ((SESSION_ID, "org-b"), (SESSION_ID, ""), ("missing", "org-a")):
+        with pytest.raises(api_logic.SessionNotFoundError):
+            api_logic.get_session_record(session_id, organization_id=scope)
+    assert record_reads["reads"] == [("updated_at",)] * 3
+    assert record_reads["builds"] == {}
+
+
 # ── Postgres: connection pool ───────────────────────────────────────────────
 
 

@@ -1,4 +1,4 @@
-"""One session: cover image, cached workspace, fetches, the transcript job and download, speaker labels."""
+"""One session: cover image, cached workspace, the v1 record, fetches, the transcript job and download, speaker labels."""
 
 from __future__ import annotations
 
@@ -10,10 +10,12 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
 from livestorm_app.api_logic import (
+    SessionNotFoundError,
     fetch_all_session_data,
     fetch_session_base_data,
     fetch_session_transcript_data,
     get_cached_workspace,
+    get_session_record,
     get_transcript_download,
     get_transcript_job_status_data,
     save_speaker_labels,
@@ -78,6 +80,22 @@ def get_cached_session_workspace(session_id: SessionId, caller: Caller = Depends
     except Exception:
         logger.exception("Cached session route failed for session_id=%s", session_id)
         return Response(status_code=204)
+
+
+@router.get("/api/sessions/{session_id}/record")
+def read_session_record(session_id: SessionId, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
+    """The v1 Report's data for one session: the clock, the roster header and
+    the Pulse (`api_logic.get_session_record`). The classic app doesn't call it."""
+    try:
+        return get_session_record(session_id, organization_id=caller.read_scope)
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail={"resource": "Session record", "message": str(exc)}) from exc
+    except Exception as exc:
+        logger.exception("Session record failed for session_id=%s", session_id)
+        raise HTTPException(
+            status_code=500,
+            detail={"resource": "Session record", "message": "The session record could not be built."},
+        ) from exc
 
 
 @router.post("/api/sessions/{session_id}/fetch")

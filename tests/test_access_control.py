@@ -213,8 +213,9 @@ def _call(
 def test_route_inventory_covers_every_session_route():
     # Guards the enumeration itself: if this drops, the parametrized tests
     # below would silently check nothing.
-    assert len(SESSION_ROUTES) >= 19
+    assert len(SESSION_ROUTES) >= 21
     assert len(ADMIN_ROUTES) >= 8
+    assert "GET /api/sessions/{session_id}/record" in {param.id for param in SESSION_ROUTES}
 
 
 @pytest.mark.parametrize("method,path", SESSION_ROUTES)

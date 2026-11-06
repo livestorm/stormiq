@@ -9,7 +9,10 @@
   by people id, with honest coverage (an author never resolves by guess).
 - `inputs.py`: the single loader of a session's record inputs (payloads,
   clock, roster, authors).
+- `assemble.py`: the record as `GET /api/sessions/{id}/record` serves it
+  (the clock, the roster header, the Pulse).
 
-No database, network or web framework here. The classic workspace does not
-import this package. See docs/architecture.md.
+No database, network or web framework here. The classic app does not
+import this package: only `api_logic.get_session_record`, the v1 record
+route's loader, imports it, inside the function. See docs/architecture.md.
 """

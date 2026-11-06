@@ -407,6 +407,92 @@ def get_cached_workspace(session_id: str, *, organization_id: OrgScope) -> Optio
     return _serialize_cached_session(session_id, cached)
 
 
+# ── The v1 record ───────────────────────────────────────────────────────────
+#
+# `GET /api/sessions/{id}/record` serves the v1 Report. `livestorm_app/record/`
+# builds it; the classic serializer above never runs v1 code, so a bug there
+# can't break a classic read.
+#
+# The computed block is cached per process, keyed by everything it reads:
+# the row's `updated_at` (every write to the row bumps it), the record's
+# version, and what will change without a new row version
+# (`_record_input_versions`). Live state that changes without any of these
+# (none yet) must be read outside the cache, on every request.
+
+RECORD_FIELDS = ("session_payload", "event_payload", "chat_payload", "questions_payload", "updated_at")
+RECORD_CACHE_SIZE = 32
+_record_cache: "OrderedDict[Tuple[Any, ...], Dict[str, Any]]" = OrderedDict()
+_record_cache_lock = threading.Lock()
+
+
+def _record_input_versions(session_id: str, *, organization_id: OrgScope) -> Tuple[Any, Any]:
+    """(roster version, metrics fingerprint): what the record reads that
+    changes without bumping `session_cache.updated_at`. Both None for now,
+    because the roster comes from the session payload and no measure is
+    stored. Stored rosters and stored measures add their version here."""
+    return None, None
+
+
+def _record_cache_key(session_id: str, updated_at: Any, record_version: int, input_versions: Tuple[Any, ...]) -> Optional[Tuple[Any, ...]]:
+    if updated_at is None:
+        return None
+    return (str(session_id), updated_at, record_version, *input_versions)
+
+
+def _cached_record_block(key: Optional[Tuple[Any, ...]]) -> Optional[Dict[str, Any]]:
+    if key is None:
+        return None
+    with _record_cache_lock:
+        hit = _record_cache.get(key)
+        if hit is not None:
+            _record_cache.move_to_end(key)
+        return hit
+
+
+def _store_record_block(key: Optional[Tuple[Any, ...]], block: Dict[str, Any]) -> None:
+    if key is None:
+        return
+    with _record_cache_lock:
+        for stale in [k for k in _record_cache if k[0] == key[0] and k != key]:
+            del _record_cache[stale]  # an older version of this session
+        _record_cache[key] = block
+        while len(_record_cache) > RECORD_CACHE_SIZE:
+            _record_cache.popitem(last=False)
+
+
+def get_session_record(session_id: str, *, organization_id: OrgScope) -> Dict[str, Any]:
+    """The v1 Report's record of one session: `{sessionId, updatedAt, meta:
+    {clock}, record}`.
+
+    The scope check comes first: a row that is missing or outside the
+    caller's scope raises `SessionNotFoundError` (404) before anything else
+    is read. A cache hit then costs that one small read. A miss reads the
+    base payloads (never the transcript or the AI outputs) and builds the
+    block with `record.assemble.assemble_record`. The block is shared
+    between requests: never modify it.
+    """
+    stamp = fetch_session_fields(session_id, ["updated_at"], organization_id=organization_id)
+    if not isinstance(stamp, dict):
+        raise SessionNotFoundError()
+    # The record package is imported here, in the only function that runs
+    # it, so it loads with the first record request: an error in it can't
+    # stop the app from starting or reach a classic read. Nothing else
+    # outside `record/` imports it (tests/test_roster.py).
+    from livestorm_app.record.assemble import RECORD_VERSION, assemble_record
+    from livestorm_app.record.inputs import load_record_inputs
+
+    input_versions = _record_input_versions(session_id, organization_id=organization_id)
+    block = _cached_record_block(_record_cache_key(session_id, stamp.get("updated_at"), RECORD_VERSION, input_versions))
+    if block is None:
+        row = fetch_session_fields(session_id, list(RECORD_FIELDS), organization_id=organization_id)
+        if not isinstance(row, dict):
+            raise SessionNotFoundError()
+        stamp = row
+        block = _sanitize_json_value(assemble_record(load_record_inputs({**row, "session_id": session_id})))
+        _store_record_block(_record_cache_key(session_id, row.get("updated_at"), RECORD_VERSION, input_versions), block)
+    return {"sessionId": session_id, "updatedAt": stamp.get("updated_at"), **block}
+
+
 # ── Workspace sessions list ────────────────────────────────────────────────
 #
 # Powers the Single Analysis card grid. Returns every cached session

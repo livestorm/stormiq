@@ -14,7 +14,7 @@ The HTTP routes live in `routes/`, one module per area; `../app.py` creates the 
 - All SQL lives in `db.py` and goes through the pooled `get_db_connection()`. Pass values as query parameters, never by string formatting.
 - Schema changes go in `ensure_database_schema()` and must be idempotent (`IF NOT EXISTS`); there is no migration tool.
 - Write an AI bundle with `merge_cached_bundle_entry` (one language or tone), never by rewriting the whole bundle. Writes raise on failure; don't swallow them.
-- Hot paths (polls, job starts) read with `fetch_session_fields`; add a field to `_SESSION_FIELD_SQL` rather than loading the full row. → [docs/data-model.md](../docs/data-model.md)
+- Hot paths (polls, job starts, the v1 record) read with `fetch_session_fields`; add a field to `_SESSION_FIELD_SQL` rather than loading the full row. → [docs/data-model.md](../docs/data-model.md)
 
 **Jobs (`queue.py`, `worker.py`)**
 - Enqueue only through `queue.enqueue_unique_job_sync`, with a deterministic id (`ai_job_id`, `transcription_job_id`, `cover_image_job_id`).
@@ -34,7 +34,8 @@ The HTTP routes live in `routes/`, one module per area; `../app.py` creates the 
 - Return `{resource, message, details}`. Log upstream URLs and bodies server-side; never return them.
 
 **The v1 record (`record/`)**
-- New code for the v1 Report goes in `record/`: pure functions over cached payloads, with no database, network or FastAPI. Classic code (`analytics/`, `api_logic`) doesn't import it, so a bug there can't break a classic read.
+- New code for the v1 Report goes in `record/`: pure functions over cached payloads, with no database, network or FastAPI. Classic code (`analytics/`, `api_logic`) doesn't import it, so a bug there can't break a classic read. The one exception is the record route's loader, `api_logic.get_session_record`, which imports it inside the function (`tests/test_roster.py` checks both).
+- v1 data is served only by `GET /api/sessions/{id}/record` (`api_logic.get_session_record`, built by `record.assemble.assemble_record`); never add it to `_serialize_cached_session`. Its cache key must cover everything the block reads: when an input can change without bumping `updated_at`, add its version in `_record_input_versions`. Bump `record.assemble.RECORD_VERSION` when the block changes, and regenerate `frontend/tests/fixtures/record-v1.json` (`.venv/bin/python tests/synthetic_session.py`). → [docs/architecture.md](../docs/architecture.md#reading-the-v1-record)
 - Times come from the raw payload values (`created_at`, `responded_at`: unix seconds or ISO strings), read through `record.clock`, never from the formatted strings of the classic tables. A session without `started_at` has no clock: never fall back to `estimated_started_at`.
 - Evidence ids (`C0001`, `Q001`, `A001`) come only from `record.evidence.audience_events`. Anything that stores one also stores the Livestorm id. Rules: [docs/product.md §13](../docs/product.md#session-clock-v1-report).
 - v1 code reads person-level data only through `record/roster.py`, loaded by `record.inputs.load_record_inputs`; each people record is parsed by `livestorm.payloads.parse_person`. A person row keeps the email domain, never the address. A v1 prompt gets people only through `roster.prompt_view` (ref, role, job title); a page gets names only through `roster.display_people`, which fails closed. Roles never change for an internal session: read `Roster.meta.internal`. Rules: [docs/product.md §13](../docs/product.md#roster-v1-report).
@@ -49,10 +50,11 @@ The HTTP routes live in `routes/`, one module per area; `../app.py` creates the 
 | `test_data_integrity.py` | bundle writes, write failures, incomplete AI output, join links never saved, `rewrite_base_payloads` |
 | `test_job_reliability.py` | dedupe, retries, timeouts, the transcript job lifecycle, cancellation, the Gladia request built once |
 | `test_gladia_merge.py` | merging a long recording's Gladia chunks (synthetic payloads), and what classic insights read from the result |
-| `test_performance.py` | the insights cache, field reads, pools, the Redis cooldown, outputs-only polls |
+| `test_performance.py` | the insights cache, the v1 record cache, field reads, pools, the Redis cooldown, outputs-only polls |
 | `test_pure_functions.py` | metrics and formulas, PDF rendering, the Anthropic request's `temperature`, the join-link strip, the Livestorm pagers |
 | `test_session_clock.py` | the session clock, its fallbacks, minute bins and evidence ids (`record/`); the payload shapes script's local-database check and chat author check |
-| `test_roster.py` | `parse_person`, roles, organizers, channels, lead time, field definitions, `P-` refs, the prompt and display views, the record-inputs loader (`record/`); classic code never imports `record/` |
+| `test_roster.py` | `parse_person`, roles, organizers, channels, lead time, field definitions, `P-` refs, the prompt and display views, the record-inputs loader (`record/`); classic code never imports `record/` (only the record route's loader does, inside the function) |
 | `test_authors.py` | chat, question and answer authors resolved to roster people, their coverage, roles raised by chat flags and written answers, the evidence table's author columns (`record/`); the chat fetcher's `include=people`; classic reading a fetched chat as before; the benchmark seed's chat shape |
+| `test_record_route.py` | the v1 record route: its response, what it never carries, the internal flag, errors, the frontend fixture, and the classic workspace snapshot |
 
-`conftest.py` provides `test_database` (needs `TEST_DATABASE_URL`, local only) and `test_redis` (needs `TEST_REDIS_URL`, local, non-zero db index; it flushes that db). `make test-backend` sets both. Tests never call real providers: patch them at the module boundary, for example `monkeypatch.setattr("livestorm_app.transcript_client.fetch_session_transcript", fake)`.
+`synthetic_session.py` is a made-up webinar as a `session_cache` row; it generates `frontend/tests/fixtures/record-v1.json` and froze `fixtures/classic-workspace.json` (how to regenerate each: its docstring). `conftest.py` provides `test_database` (needs `TEST_DATABASE_URL`, local only) and `test_redis` (needs `TEST_REDIS_URL`, local, non-zero db index; it flushes that db). `make test-backend` sets both. Tests never call real providers: patch them at the module boundary, for example `monkeypatch.setattr("livestorm_app.transcript_client.fetch_session_transcript", fake)`.
