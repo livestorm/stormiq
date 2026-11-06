@@ -71,6 +71,94 @@ transcript_jobs (
 --   db.create_transcript_job uses INSERT … ON CONFLICT DO NOTHING and attaches to the existing job
 ```
 
+## Stored people
+
+Four tables: `session_rosters`, `session_people`, `org_people_attributes` and `livestorm_sync_jobs`. They hold a session's people as Livestorm lists them on the paginated people endpoint, for the v1 Report ([providers.md](providers.md#livestorm-people)). Nothing writes these tables yet: the people sync job comes next, and until then the roster reads the people cached with the session (`include=people`). The rules on what a row may hold are in [security.md](security.md#stored-people).
+
+```sql
+session_rosters (                               -- one roster header per session
+  session_id     TEXT PRIMARY KEY REFERENCES session_cache (session_id) ON DELETE CASCADE,
+  roster_version INTEGER NOT NULL,              -- 1, then +1 on every replace
+  source         TEXT NOT NULL,                 -- 'paginated' | 'session_include' (a backfill from the cached payload)
+  complete       BOOLEAN,                       -- the fetch's coverage (product.md §13, Roster: Coverage); NULL = unknown (no count)
+  record_count   INTEGER,                       -- Livestorm's meta.record_count for the list
+  people_count   INTEGER NOT NULL,
+  fields         JSONB NOT NULL DEFAULT '[]',   -- the registration field definitions used, kept with the roster
+  fields_source  TEXT NOT NULL,                 -- 'people_attributes' | 'event_fields' | 'none'
+  reason         TEXT NOT NULL,                 -- 'initial' | 'refresh_t7' | 'manual' | 'backfill'
+  synced_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  refresh_due_at TIMESTAMPTZ,                   -- when a refresh is due; NULL when none is. Every replace sets it
+  refreshed_at   TIMESTAMPTZ                    -- set by a 'refresh_t7' replace, kept by the others
+)
+
+session_people (                                -- one row per person: `livestorm.payloads.parse_person` plus a ref
+  session_id            TEXT NOT NULL REFERENCES session_cache (session_id) ON DELETE CASCADE,
+  person_id             TEXT NOT NULL,          -- the Livestorm people id
+  person_ref            TEXT NOT NULL,          -- 'P-' + hex (`record.roster.assign_person_refs`)
+  livestorm_role        TEXT,                   -- 'participant' | 'team_member', as sent
+  is_guest_speaker      BOOLEAN NOT NULL DEFAULT FALSE,
+  session_role          TEXT,
+  first_name            TEXT,
+  last_name             TEXT,
+  email_domain          TEXT CHECK (email_domain IS NULL OR position('@' IN email_domain) = 0),
+  company               TEXT,
+  job_title             TEXT,
+  answers               JSONB NOT NULL DEFAULT '{}',  -- {field slug: text or [texts]}: text and select fields only
+  registered_at         TIMESTAMPTZ,
+  registration_type     TEXT,
+  referrer_domain       TEXT,                   -- the referrer's host, never the URL
+  utm_source, utm_medium, utm_campaign, utm_term, utm_content  TEXT,
+  timezone              TEXT,
+  country_code          TEXT,
+  country_name          TEXT,
+  attended              BOOLEAN,
+  attendance_duration_s INTEGER,
+  attendance_rate       DOUBLE PRECISION,       -- Livestorm's 0-100 share of the session
+  has_viewed_replay     BOOLEAN,
+  replay_watched_at     TIMESTAMPTZ,
+  ls_messages_count, ls_questions_count, ls_votes_count, ls_up_votes_count  INTEGER,  -- Livestorm's own counters
+  ls_updated_at         TIMESTAMPTZ,
+  PRIMARY KEY (session_id, person_id)
+)
+-- idx_session_people_ref   UNIQUE (session_id, person_ref)
+
+org_people_attributes (                         -- one row per org: the workspace's registration fields
+  organization_id TEXT PRIMARY KEY,
+  attributes      JSONB NOT NULL DEFAULT '[]',  -- [{slug, name, type, builtin, options: [{value, label, position}]}]
+  status          TEXT NOT NULL,                -- 'ok' | 'forbidden' (the token can't read them) | 'error'
+  fetched_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+
+livestorm_sync_jobs (                           -- worker jobs that call Livestorm with a user's credentials
+  sync_id            TEXT PRIMARY KEY,          -- uuid4 hex
+  session_id         TEXT NOT NULL REFERENCES session_cache (session_id) ON DELETE CASCADE,
+  kind               TEXT NOT NULL,             -- 'people'
+  reason             TEXT NOT NULL,             -- 'initial' | 'refresh_t7' | 'manual'
+  status             TEXT NOT NULL,             -- 'scheduled' | 'pending' | 'running' | 'completed' | 'error' | 'waiting_for_user' | 'deferred'
+  due_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  connection_id      TEXT,                      -- the OAuth connection that started it (NULL = LS_API_KEY, local dev).
+                                                -- Handed to the worker and cleared by the claim; cleared by any update that moves the row out of 'pending'.
+                                                -- Never returned: it is also the session cookie value.
+  credential_user_id TEXT,                      -- reserved for a later unattended refresh; nothing sets it
+  pages_fetched      INTEGER,
+  record_count       INTEGER,
+  people_written     INTEGER,
+  error              TEXT,                      -- at most 1,000 characters; never a key, token or upstream body
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+-- idx_livestorm_sync_one_active      UNIQUE (session_id, kind) WHERE status IN ('pending','running')
+-- idx_livestorm_sync_one_scheduled   UNIQUE (session_id, kind, reason) WHERE status = 'scheduled'
+-- idx_livestorm_sync_due             (status, due_at)
+-- idx_livestorm_sync_session         (session_id, created_at DESC)
+```
+
+- **Deleted with the session.** The three per-session tables reference `session_cache (session_id)` with `ON DELETE CASCADE`, through the unique index `idx_session_cache_session_id_unique` (Postgres accepts a non-partial unique index as a foreign-key target), so `admin_delete_session` deletes a session's roster, people and syncs with it. `org_people_attributes` holds no personal data and isn't per session; it stays. `tests/test_data_integrity.py` checks the cascade and the index on the compose Postgres.
+- **Scoped through the session.** These tables have no `organization_id`. `db.fetch_roster_status` (the header and the latest sync that isn't merely scheduled) and `db.list_session_people` join `session_cache` and filter on its org (`_org_filter`), so a blank scope matches nothing and never queries, and a row without an org is visible to admins only. `db.get_org_people_attributes` reads one org, never `ALL_ORGS`. These reads raise when the database can't be read: a failed read must never look like an empty roster.
+- **A roster is replaced whole.** `db.replace_session_roster` upserts the header with `roster_version + 1`, deletes the session's person rows and inserts the new ones, in one transaction. A failure rolls it all back: readers see the previous roster and version, never a mix. It refuses, before writing, a row with any key `parse_person` doesn't give (an `email`, a join link or a full referrer included), an `email_domain` with an "@", repeated ids or refs, and `complete` without a matching count. Times are stored as `TIMESTAMPTZ` and read back as unix seconds (a float), whether `parse_person` gave them as numbers or ISO strings; `record/roster.py` reads both. `refresh_due_at` has no default: every replace sets it, and None clears it, so a replace that keeps a due refresh passes the stored value.
+- **Workspace field labels.** `db.upsert_org_people_attributes` replaces an org's attributes only with an `ok` result; `forbidden` or `error` keeps the last good ones and records the status and time.
+- **Sync rows.** `db.create_livestorm_sync` inserts a `pending` row (or a `scheduled` one, which never holds a connection id) unless the session already has one in flight: a lost race attaches to the existing row (`created: false`), as transcript jobs do. `db.claim_livestorm_sync` moves `pending` to `running` and hands the connection id over once, clearing it in the same statement (like `claim_transcript_job`). `db.update_livestorm_sync` sets the status, error and counts, and clears the connection id when the row leaves `pending`. Nothing else clears it, so a row that is never claimed (a failed enqueue, a lost job) must be closed through `update_livestorm_sync`; the people sync job's sweeper will do this.
+
 ## `oauth_connections`
 
 ```sql
@@ -167,9 +255,10 @@ llm_usage (
 - **Cache first.** Every fetch route checks `session_cache` before calling Livestorm or Gladia. `force_refresh: true` is the only bypass. Entries never expire.
 - **One row holds the latest of everything.** There is no history of analyses: regenerating an output replaces that language's (or tone's) entry.
 - **Bundle columns are written one entry at a time.** AI runners never rewrite a whole bundle: `db.merge_cached_bundle_entry(session_id, column, key, value)` sets one language or tone with a single `jsonb_set` UPDATE, so concurrent jobs on the same session (English and French, or two recap tones) can't erase each other's results. Never write a bundle column with `upsert_cached_session` from a worker job.
-- **Writes fail loudly.** `upsert_cached_session`, `merge_cached_bundle_entry` and `rewrite_base_payloads` raise on database errors; a job is only `completed` once its result is saved.
+- **Writes fail loudly.** `upsert_cached_session`, `merge_cached_bundle_entry`, `rewrite_base_payloads` and the people writes (`replace_session_roster`, `upsert_org_people_attributes`, `create_livestorm_sync`, `claim_livestorm_sync`, `update_livestorm_sync`) raise on database errors; a job is only `completed` once its result is saved.
+- **A roster is replaced whole or not at all.** `replace_session_roster` swaps a session's header and person rows in one transaction and bumps `roster_version`. A caller fetches every page first, so a failed or partial fetch never overwrites a stored roster ([Stored people](#stored-people)).
 - **One narrow exception: usage rows.** `insert_llm_usage` raises too, but its one caller, `ai.usage.record_call`, catches the failure, logs the whole row as a line at ERROR (no prompt, output or key) and lets the job go on to save its output. The output is complete and already paid for; failing the job would make the user pay for it again. This is an owner decision, and it covers `llm_usage` only.
-- **No registrant join links.** The session, chat and questions payloads are saved without each person's `password_key` and `connection_link` ([security.md](security.md#data-stormiq-doesnt-keep)). Every other key Livestorm returns is kept.
+- **No registrant join links.** The session, chat and questions payloads are saved without each person's `password_key` and `connection_link` ([security.md](security.md#data-stormiq-doesnt-keep)). Every other key Livestorm returns is kept. `session_people` has no column for them, nor for an email address.
 - **Every write bumps `updated_at`.** The in-process transcript-insights cache and the v1 record cache are keyed on it ([architecture.md](architecture.md#reading-a-workspace), [the v1 record](architecture.md#reading-the-v1-record)). The one exception is `db.rewrite_base_payloads`, for maintenance scripts. It replaces base payloads without bumping `updated_at`, so the library keeps its order. It writes only if `updated_at` still matches the value the script read, so it never overwrites a newer save. Use it only for changes nothing in the app reads, such as removing join links. `db.scan_base_payloads` reads the rows for it in batches.
 
 ## Connections

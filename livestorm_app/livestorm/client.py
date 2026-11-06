@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import time
 from http.cookiejar import DefaultCookiePolicy
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -26,8 +27,12 @@ from livestorm_app.livestorm.payloads import (
     extract_events,
     extract_messages,
     extract_questions,
+    extract_record_count,
+    extract_records,
     extract_sessions,
+    parse_people_attributes,
     strip_payload_join_links,
+    strip_registrant_join_link,
 )
 
 
@@ -453,6 +458,169 @@ def fetch_workspace_events_page(
     payload["requested_scheduling_status"] = normalized_status
     payload["next_page"] = _extract_next_page(payload)
     return payload
+
+
+# ── People ─────────────────────────────────────────────────────────────────
+#
+# A session's people come from the paginated list, `GET /sessions/{id}/people`,
+# whose `meta.record_count` proves the list is complete. A large session takes
+# many calls (100 for 5,000 registrants, at 50 per page), so these fetchers
+# are for the worker only, never a web request. Every call goes through
+# `livestorm_get` (its timeouts and retries); nothing else is retried.
+
+RATE_LIMIT_MONTHLY_REMAINING = "RateLimit-Monthly-Remaining"
+
+
+class LivestormDeadlineExceeded(TimeoutError):
+    """A paginated fetch ran past its deadline. Nothing it read is returned."""
+
+
+class LivestormPaginationError(RuntimeError):
+    """A paginated fetch couldn't reach the list's last page: Livestorm
+    pointed back at a page it had already sent, or the list ran past
+    `MAX_PAGES`. Nothing it read is returned."""
+
+
+def monthly_remaining(headers: Any) -> Optional[int]:
+    """The `RateLimit-Monthly-Remaining` header as a number: the API calls
+    left in the current 30-day period. None when it is missing or not a
+    whole number."""
+    getter = getattr(headers, "get", None)
+    raw = getter(RATE_LIMIT_MONTHLY_REMAINING) if callable(getter) else None
+    text = str(raw).strip() if raw is not None else ""
+    return int(text) if text.isascii() and text.isdigit() else None
+
+
+def _pages(
+    key: str,
+    url: str,
+    *,
+    page_size: int,
+    deadline: Optional[float],
+) -> Iterator[Tuple[Dict[str, Any], Any]]:
+    """Yield `(payload, response)` for each page of a paginated GET.
+
+    Starts at page 0 and follows `meta.next_page` until it is null; only a
+    payload without pagination metadata stops at its first short page. Before
+    each request it checks `deadline` (a `time.monotonic()` value) and raises
+    `LivestormDeadlineExceeded` once it has passed. An HTTP error raises. It
+    never stops early without raising: a next page it already read, or one
+    past `MAX_PAGES`, raises `LivestormPaginationError`.
+    """
+    headers = build_headers(key)
+    page_number = START_PAGE_NUMBER
+    seen_pages: set = set()
+    while True:
+        if page_number in seen_pages:
+            raise LivestormPaginationError("Livestorm pointed back at a page it had already sent; nothing was kept.")
+        if len(seen_pages) >= MAX_PAGES:
+            raise LivestormPaginationError(f"The list runs past {MAX_PAGES} pages; nothing was kept.")
+        if deadline is not None and time.monotonic() >= deadline:
+            raise LivestormDeadlineExceeded("Livestorm took too long to list every page; nothing was kept.")
+        seen_pages.add(page_number)
+        response = livestorm_get(url, headers=headers, params={"page[number]": page_number, "page[size]": page_size})
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, dict):
+            payload = {"data": extract_records(payload)}
+        yield payload, response
+
+        next_page = _extract_next_page(payload)
+        if next_page is not None:
+            page_number = next_page
+            continue
+        if _states_last_page(payload) or len(extract_records(payload)) < page_size:
+            break
+        page_number += 1
+
+
+def fetch_session_people(
+    key: str,
+    session_id: str,
+    *,
+    deadline: float,
+    page_size: int = LIVESTORM_MAX_PAGE_SIZE,
+) -> Dict[str, Any]:
+    """Every person of a session, from the paginated people list.
+
+    Asks for 50 per page and follows `meta.next_page`. Each record is
+    returned without its registrant join link (`strip_registrant_join_link`).
+    A person listed twice (the list can shift while people register) is kept
+    once, as last listed. A record without an id is dropped. Returns:
+
+    - `people`: the person records, in first-listed order;
+    - `record_count`: Livestorm's `meta.record_count` on the last page that
+      sent one, or None;
+    - `complete`: True when the unique people equal `record_count`, False
+      when they don't, None when Livestorm sent no count;
+    - `pages_fetched`, `duplicates` (records seen again), and
+      `monthly_remaining`: the `RateLimit-Monthly-Remaining` header of the
+      last page that sent one, or None.
+
+    Raises on any failed page (`requests.HTTPError`), past `deadline`, a
+    `time.monotonic()` value (`LivestormDeadlineExceeded`), and when the list
+    doesn't reach its last page (`LivestormPaginationError`: a next page
+    already read, or more than `MAX_PAGES`), so a caller never gets part of
+    a list. Worker only: a large session takes many calls.
+    """
+    url = f"{API_BASE}/sessions/{session_id}/people"
+    people: Dict[str, Dict[str, Any]] = {}
+    record_count: Optional[int] = None
+    remaining: Optional[int] = None
+    pages_fetched = 0
+    duplicates = 0
+    for payload, response in _pages(key, url, page_size=_page_size(page_size), deadline=deadline):
+        pages_fetched += 1
+        count = extract_record_count(payload)
+        record_count = count if count is not None else record_count
+        left = monthly_remaining(getattr(response, "headers", None))
+        remaining = left if left is not None else remaining
+        for record in extract_records(payload):
+            person_id = str(record.get("id") or "").strip() if isinstance(record, dict) else ""
+            if not person_id:
+                continue
+            if person_id in people:
+                duplicates += 1
+            people[person_id] = strip_registrant_join_link(record)
+    return {
+        "people": list(people.values()),
+        "record_count": record_count,
+        "complete": None if record_count is None else len(people) == record_count,
+        "pages_fetched": pages_fetched,
+        "duplicates": duplicates,
+        "monthly_remaining": remaining,
+    }
+
+
+def fetch_people_attributes(
+    key: str,
+    *,
+    deadline: Optional[float] = None,
+    page_size: int = LIVESTORM_MAX_PAGE_SIZE,
+) -> Dict[str, Any]:
+    """The workspace's people attributes (`GET /people_attributes`, paginated).
+
+    Returns `{attributes, status, http_status}`. `attributes` is
+    `payloads.parse_people_attributes` of every page. A 401 or 403 (the token
+    may not reach this endpoint) is not a failure: `status` is "forbidden",
+    with no attributes, and the caller labels fields from the event instead.
+    Any other HTTP error raises, and so do passing `deadline`
+    (`LivestormDeadlineExceeded`) and a list that doesn't reach its last
+    page (`LivestormPaginationError`).
+    """
+    url = f"{API_BASE}/people_attributes"
+    records: List[Any] = []
+    http_status = None
+    try:
+        for payload, response in _pages(key, url, page_size=_page_size(page_size), deadline=deadline):
+            records.extend(extract_records(payload))
+            http_status = getattr(response, "status_code", None)
+    except requests.HTTPError as exc:
+        status_code = exc.response.status_code if exc.response is not None else None
+        if status_code in (401, 403):
+            return {"attributes": [], "status": "forbidden", "http_status": status_code}
+        raise
+    return {"attributes": parse_people_attributes(records), "status": "ok", "http_status": http_status}
 
 
 def fetch_chat_and_questions_bundle(key: str, session_id: str) -> Dict[str, Any]:

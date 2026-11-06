@@ -4,7 +4,7 @@ The services StormIQ calls, how models are chosen, and the timeout and retry rul
 
 | Service | Used for | Code | Credentials |
 |---|---|---|---|
-| **Livestorm REST API** | session, event, chat, questions, events list | [`livestorm/client.py`](../livestorm_app/livestorm/client.py) | the user's OAuth token (or `LS_API_KEY` in local-dev mode) |
+| **Livestorm REST API** | session, event, chat, questions, events list; a session's people and the workspace's people attributes ([below](#livestorm-people)) | [`livestorm/client.py`](../livestorm_app/livestorm/client.py) | the user's OAuth token (or `LS_API_KEY` in local-dev mode) |
 | **Livestorm OAuth** | sign-in, token refresh, `/me` | [`oauth_client.py`](../livestorm_app/oauth_client.py) | OAuth client id and secret |
 | **Gladia v2 (pre-recorded)** | transcription with diarization, named entities, sentences and subtitles; the transcriber also fetches the session's recordings from Livestorm | [`gladia/transcriber.py`](../livestorm_app/gladia/transcriber.py) | `GLADIA_KEY` (worker only) |
 | **Anthropic** (default) | overall and deep analysis, Smart Recap, content repurposing, translation | [`llm_client.py`](../livestorm_app/llm_client.py) | `CLAUDE_API_KEY` |
@@ -145,9 +145,18 @@ Every outbound call has a timeout. Retries are limited to failures that almost a
 
 The Livestorm HTTP session is shared by every user's requests, so it keeps no cookies.
 
-Livestorm list calls (chat, questions, an event's sessions, the events list) ask for at most 50 items per page, the maximum the API documents (`config.LIVESTORM_MAX_PAGE_SIZE`). Some endpoints accept more today; StormIQ keeps to the documented limit. The pagers follow `meta.next_page` and stop when it is null, even after a full page: asking for a page past the last one returns HTTP 400. Only a payload without pagination metadata stops at the first short page.
+Livestorm list calls (chat, questions, an event's sessions, the events list, a session's people, the people attributes) ask for at most 50 items per page, the maximum the API documents (`config.LIVESTORM_MAX_PAGE_SIZE`). Some endpoints accept more today; StormIQ keeps to the documented limit. The pagers follow `meta.next_page` and stop when it is null, even after a full page: asking for a page past the last one returns HTTP 400. Only a payload without pagination metadata stops at the first short page.
 
 The chat call asks for `include=people`, so each message carries its author's people id (`relationships.people.data`). Livestorm doesn't document this link; it was observed on real data. The fetcher drops the `included` people before returning, since the session call asks for `include=people` too. In the one real session checked, the session's list held every chat author; one missing from it reads unresolved ([product.md §13](product.md#authors-v1-report)). The questions call asks for `include=asker,responder` and keeps those people.
+
+## Livestorm people
+
+Two fetchers read people for the v1 roster. Nothing calls them yet: the people sync job will, in the worker only, since a large session takes many calls. Both go through `livestorm_get`, with its timeouts and retries, and retry nothing else.
+
+- **A session's people**: `client.fetch_session_people(key, session_id, deadline=…)` reads `GET /sessions/{id}/people`, 50 per page from page 0, following `meta.next_page` until it is null. A person listed twice (the list can shift while people register) is kept once. Each record comes back without its registrant join link. It returns the people, `record_count` (Livestorm's `meta.record_count`, its count of the whole list) and `complete`, which compares the unique people with that count (None when Livestorm sends no count; the rule is [Coverage in product.md §13](product.md#roster-v1-report)). It never returns part of a list: a failed page raises, and so do passing the deadline (`LivestormDeadlineExceeded`, checked before each page) and a list that never reaches its last page (`LivestormPaginationError`: a `next_page` it already read, or more than `config.MAX_PAGES` pages).
+- **The workspace's people attributes**: `client.fetch_people_attributes(key)` reads `GET /people_attributes` (paginated the same way): each registration field's slug, label, type and select options (`payloads.parse_people_attributes`). A 401 or 403 is not a failure: the result says `forbidden`, and the people sync will then label fields from the event's own fields. Other failures raise, as for a session's people. Livestorm's OAuth scope list names `/people/*` under `events:read` but not `/people_attributes`, so StormIQ's token may be refused here.
+
+**Rate limits.** API tokens: 10,000 calls per 30 days and 5 per second. OAuth apps: 5 per second per user access token; whether they have a monthly quota isn't documented. A session of 5,000 registrants takes 100 calls to list. Each response may carry `RateLimit-Monthly-Remaining`; `fetch_session_people` returns it as a number (`monthly_remaining`, None when absent), from the last page that sent it. Whether responses to OAuth tokens carry these headers is not confirmed yet. `scripts/diagnose_people_cap.py` checks the counts and the headers on local sessions ([operations.md](operations.md#scripts)).
 
 ## Gladia configuration
 

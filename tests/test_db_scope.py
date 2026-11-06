@@ -1,14 +1,16 @@
 """Org scoping against a real Postgres.
 
 Exercises the actual SQL behind `fetch_cached_session`, `fetch_cover_image`,
-`list_workspace_sessions`, the upsert's first-writer-wins org stamp, and the
-per-org model spend (`llm_spend_since`).
+`list_workspace_sessions`, the upsert's first-writer-wins org stamp, the
+per-org model spend (`llm_spend_since`), and the stored people
+(`fetch_roster_status`, `list_session_people`, `get_org_people_attributes`).
 Skipped unless TEST_DATABASE_URL points at a local database (see conftest).
 """
 
 from datetime import datetime, timedelta, timezone
 
 import pytest
+import synthetic_session as synthetic
 
 from livestorm_app import db
 from livestorm_app.db import ALL_ORGS
@@ -95,3 +97,71 @@ def test_spend_never_sums_every_org(test_database):
         db.llm_spend_since(ALL_ORGS, _SINCE)
     with pytest.raises(ValueError, match="timezone-aware"):
         db.llm_spend_since("org-a", datetime(2000, 1, 1))
+
+
+# ── Stored people (session_rosters, session_people, livestorm_sync_jobs) ────
+
+
+def _seed_people() -> None:
+    _seed()
+    db.upsert_cached_session("key-x", "sess-legacy", session_payload={"name": "L"})
+    for session_id in ("sess-a", "sess-b"):
+        rows = synthetic.person_rows(session_id)
+        db.replace_session_roster(
+            session_id, rows, source="paginated", complete=True, record_count=len(rows), reason="initial", refresh_due_at=None,
+        )
+    db.replace_session_roster(
+        "sess-legacy", synthetic.person_rows("sess-legacy")[:2],
+        source="session_include", complete=None, record_count=None, reason="backfill", refresh_due_at=None,
+    )
+    db.create_livestorm_sync("sess-a", reason="initial", connection_id="conn-of-org-a")
+
+
+def test_roster_status_is_scoped_by_org(test_database):
+    _seed_people()
+    status = db.fetch_roster_status("sess-a", "org-a")
+    assert status["session_id"] == "sess-a"
+    assert status["roster"]["people_count"] == 10 and status["roster"]["source"] == "paginated"
+    assert status["sync"]["status"] == "pending" and status["sync"]["reason"] == "initial"
+    assert "connection_id" not in status["sync"] and "conn-of-org-a" not in repr(status)
+
+    assert db.fetch_roster_status("sess-a", "org-b") is None
+    assert db.fetch_roster_status("sess-b", "org-a") is None
+    assert db.fetch_roster_status("sess-legacy", "org-a") is None, "a row without an org is not any org's"
+    assert db.fetch_roster_status("sess-legacy", ALL_ORGS)["roster"]["source"] == "session_include"
+    assert db.fetch_roster_status("sess-b", ALL_ORGS)["sync"] is None
+    assert db.fetch_roster_status("sess-missing", ALL_ORGS) is None
+
+    db.upsert_cached_session("key-a", "sess-new", organization_id="org-a")
+    assert db.fetch_roster_status("sess-new", "org-a") == {"session_id": "sess-new", "roster": None, "sync": None}
+
+
+def test_stored_people_are_scoped_by_org(test_database):
+    _seed_people()
+    assert len(db.list_session_people("sess-a", "org-a")) == 10
+    assert db.list_session_people("sess-a", "org-b") == []
+    assert db.list_session_people("sess-b", "org-a") == []
+    assert db.list_session_people("sess-legacy", "org-a") == []
+    assert len(db.list_session_people("sess-legacy", ALL_ORGS)) == 2
+    assert db.list_session_people("sess-missing", ALL_ORGS) == []
+
+
+def test_a_blank_scope_never_queries_the_people_tables(monkeypatch):
+    def no_query():
+        raise AssertionError("a blank scope must not reach the database")
+
+    monkeypatch.setattr(db, "database_enabled", lambda: True)
+    monkeypatch.setattr(db, "get_db_connection", no_query)
+    for blank in ("", "   ", None):
+        assert db.fetch_roster_status("sess-a", blank) is None
+        assert db.list_session_people("sess-a", blank) == []
+        assert db.get_org_people_attributes(blank) is None
+
+
+def test_people_attributes_are_per_org(test_database):
+    goal = {"slug": "goal", "name": "Your goal", "type": "text", "builtin": False, "options": []}
+    db.upsert_org_people_attributes("org-a", [goal], status="ok")
+    assert db.get_org_people_attributes("org-a")["attributes"] == [goal]
+    assert db.get_org_people_attributes("org-b") is None
+    with pytest.raises(ValueError, match="never ALL_ORGS"):
+        db.get_org_people_attributes(ALL_ORGS)
