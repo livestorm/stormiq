@@ -9,6 +9,7 @@ need TEST_DATABASE_URL / TEST_REDIS_URL and skip otherwise.
 from __future__ import annotations
 
 import concurrent.futures
+import json
 import logging
 import math
 import random
@@ -349,7 +350,12 @@ def test_the_record_reads_its_payloads_from_postgres_in_scope(test_database, mon
     row = cached_row()
     db.upsert_cached_session(
         "k", SESSION_ID, organization_id=ORGANIZATION_ID,
-        **{field: row[field] for field in ("session_payload", "event_payload", "chat_payload", "questions_payload", "transcript_payload")},
+        **{
+            field: row[field]
+            for field in (
+                "session_payload", "event_payload", "chat_payload", "questions_payload", "transcript_payload", "transcript_speaker_names",
+            )
+        },
     )
     stored = api_logic.get_session_record(SESSION_ID, organization_id=ORGANIZATION_ID)
     expected = record_response(row)
@@ -391,6 +397,8 @@ def record_reads(monkeypatch):
     for module, name in (
         (inputs, "clock_base"),
         (inputs, "roster_from_session_payload"),
+        (inputs, "parse_transcript"),
+        (inputs, "build_transcript_health"),
         (assemble, "audience_events"),
         (assemble, "minute_bins"),
         (assemble, "compute_measures"),
@@ -407,16 +415,41 @@ def _read_record(state):
     return api_logic.get_session_record(SESSION_ID, organization_id="org-a")
 
 
-ONCE = {"clock_base": 1, "roster_from_session_payload": 1, "audience_events": 1, "minute_bins": 1, "compute_measures": 1}
+ONCE = {
+    "clock_base": 1, "roster_from_session_payload": 1, "parse_transcript": 1, "build_transcript_health": 1,
+    "audience_events": 1, "minute_bins": 1, "compute_measures": 1,
+}
 
 
-def test_a_record_read_builds_the_clock_roster_bins_and_measures_once(record_reads):
+def test_a_record_read_builds_the_clock_roster_transcript_bins_and_measures_once(record_reads):
+    """The transcript is parsed once per build, and its health built once,
+    for the record block and the measures alike."""
     _read_record(record_reads)
     assert record_reads["builds"] == ONCE
-    # The scope check, then the base payloads: never the transcript or the outputs.
+    # The scope check, then the payloads in one read: never the AI outputs.
     assert record_reads["reads"] == [("updated_at",), api_logic.RECORD_FIELDS]
     assert set(api_logic.RECORD_FIELDS) <= set(db._SESSION_FIELD_SQL)
-    assert "transcript_payload" not in api_logic.RECORD_FIELDS
+    assert {"transcript_payload", "transcript_speaker_names"} <= set(api_logic.RECORD_FIELDS)
+    assert not {field for field in api_logic.RECORD_FIELDS if field.endswith(("_bundle", "_md"))}
+
+
+def test_the_cached_record_block_holds_the_health_not_the_transcript(record_reads):
+    """Only the health stays in the cache: never the payload or its parsed frames."""
+    first = _read_record(record_reads)
+    assert first["record"]["transcriptHealth"]["state"] == "ok"
+    (block,) = api_logic._record_cache.values()
+    text = json.dumps(block, default=lambda value: f"<{type(value).__name__}>")
+    assert "<DataFrame>" not in text and "<ParsedTranscript>" not in text
+    assert '"utterances":' not in text and "full_transcript" not in text and "welcome everyone" not in text
+
+
+def test_a_new_health_version_misses_the_record_cache(record_reads, monkeypatch):
+    from livestorm_app.record import transcript_health
+
+    _read_record(record_reads)
+    monkeypatch.setattr(transcript_health, "HEALTH_VERSION", transcript_health.HEALTH_VERSION + 1)
+    _read_record(record_reads)
+    assert record_reads["builds"] == {name: 2 for name in ONCE}
 
 
 def test_a_second_record_read_hits_the_cache(record_reads):

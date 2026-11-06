@@ -1,9 +1,9 @@
 """The session clock: one time base for every event of a session.
 
 `t` is seconds since the session's `started_at`. Chat, questions and answers
-are placed from their raw `created_at` and `responded_at` values. Speech will
-be placed through an alignment offset: `t = r + offset_s`, where `r` is
-seconds into the recording.
+are placed from their raw `created_at` and `responded_at` values. Speech is
+placed through an alignment offset (`speech_events`): `t = r + offset_s`,
+where `r` is seconds into the recording.
 
 The rules (formulas in docs/product.md §13, "Session clock"):
 - the session ends at `ended_at - started_at`, else after its `duration`;
@@ -215,6 +215,41 @@ def session_label(t: Any, base: ClockBase) -> str:
     if where == AFTER:
         return "+" + _mmss(math.ceil(value - base.end_s))
     return _mmss(math.floor(value))
+
+
+# ── Speech ──────────────────────────────────────────────────────────────────
+
+SPEECH_EVENT_COLUMNS = ("eid", "r_start", "r_end", "t_start", "t_end", "speaker_key", "n_words", "conf_mean")
+
+
+def speech_events(utterances_df: Optional[pd.DataFrame], offset_s: Any) -> pd.DataFrame:
+    """Utterances as speech events (`SPEECH_EVENT_COLUMNS`), one per row of
+    `transcript.parse_utterances`, in its order: `eid` is the utterance's
+    `U` id, and `t = r + offset_s` puts it on the session clock.
+
+    `offset_s` comes from the alignment of the recording with the session;
+    when it is None (not aligned), `t_start` and `t_end` are NaN and
+    `minute_bins` places nothing."""
+    columns = list(SPEECH_EVENT_COLUMNS)
+    if not isinstance(utterances_df, pd.DataFrame) or utterances_df.empty:
+        return pd.DataFrame(columns=columns).astype(
+            {"r_start": "float64", "r_end": "float64", "t_start": "float64", "t_end": "float64", "conf_mean": "float64"}
+        )
+    offset = _finite(offset_s)
+    events = pd.DataFrame(
+        {
+            "eid": utterances_df["uid"].to_numpy(),
+            "r_start": utterances_df["r_start"].astype("float64").to_numpy(),
+            "r_end": utterances_df["r_end"].astype("float64").to_numpy(),
+        }
+    )
+    shift = math.nan if offset is None else offset
+    events["t_start"] = events["r_start"] + shift
+    events["t_end"] = events["r_end"] + shift
+    events["speaker_key"] = utterances_df["speaker_key"].to_numpy()
+    events["n_words"] = utterances_df["n_words"].astype("int64").to_numpy()
+    events["conf_mean"] = utterances_df["conf_mean"].astype("float64").to_numpy()
+    return events[columns]
 
 
 # ── Minute bins ─────────────────────────────────────────────────────────────

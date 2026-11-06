@@ -12,7 +12,7 @@
     }
   },
   "record": {
-    "version": 3,
+    "version": 4,
     "roster": {
       "source": "session_include",
       "complete": null,
@@ -263,7 +263,63 @@
       },
       "unplaced": 0
     },
-    "metricsVersion": 3,
+    "transcriptHealth": {
+      "version": 1,
+      "state": "ok",
+      "reasons": [],
+      "model": "solaria-1",
+      "words": {
+        "count": 2753,
+        "withConfidence": 2753,
+        "meanConfidence": 0.9169,
+        "lowConfidenceShare": 0.0062,
+        "source": "utterances",
+        "rebasedUtterances": 0
+      },
+      "coverage": {
+        "speechS": 1222.25,
+        "audioS": 1800,
+        "liveS": 1800,
+        "shareOfAudio": 0.679,
+        "shareOfLive": 0.679,
+        "firstSpeechR": 3,
+        "tailS": 96.95
+      },
+      "speakers": {
+        "detected": 3,
+        "substantial": 2,
+        "labelled": 2,
+        "substantialLabelled": 2,
+        "expected": 2,
+        "expectedSource": "transcript",
+        "cap": 4,
+        "chunks": 1,
+        "splitRisk": false
+      },
+      "language": {
+        "detected": "en",
+        "expected": "en",
+        "match": true,
+        "shares": {
+          "en": 1.0
+        }
+      },
+      "unclearClusters": [
+        {
+          "t0R": 1204,
+          "t1R": 1211.55,
+          "nLow": 17,
+          "u": [
+            "U0117"
+          ]
+        }
+      ],
+      "gates": {
+        "pace": true,
+        "speakerShares": true
+      }
+    },
+    "metricsVersion": 4,
     "measuresSource": "live",
     "measures": {
       "m.roster_coverage": {
@@ -860,6 +916,29 @@
             "share": null
           }
         ]
+      },
+      "m.transcript_health": {
+        "id": "m.transcript_health",
+        "version": 1,
+        "value": 0.9169,
+        "num": null,
+        "den": 2753,
+        "state": "ok",
+        "coverage": {
+          "health": "ok",
+          "reasons": [],
+          "model": "solaria-1",
+          "words": 2753,
+          "lowConfidenceShare": 0.0062,
+          "speechShareOfAudio": 0.679,
+          "speakersSubstantial": 2,
+          "speakersExpected": 2,
+          "splitRisk": false,
+          "chunks": 1
+        },
+        "excluded": null,
+        "livestorm": null,
+        "rows": null
       }
     }
   }

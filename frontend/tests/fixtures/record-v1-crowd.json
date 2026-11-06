@@ -12,7 +12,7 @@
     }
   },
   "record": {
-    "version": 3,
+    "version": 4,
     "roster": {
       "source": "session_include",
       "complete": null,
@@ -263,7 +263,24 @@
       },
       "unplaced": 0
     },
-    "metricsVersion": 3,
+    "transcriptHealth": {
+      "version": 1,
+      "state": "unavailable",
+      "reasons": [
+        "no_transcript"
+      ],
+      "model": null,
+      "words": null,
+      "coverage": null,
+      "speakers": null,
+      "language": null,
+      "unclearClusters": [],
+      "gates": {
+        "pace": false,
+        "speakerShares": false
+      }
+    },
+    "metricsVersion": 4,
     "measuresSource": "live",
     "measures": {
       "m.roster_coverage": {
@@ -980,6 +997,22 @@
             "share": 0.1333
           }
         ]
+      },
+      "m.transcript_health": {
+        "id": "m.transcript_health",
+        "version": 1,
+        "value": null,
+        "num": null,
+        "den": null,
+        "state": "unavailable",
+        "coverage": {
+          "missing": [
+            "transcript"
+          ]
+        },
+        "excluded": null,
+        "livestorm": null,
+        "rows": null
       }
     }
   }

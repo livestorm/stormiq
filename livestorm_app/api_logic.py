@@ -415,13 +415,21 @@ def get_cached_workspace(session_id: str, *, organization_id: OrgScope) -> Optio
 # can't break a classic read.
 #
 # The computed block is cached per process, keyed by everything it reads:
-# the row's `updated_at` (every write to the row bumps it), the record's and
-# the measures' versions (`RECORD_VERSION`, `METRICS_VERSION`), and what will
-# change without a new row version (`_record_input_versions`). Live state
-# that changes without any of these (none yet) must be read outside the
-# cache, on every request.
+# the row's `updated_at` (every write to the row bumps it, the transcript's
+# and the speaker labels' included), the record's, the measures' and the
+# transcript health's versions (`RECORD_VERSION`, `METRICS_VERSION`,
+# `HEALTH_VERSION`), and what will change without a new row version
+# (`_record_input_versions`). Live state that changes without any of these
+# (none yet) must be read outside the cache, on every request.
+#
+# The transcript is the largest column: it is read only on a miss, in the
+# same read as the base payloads (a session without one reads a NULL), and
+# only its health stays in the cached block.
 
-RECORD_FIELDS = ("session_payload", "event_payload", "chat_payload", "questions_payload", "updated_at")
+RECORD_FIELDS = (
+    "session_payload", "event_payload", "chat_payload", "questions_payload",
+    "transcript_payload", "transcript_speaker_names", "updated_at",
+)
 RECORD_CACHE_SIZE = 32
 _record_cache: "OrderedDict[Tuple[Any, ...], Dict[str, Any]]" = OrderedDict()
 _record_cache_lock = threading.Lock()
@@ -471,9 +479,10 @@ def get_session_record(session_id: str, *, organization_id: OrgScope) -> Dict[st
     The scope check comes first: a row that is missing or outside the
     caller's scope raises `SessionNotFoundError` (404) before anything else
     is read. A cache hit then costs that one small read. A miss reads the
-    base payloads (never the transcript or the AI outputs) and builds the
-    block, measures included, with `record.assemble.assemble_record`. The
-    block is shared between requests: never modify it.
+    base payloads, the transcript and its speaker labels (never the AI
+    outputs) and builds the block, transcript health and measures included,
+    with `record.assemble.assemble_record`. The block is shared between
+    requests: never modify it.
     """
     stamp = fetch_session_fields(session_id, ["updated_at"], organization_id=organization_id)
     if not isinstance(stamp, dict):
@@ -485,8 +494,9 @@ def get_session_record(session_id: str, *, organization_id: OrgScope) -> Dict[st
     from livestorm_app.record.assemble import RECORD_VERSION, assemble_record
     from livestorm_app.record.inputs import load_record_inputs
     from livestorm_app.record.measures import METRICS_VERSION
+    from livestorm_app.record.transcript_health import HEALTH_VERSION
 
-    code_versions = (RECORD_VERSION, METRICS_VERSION)
+    code_versions = (RECORD_VERSION, METRICS_VERSION, HEALTH_VERSION)
     input_versions = _record_input_versions(session_id, organization_id=organization_id)
     block = _cached_record_block(_record_cache_key(session_id, stamp.get("updated_at"), code_versions, input_versions))
     if block is None:

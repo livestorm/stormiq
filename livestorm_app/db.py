@@ -517,7 +517,8 @@ def fetch_cached_session(
 
 # Light reads for polling, job starts and the v1 record: only these fields
 # can be asked for, by name. A 2-hour session row is megabytes; a poll needs
-# a flag, and the record needs the base payloads but not the transcript.
+# a flag, and the record reads the base payloads and, on a cache miss only,
+# the transcript and its speaker labels.
 _SESSION_FIELD_SQL = {
     "has_transcript": "transcript_payload IS NOT NULL",
     "session_payload": "session_payload",
@@ -525,6 +526,7 @@ _SESSION_FIELD_SQL = {
     "chat_payload": "chat_payload",
     "questions_payload": "questions_payload",
     "transcript_payload": "transcript_payload",
+    "transcript_speaker_names": "transcript_speaker_names",
     "analysis_bundle": "analysis_bundle",
     "analysis_md": "analysis_md",
     "deep_analysis_bundle": "deep_analysis_bundle",

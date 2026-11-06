@@ -105,7 +105,8 @@ SOURCE_SESSION = "session"  # the session payload's own attributes
 SOURCE_ROSTER = "roster"  # the people (record/roster.py)
 SOURCE_CHAT = "chat"
 SOURCE_QUESTIONS = "questions"
-SOURCES = (SOURCE_SESSION, SOURCE_ROSTER, SOURCE_CHAT, SOURCE_QUESTIONS)
+SOURCE_TRANSCRIPT = "transcript"  # a Gladia transcript that parsed (record/transcript.py)
+SOURCES = (SOURCE_SESSION, SOURCE_ROSTER, SOURCE_CHAT, SOURCE_QUESTIONS, SOURCE_TRANSCRIPT)
 
 AUDIENCE_ONLY = "team, guest speakers"
 
@@ -114,8 +115,8 @@ AUDIENCE_ONLY = "team, guest speakers"
 # and in tests/test_measures.py. The pin also covers each measure's unit,
 # sources, exclusions and gates, so editing one without a new version fails
 # the test. Stored numbers are keyed by it.
-METRICS_VERSION = 3
-REGISTRY_PIN = "864d68d8871758f3a65cce51e25a172b4026a366c9eda7998a272486567e8432"
+METRICS_VERSION = 4
+REGISTRY_PIN = "371ad80ebb3c49f67537164dae3c8e33b359f0dfb3e9761fc9db464be99f9f46"
 
 # Gate thresholds. Provisional: they move with a version bump.
 WROTE_RATE_MIN_ATTENDEES = 10
@@ -388,7 +389,8 @@ class _Facts:
 def available_sources(inputs: RecordInputs) -> FrozenSet[str]:
     """The sources this session has. The session and its roster come from a
     session payload with a resource (or from stored people); chat and
-    questions are there when they were fetched, even empty."""
+    questions are there when they were fetched, even empty; the transcript
+    when a Gladia transcript parsed, even one without speech."""
     found = set()
     data = inputs.session_payload.get("data") if isinstance(inputs.session_payload, Mapping) else None
     if isinstance(data, Mapping):
@@ -399,6 +401,8 @@ def available_sources(inputs: RecordInputs) -> FrozenSet[str]:
         found.add(SOURCE_CHAT)
     if isinstance(inputs.questions_payload, Mapping):
         found.add(SOURCE_QUESTIONS)
+    if inputs.transcript is not None:
+        found.add(SOURCE_TRANSCRIPT)
     return frozenset(found)
 
 
@@ -1074,6 +1078,32 @@ def _replay_caught_up(facts: _Facts) -> _Draft:
     )
 
 
+def _transcript_health(facts: _Facts) -> _Draft:
+    """The mean word confidence over the words that have one (`den`), with
+    the transcript's health in `coverage` (`record.transcriptHealth`, built
+    once by `inputs.load_record_inputs`). Partial when some words have no
+    confidence."""
+    health = facts.inputs.transcript_health
+    words, coverage, speakers = health["words"], health["coverage"], health["speakers"]
+    return _Draft(
+        value=words["meanConfidence"],
+        den=words["withConfidence"],
+        flags=_flags(partial=words["count"] > words["withConfidence"] > 0),
+        coverage={
+            "health": health["state"],
+            "reasons": list(health["reasons"]),
+            "model": health["model"],
+            "words": words["count"],
+            "lowConfidenceShare": words["lowConfidenceShare"],
+            "speechShareOfAudio": coverage["shareOfAudio"],
+            "speakersSubstantial": speakers["substantial"],
+            "speakersExpected": speakers["expected"],
+            "splitRisk": speakers["splitRisk"],
+            "chunks": speakers["chunks"],
+        },
+    )
+
+
 # ── The registry ────────────────────────────────────────────────────────────
 
 _ROSTER = (SOURCE_ROSTER,)
@@ -1129,6 +1159,9 @@ _DEFINITIONS = (
     MeasureDef(
         "m.replay_caught_up", 2, "ratio", _ROSTER, AUDIENCE_ONLY, (Gate("den", REPLAY_MIN_NO_SHOWS),), "replay-catch-up",
         _replay_caught_up,
+    ),
+    MeasureDef(
+        "m.transcript_health", 1, "ratio", (SOURCE_TRANSCRIPT,), "", (Gate("den", 1),), "transcript-health", _transcript_health,
     ),
 )
 REGISTRY: Mapping[str, MeasureDef] = MappingProxyType({definition.id: definition for definition in _DEFINITIONS})
