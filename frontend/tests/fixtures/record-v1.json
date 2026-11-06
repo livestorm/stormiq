@@ -12,7 +12,7 @@
     }
   },
   "record": {
-    "version": 2,
+    "version": 3,
     "roster": {
       "source": "session_include",
       "complete": null,
@@ -263,7 +263,7 @@
       },
       "unplaced": 0
     },
-    "metricsVersion": 1,
+    "metricsVersion": 3,
     "measuresSource": "live",
     "measures": {
       "m.roster_coverage": {
@@ -565,6 +565,299 @@
             "key": "upVotes",
             "value": 2,
             "source": "people"
+          }
+        ]
+      },
+      "m.chat_concentration": {
+        "id": "m.chat_concentration",
+        "version": 1,
+        "value": null,
+        "num": null,
+        "den": 13,
+        "state": "insufficient",
+        "coverage": {
+          "roster": "partial",
+          "people": 10,
+          "recordCount": null,
+          "chatAuthors": "resolved",
+          "unresolvedItems": 0,
+          "authors": 4
+        },
+        "excluded": {
+          "team": 2,
+          "guestSpeakers": 1,
+          "total": 3,
+          "internal": false
+        },
+        "livestorm": null,
+        "rows": [
+          {
+            "key": "top",
+            "authors": null,
+            "messages": null,
+            "share": null
+          },
+          {
+            "key": "rest",
+            "authors": null,
+            "messages": null,
+            "share": null
+          }
+        ]
+      },
+      "m.room_map": {
+        "id": "m.room_map",
+        "version": 1,
+        "value": null,
+        "num": null,
+        "den": 5,
+        "state": "insufficient",
+        "coverage": {
+          "roster": "partial",
+          "people": 10,
+          "recordCount": null,
+          "chatAuthors": "resolved",
+          "questionAuthors": "resolved",
+          "unresolvedItems": 0,
+          "durationUnknown": 0,
+          "sessionLengthS": 1800.0
+        },
+        "excluded": {
+          "team": 2,
+          "guestSpeakers": 1,
+          "total": 3,
+          "internal": false
+        },
+        "livestorm": null,
+        "rows": [
+          {
+            "key": "stayed_wrote",
+            "stayed": true,
+            "wrote": true,
+            "people": 3,
+            "share": null
+          },
+          {
+            "key": "stayed_quiet",
+            "stayed": true,
+            "wrote": false,
+            "people": 0,
+            "share": null
+          },
+          {
+            "key": "left_wrote",
+            "stayed": false,
+            "wrote": true,
+            "people": 2,
+            "share": null
+          },
+          {
+            "key": "left_quiet",
+            "stayed": false,
+            "wrote": false,
+            "people": 0,
+            "share": null
+          }
+        ]
+      },
+      "m.channel_quality": {
+        "id": "m.channel_quality",
+        "version": 1,
+        "value": null,
+        "num": null,
+        "den": null,
+        "state": "insufficient",
+        "coverage": {
+          "roster": "partial",
+          "people": 10,
+          "recordCount": null,
+          "chatAuthors": "resolved",
+          "questionAuthors": "resolved",
+          "unresolvedItems": 0,
+          "attendanceUnknown": 0,
+          "registrants": 7,
+          "withSource": 4,
+          "sourcedShare": 0.5714,
+          "channels": 0,
+          "channelRule": 1
+        },
+        "excluded": {
+          "team": 2,
+          "guestSpeakers": 1,
+          "total": 3,
+          "internal": false
+        },
+        "livestorm": null,
+        "rows": [
+          {
+            "key": "(other)",
+            "kind": "other",
+            "channels": 4,
+            "registrants": 4,
+            "share": null,
+            "attendees": 4,
+            "showUpRate": null,
+            "wrote": 4,
+            "wroteRate": null,
+            "medianTimeShare": null,
+            "medianAttendanceS": null,
+            "state": "insufficient"
+          },
+          {
+            "key": "direct_or_unknown",
+            "kind": "none",
+            "registrants": 3,
+            "share": null,
+            "attendees": 1,
+            "showUpRate": null,
+            "wrote": 1,
+            "wroteRate": null,
+            "medianTimeShare": null,
+            "medianAttendanceS": null,
+            "state": "insufficient"
+          }
+        ]
+      },
+      "m.segment_quality": {
+        "id": "m.segment_quality",
+        "version": 1,
+        "value": null,
+        "num": null,
+        "den": null,
+        "state": "insufficient",
+        "coverage": {
+          "roster": "partial",
+          "people": 10,
+          "recordCount": null,
+          "chatAuthors": "resolved",
+          "questionAuthors": "resolved",
+          "unresolvedItems": 0,
+          "attendanceUnknown": 0,
+          "registrants": 7,
+          "fieldsSource": "event_fields",
+          "selectFields": 1,
+          "fields": [
+            {
+              "field": "team_size",
+              "name": "Team size",
+              "type": "unique_select",
+              "answered": 3,
+              "segments": 0
+            }
+          ]
+        },
+        "excluded": {
+          "team": 2,
+          "guestSpeakers": 1,
+          "total": 3,
+          "internal": false
+        },
+        "livestorm": null,
+        "rows": [
+          {
+            "key": "team_size:(other)",
+            "kind": "other",
+            "field": "team_size",
+            "value": null,
+            "label": null,
+            "values": 3,
+            "registrants": 3,
+            "share": null,
+            "attendees": 3,
+            "showUpRate": null,
+            "wrote": 3,
+            "wroteRate": null,
+            "medianTimeShare": null,
+            "medianAttendanceS": null,
+            "state": "insufficient"
+          }
+        ]
+      },
+      "m.lead_time_show_up": {
+        "id": "m.lead_time_show_up",
+        "version": 1,
+        "value": null,
+        "num": null,
+        "den": 7,
+        "state": "insufficient",
+        "coverage": {
+          "roster": "partial",
+          "people": 10,
+          "recordCount": null,
+          "attendanceUnknown": 0,
+          "leadUnknown": 0
+        },
+        "excluded": {
+          "team": 2,
+          "guestSpeakers": 1,
+          "total": 3,
+          "internal": false
+        },
+        "livestorm": null,
+        "rows": [
+          {
+            "key": "same_day..15+",
+            "buckets": [
+              "same_day",
+              "1-3",
+              "4-7",
+              "8-14",
+              "15+"
+            ],
+            "registrants": 6,
+            "share": null,
+            "attendees": 4,
+            "showUpRate": null,
+            "state": "insufficient"
+          },
+          {
+            "key": "after_start",
+            "buckets": [
+              "after_start"
+            ],
+            "registrants": 1,
+            "share": null,
+            "attendees": 1,
+            "showUpRate": null,
+            "state": "insufficient"
+          }
+        ]
+      },
+      "m.replay_caught_up": {
+        "id": "m.replay_caught_up",
+        "version": 2,
+        "value": null,
+        "num": 1,
+        "den": 2,
+        "state": "insufficient",
+        "coverage": {
+          "roster": "partial",
+          "people": 10,
+          "recordCount": null,
+          "syncedAt": null,
+          "settled": false,
+          "replayUnknown": 0,
+          "attendanceUnknown": 0
+        },
+        "excluded": {
+          "team": 2,
+          "guestSpeakers": 1,
+          "total": 3,
+          "internal": false
+        },
+        "livestorm": null,
+        "rows": [
+          {
+            "key": "no_shows",
+            "people": 2,
+            "viewedReplay": 1,
+            "share": null
+          },
+          {
+            "key": "attendees",
+            "people": 5,
+            "viewedReplay": 0,
+            "share": null
           }
         ]
       }

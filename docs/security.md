@@ -68,6 +68,7 @@ The cached session payload still holds each person's full Livestorm record, minu
 - A v1 prompt gets people only through `roster.prompt_view`: a `P-` ref, a role and a job title. Never a name, email domain, company or Livestorm id.
 - A v1 page gets names only through `roster.display_people`, which fails closed: only a session whose profile is "public" lists anyone.
 - The v1 record route (`GET /api/sessions/{id}/record`) sends counts, measures and session-level facts only: no name, email, company, person or message id, or message text (`record/assemble.py`, `record/measures.py`). The only Livestorm id in it is the session's own. `tests/test_record_route.py` scans its response for them.
+- Its channel and segment measures name a channel (a UTM source, a referrer's host or a registration type) or a select answer only when enough audience registrants share it; smaller groups fold into one `(other)` row, so no small group is named. Text answers are never grouped. The minimums: [Channel quality](product.md#channel-quality) and [Segment quality](product.md#segment-quality).
 
 ## Model usage rows
 

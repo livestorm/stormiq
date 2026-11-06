@@ -10,7 +10,12 @@ plus an OAuth connection `bench-conn` for that org (expires in a year).
 All content is generated (fixed random seed): no customer data is involved.
 Payload shapes follow what the app stores: a raw Gladia v2 result run
 through the transcriber's own normalisation, and Livestorm JSON:API
-payloads for the session, chat and questions.
+payloads for the session, its event, chat and questions. Like a public
+webinar's, the people come from many UTM sources, referrers and
+registration types, registered days or hours ahead (a few after the
+start), and answered select fields, one with 200 options; the event
+carries those registration fields. So the v1 record's channel, segment
+and lead-time measures do their full work on these sessions.
 
 Usage (refuses any non-local database):
     DATABASE_URL=postgresql://stormiq:stormiq@localhost:5433/stormiq \\
@@ -63,6 +68,28 @@ ENTITIES = [
     ("PERSON", "Claire"), ("DATE", "Q3"), ("PERCENT", "25%"), ("MONEY", "$40,000"),
 ]
 COUNTRIES = [("FR", "France"), ("US", "United States"), ("DE", "Germany"), ("GB", "United Kingdom"), ("ES", "Spain")]
+
+# How people registered, and what they answered (all made up). Choices are
+# skewed (`_skewed`), so a few channels and answers are large and the long
+# tail folds into Other.
+UTM_SOURCES = tuple(f"source-{i:02d}" for i in range(1, 41))
+UTM_MEDIUMS = ("email", "social", "cpc", "partner")
+REFERRER_HOSTS = tuple(f"https://www.site-{i:02d}.example/page" for i in range(1, 16))
+TEAM_SIZES = ("1-10", "11-50", "51-200", "201-1000", "1000+")
+INDUSTRIES = tuple(f"industry-{i:03d}" for i in range(1, 201))  # a 200-option select
+TOPICS = tuple(f"topic-{i:02d}" for i in range(1, 31))
+# Days registered ahead of the start; negative is after the start.
+LEAD_DAYS = (0.1, 0.5, 2, 3, 5, 7, 10, 14, 20, 40, -0.01)
+EVENT_FIELDS = [
+    {"id": "email", "type": "text", "order": 0, "required": True},
+    {"id": "first_name", "type": "text", "order": 1, "required": True},
+    {"id": "last_name", "type": "text", "order": 2, "required": True},
+    {"id": "company", "type": "text", "order": 3, "required": False},
+    {"id": "job_title", "type": "text", "order": 4, "required": False},
+    {"id": "team_size", "type": "unique_select", "order": 5, "required": False},
+    {"id": "industry", "type": "unique_select", "order": 6, "required": False},
+    {"id": "topics", "type": "multiple_select", "order": 7, "required": False},
+]
 
 
 def _require_local_database() -> None:
@@ -145,11 +172,42 @@ def build_transcript(rng: random.Random, session_id: str, duration_s: int) -> Di
 # ── Livestorm payloads ──────────────────────────────────────────────────────
 
 
-def build_people(rng: random.Random, attendees: int) -> List[Dict[str, Any]]:
+def _skewed(rng: random.Random, options: tuple) -> Any:
+    """One option, the k-th about 1/k as likely as the first."""
+    return rng.choices(options, weights=[1 / k for k in range(1, len(options) + 1)])[0]
+
+
+def _channel(rng: random.Random) -> Dict[str, Any]:
+    """How a person registered: a UTM, a referrer, a registration type, or nothing."""
+    draw = rng.random()
+    if draw < 0.5:
+        return {"utm_source": _skewed(rng, UTM_SOURCES), "utm_medium": rng.choice(UTM_MEDIUMS), "referrer": None, "registration_type": None}
+    if draw < 0.7:
+        return {"utm_source": None, "utm_medium": None, "referrer": _skewed(rng, REFERRER_HOSTS), "registration_type": None}
+    if draw < 0.8:
+        return {"utm_source": None, "utm_medium": None, "referrer": None, "registration_type": "live"}
+    return {"utm_source": None, "utm_medium": None, "referrer": None, "registration_type": None}
+
+
+def _select_answers(rng: random.Random) -> List[Dict[str, Any]]:
+    """Answers to the select fields; about one person in ten skips each."""
+    answers = []
+    if rng.random() < 0.9:
+        answers.append({"id": "team_size", "type": "unique_select", "value": _skewed(rng, TEAM_SIZES), "required": False})
+    if rng.random() < 0.9:
+        answers.append({"id": "industry", "type": "unique_select", "value": _skewed(rng, INDUSTRIES), "required": False})
+    if rng.random() < 0.9:
+        topics = sorted({_skewed(rng, TOPICS) for _ in range(rng.randint(1, 4))})
+        answers.append({"id": "topics", "type": "multiple_select", "value": topics, "required": False})
+    return answers
+
+
+def build_people(rng: random.Random, attendees: int, started_at: int = 1759312800) -> List[Dict[str, Any]]:
     people = []
     for i in range(attendees):
         code, country = rng.choice(COUNTRIES)
         attended = rng.random() < 0.7
+        registered_at = started_at - int(_skewed(rng, LEAD_DAYS) * 86400)
         people.append({
             "id": f"p{i}", "type": "people",
             "attributes": {
@@ -162,16 +220,17 @@ def build_people(rng: random.Random, attendees: int) -> List[Dict[str, Any]]:
                     "event_id": "evt", "session_id": "s", "attended": attended,
                     "attendance_rate": rng.randint(10, 100) if attended else 0,
                     "attendance_duration": rng.randint(300, 7000) if attended else 0,
-                    "has_viewed_replay": rng.random() < 0.2, "registration_type": "live",
+                    "has_viewed_replay": rng.random() < 0.2,
                     "is_guest_speaker": i < 2, "session_role": "participant", "browser_name": "Chrome",
                     "os_name": "Mac OS", "ip_city": "Paris", "ip_country_code": code, "ip_country_name": country,
-                    "referrer": None, "utm_source": None,
+                    "created_at": registered_at, **_channel(rng),
                     "fields": [
                         {"id": "email", "type": "text", "value": f"person{i}@example.com", "required": True},
                         {"id": "first_name", "type": "text", "value": f"First{i}", "required": True},
                         {"id": "last_name", "type": "text", "value": f"Last{i}", "required": True},
                         {"id": "company", "type": "text", "value": f"Company {i % 37}", "required": False},
                         {"id": "job_title", "type": "text", "value": "Manager", "required": False},
+                        *_select_answers(rng),
                     ],
                 },
             },
@@ -260,10 +319,11 @@ def build_outputs(rng: random.Random) -> Dict[str, Any]:
 def seed_session(rng: random.Random, session_id: str, *, duration_s: int, attendees: int, chat: int, questions: int,
                  with_transcript: bool = True, with_outputs: bool = True, cover: bool = False, started_at: int) -> None:
     event_id = f"evt-{session_id}"
-    people = build_people(rng, attendees)
+    people = build_people(rng, attendees, started_at)
+    event_attributes = {"title": f"Benchmark webinar {session_id}", "fields": EVENT_FIELDS}
     fields: Dict[str, Any] = {
         "session_payload": build_session_payload(session_id, event_id, duration_s, people, started_at),
-        "event_payload": {"data": {"id": event_id, "type": "events", "attributes": {"title": f"Benchmark webinar {session_id}"}}},
+        "event_payload": {"data": {"id": event_id, "type": "events", "attributes": event_attributes}},
         "chat_payload": build_chat(rng, chat, people, started_at, duration_s),
         "questions_payload": build_questions(rng, questions, people, started_at, duration_s),
         "organization_id": ORG,
