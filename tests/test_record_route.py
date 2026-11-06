@@ -99,8 +99,8 @@ def test_the_owner_gets_the_clock_the_roster_header_and_the_pulse(client):
         }
     }
     record = body["record"]
-    assert list(record) == ["version", "roster", "pulse", "metricsVersion", "measuresSource", "measures"]
-    assert record["version"] == assemble.RECORD_VERSION == 3
+    assert list(record) == ["version", "roster", "pulse", "transcriptHealth", "metricsVersion", "measuresSource", "measures"]
+    assert record["version"] == assemble.RECORD_VERSION == 4
     assert record["roster"] == {
         "source": "session_include",
         "complete": None,
@@ -135,7 +135,7 @@ def test_the_pulse_counts_every_event_once_on_the_session_clock(client):
 
 def test_the_record_serves_every_measure_live(client):
     record = get(client).json()["record"]
-    assert record["metricsVersion"] == measures.METRICS_VERSION == 3
+    assert record["metricsVersion"] == measures.METRICS_VERSION == 4
     assert record["measuresSource"] == "live"
     assert list(record["measures"]) == list(measures.REGISTRY)
     measures.validate_measures(record["measures"])
@@ -152,6 +152,34 @@ def test_the_record_serves_every_measure_live(client):
         "livestorm": {"attendeesCount": 8, "registrantsCount": 10, "value": 0.8},
         "rows": None,
     }
+
+
+def test_the_transcript_health_comes_with_the_record(client):
+    """Counts and our own utterance ids only: no word, text or speaker label."""
+    health = get(client).json()["record"]["transcriptHealth"]
+    assert list(health) == ["version", "state", "reasons", "model", "words", "coverage", "speakers", "language", "unclearClusters", "gates"]
+    assert (health["version"], health["state"], health["reasons"], health["model"]) == (1, "ok", [], "solaria-1")
+    assert health["words"]["source"] == "utterances" and health["words"]["count"] == health["words"]["withConfidence"] > 0
+    assert health["coverage"]["audioS"] == DURATION_S and health["coverage"]["liveS"] == DURATION_S
+    assert health["speakers"] == {
+        "detected": 3, "substantial": 2, "labelled": 2, "substantialLabelled": 2, "expected": 2,
+        "expectedSource": "transcript", "cap": 4, "chunks": 1, "splitRisk": False,
+    }
+    assert health["language"] == {"detected": "en", "expected": "en", "match": True, "shares": {"en": 1.0}}
+    assert [cluster["u"] for cluster in health["unclearClusters"]] == [["U0117"]]
+    assert health["gates"] == {"pace": True, "speakerShares": True}
+    measure = get(client).json()["record"]["measures"]["m.transcript_health"]
+    assert (measure["value"], measure["den"], measure["state"]) == (health["words"]["meanConfidence"], health["words"]["withConfidence"], "ok")
+    assert measure["coverage"]["health"] == "ok"
+
+
+def test_a_session_without_a_transcript_has_unavailable_health(rows):
+    row = {**rows[SESSION_ID], "transcript_payload": None}
+    record = record_for(row)["record"]
+    assert record["transcriptHealth"]["state"] == "unavailable"
+    assert record["transcriptHealth"]["reasons"] == ["no_transcript"]
+    assert record["measures"]["m.transcript_health"]["state"] == "unavailable"
+    assert record["measures"]["m.transcript_health"]["coverage"] == {"missing": ["transcript"]}
 
 
 def test_a_session_without_started_at_has_no_clock_and_places_nothing(rows):
@@ -174,7 +202,10 @@ def test_a_session_without_started_at_has_no_clock_and_places_nothing(rows):
 
 
 def test_an_empty_row_still_answers(rows):
-    row = {**rows[SESSION_ID], "session_payload": None, "event_payload": None, "chat_payload": None, "questions_payload": None}
+    row = {
+        **rows[SESSION_ID], "session_payload": None, "event_payload": None, "chat_payload": None, "questions_payload": None,
+        "transcript_payload": None, "transcript_speaker_names": None,
+    }
     record = record_for(row)
     assert record["meta"]["clock"]["endSource"] == "none"
     assert record["record"]["roster"]["peopleCount"] == 0 and record["record"]["roster"]["internal"] is False

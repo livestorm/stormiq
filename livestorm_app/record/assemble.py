@@ -7,6 +7,8 @@ computed part of the response:
 - `record.roster`: the roster's header, counts only;
 - `record.pulse`: chat, questions and written answers per session minute,
   plus the before and after edges (`clock.minute_bins`);
+- `record.transcriptHealth`: how far the transcript can be trusted
+  (`record/transcript_health.py`, built once by `inputs.load_record_inputs`);
 - `record.metricsVersion`, `record.measuresSource` and `record.measures`:
   every measure of the registry (`record/measures.py`), through
   `measures_for_read`.
@@ -17,8 +19,9 @@ whenever the block's shape or rules change: it is part of that cache's key
 and of the response (`record.version`).
 
 Only counts and session-level facts leave here: no name, email, company,
-person or message id, or message text (the caller adds the session's own
-id). A page gets people only through `roster.display_people`, and the
+person or message id, or message or transcript text (the caller adds the
+session's own id). The transcript health carries our own utterance ids
+(`U0001`), never a word or a speaker label. A page gets people only through `roster.display_people`, and the
 header carries none.
 
 Pure functions: no database, network or web framework.
@@ -35,7 +38,7 @@ from livestorm_app.record.inputs import RecordInputs
 from livestorm_app.record.measures import METRICS_VERSION, compute_measures, validate_measures
 from livestorm_app.record.roster import Roster
 
-RECORD_VERSION = 3
+RECORD_VERSION = 4
 
 # Where the measures come from: computed from the cached payloads when the
 # block is built (the caller caches the block per process; nothing is
@@ -149,6 +152,7 @@ def assemble_record(inputs: RecordInputs) -> Dict[str, Any]:
             "version": RECORD_VERSION,
             "roster": roster_header(inputs.roster),
             "pulse": pulse(minute_bins(events, base=inputs.clock)),
+            "transcriptHealth": inputs.transcript_health,
             **measures_for_read(inputs),
         },
     }

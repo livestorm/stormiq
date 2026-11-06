@@ -75,6 +75,7 @@ GROUPED = (
     "m.lead_time_show_up",
     "m.replay_caught_up",
 )
+TRANSCRIPT = ("m.transcript_health",)
 AUDIENCE_MEASURES = tuple(measure_id for measure_id, definition in REGISTRY.items() if definition.excludes)
 
 # Every registry pin ever published, by METRICS_VERSION. Never edit an entry:
@@ -83,6 +84,7 @@ PUBLISHED_PINS = {
     1: "3120ffec1fc37731bd6bfec4e7c863b8f98bfa2507e5617e04f4e0e75c617e07",
     2: "0b51257a2ab5dd195a1840683fe81f5185cc8130b75104834617845b359100ea",
     3: "864d68d8871758f3a65cce51e25a172b4026a366c9eda7998a272486567e8432",
+    4: "371ad80ebb3c49f67537164dae3c8e33b359f0dfb3e9761fc9db464be99f9f46",
 }
 
 
@@ -203,13 +205,37 @@ def questions(*items):
     return {"data": list(items)}
 
 
-def row(people, chat_payload=None, questions_payload=None, *, event_payload=None, **attributes):
+def transcript(*confidences, speech_s=3000.0):
+    """A one-utterance Gladia transcript whose words have these confidences
+    (None: no confidence), over a recording of the session's length."""
+    words = [
+        {"word": f" w{index}", "start": float(index), "end": index + 0.5, **({} if value is None else {"confidence": value})}
+        for index, value in enumerate(confidences)
+    ]
+    utterance = {"start": 0.0, "end": speech_s, "speaker": 0, "language": "en", "text": "words", "words": words}
+    return {
+        "request_params": {"model": "solaria-1"},
+        "result": {
+            "metadata": {"audio_duration": float(LENGTH_S)},
+            "transcription": {"languages": ["en"], "utterances": [utterance]},
+            "stormiq_chunks": [{"index": 1, "offset_s": 0.0}],
+        },
+    }
+
+
+DEFAULT_TRANSCRIPT = object()
+
+
+def row(
+    people, chat_payload=None, questions_payload=None, *, event_payload=None, transcript_payload=DEFAULT_TRANSCRIPT, **attributes
+):
     return {
         "session_id": "s1",
         "session_payload": session_payload(people, **attributes),
         "event_payload": event_payload,
         "chat_payload": chat() if chat_payload is None else chat_payload,
         "questions_payload": questions() if questions_payload is None else questions_payload,
+        "transcript_payload": transcript(0.9, 0.95) if transcript_payload is DEFAULT_TRANSCRIPT else transcript_payload,
     }
 
 
@@ -232,8 +258,8 @@ def one(measure_id, people, *args, roster_rows=None, **kwargs):
 # ── The registry ────────────────────────────────────────────────────────────
 
 
-def test_the_registry_holds_the_vitals_then_the_grouped_measures_in_order():
-    assert tuple(REGISTRY) == VITALS + GROUPED
+def test_the_registry_holds_the_vitals_then_the_grouped_measures_then_the_transcript_in_order():
+    assert tuple(REGISTRY) == VITALS + GROUPED + TRANSCRIPT
     for measure_id, definition in REGISTRY.items():
         assert definition.id == measure_id and definition.version >= 1
         assert definition.unit in UNITS
@@ -395,6 +421,7 @@ def test_a_stored_roster_without_a_session_payload():
     assert unavailable == {
         "m.show_up_rate", "m.livestorm_counts", "m.wrote_rate", "m.questions_qa", "m.time_to_answer", "m.author_resolution",
         "m.chat_concentration", "m.room_map", "m.channel_quality", "m.segment_quality", "m.lead_time_show_up",
+        "m.transcript_health",
     }
     assert found["m.lead_time_show_up"]["coverage"] == {"missing": ["session"]}, "no start, no lead time"
     assert found["m.show_up_rate"]["coverage"] == {"missing": ["session"]}
@@ -1733,6 +1760,43 @@ def test_grouped_rows_have_unique_keys_and_carry_no_person():
 # ── The synthetic webinar ───────────────────────────────────────────────────
 
 
+def test_transcript_health_is_the_mean_word_confidence_with_the_health_in_coverage():
+    item = one("m.transcript_health", webinar(), transcript_payload=transcript(0.9, 0.8, 0.4, 0.9))
+    assert (item["value"], item["num"], item["den"], item["state"]) == (0.75, None, 4, OK)
+    assert item["coverage"] == {
+        "health": "poor",  # a mean of 0.75 is below the degraded line, and a quarter of the words are unclear
+        "reasons": ["unclear_words", "low_confidence"],
+        "model": "solaria-1",
+        "words": 4,
+        "lowConfidenceShare": 0.25,
+        "speechShareOfAudio": 0.8333,
+        "speakersSubstantial": 1,
+        "speakersExpected": 1,
+        "splitRisk": False,
+        "chunks": 1,
+    }
+    assert item["excluded"] is None and item["livestorm"] is None and item["rows"] is None
+
+
+def test_transcript_health_without_words_is_insufficient_not_zero():
+    item = one("m.transcript_health", webinar(), transcript_payload=transcript())
+    assert (item["value"], item["den"], item["state"]) == (None, 0, INSUFFICIENT)
+    assert item["coverage"]["health"] == "degraded" and item["coverage"]["reasons"] == ["no_word_data"]
+
+
+def test_transcript_health_with_words_without_confidence_is_partial():
+    item = one("m.transcript_health", webinar(), transcript_payload=transcript(0.9, None, 0.9))
+    assert (item["value"], item["den"], item["state"]) == (0.9, 2, PARTIAL)
+    assert item["coverage"]["words"] == 3
+
+
+@pytest.mark.parametrize("payload", [None, {"text": "not a Gladia transcript"}], ids=["none", "not gladia"])
+def test_transcript_health_without_a_transcript_is_unavailable(payload):
+    item = one("m.transcript_health", webinar(), transcript_payload=payload)
+    assert (item["value"], item["den"], item["state"]) == (None, None, UNAVAILABLE)
+    assert item["coverage"] == {"missing": ["transcript"]}
+
+
 def test_the_synthetic_webinar():
     """The values the frontend fixture shows (record-v1.json)."""
     found = compute(synthetic.cached_row())
@@ -1755,6 +1819,7 @@ def test_the_synthetic_webinar():
         "m.segment_quality": (None, None, None, INSUFFICIENT),
         "m.lead_time_show_up": (None, None, 7, INSUFFICIENT),
         "m.replay_caught_up": (None, 1, 2, INSUFFICIENT),
+        "m.transcript_health": (0.9169, None, 2753, OK),
     }
 
 

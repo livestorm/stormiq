@@ -7,6 +7,10 @@ authors of the chat and the questions, resolved to roster people
 (`authors.resolve_authors`). The roster's roles are raised by what each
 person did: the team flags of the chat messages resolved to them, and the
 answers they wrote (`roster.escalate_roles`), except on an internal session.
+The transcript, when there is one, is parsed once here
+(`transcript.parse_transcript`) and its health built once
+(`transcript_health.build_transcript_health`), for the record block and the
+measures alike.
 
 The roster comes from stored person rows when the caller has them
 (`roster_rows`), and from the session payload's `include=people` list
@@ -33,6 +37,8 @@ from livestorm_app.record.roster import (
     roster_from_rows,
     roster_from_session_payload,
 )
+from livestorm_app.record.transcript import ParsedTranscript, parse_transcript
+from livestorm_app.record.transcript_health import build_transcript_health
 
 
 @dataclass(frozen=True)
@@ -49,6 +55,10 @@ class RecordInputs:
     chat_payload: Optional[Mapping[str, Any]]
     questions_payload: Optional[Mapping[str, Any]]
     transcript_payload: Optional[Mapping[str, Any]]
+    # The parsed transcript (None without a Gladia transcript) and its health
+    # (`record.transcriptHealth`), built once per load.
+    transcript: Optional[ParsedTranscript]
+    transcript_health: Mapping[str, Any]
 
 
 def _mapping(value: Any) -> Optional[Mapping[str, Any]]:
@@ -104,13 +114,20 @@ def count_people_on_stage(cached: Any, *, roster_rows: Optional[RosterRows] = No
     return count if count > 0 else None
 
 
+def _event_language(event_payload: Optional[Mapping[str, Any]]) -> Any:
+    data = event_payload.get("data") if isinstance(event_payload, Mapping) else None
+    attributes = data.get("attributes") if isinstance(data, Mapping) else None
+    return attributes.get("language") if isinstance(attributes, Mapping) else None
+
+
 def load_record_inputs(cached: Mapping[str, Any], *, roster_rows: Optional[RosterRows] = None) -> RecordInputs:
     """The record's inputs from a cached session row.
 
     `roster_rows`, when given, are the session's stored people and wins over
     the payload's `include=people` list. Missing payloads are None; a missing
     session payload gives no clock and an empty roster, so no author
-    resolves.
+    resolves. The row's `transcript_payload` and `transcript_speaker_names`,
+    when present, give the parsed transcript and its health.
     """
     if not isinstance(cached, Mapping):
         raise TypeError("load_record_inputs needs a cached session row")
@@ -121,15 +138,28 @@ def load_record_inputs(cached: Mapping[str, Any], *, roster_rows: Optional[Roste
     chat_payload = _mapping(cached.get("chat_payload"))
     questions_payload = _mapping(cached.get("questions_payload"))
     authors = resolve_authors(chat_payload, questions_payload, roster)
+    clock = clock_base(session_payload)
+    transcript_payload = _mapping(cached.get("transcript_payload"))
+    transcript = parse_transcript(transcript_payload)
+    on_stage = people_on_stage(roster)  # as the speaker cap counts them (`count_people_on_stage`)
+    transcript_health = build_transcript_health(
+        transcript,
+        live_s=clock.end_s,
+        people_on_stage=on_stage if on_stage > 0 else None,
+        expected_language=_event_language(event_payload),
+        speaker_names=cached.get("transcript_speaker_names"),
+    )
 
     return RecordInputs(
         session_id=session_id,
-        clock=clock_base(session_payload),
+        clock=clock,
         roster=escalate_roles(roster, authors.role_signals),
         authors=authors,
         session_payload=session_payload,
         event_payload=event_payload,
         chat_payload=chat_payload,
         questions_payload=questions_payload,
-        transcript_payload=_mapping(cached.get("transcript_payload")),
+        transcript_payload=transcript_payload,
+        transcript=transcript,
+        transcript_health=transcript_health,
     )

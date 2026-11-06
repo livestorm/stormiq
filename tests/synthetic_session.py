@@ -6,7 +6,8 @@ what `db.fetch_cached_session` returns for a 30-minute session that started
 seven audience members with UTMs, a referrer and a registration type, chat
 in the waiting room, live and after the end (each message linked to its
 author's people record), questions answered in writing, orally or not at
-all, a short transcript and a few AI outputs.
+all, a transcript of the whole session (with speaker labels, a stretch of
+unclear words and a phantom speaker) and a few AI outputs.
 
 Three committed files come from it:
 
@@ -325,32 +326,55 @@ def questions_payload() -> Dict[str, Any]:
     return {"data": data, "included": included, "pages_fetched": 1, "requested_page_size": 50}
 
 
-def _utterance(speaker: int, start: float, words: List[str]) -> Dict[str, Any]:
+def _utterance(speaker: int, start: float, words: List[str], confidence: float = 0.92) -> Dict[str, Any]:
     timed = []
     t = start
     for word in words:
-        timed.append({"word": f" {word}", "start": round(t, 2), "end": round(t + 0.35, 2), "confidence": 0.92})
+        timed.append({"word": f" {word}", "start": round(t, 2), "end": round(t + 0.35, 2), "confidence": confidence})
         t += 0.45
     text = " ".join(words)
     return {
         "start": timed[0]["start"], "end": timed[-1]["end"], "speaker": speaker, "channel": 0,
-        "confidence": 0.92, "language": "en", "text": text, "words": timed,
+        "confidence": confidence, "language": "en", "text": text, "words": timed,
     }
 
 
+# The scripted lines of the transcript: (speaker, start in recording seconds, words).
+SCRIPT = (
+    (0, 3.0, "welcome everyone thanks for joining us today".split()),
+    (0, 12.0, "today we look at the new dashboard and the export".split()),
+    (1, 60.0, "happy to be here let me share my screen".split()),
+    (1, 300.0, "pricing works per team and scales with seats".split()),
+    (0, 760.0, "yes you can export everything to csv".split()),
+    (0, 1700.0, "thank you all see you next time".split()),
+)
+FILLER = "we walk through each view step by step and show how it helps your team every week".split()
+UNCLEAR_AT_S = 1204.0  # a stretch of words heard badly
+PHANTOM_AT_S = 905.0  # a speaker heard for one second
+
+
+def _utterances() -> List[Dict[str, Any]]:
+    """The scripted lines, filler talk every 10 seconds between them (the host
+    and the guest speaker in turns of 5 minutes), one stretch of
+    low-confidence words and a phantom third speaker."""
+    utterances = [_utterance(speaker, start, words) for speaker, start, words in SCRIPT]
+    for start in range(24, 1690, 10):
+        if any(abs(start - line[1]) < 10 for line in SCRIPT) or abs(start - PHANTOM_AT_S) < 10:
+            continue
+        speaker = 0 if (start // 300) % 2 == 0 else 1
+        confidence = 0.45 if abs(start - UNCLEAR_AT_S) < 1 else 0.92
+        utterances.append(_utterance(speaker, float(start), FILLER, confidence))
+    utterances.append(_utterance(2, PHANTOM_AT_S, ["right", "exactly"], 0.7))
+    return sorted(utterances, key=lambda u: u["start"])
+
+
 def transcript_payload() -> Dict[str, Any]:
-    """A short Gladia transcript, normalized as the worker stores it, with
+    """A Gladia transcript of the whole session, made and normalized as the
+    worker stores it today (one chunk, the speaker cap's provenance), with
     the machine-dependent fields pinned."""
     from livestorm_app.gladia import transcriber
 
-    utterances = [
-        _utterance(0, 3.0, "welcome everyone thanks for joining us today".split()),
-        _utterance(0, 12.0, "today we look at the new dashboard and the export".split()),
-        _utterance(1, 60.0, "happy to be here let me share my screen".split()),
-        _utterance(1, 300.0, "pricing works per team and scales with seats".split()),
-        _utterance(0, 760.0, "yes you can export everything to csv".split()),
-        _utterance(0, 1700.0, "thank you all see you next time".split()),
-    ]
+    utterances = _utterances()
     sentences = [
         {"sentence": u["text"], "start": u["start"], "end": u["end"], "speaker": u["speaker"], "channel": 0,
          "confidence": u["confidence"], "language": "en", "words": copy.deepcopy(u["words"])}
@@ -359,6 +383,7 @@ def transcript_payload() -> Dict[str, Any]:
     gladia = {
         "id": "synthetic-gladia-job", "status": "done", "kind": "pre-recorded",
         "file": {"audio_duration": float(DURATION_S)},
+        "request_params": {"model": "solaria-1", "diarization": True, "sentences": True},
         "result": {
             "metadata": {"audio_duration": float(DURATION_S), "number_of_distinct_channels": 1, "billing_time": float(DURATION_S)},
             "transcription": {
@@ -370,13 +395,18 @@ def transcript_payload() -> Dict[str, Any]:
             "named_entity_recognition": {"success": True, "is_empty": True, "results": []},
         },
     }
+    request = {"diarization_config": {"min_speakers": 1, "max_speakers": 4}}
+    chunk = {"gladia_result": gladia, "offset_seconds": 0.0, "gladia_request": request, "started_job": {"id": gladia["id"]}}
+    provenance = transcriber._provenance([chunk], None)
+    provenance["people_on_stage"] = 2
     normalized = transcriber._normalize_transcription(
-        gladia,
+        transcriber._merge_chunk_results([chunk]),
         source_video=Path("recording.mp4"),
         extracted_audio=None,
         requested_model=transcriber.DEFAULT_MODEL,
         actual_model=transcriber.DEFAULT_MODEL,
         session_id=SESSION_ID,
+        provenance=provenance,
     )
     normalized["source_video"] = "recording.mp4"
     normalized["created_at"] = "2026-10-01T10:00:00+00:00"
@@ -393,7 +423,7 @@ def cached_row() -> Dict[str, Any]:
         "chat_payload": chat_payload(),
         "questions_payload": questions_payload(),
         "transcript_payload": transcript_payload(),
-        "transcript_speaker_names": {"0": "Host", "1": "Guest"},
+        "transcript_speaker_names": {"0": "Nora Vale", "1": "Rhea Stone"},
         "analysis_md": None,
         "analysis_bundle": {"English": "# Synthetic analysis\n\nThe audience asked about pricing and exports."},
         "deep_analysis_md": None,
