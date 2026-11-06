@@ -18,6 +18,7 @@ from types import SimpleNamespace
 
 import pytest
 import requests
+import urllib3
 from requests.structures import CaseInsensitiveDict
 
 from livestorm_app.livestorm import client
@@ -208,6 +209,31 @@ def test_a_list_that_ends_on_its_max_page_is_whole(monkeypatch):
     _serve_pages(monkeypatch, {0: ([_person("p1")], _meta(1, 2)), 1: ([_person("p2")], _meta(None, 2))})
     result = client.fetch_session_people("Bearer t", "s1", deadline=FAR_DEADLINE, page_size=1)
     assert (len(result["people"]), result["complete"]) == (2, True)
+
+
+def test_each_answer_reports_the_requests_behind_it_retries_included(monkeypatch):
+    # The shared session's retries send a GET again after a 429, a 5xx or a
+    # connection error before it returns; urllib3 records each one in the
+    # final response's retry history. The people sync counts its calls from it.
+    retry = urllib3.util.Retry(total=3, status_forcelist=(503,), allowed_methods=frozenset({"GET"}))
+    for _ in range(2):
+        retry = retry.increment(method="GET", url="/people", response=urllib3.HTTPResponse(status=503))
+    retried = requests.Response()
+    retried.raw = urllib3.HTTPResponse(body=b"", status=200, retries=retry)
+    assert client.requests_sent(retried) == 3
+    assert client.requests_sent(requests.Response()) == 1, "no raw response: one request"
+
+    def answer(payload, *, status_code=200, sent=1):
+        response = FakeResponse(payload, status_code=status_code)
+        response.raw = SimpleNamespace(retries=SimpleNamespace(history=("retry",) * (sent - 1)))
+        return response
+
+    answers = {0: answer({"data": [_person("p1")], "meta": _meta(1, 2)}, sent=3), 1: answer({}, status_code=500, sent=4)}
+    monkeypatch.setattr(client, "livestorm_get", lambda url, *, headers, params=None: answers[params["page[number]"]])
+    counted: list = []
+    with pytest.raises(requests.HTTPError):
+        client.fetch_session_people("Bearer t", "s1", deadline=FAR_DEADLINE, page_size=1, on_page=counted.append)
+    assert counted == [3, 4], "every request sent, the failed answer's retries included"
 
 
 def test_the_people_pager_reads_the_monthly_rate_limit_header_as_a_number(monkeypatch):

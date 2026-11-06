@@ -32,6 +32,8 @@ Every route is a FastAPI handler in [`livestorm_app/routes/`](../livestorm_app/r
 | `/api/sessions/{id}/transcript-job` | GET | caller | Transcript job status and progress |
 | `/api/sessions/{id}/transcript.json` | GET | caller | Full raw transcript as a download (the workspace carries only subtitles) |
 | `/api/sessions/{id}/speaker-labels` | POST | caller | Save edited speaker labels |
+| `/api/sessions/{id}/roster-status` | GET | caller | v1 Report only: the stored roster's header and the latest people sync, with its progress ([below](#the-people-sync)). 404 if not cached |
+| `/api/sessions/{id}/roster-sync` | POST | caller | v1 Report only: start reading the session's people from Livestorm in the worker ([jobs.md](jobs.md#people-sync)). Starts nothing for another org's session; 429 over the org's daily call cap |
 | `/api/sessions/{id}/analysis` | POST | caller | Start the overall analysis (English or French) |
 | `/api/sessions/{id}/deep-analysis` | POST | caller | Start the deep analysis (English or French) |
 | `/api/sessions/{id}/smart-recap` | POST | caller | Start a Smart Recap (`professional`, `hype` or `surprise`) |
@@ -79,6 +81,31 @@ Every route is a FastAPI handler in [`livestorm_app/routes/`](../livestorm_app/r
 | `record.measures` | One entry per measure of the registry, by id, in registry order (the vitals `m.roster_coverage`, `m.audience_registrants`, `m.team_count`, `m.audience_attendees`, `m.show_up_rate`, `m.time_in_room`, `m.wrote_rate`, `m.questions_qa`, `m.time_to_answer`, `m.author_resolution`, `m.livestorm_counts`, then the grouped audience measures `m.chat_concentration`, `m.room_map`, `m.channel_quality`, `m.segment_quality`, `m.lead_time_show_up`, `m.replay_caught_up`, then `m.transcript_health` and `m.clock_alignment`). Each is `{id, version, value, num, den, state, coverage, excluded, livestorm, rows}`. `state` is `ok`, `partial`, `approximation`, `insufficient`, `unresolved` or `unavailable`; `value` is null in the last three, whenever there is nothing to divide, and on the measures that have rows only (`m.livestorm_counts`, `m.room_map`, `m.channel_quality`, `m.segment_quality`, `m.lead_time_show_up`); `num` and `den` are null when `unresolved`. `rows` is a list of objects, each with a `key` unique in the measure; a row's own `state` (on channels, segments and lead-time buckets) is `ok` or `insufficient`, or the measure's state when that hides its value, and a hidden row value is null. On `m.channel_quality` and `m.segment_quality`, `wrote` and `wroteRate` are also null when the chat's or the questions' authors are unresolved; the measure is then partial, never unresolved, and `coverage.chatAuthors` or `coverage.questionAuthors` says so. `excluded` is `{team, guestSpeakers, total, internal}` on an audience-only measure (null when it is `unavailable`) and null on the others; `total` is the n of "excludes your team (n)". Each measure's formula, gates and states: [product.md §13](product.md#measures-v1-report). The page renders these fields and computes nothing |
 
 On an internal session nobody is relabelled: its chat stays team chat, and `record.roster.internal` is true. Its audience-only measures count everyone, with `excluded.internal` true.
+
+## The people sync
+
+Two routes for the v1 Report's people list, which the worker reads from Livestorm and stores ([jobs.md](jobs.md#people-sync)). Both check the caller's scope first: a session out of scope is a 404 and starts nothing. Neither returns a person, a connection id or a token. Times are ISO 8601 strings in UTC.
+
+`GET /api/sessions/{id}/roster-status` (`people_sync.read_roster_status`), polled while a sync runs:
+
+```
+{sessionId, status, roster, sync, progress}
+```
+
+| Field | What it holds |
+|---|---|
+| `status` | The latest sync's status (`pending`, `running`, `completed`, `error`), or `none` before the first one. A sync whose queue job is gone is closed as `error` on this read |
+| `roster` | The stored roster's header, or null before the first: `{version, source, complete, recordCount, peopleCount, fieldsSource, reason, syncedAt, refreshDueAt, refreshedAt}`. `source` is `paginated` for a synced roster; `complete` is true only when the people match Livestorm's `recordCount` |
+| `sync` | The latest sync, or null: `{syncId, reason, status, error, calls, recordCount, peopleWritten, createdAt, updatedAt}`. `reason` is `initial` or `manual`; `calls` is the HTTP requests it sent to Livestorm, retries included; `error` is StormIQ's own message, never an upstream URL or body |
+| `progress` | While the sync is active, its Redis progress (`{kind: "roster", stage, percent, updated_at_ms, label?, calls?}`; stages `queued`, `waiting`, `people`, `labels`, `saving`), else null |
+
+`POST /api/sessions/{id}/roster-sync` (`people_sync.request_people_sync`) takes no body and returns:
+
+```
+{sessionId, status, syncId, started, skipped}
+```
+
+`started` is true when a new sync was queued (`status` `pending`). Otherwise `status` and `syncId` are the latest sync's, and `skipped` says why nothing started: null (a sync is already running; it was joined), `other_org` (the session isn't the caller's org's, for example an admin reading another org's session), or `cooldown` (one completed less than 15 minutes ago). Over the org's daily cap of Livestorm calls (`LIVESTORM_SYNC_DAILY_CALLS_PER_ORG`) it answers **429** `{resource: "People sync", message, details: {resource, dailyCallCap, callsLast24h}}`; when the job queue is unavailable, **503** `{resource: "People sync", message, details: {resource}}`. A sync that was queued can still end in `error` without calling Livestorm: when the cap was reached before it ran, or when another sync of the org was already waiting to run ([jobs.md](jobs.md#people-sync)); its `sync.error` says which.
 
 ## Adding a route
 

@@ -82,6 +82,14 @@ def transcription_job_id(transcript_job_id: str) -> str:
     return f"transcription:{str(transcript_job_id).strip()}"
 
 
+def livestorm_sync_job_id(sync_id: str) -> str:
+    """arq id for a `livestorm_sync_jobs` row (the people sync). As for
+    transcriptions, the row's partial unique index (one active sync per
+    session) is the dedupe; this id lets the web process ask arq whether the
+    job behind a row is still alive."""
+    return f"livestorm_sync:{str(sync_id).strip()}"
+
+
 # ── Sync bridge ─────────────────────────────────────────────────────────────
 #
 # FastAPI runs `def` handlers in a threadpool with no event loop, while arq

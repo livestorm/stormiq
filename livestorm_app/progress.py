@@ -67,8 +67,23 @@ ANALYSIS_STAGE_FLOORS: Dict[str, int] = {
 }
 
 
+# The people sync (`worker.run_people_sync`, keyed by session): it may wait
+# for another sync of the same org, then lists the people page by page (the
+# longest stage on a large session), then the workspace's field labels, then
+# saves the roster.
+ROSTER_STAGE_FLOORS: Dict[str, int] = {
+    "queued": 0,
+    "waiting": 5,
+    "people": 15,
+    "labels": 80,
+    "saving": 90,
+    "done": 100,
+}
+
+
 STAGE_TABLE: Dict[str, Dict[str, int]] = {
     "transcript": TRANSCRIPT_STAGE_FLOORS,
+    "roster": ROSTER_STAGE_FLOORS,
     "overall_analysis": ANALYSIS_STAGE_FLOORS,
     "deep_analysis": ANALYSIS_STAGE_FLOORS,
     "smart_recap": ANALYSIS_STAGE_FLOORS,

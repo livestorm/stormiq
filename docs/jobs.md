@@ -1,6 +1,6 @@
 # Jobs and processing flows
 
-How a session is fetched, transcribed and analysed. Slow or paid work (transcription, AI generation, cover images) runs only in the arq worker, never inside a web request; the web process doesn't even import the Gladia client. Code: [`api_logic.py`](../livestorm_app/api_logic.py) (web side), [`queue.py`](../livestorm_app/queue.py), [`worker.py`](../livestorm_app/worker.py), [`progress.py`](../livestorm_app/progress.py).
+How a session is fetched, transcribed and analysed. Slow or paid work (transcription, the people sync, AI generation, cover images) runs only in the arq worker, never inside a web request; the web process doesn't even import the Gladia client. Code: [`api_logic.py`](../livestorm_app/api_logic.py) and [`people_sync.py`](../livestorm_app/people_sync.py) (web side), [`queue.py`](../livestorm_app/queue.py), [`worker.py`](../livestorm_app/worker.py), [`progress.py`](../livestorm_app/progress.py).
 
 ## Fetching a session
 
@@ -32,6 +32,32 @@ The worker, in `worker.run_transcription(job_id, session_id)`:
 Each transcript poll also reconciles the row with arq (as in step 2), so a job that died in the queue shows as an error within minutes. The poll response carries `progress` (the raw Gladia step) and `progressRedis` (stage-floor progress with a percent).
 
 **Sweeper.** Every 10 minutes, a cron job marks `pending` or `running` rows that have been silent for an hour as `error`. A job that finishes after being swept still writes `completed`.
+
+## People sync
+
+The v1 roster's complete people list comes from Livestorm's paginated people endpoint: 50 people per page, so about 100 calls for 5,000 registrants ([providers.md](providers.md#livestorm-people)). It runs only in the worker, as the job `run_people_sync`, and is saved whole as the session's roster ([data-model.md](data-model.md#stored-people)). The v1 record still reads the people cached with the session (`include=people`); it will switch to the stored roster in a later change.
+
+**Starting one.** `POST /api/sessions/{id}/roster-sync` runs `people_sync.request_people_sync`. It checks the caller's scope first (`fetch_session_fields`, which also gives the session's stamped org; 404 outside it), then `people_sync.start_people_sync` applies these guards in order. A guard that stops the sync starts nothing and answers with the latest status and why (`skipped`):
+
+1. **Same org only.** The session's stamped org must equal the caller's org (`other_org` otherwise): an admin reading another org's session never spends their own token on it. The one exception is local dev with the operator's `LS_API_KEY`.
+2. **One sync at a time per session.** An active sync (`pending` or `running`) is first checked against arq, as transcriptions are: a job arq reports failed, or has no trace of 2 minutes after the row's last update, is closed as `error`. A sync still active is joined, not duplicated.
+3. **Cooldown.** A sync that completed less than `PEOPLE_SYNC_COOLDOWN_MINUTES` (15) ago starts nothing (`cooldown`).
+4. **Error backoff.** An automatic start doesn't retry within an hour of a failed sync (`error_backoff`); an explicit `POST /roster-sync` does. Nothing starts a sync automatically yet: starting one after a fresh fetch comes next.
+5. **Daily cap.** `LIVESTORM_SYNC_DAILY_CALLS_PER_ORG` (default 1,000) caps the Livestorm calls an org's syncs recorded in a rolling 24 hours (`db.livestorm_sync_calls_since`, which sums each sync's calls as recorded when it ends). Every sync counts except a session's first `initial` sync, which is never capped. At or over the cap, `POST /roster-sync` answers 429 ([api.md](api.md#the-people-sync)). Syncs still running count for nothing here, so syncs queued together all pass this check; the worker checks the cap again before any call (its step 3 below).
+
+Then it inserts a `livestorm_sync_jobs` row with the caller's connection id (`reason` `initial` while the session has no roster, `manual` after; a request that loses the insert race joins the winner's row) and enqueues `run_people_sync(sync_id, session_id)` with the arq id `livestorm_sync:{sync_id}` (`queue.livestorm_sync_job_id`). If the enqueue fails, the row is marked `error` at once, which clears its connection id, and the request answers 503.
+
+The worker, in `worker.run_people_sync(sync_id, session_id)`:
+
+1. **Claims the row** (`db.claim_livestorm_sync`), which moves it to `running` and hands the connection id over once, clearing it in the same statement. A row that is no longer `pending` (swept, or closed as lost) is skipped with no Livestorm call.
+2. **Waits for the org's lock.** At most one people sync per org runs at a time: a Redis lock, `stormiq:livestorm-sync:{org}`, keyed by the session's stamped org. While another sync holds it, the job waits; every minute it refreshes its row's `updated_at`, so the sweeper leaves it alone, and publishes a `waiting` progress. A row closed meanwhile (swept) stops the wait. The wait counts toward the job's timeout. A waiting job holds one of the worker's job slots (arq's `max_jobs`, 10, shared by every org's jobs), so only one sync per org may wait: it holds `stormiq:livestorm-sync-wait:{org}`, and a sync that finds both keys held fails at once, with no Livestorm call, and says another sync of the org is already waiting. One org therefore holds two slots at most. Both keys live 20 minutes, longer than the timeout, so a killed worker's keys free themselves, and only their owner releases them (a token-checked delete in `finally`).
+3. **Checks the daily cap again** (`people_sync.check_daily_cap`). Under the org's lock every earlier sync of the org has recorded its calls, so the sum is exact: at or over the cap, the sync fails with no Livestorm call. A sync that starts under the cap runs to its end, so the org can pass the cap by that one sync's calls. A session's first `initial` sync is exempt here too (`db.livestorm_sync_is_first_initial`).
+4. **Resolves credentials** (`people_sync._resolve_sync_credentials`), after the wait so the token is fresh. The connection is read from the database and its org must equal the session's stamped org; otherwise the sync fails with no Livestorm call, not even a token refresh. Only then is the token resolved, and refreshed if close to expiry (`auth.livestorm_auth_for_job`).
+5. **Reads and saves** in a thread (`people_sync.run_people_sync`): every page of people (`client.fetch_session_people`), then the workspace's field labels (`client.fetch_people_attributes`, reused from `org_people_attributes` when read less than 24 hours ago; a 401 or 403 is stored as `forbidden` and the fields are labelled from the event's own fields), then the field definitions and the `P-` refs, then `db.replace_session_roster` (`source='paginated'`, complete only when the people match Livestorm's `record_count`). A first roster is due its refresh 7 days after the session ends (`refresh_due_at`; none when that is already past, since this sync then is the refresh); later syncs keep the stored value. The pager stops itself 30 seconds before the job's time limit.
+6. **Finishes.** The row becomes `completed` with its counts: `pages_fetched` (every HTTP request the sync sent to Livestorm and got an answer to, people and field labels, the HTTP session's retries included: `client.requests_sent`), `record_count` and `people_written`. The arq result is counts only: `{status, calls, people, recordCount}`.
+7. **On any failure** (a page, the deadline, a list that never reaches its last page, the database), it raises before the roster is written, so the previous roster stays, and marks the row `error` with a message of our own (never an upstream URL or body) and the calls made so far. The job then fails with `people_sync.PeopleSyncFailed`, which holds that message only: arq pickles a failed job's exception into Redis, and a `requests` exception carries the user's token and the upstream body. On a timeout or a worker shutdown the row is marked `error` too, and the sync's thread stops at its next page and never writes. Nothing is retried; the user retries with `POST /roster-sync`.
+
+`GET /api/sessions/{id}/roster-status` (`people_sync.read_roster_status`) is the poll: the roster header and the latest sync, with the Redis progress while it runs. It closes a lost sync the same way as the second guard above. The stuck-job sweeper also covers `livestorm_sync_jobs`: a `pending` or `running` row silent for an hour becomes `error`, with its connection id cleared (`db.sweep_stuck_livestorm_syncs`).
 
 ## AI generation
 
@@ -73,12 +99,13 @@ Smart Recap is on demand only: nothing generates it automatically.
 | Job | Timeout |
 |---|---|
 | Transcription | 120 min |
+| People sync | 15 min, the wait for the org's lock included |
 | AI flows | 15 min |
 | Cover image | 5 min |
 | `ping` | 5 min (arq default) |
 
 - A timeout fails the job. The thread it started is not killed, which is why every HTTP call also has its own timeout ([providers.md](providers.md)).
-- arq retries nothing (`max_tries=1`): failures are mostly deterministic, and re-runs cost money. A transcription marks its `transcript_jobs` row `error`. AI and cover jobs log and re-raise; arq keeps the error in the job's result for an hour, and the poll returns it. The worker stores only the error's message there, never the exception object (`queue.job_result_serializer`, set as `WorkerSettings.job_serializer`). The user retries from the UI.
+- arq retries nothing (`max_tries=1`): failures are mostly deterministic, and re-runs cost money. A transcription marks its `transcript_jobs` row `error`, and a people sync its `livestorm_sync_jobs` row. AI and cover jobs log and re-raise; arq keeps the error in the job's result for an hour, and the poll returns it. The worker stores only the error's message there, never the exception object (`queue.job_result_serializer`, set as `WorkerSettings.job_serializer`). The user retries from the UI.
 - If the worker process is killed mid-job (OOM, not a normal shutdown), arq keeps reporting that job as running until its in-progress key expires: the longest job timeout plus 10 s, about 2 hours. Until then the same output can't be regenerated. Deleting `arq:in-progress:{job id}` in Redis frees it.
 - `ping` returns `"pong"`. Enqueue it to check the web → Redis → worker path after a deploy.
 
@@ -87,14 +114,18 @@ Smart Recap is on demand only: nothing generates it automatically.
 | Question | Source of truth |
 |---|---|
 | Is this output done? | `session_cache` (durable) |
-| Which stage is it in? | Redis key `stormiq:progress:{kind}:{key}` (30 min TTL) |
-| Did it fail, and why? | arq job state (1 h TTL; a failed job's message only); `transcript_jobs` for transcriptions |
+| Is a session's people list saved? | `session_rosters` and `session_people` (durable, replaced whole) |
+| Which stage is it in? | Redis key `stormiq:progress:{kind}:{key}` (30 min TTL; the people sync's kind is `roster`) |
+| Did it fail, and why? | arq job state (1 h TTL; a failed job's message only); `transcript_jobs` for transcriptions, `livestorm_sync_jobs` for people syncs |
+| Which connection does a queued job use? | its `transcript_jobs` or `livestorm_sync_jobs` row, only until the worker claims it |
+| Is an org's people sync running, or waiting? | Redis keys `stormiq:livestorm-sync:{org}` and `stormiq:livestorm-sync-wait:{org}` (20 min TTL) |
+| How many Livestorm calls has an org's sync spent today? | `livestorm_sync_jobs.pages_fetched` over the last 24 hours |
 
-A Redis restart loses queued jobs and progress, never results: queued transcriptions show as errors within about 2 minutes, and users retry.
+A Redis restart loses queued jobs, progress and the org locks, never results: queued transcriptions and people syncs show as errors within about 2 minutes, and users retry.
 
 ## Writing a worker job
 
 - Handlers take `ctx` (arq's per-job context) and a minimal payload. Never pass a secret or a connection id.
 - If users watch the job, publish progress at each meaningful stage (`progress.publish_progress_sync`) and clear it in `finally`; the UI depends on it.
-- Re-raise failures so arq records them. If the job has its own Postgres row, as transcription does, mark it `error` first. arq stores only the exception's message, and the poll shows it to the user: write a message that says what failed, with no key, token or upstream body in it.
+- Re-raise failures so arq records them. If the job has its own Postgres row, as transcription and the people sync do, mark it `error` first. arq stores only the exception's message (`queue.job_result_serializer`), and the poll shows it to the user: write a message that says what failed, with no key, token or upstream body in it. The people sync raises its own `people_sync.PeopleSyncFailed`, so a `requests` exception never leaves it.
 - Register the handler in `WorkerSettings.functions` with its own `timeout`, and give it a deterministic job id in `queue.py`.

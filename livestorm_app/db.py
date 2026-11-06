@@ -541,11 +541,11 @@ def _ensure_people_schema(cursor: Any) -> None:
         """
     )
     # Worker jobs that call Livestorm with a user's credentials (the people
-    # sync). `connection_id` is also a session cookie value. Only two
-    # statements clear it: the claim (`claim_livestorm_sync`) and any update
-    # that moves the row out of 'pending' (`update_livestorm_sync`). So a
-    # row that is never claimed (a failed enqueue, a lost job) must be closed
-    # through `update_livestorm_sync`, as the people sync job's sweeper will.
+    # sync). `connection_id` is also a session cookie value. Three statements
+    # clear it: the claim (`claim_livestorm_sync`); any update that moves the
+    # row out of 'pending' (`update_livestorm_sync`), which closes a failed
+    # enqueue or a lost job; and the stuck-job sweeper
+    # (`sweep_stuck_livestorm_syncs`).
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS livestorm_sync_jobs (
@@ -681,6 +681,7 @@ _SESSION_FIELD_SQL = {
     "smart_recap_bundle": "smart_recap_bundle",
     "content_repurpose_bundle": "content_repurpose_bundle",
     "updated_at": "updated_at",
+    "organization_id": "organization_id",
 }
 
 
@@ -1492,8 +1493,8 @@ def admin_list_users() -> List[Dict[str, Any]]:
 # header (`session_rosters`) and one row per person (`session_people`),
 # replaced together in one transaction. The per-session tables have no org
 # column; every read joins `session_cache` and filters on its org, so a blank
-# scope matches nothing and never queries. Nothing calls these yet: the
-# people sync job will (docs/data-model.md).
+# scope matches nothing and never queries. The people sync job
+# (`people_sync.py`, `worker.run_people_sync`) writes them (docs/data-model.md).
 
 ROSTER_SOURCES = ("paginated", "session_include")
 ROSTER_FIELDS_SOURCES = ("people_attributes", "event_fields", "none")
@@ -2002,13 +2003,16 @@ def update_livestorm_sync(
     pages_fetched: Optional[int] = None,
     record_count: Optional[int] = None,
     people_written: Optional[int] = None,
+    only_from: Optional[Sequence[str]] = None,
 ) -> bool:
     """Set a sync's status, its error (None clears it) and any counts given.
 
     A row that leaves 'pending' drops its connection id in the same
     statement, so a finished, failed or deferred sync never keeps one. The
     error is cut to `SYNC_ERROR_MAX_CHARS`; it must never hold a key, token or
-    upstream body. Returns False when there is no such sync. Raises on
+    upstream body. `only_from`, when given, updates the row only while its
+    status is one of these (closing a lost sync must not overwrite one that
+    finished meanwhile). Returns False when no row was updated. Raises on
     database errors.
     """
     sync_id_value = str(sync_id or "").strip()
@@ -2016,6 +2020,9 @@ def update_livestorm_sync(
         raise ValueError("update_livestorm_sync requires a sync_id.")
     if status not in SYNC_STATUSES:
         raise ValueError(f"Unknown sync status; expected one of {SYNC_STATUSES}.")
+    from_statuses = None if only_from is None else [str(value) for value in only_from]
+    if from_statuses is not None and not set(from_statuses) <= set(SYNC_STATUSES):
+        raise ValueError(f"Unknown sync status in only_from; expected some of {SYNC_STATUSES}.")
     if not database_enabled():
         raise RuntimeError("Database is not configured.")
     error_value = str(error)[:SYNC_ERROR_MAX_CHARS] if error is not None else None
@@ -2032,8 +2039,12 @@ def update_livestorm_sync(
                     connection_id = CASE WHEN %s = 'pending' THEN connection_id END,
                     updated_at = NOW()
                 WHERE sync_id = %s
+                  AND (%s::text[] IS NULL OR status = ANY(%s::text[]))
                 """,
-                (status, error_value, pages_fetched, record_count, people_written, status, sync_id_value),
+                (
+                    status, error_value, pages_fetched, record_count, people_written, status, sync_id_value,
+                    from_statuses, from_statuses,
+                ),
             )
             updated = cursor.rowcount
             connection.commit()
@@ -2041,6 +2052,127 @@ def update_livestorm_sync(
         logger.error("Failed to update sync_id=%s (%s)", sync_id_value, _error_label(exc))
         raise RuntimeError("Could not update the people sync.") from exc
     return bool(updated)
+
+
+def touch_livestorm_sync(sync_id: str) -> bool:
+    """Refresh a running sync's `updated_at`, so the stuck-job sweeper leaves
+    a sync alone while it waits for its org's lock. False when the row is no
+    longer 'running' (swept or closed): the job should then stop. Raises on
+    database errors."""
+    sync_id_value = str(sync_id or "").strip()
+    if not sync_id_value:
+        return False
+    if not database_enabled():
+        raise RuntimeError("Database is not configured.")
+    try:
+        with get_db_connection() as connection:
+            cursor = connection.execute(
+                "UPDATE livestorm_sync_jobs SET updated_at = NOW() WHERE sync_id = %s AND status = 'running'",
+                (sync_id_value,),
+            )
+            touched = cursor.rowcount
+            connection.commit()
+    except Exception as exc:
+        logger.error("Failed to touch sync_id=%s (%s)", sync_id_value, _error_label(exc))
+        raise RuntimeError("Could not update the people sync.") from exc
+    return bool(touched)
+
+
+SYNC_SWEEPER_ERROR = "The people sync stalled with no progress (closed by the sweeper). Please try again."
+
+
+def sweep_stuck_livestorm_syncs(stale_before: datetime) -> int:
+    """Close the syncs stuck in 'pending' or 'running' (no update since
+    `stale_before`): 'error', with the connection id cleared in the same
+    statement. A row whose job was lost would otherwise keep a session-cookie
+    value in Postgres and block the session's one active sync. Returns how
+    many rows it closed. Raises on database errors."""
+    if not database_enabled():
+        raise RuntimeError("Database is not configured.")
+    try:
+        with get_db_connection() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE livestorm_sync_jobs
+                SET status = 'error', error = %s, connection_id = NULL, updated_at = NOW()
+                WHERE status IN ('pending', 'running') AND updated_at < %s
+                """,
+                (SYNC_SWEEPER_ERROR, stale_before),
+            )
+            closed = cursor.rowcount or 0
+            connection.commit()
+    except Exception as exc:
+        logger.error("Failed to sweep stuck syncs (%s)", _error_label(exc))
+        raise RuntimeError("Could not sweep the stuck people syncs.") from exc
+    return int(closed)
+
+
+def livestorm_sync_calls_since(organization_id: OrgScope, since: datetime, *, kind: str = "people") -> int:
+    """The Livestorm calls one org's syncs made since `since`, for its daily cap.
+
+    Sums `pages_fetched` (every page a sync asked Livestorm for, people and
+    attributes) over the sync rows of the org's sessions updated since then.
+    Each session's first 'initial' sync is left out: it never counts toward
+    the cap. One org only, through `session_cache`: a blank scope returns 0
+    without querying, `ALL_ORGS` raises ValueError. Raises on database errors.
+    """
+    try:
+        org_filter = _org_filter(organization_id)
+    except ScopeMatchesNothing:
+        return 0
+    if org_filter is None:
+        raise ValueError("livestorm_sync_calls_since sums one organization, never ALL_ORGS.")
+    if kind not in SYNC_KINDS:
+        raise ValueError(f"Unknown sync kind; expected one of {SYNC_KINDS}.")
+    if not database_enabled():
+        return 0
+    with get_db_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT COALESCE(SUM(j.pages_fetched), 0)::bigint AS calls
+            FROM livestorm_sync_jobs j
+            JOIN session_cache c ON c.session_id = j.session_id
+            WHERE c.organization_id = %s
+              AND j.kind = %s
+              AND j.updated_at >= %s
+              AND j.pages_fetched IS NOT NULL
+              AND NOT (
+                  j.reason = 'initial'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM livestorm_sync_jobs e
+                      WHERE e.session_id = j.session_id AND e.kind = j.kind AND e.reason = 'initial'
+                        AND (e.created_at, e.sync_id) < (j.created_at, j.sync_id)
+                  )
+              )
+            """,
+            (org_filter, kind, since),
+        ).fetchone()
+    return int(row["calls"] or 0)
+
+
+def livestorm_sync_is_first_initial(sync_id: str) -> bool:
+    """Whether a sync is its session's first 'initial' sync, the one the daily
+    cap leaves out (the same rule as `livestorm_sync_calls_since`). False for
+    an unknown sync. Raises on database errors."""
+    sync_id_value = str(sync_id or "").strip()
+    if not sync_id_value:
+        return False
+    if not database_enabled():
+        raise RuntimeError("Database is not configured.")
+    with get_db_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT j.reason = 'initial' AND NOT EXISTS (
+                SELECT 1 FROM livestorm_sync_jobs e
+                WHERE e.session_id = j.session_id AND e.kind = j.kind AND e.reason = 'initial'
+                  AND (e.created_at, e.sync_id) < (j.created_at, j.sync_id)
+            ) AS first_initial
+            FROM livestorm_sync_jobs j
+            WHERE j.sync_id = %s
+            """,
+            (sync_id_value,),
+        ).fetchone()
+    return bool(row and row["first_initial"])
 
 
 # ── Model usage (ai/usage.py) ──────────────────────────────────────────────

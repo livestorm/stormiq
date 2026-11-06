@@ -61,7 +61,7 @@ Render, configured in [`render.yaml`](../render.yaml):
 
 ### Worker environment
 
-The worker resolves every credential itself, because job arguments never carry secrets. It needs `DATABASE_URL`, `REDIS_URL`, `GLADIA_KEY`, the LLM key (`CLAUDE_API_KEY` or `OPENAI_API_KEY`), `OPENAI_API_KEY` for covers, and `LIVESTORM_OAUTH_CLIENT_ID` / `LIVESTORM_OAUTH_CLIENT_SECRET` to refresh a user's token when a queued transcription starts close to its expiry. It logs a warning at startup when `GLADIA_KEY` is missing.
+The worker resolves every credential itself, because job arguments never carry secrets. It needs `DATABASE_URL`, `REDIS_URL`, `GLADIA_KEY`, the LLM key (`CLAUDE_API_KEY` or `OPENAI_API_KEY`), `OPENAI_API_KEY` for covers, and `LIVESTORM_OAUTH_CLIENT_ID` / `LIVESTORM_OAUTH_CLIENT_SECRET` to refresh a user's token when a queued transcription or people sync starts close to its expiry. It logs a warning at startup when `GLADIA_KEY` is missing.
 
 ## Environment variables
 
@@ -86,6 +86,11 @@ SESSION_SECRET                # Recommended: HMAC key for the OAuth handshake co
 ADMIN_EMAILS                  # Optional; comma-separated bootstrap admin emails
 STORMIQ_LOCAL_DEV             # Optional; "1" turns on local-dev mode. Ignored on Render.
 LS_API_KEY                    # Optional; used only in local-dev mode. Never sent to the browser.
+LIVESTORM_SYNC_DAILY_CALLS_PER_ORG  # Optional, web and worker. Once one org's people syncs have recorded this many
+                              # Livestorm calls in a rolling 24 hours (default 1000), no new sync starts and no
+                              # queued one makes a call; the sync already running finishes. A session's first sync
+                              # never counts. An invalid value (not a whole number) stops every sync it applies to
+                              # until it is fixed.
 
 # Transcription
 GLADIA_KEY                    # Required on the worker

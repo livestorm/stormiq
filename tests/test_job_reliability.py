@@ -6,24 +6,31 @@ Real Redis tests need TEST_REDIS_URL, real Postgres tests TEST_DATABASE_URL
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import copy
 import inspect
 import json
+import logging
 import pickle
+import re
 import subprocess
 import threading
 import time
 import urllib.error
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import requests
+from arq.jobs import serialize_result
 from urllib3._collections import HTTPHeaderDict
 
 from livestorm_app.routes import models as routes_models
-from livestorm_app import api_logic, auth, llm_client, queue, worker
+from livestorm_app.routes import sessions as routes_sessions
+from livestorm_app import api_logic, auth, db, llm_client, people_sync, queue, worker
 from livestorm_app.livestorm import client as livestorm_client
 from livestorm_app.db import (
     ALL_ORGS,
@@ -34,6 +41,7 @@ from livestorm_app.db import (
     update_transcript_job_status,
 )
 from livestorm_app.gladia import transcriber
+import synthetic_session as synthetic
 
 
 # ── Queue: deterministic ids on a real Redis ───────────────────────────────
@@ -480,6 +488,9 @@ def test_every_job_kind_has_its_own_timeout_and_no_retries():
     assert timeouts["run_cover_image_job"] == 5 * 60
     for name in ("run_overall_analysis_job", "run_deep_analysis_job", "run_smart_recap_job", "run_content_repurposing_job"):
         assert timeouts[name] == 15 * 60
+    assert timeouts["run_people_sync"] == 15 * 60
+    # The org lock outlives the job, so it is never freed under a running sync.
+    assert worker.PEOPLE_SYNC_LOCK_TTL_SECONDS > worker.PEOPLE_SYNC_JOB_TIMEOUT_SECONDS
     assert worker.WorkerSettings.max_tries == 1
 
 
@@ -1203,3 +1214,880 @@ def test_gladia_polling_gives_up_after_repeated_errors(monkeypatch):
     with pytest.raises(transcriber.TransientHTTPError):
         transcriber._poll_gladia_transcription("job", "k")
     assert calls["n"] == transcriber.GLADIA_POLL_MAX_CONSECUTIVE_ERRORS
+
+
+# ── People sync (people_sync.py, worker.run_people_sync) ───────────────────
+#
+# Synthetic people only. Livestorm is faked at `client.livestorm_get`, so the
+# real pager, parser and roster write run; nothing reaches Livestorm.
+
+
+class _LivestormAnswer:
+    def __init__(self, payload, status_code: int = 200):
+        self._payload = payload
+        self.status_code = status_code
+        self.headers: dict = {}
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"{self.status_code} Client Error for url: https://api.livestorm.test/x", response=self)
+
+    def json(self):
+        return copy.deepcopy(self._payload)
+
+
+UPSTREAM_BODY = "upstream-body-marker"
+
+
+def _upstream_error(url, headers, params, status_code: int) -> requests.Response:
+    """A real `requests.Response` error, as Livestorm's comes back: its request
+    carries the Authorization header (the user's token) and its body is
+    upstream text, so the `HTTPError` it raises carries both."""
+    response = requests.Response()
+    response.status_code = status_code
+    response._content = json.dumps({"errors": [{"detail": UPSTREAM_BODY}]}).encode()
+    response.request = requests.Request("GET", url, headers=headers, params=params).prepare()
+    response.url = response.request.url
+    return response
+
+
+def _raw_person(index: int) -> dict:
+    return {
+        "id": f"p-sync-{index:03d}",
+        "type": "people",
+        "attributes": {
+            "role": "participant",
+            "first_name": f"Person{index}",
+            "registrant_detail": {"attended": index % 2 == 0, "password_key": "synthetic-password-key"},
+        },
+    }
+
+
+TEAM_SIZE_ATTRIBUTE = {
+    "id": "attr-1",
+    "type": "people_attributes",
+    "attributes": {"slug": "team_size", "name": "Team size", "type": "unique_select", "user_id": "u-synthetic", "options": []},
+}
+
+
+class _FakeLivestorm:
+    """`client.livestorm_get` for the people list (50 per page) and the people attributes."""
+
+    def __init__(self) -> None:
+        self.people = synthetic.people()
+        self.fail_people_page = None  # a page answered with HTTP 500
+        self.unreachable_page = None  # a page whose request never gets an answer
+        self.loop_on_page = None  # a page whose next_page points back at page 0
+        self.record_count_offset = 0  # Livestorm's count against the people it lists
+        self.attributes_status = 200
+        self.slow_s = 0.0
+        self.calls: list = []
+        self.errors: list = []  # the request of every failed call, token included
+
+    def get(self, url, *, headers, params=None):
+        self.calls.append(url.rsplit("/", 1)[-1])
+        assert "Bearer" in headers.get("Authorization", ""), "a sync always sends the resolved token"
+        time.sleep(self.slow_s)
+        number = (params or {}).get("page[number]", 0)
+        if url.endswith("/people_attributes"):
+            if self.attributes_status != 200:
+                return self._error(url, headers, params, self.attributes_status)
+            return _LivestormAnswer({"data": [TEAM_SIZE_ATTRIBUTE], "meta": {"next_page": None, "record_count": 1}})
+        if number == self.fail_people_page:
+            return self._error(url, headers, params, 500)
+        if number == self.unreachable_page:
+            request = requests.Request("GET", url, headers=headers, params=params).prepare()
+            self.errors.append(request)
+            raise requests.ConnectionError("Livestorm could not be reached", request=request)
+        size = (params or {}).get("page[size]", 50)
+        chunk = self.people[number * size:(number + 1) * size]
+        next_page = number + 1 if (number + 1) * size < len(self.people) else None
+        if number == self.loop_on_page:
+            next_page = 0
+        record_count = len(self.people) + self.record_count_offset
+        return _LivestormAnswer({"data": chunk, "meta": {"next_page": next_page, "record_count": record_count}})
+
+    def _error(self, url, headers, params, status_code):
+        response = _upstream_error(url, headers, params, status_code)
+        self.errors.append(response.request)
+        return response
+
+
+@pytest.fixture
+def people_env(monkeypatch):
+    """A worker with fake Livestorm, credentials, queue and progress; real Postgres where the test asks for it."""
+    env = SimpleNamespace(livestorm=_FakeLivestorm(), enqueued=[], auth=[], progress=[], cleared=[])
+    monkeypatch.setattr(livestorm_client, "livestorm_get", env.livestorm.get)
+    monkeypatch.setattr(
+        people_sync, "enqueue_unique_job_sync",
+        lambda *args: env.enqueued.append(args) or {"jobId": args[1], "jobStatus": "pending", "enqueued": True},
+    )
+    monkeypatch.setattr(
+        people_sync, "fetch_oauth_connection",
+        lambda cid: {"connection_id": cid, "organization_id": {"conn-a": "org-a", "conn-b": "org-b"}[cid]}
+        if cid in ("conn-a", "conn-b") else None,
+    )
+    monkeypatch.setattr(people_sync, "livestorm_auth_for_job", lambda cid: env.auth.append(cid) or "Bearer fresh-token")
+    monkeypatch.setattr(people_sync, "publish_progress_sync", lambda *a, **k: env.progress.append(a[2]))
+    monkeypatch.setattr(worker, "publish_progress_sync", lambda *a, **k: env.progress.append(a[2]))
+    monkeypatch.setattr(worker, "clear_progress_sync", lambda kind, key: env.cleared.append((kind, key)))
+    return env
+
+
+def _seed_session(session_id: str = "sess-a", org: str = "org-a", *, ended_s_ago: float = 86400) -> float:
+    """A cached session that ended `ended_s_ago` seconds ago; returns its end (unix seconds)."""
+    end = int(time.time() - ended_s_ago)
+    payload = {"data": {"id": session_id, "type": "sessions", "attributes": {"started_at": end - 1800, "ended_at": end, "duration": 1800}}}
+    db.upsert_cached_session("key-a", session_id, organization_id=org, session_payload=payload, event_payload=synthetic.event_payload())
+    return end
+
+
+def _request_sync(session_id: str = "sess-a", *, org: str = "org-a", connection: str = "conn-a") -> dict:
+    return people_sync.request_people_sync(session_id, read_scope=org, caller_org_id=org, job_connection_id=connection)
+
+
+def _run_job(sync_id: str, session_id: str = "sess-a", ctx=None):
+    return asyncio.run(worker.run_people_sync({} if ctx is None else ctx, sync_id, session_id))
+
+
+def _sync_row(sync_id: str) -> dict:
+    with get_db_connection() as conn:
+        return dict(conn.execute("SELECT * FROM livestorm_sync_jobs WHERE sync_id = %s", (sync_id,)).fetchone())
+
+
+def _arq_result_blob(exc: BaseException) -> bytes:
+    """What arq stores in Redis for a failed job (`Worker.run_job`: the
+    exception as its result, pickled)."""
+    return serialize_result("run_people_sync", ("sync-1", "sess-a"), {}, 1, 0, False, exc, 0, 0, "ref", "arq:queue", "job-1")
+
+
+def test_a_people_sync_hands_over_its_connection_once_and_queues_ids_only(test_database, people_env, caplog):
+    caplog.set_level(logging.DEBUG)
+    _seed_session()
+    started = _request_sync()
+    sync_id = started["syncId"]
+    assert started == {"sessionId": "sess-a", "status": "pending", "syncId": sync_id, "started": True, "skipped": None}
+    assert people_env.enqueued == [("run_people_sync", f"livestorm_sync:{sync_id}", sync_id, "sess-a")]
+    assert _sync_row(sync_id)["connection_id"] == "conn-a", "the connection waits on the row, not in the queue"
+
+    result = _run_job(sync_id)
+
+    # arq keeps results in Redis: counts only. One page of people, one of field labels.
+    assert result == {"status": "completed", "calls": 2, "people": 10, "recordCount": 10}
+    assert people_env.auth == ["conn-a"], "the token comes from the claimed row"
+    row = _sync_row(sync_id)
+    assert (row["status"], row["connection_id"], row["pages_fetched"], row["people_written"]) == ("completed", None, 2, 10)
+    roster = db.fetch_roster_status("sess-a", "org-a")["roster"]
+    assert (roster["source"], roster["complete"], roster["people_count"], roster["reason"]) == ("paginated", True, 10, "initial")
+    assert roster["fields_source"] == "people_attributes" and roster["fields"][0]["name"] == "Team size"
+    assert len(db.list_session_people("sess-a", "org-a")) == 10
+    assert "queued" in people_env.progress and "people" in people_env.progress
+    assert people_env.cleared == [("roster", "sess-a")], "the job clears its progress"
+
+    # The claim handed the connection over once: running the job again does nothing.
+    calls_before = len(people_env.livestorm.calls)
+    assert _run_job(sync_id) == {"status": "skipped"}
+    assert len(people_env.livestorm.calls) == calls_before
+    shared = json.dumps([people_env.enqueued, result])
+    assert "conn-a" not in shared and "Bearer" not in shared
+    assert "conn-a" not in caplog.text and "fresh-token" not in caplog.text, "no connection id or token in the logs"
+
+
+@pytest.mark.parametrize("failure", ["page fails", "unreachable", "list loops", "deadline", "labels fail"])
+def test_a_failed_page_keeps_the_previous_roster_and_marks_the_sync_error(test_database, people_env, monkeypatch, caplog, failure):
+    caplog.set_level(logging.DEBUG)
+    _seed_session()
+    people_env.livestorm.people = [_raw_person(index) for index in range(120)]  # three pages
+    first = _request_sync()
+    _run_job(first["syncId"])
+    before = db.fetch_roster_status("sess-a", "org-a")["roster"]
+    people_before = db.list_session_people("sess-a", "org-a")
+    assert before["roster_version"] == 1 and len(people_before) == 120
+
+    people_env.livestorm.people = [_raw_person(index) for index in range(130)]
+    expected_calls = {"page fails": 2, "unreachable": 1, "list loops": 2, "deadline": 0, "labels fail": 4}[failure]
+    if failure == "page fails":
+        people_env.livestorm.fail_people_page = 1
+    elif failure == "unreachable":
+        people_env.livestorm.unreachable_page = 1
+    elif failure == "list loops":
+        people_env.livestorm.loop_on_page = 1
+    elif failure == "deadline":
+        monkeypatch.setattr(worker, "PEOPLE_SYNC_DEADLINE_MARGIN_SECONDS", worker.PEOPLE_SYNC_JOB_TIMEOUT_SECONDS + 60)
+    else:
+        people_env.livestorm.attributes_status = 500
+        # The labels read the day before are stale, so they are read again.
+        with get_db_connection() as conn:
+            conn.execute("UPDATE org_people_attributes SET fetched_at = NOW() - INTERVAL '25 hours'")
+            conn.commit()
+    retry = _request_sync()
+    assert retry["started"] is False and retry["skipped"] == "cooldown", "a sync completed a moment ago"
+    with get_db_connection() as conn:
+        conn.execute("UPDATE livestorm_sync_jobs SET updated_at = NOW() - INTERVAL '20 minutes'")
+        conn.commit()
+    second = _request_sync()
+    assert second["started"] is True
+
+    with pytest.raises(people_sync.PeopleSyncFailed) as failed:
+        _run_job(second["syncId"])
+
+    assert db.fetch_roster_status("sess-a", "org-a")["roster"] == before, "the previous roster and version stay"
+    assert db.list_session_people("sess-a", "org-a") == people_before
+    row = _sync_row(second["syncId"])
+    assert (row["status"], row["connection_id"], row["pages_fetched"]) == ("error", None, expected_calls)
+    assert "previous people list is kept" in row["error"]
+    assert livestorm_client.API_BASE not in row["error"] and "Bearer" not in row["error"], "no upstream URL or token in the error"
+    assert people_env.cleared == [("roster", "sess-a")] * 2, "each run clears its progress"
+
+    # arq pickles a failed job's exception into Redis, and a status read
+    # unpickles it in the web process: only our own message gets there, never
+    # the request (the user's token) or the upstream body a requests error carries.
+    if failure in ("page fails", "unreachable", "labels fail"):
+        assert "fresh-token" in people_env.livestorm.errors[-1].headers["Authorization"], "the upstream error did carry the token"
+    raised = failed.value
+    assert str(raised) == row["error"] and raised.__cause__ is None
+    for blob in (pickle.dumps(raised), _arq_result_blob(raised)):
+        assert b"fresh-token" not in blob and UPSTREAM_BODY.encode() not in blob and b"api.livestorm" not in blob
+    assert "conn-a" not in caplog.text and "fresh-token" not in caplog.text, "no connection id or token in the logs"
+
+
+def test_the_first_roster_is_due_a_refresh_a_week_after_the_session_and_later_syncs_keep_it(test_database, people_env):
+    end = _seed_session(ended_s_ago=86400)
+    _run_job(_request_sync()["syncId"])
+    due = db.fetch_roster_status("sess-a", "org-a")["roster"]["refresh_due_at"]
+    assert due == datetime.fromtimestamp(end, tz=timezone.utc) + timedelta(days=7)
+
+    with get_db_connection() as conn:
+        conn.execute("UPDATE livestorm_sync_jobs SET updated_at = NOW() - INTERVAL '20 minutes'")
+        conn.commit()
+    _seed_session(ended_s_ago=3 * 86400)  # a later read moves nothing that was due
+    second = _request_sync()
+    _run_job(second["syncId"])
+    roster = db.fetch_roster_status("sess-a", "org-a")["roster"]
+    assert (roster["roster_version"], roster["reason"], roster["refresh_due_at"]) == (2, "manual", due)
+    # The field labels read less than 24 hours ago are reused: one call, the people page.
+    assert _sync_row(second["syncId"])["pages_fetched"] == 1
+
+    _seed_session("sess-old", ended_s_ago=30 * 86400)
+    _run_job(_request_sync("sess-old")["syncId"], "sess-old")
+    assert db.fetch_roster_status("sess-old", "org-a")["roster"]["refresh_due_at"] is None, "this sync already is the refresh"
+
+
+def test_refused_field_labels_fall_back_to_the_event_fields(test_database, people_env):
+    _seed_session()
+    people_env.livestorm.attributes_status = 403
+    result = _run_job(_request_sync()["syncId"])
+    assert result["status"] == "completed"
+    roster = db.fetch_roster_status("sess-a", "org-a")["roster"]
+    assert roster["fields_source"] == "event_fields" and roster["fields"][0]["name"] == "Team size"
+    assert db.get_org_people_attributes("org-a")["status"] == "forbidden"
+
+
+def test_a_count_that_disagrees_with_the_list_saves_an_incomplete_roster(test_database, people_env):
+    _seed_session()
+    people_env.livestorm.record_count_offset = 1  # Livestorm counts one more person than it lists
+    result = _run_job(_request_sync()["syncId"])
+    assert result == {"status": "completed", "calls": 2, "people": 10, "recordCount": 11}
+    roster = db.fetch_roster_status("sess-a", "org-a")["roster"]
+    assert (roster["source"], roster["complete"], roster["record_count"], roster["people_count"]) == ("paginated", False, 11, 10)
+
+
+def test_the_worker_checks_the_daily_cap_again_before_any_call(test_database, people_env, monkeypatch):
+    # The web side sums only the syncs that have ended, so syncs queued
+    # together all pass it. The worker checks again under the org's lock,
+    # where every earlier sync has recorded its calls.
+    for session_id in ("sess-a", "sess-b"):
+        _seed_session(session_id)
+        _run_job(_request_sync(session_id)["syncId"], session_id)  # each session's first sync: never capped
+    with get_db_connection() as conn:
+        conn.execute("UPDATE livestorm_sync_jobs SET updated_at = NOW() - INTERVAL '20 minutes'")
+        conn.commit()
+    monkeypatch.setenv(people_sync.DAILY_CALLS_ENV, "1")
+    first, second = _request_sync("sess-a"), _request_sync("sess-b")
+    assert first["started"] and second["started"], "both pass the web side: no call counted yet"
+
+    assert _run_job(first["syncId"], "sess-a")["calls"] == 1, "one page of people; the field labels are reused"
+    calls_before, auth_before = len(people_env.livestorm.calls), list(people_env.auth)
+    with pytest.raises(people_sync.PeopleSyncFailed, match="daily limit"):
+        _run_job(second["syncId"], "sess-b")
+    assert len(people_env.livestorm.calls) == calls_before, "no Livestorm call"
+    assert people_env.auth == auth_before, "not even a token refresh"
+    row = _sync_row(second["syncId"])
+    assert (row["status"], row["connection_id"], row["pages_fetched"]) == ("error", None, None)
+    assert "daily limit" in row["error"]
+    assert db.fetch_roster_status("sess-b", "org-a")["roster"]["roster_version"] == 1, "the roster stays"
+
+    # A session's first sync is never capped, in the worker either.
+    monkeypatch.setenv(people_sync.DAILY_CALLS_ENV, "0")
+    _seed_session("sess-c")
+    assert _run_job(_request_sync("sess-c")["syncId"], "sess-c")["status"] == "completed"
+
+
+def test_an_org_mismatch_makes_no_livestorm_call(monkeypatch):
+    def no_call(*args, **kwargs):
+        raise AssertionError("Livestorm was called for another org's session")
+
+    monkeypatch.setattr(livestorm_client, "livestorm_get", no_call)
+    monkeypatch.setattr(people_sync, "livestorm_auth_for_job", no_call)  # not even a token refresh
+    monkeypatch.setattr(people_sync, "fetch_oauth_connection", lambda cid: {"connection_id": cid, "organization_id": "org-b"})
+    claim = {"session_id": "s1", "reason": "initial", "connection_id": "conn-b", "credential_user_id": ""}
+    for session_org in ("org-a", ""):
+        with pytest.raises(RuntimeError, match="another Livestorm organization"):
+            people_sync._resolve_sync_credentials(claim, session_org_id=session_org)
+
+    # The same through the job: the row ends in error, with no call made.
+    marked: list = []
+    monkeypatch.setattr(worker, "claim_livestorm_sync", lambda sync_id: dict(claim))
+    monkeypatch.setattr(people_sync, "session_organization", lambda sid: "org-a")
+    monkeypatch.setattr(people_sync, "check_daily_cap", lambda sync_id, org: None)
+    monkeypatch.setattr(people_sync, "update_livestorm_sync", lambda sync_id, **kw: marked.append(kw) or True)
+    monkeypatch.setattr(worker, "publish_progress_sync", lambda *a, **k: None)
+    monkeypatch.setattr(worker, "clear_progress_sync", lambda *a, **k: None)
+    with pytest.raises(RuntimeError, match="another Livestorm organization"):
+        _run_job("sync-1", "s1")
+    assert marked[-1]["status"] == "error" and "another Livestorm organization" in marked[-1]["error"]
+
+
+def test_a_sync_without_a_connection_uses_the_operator_key_in_local_dev_only(monkeypatch):
+    monkeypatch.setattr(people_sync, "fetch_oauth_connection", lambda cid: pytest.fail("no connection to read"))
+    monkeypatch.setenv("LS_API_KEY", "ls-key")
+    claim = {"session_id": "s1", "reason": "initial", "connection_id": "", "credential_user_id": ""}
+    with pytest.raises(RuntimeError, match="no Livestorm credentials"):
+        people_sync._resolve_sync_credentials(claim, session_org_id="org-a")
+    monkeypatch.setenv("STORMIQ_LOCAL_DEV", "1")
+    assert people_sync._resolve_sync_credentials(claim, session_org_id="") == "ls-key"
+    with pytest.raises(RuntimeError, match="not supported yet"):
+        people_sync._resolve_sync_credentials({**claim, "credential_user_id": "u-1"}, session_org_id="org-a")
+
+
+@pytest.fixture
+def sync_start(monkeypatch):
+    """`start_people_sync` with its row, queue and cap faked."""
+    state = SimpleNamespace(created=[], enqueued=[], updates=[], used=0, arq={"jobStatus": "running"})
+
+    def create(session_id, *, reason, connection_id=""):
+        state.created.append((session_id, reason, connection_id))
+        return {"sync_id": "sync-new", "status": "pending", "created": True}
+
+    monkeypatch.setattr(people_sync, "create_livestorm_sync", create)
+    monkeypatch.setattr(
+        people_sync, "enqueue_unique_job_sync",
+        lambda *args: state.enqueued.append(args) or {"jobId": args[1], "jobStatus": "pending", "enqueued": True},
+    )
+    monkeypatch.setattr(people_sync, "update_livestorm_sync", lambda sync_id, **kw: state.updates.append((sync_id, kw)) or True)
+    monkeypatch.setattr(people_sync, "livestorm_sync_calls_since", lambda org, since: state.used)
+    monkeypatch.setattr(people_sync, "read_job_status_sync", lambda job_id: state.arq)
+    monkeypatch.delenv(people_sync.DAILY_CALLS_ENV, raising=False)
+    return state
+
+
+def _prior_sync(status: str, minutes_ago: float, reason: str = "initial") -> dict:
+    return {"sync_id": "sync-old", "status": status, "reason": reason, "updated_at": datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)}
+
+
+def _start(sync=None, *, roster=True, automatic=False, caller_org="org-a", session_org="org-a", connection="conn-a", local_dev=False):
+    return people_sync.start_people_sync(
+        "s1",
+        reason="manual" if roster else "initial",
+        caller_org_id=caller_org,
+        session_org_id=session_org,
+        job_connection_id=connection,
+        roster_status={"session_id": "s1", "roster": {"roster_version": 1} if roster else None, "sync": sync},
+        local_dev=local_dev,
+        automatic=automatic,
+    )
+
+
+@pytest.mark.parametrize(
+    ("caller_org", "session_org", "connection", "local_dev", "starts"),
+    [
+        ("org-a", "org-a", "conn-a", False, True),
+        ("org-b", "org-a", "conn-admin", False, False),  # an admin reading another org's session
+        ("", "", "conn-x", False, False),  # a session without an org is no one's
+        ("org-b", "org-a", "conn-admin", True, False),  # local dev, but with a user's connection
+        ("", "org-a", "", True, True),  # local dev with the operator's LS_API_KEY
+    ],
+)
+def test_only_the_sessions_org_starts_a_sync(sync_start, caller_org, session_org, connection, local_dev, starts):
+    result = _start(caller_org=caller_org, session_org=session_org, connection=connection, local_dev=local_dev)
+    assert result["started"] is starts
+    if not starts:
+        assert result["skipped"] == "other_org"
+        assert sync_start.created == [] and sync_start.enqueued == [], "nothing is created or enqueued for another org"
+
+
+@pytest.mark.parametrize(
+    ("prior", "automatic", "skipped"),
+    [
+        (_prior_sync("completed", 5), False, "cooldown"),
+        (_prior_sync("completed", 5), True, "cooldown"),
+        (_prior_sync("completed", 20), False, None),
+        (_prior_sync("error", 30), True, "error_backoff"),
+        (_prior_sync("error", 30), False, None),  # an explicit POST retries at once
+        (_prior_sync("error", 120), True, None),
+    ],
+    ids=["cooldown", "cooldown-automatic", "after-cooldown", "backoff", "explicit-retry", "after-backoff"],
+)
+def test_the_cooldown_and_the_error_backoff_start_nothing(sync_start, prior, automatic, skipped):
+    result = _start(prior, automatic=automatic)
+    assert result["skipped"] == skipped
+    assert result["started"] is (skipped is None)
+    assert (sync_start.created == [] and sync_start.enqueued == []) is (skipped is not None)
+
+
+def test_an_active_sync_is_joined_unless_its_queue_job_is_gone(sync_start):
+    joined = _start(_prior_sync("running", 30))
+    assert joined == {"status": "running", "syncId": "sync-old", "started": False, "skipped": None}
+    assert sync_start.created == [] and sync_start.enqueued == []
+
+    sync_start.arq = {"jobStatus": "not_found"}
+    replaced = _start(_prior_sync("pending", 5))
+    assert replaced["started"] is True
+    assert sync_start.updates[0][0] == "sync-old" and sync_start.updates[0][1]["status"] == "error"
+    assert sync_start.updates[0][1]["only_from"] == ("pending", "running"), "only a row still active is closed"
+
+
+@pytest.mark.parametrize(
+    ("arq_status", "minutes_ago", "closed"),
+    [
+        ({"jobStatus": "error", "error": "boom"}, 0, True),
+        ({"jobStatus": "not_found"}, 5, True),
+        ({"jobStatus": "not_found"}, 0, False),  # just inserted, enqueue in progress
+        ({"jobStatus": "unknown"}, 60, False),  # Redis down: leave it to the sweeper
+        ({"jobStatus": "running"}, 60, False),
+        ({"jobStatus": "pending"}, 60, False),
+    ],
+)
+def test_a_status_read_closes_only_dead_syncs(monkeypatch, arq_status, minutes_ago, closed):
+    marked: list = []
+    monkeypatch.setattr(people_sync, "read_job_status_sync", lambda job_id: arq_status)
+    monkeypatch.setattr(people_sync, "update_livestorm_sync", lambda sync_id, **kw: marked.append(kw) or True)
+    monkeypatch.setattr(people_sync, "read_progress", lambda *a: {"stage": "people"})
+    monkeypatch.setattr(
+        people_sync, "fetch_roster_status",
+        lambda sid, scope: {"session_id": sid, "roster": None, "sync": _prior_sync("pending", minutes_ago)} if scope == "org-a" else None,
+    )
+    status = people_sync.read_roster_status("s1", organization_id="org-a")
+    assert (status["status"] == "error") is closed
+    assert (status["progress"] is None) is closed
+    assert bool(marked) is closed
+    with pytest.raises(people_sync.RosterSessionNotFound):
+        people_sync.read_roster_status("s1", organization_id="org-b")
+
+
+def test_the_daily_cap_stops_every_sync_but_a_sessions_first(sync_start, monkeypatch):
+    sync_start.used = 1000
+    capped = _start(_prior_sync("completed", 60))
+    assert capped["skipped"] == "daily_cap" and (capped["limit"], capped["used"]) == (1000, 1000)
+    assert sync_start.created == [] and sync_start.enqueued == []
+    # A retry of a failed first sync is a second initial sync: it counts.
+    assert _start(_prior_sync("error", 60), roster=False)["skipped"] == "daily_cap"
+    # The session's first initial sync never counts, and is never capped.
+    assert _start(None, roster=False)["started"] is True
+
+    sync_start.used = 999
+    assert _start(_prior_sync("completed", 60))["started"] is True
+    monkeypatch.setenv(people_sync.DAILY_CALLS_ENV, "2000")
+    sync_start.used = 1500
+    assert _start(_prior_sync("completed", 60))["started"] is True
+
+
+@pytest.mark.parametrize(("raw", "cap"), [(None, 1000), ("250", 250), (" 0 ", 0), ("lots", 0), ("-5", 0), ("1.5", 0)])
+def test_the_daily_cap_reads_its_env_var_and_fails_closed(monkeypatch, raw, cap):
+    if raw is None:
+        monkeypatch.delenv(people_sync.DAILY_CALLS_ENV, raising=False)
+    else:
+        monkeypatch.setenv(people_sync.DAILY_CALLS_ENV, raw)
+    assert people_sync.daily_calls_cap() == cap
+
+
+def test_the_capped_route_answers_429_with_a_clear_error(sync_start, monkeypatch):
+    sync_start.used = 1000
+    monkeypatch.setattr(people_sync, "fetch_session_fields", lambda sid, fields, *, organization_id: {"organization_id": "org-a"})
+    monkeypatch.setattr(
+        people_sync, "fetch_roster_status", lambda sid, scope: {"session_id": sid, "roster": {"roster_version": 1}, "sync": None},
+    )
+    caller = auth.Caller(kind="user", org_id="org-a", connection={"connection_id": "conn-a", "access_token": "secret-token"})
+    with pytest.raises(routes_sessions.HTTPException) as refused:
+        routes_sessions.start_roster_sync("s1", caller=caller)
+    assert refused.value.status_code == 429
+    detail = refused.value.detail
+    assert set(detail) == {"resource", "message", "details"} and detail["resource"] == "People sync"
+    assert "daily limit" in detail["message"]
+    assert detail["details"] == {"resource": "People sync", "dailyCallCap": 1000, "callsLast24h": 1000}
+    assert "conn-a" not in json.dumps(detail) and "secret-token" not in json.dumps(detail)
+    assert sync_start.created == [] and sync_start.enqueued == []
+
+
+def test_the_daily_cap_counts_one_orgs_calls_of_the_last_24_hours(test_database):
+    for session_id, org in (("sess-a", "org-a"), ("sess-b", "org-a"), ("sess-c", "org-b")):
+        db.upsert_cached_session("key-a", session_id, organization_id=org)
+
+    def sync(session_id, reason, calls, *, hours_ago=0):
+        sync_id = db.create_livestorm_sync(session_id, reason=reason)["sync_id"]
+        db.update_livestorm_sync(sync_id, status="completed", pages_fetched=calls)
+        if hours_ago:
+            with get_db_connection() as conn:
+                conn.execute(
+                    "UPDATE livestorm_sync_jobs SET updated_at = NOW() - make_interval(hours => %s) WHERE sync_id = %s",
+                    (hours_ago, sync_id),
+                )
+                conn.commit()
+
+    sync("sess-a", "initial", 40)  # the session's first initial sync: exempt
+    sync("sess-a", "initial", 5)  # a second initial sync counts
+    sync("sess-a", "manual", 7)
+    sync("sess-b", "manual", 11, hours_ago=25)  # outside the window
+    sync("sess-b", "manual", 3)
+    sync("sess-c", "manual", 100)  # another org
+    since = datetime.now(timezone.utc) - timedelta(hours=24)
+    assert db.livestorm_sync_calls_since("org-a", since) == 15
+    assert db.livestorm_sync_calls_since("org-b", since) == 100
+    assert db.livestorm_sync_calls_since("", since) == 0
+    with pytest.raises(ValueError):
+        db.livestorm_sync_calls_since(ALL_ORGS, since)
+
+
+def test_the_sweeper_closes_stuck_syncs_and_clears_their_connection(test_database):
+    for session_id in ("sess-a", "sess-b", "sess-c"):
+        db.upsert_cached_session("key-a", session_id, organization_id="org-a")
+    stuck = db.create_livestorm_sync("sess-a", reason="initial", connection_id="conn-a")["sync_id"]
+    fresh = db.create_livestorm_sync("sess-b", reason="initial", connection_id="conn-a")["sync_id"]
+    done = db.create_livestorm_sync("sess-c", reason="initial")["sync_id"]
+    db.update_livestorm_sync(done, status="completed")
+    with get_db_connection() as conn:
+        conn.execute(
+            "UPDATE livestorm_sync_jobs SET updated_at = NOW() - INTERVAL '2 hours' WHERE sync_id IN (%s, %s)", (stuck, done),
+        )
+        conn.commit()
+
+    asyncio.run(worker.sweep_stuck_jobs({}))
+
+    stuck_row, fresh_row, done_row = _sync_row(stuck), _sync_row(fresh), _sync_row(done)
+    assert (stuck_row["status"], stuck_row["connection_id"]) == ("error", None)
+    assert "sweeper" in stuck_row["error"]
+    assert (fresh_row["status"], fresh_row["connection_id"]) == ("pending", "conn-a"), "a fresh row is left alone"
+    assert done_row["status"] == "completed"
+    assert db.claim_livestorm_sync(stuck) is None, "a swept sync can't be claimed"
+    assert db.create_livestorm_sync("sess-a", reason="initial")["created"] is True, "the session is free again"
+
+
+def test_a_failed_enqueue_leaves_no_connection_id(test_database, people_env, monkeypatch):
+    _seed_session()
+    monkeypatch.setattr(people_sync, "enqueue_unique_job_sync", lambda *args: None)
+    with pytest.raises(people_sync.PeopleSyncUnavailable):
+        _request_sync()
+    with get_db_connection() as conn:
+        rows = [dict(row) for row in conn.execute("SELECT status, connection_id, error FROM livestorm_sync_jobs")]
+    assert len(rows) == 1 and rows[0]["status"] == "error" and rows[0]["connection_id"] is None
+    assert "queue" in rows[0]["error"]
+
+    monkeypatch.setattr(
+        people_sync, "enqueue_unique_job_sync",
+        lambda *args: {"jobId": args[1], "jobStatus": "pending", "enqueued": True},
+    )
+    assert _request_sync()["started"] is True, "the closed row doesn't block a retry"
+
+
+def test_a_failed_enqueue_answers_503_with_a_clear_error(sync_start, monkeypatch):
+    monkeypatch.setattr(people_sync, "enqueue_unique_job_sync", lambda *args: None)
+    monkeypatch.setattr(people_sync, "fetch_session_fields", lambda sid, fields, *, organization_id: {"organization_id": "org-a"})
+    monkeypatch.setattr(people_sync, "fetch_roster_status", lambda sid, scope: {"session_id": sid, "roster": None, "sync": None})
+    caller = auth.Caller(kind="user", org_id="org-a", connection={"connection_id": "conn-a", "access_token": "secret-token"})
+    with pytest.raises(routes_sessions.HTTPException) as refused:
+        routes_sessions.start_roster_sync("s1", caller=caller)
+    assert refused.value.status_code == 503
+    detail = refused.value.detail
+    assert set(detail) == {"resource", "message", "details"} and detail["details"] == {"resource": "People sync"}
+    assert "queue" in detail["message"]
+    assert "conn-a" not in json.dumps(detail) and "secret-token" not in json.dumps(detail)
+    assert sync_start.updates[-1][0] == "sync-new" and sync_start.updates[-1][1]["status"] == "error", "the row is closed at once"
+
+
+def test_a_timed_out_sync_is_marked_error_and_its_thread_stops(people_env, monkeypatch):
+    marked: list = []
+    written: list = []
+    monkeypatch.setattr(
+        worker, "claim_livestorm_sync",
+        lambda sync_id: {"session_id": "s1", "reason": "initial", "connection_id": "conn-a", "credential_user_id": ""},
+    )
+    monkeypatch.setattr(people_sync, "session_organization", lambda sid: "org-a")
+    monkeypatch.setattr(people_sync, "check_daily_cap", lambda sync_id, org: None)
+    monkeypatch.setattr(
+        people_sync, "fetch_session_fields",
+        lambda sid, fields, *, organization_id: {"session_payload": synthetic.session_payload(), "event_payload": None},
+    )
+    monkeypatch.setattr(people_sync, "update_livestorm_sync", lambda sync_id, **kw: marked.append(kw) or True)
+    monkeypatch.setattr(people_sync, "replace_session_roster", lambda *a, **k: written.append(a))
+    people_env.livestorm.people = [_raw_person(index) for index in range(120)]
+    people_env.livestorm.slow_s = 0.2  # each page takes a while
+
+    async def run_with_short_timeout():
+        await asyncio.wait_for(worker.run_people_sync({}, "sync-1", "s1"), timeout=0.05)
+
+    with pytest.raises(asyncio.TimeoutError):
+        asyncio.run(run_with_short_timeout())  # returns after the thread stops
+    assert marked and all(update["status"] == "error" for update in marked)
+    assert "interrupted" in marked[0]["error"]
+    assert written == [], "a cancelled sync never writes a roster"
+    assert len(people_env.livestorm.calls) == 1, "the thread stops at its next page"
+    assert people_env.cleared == [("roster", "s1")], "a cancelled job clears its progress too"
+
+
+class _FakeLockRedis:
+    """The two Redis calls the org lock makes: SET NX EX and the token-checked delete."""
+
+    def __init__(self) -> None:
+        self.values: dict = {}
+
+    async def set(self, key, value, *, nx=False, ex=None):
+        if nx and key in self.values:
+            return None
+        self.values[key] = value
+        return True
+
+    async def eval(self, script, numkeys, key, token):
+        if self.values.get(key) == token:
+            del self.values[key]
+            return 1
+        return 0
+
+
+def test_a_held_org_lock_makes_the_next_sync_wait_not_fail(monkeypatch):
+    active = {"org-a": 0, "org-b": 0}
+    most = {"org-a": 0, "org-b": 0, "total": 0}
+    touched: list = []
+    progress: list = []
+    orgs = {"s1": "org-a", "s2": "org-a", "s3": "org-b"}
+
+    def fake_run(api_key, session_id, sync, *, deadline, should_stop):
+        org = orgs[session_id]
+        active[org] += 1
+        most[org] = max(most[org], active[org])
+        most["total"] = max(most["total"], sum(active.values()))
+        time.sleep(0.15)
+        active[org] -= 1
+        return {"status": "completed", "calls": 1, "people": 1, "recordCount": 1}
+
+    monkeypatch.setattr(
+        worker, "claim_livestorm_sync",
+        lambda sync_id: {"session_id": sync_id.replace("sync", "s"), "reason": "initial", "connection_id": "c", "credential_user_id": ""},
+    )
+    monkeypatch.setattr(people_sync, "session_organization", lambda sid: orgs[sid])
+    monkeypatch.setattr(people_sync, "check_daily_cap", lambda sync_id, org: None)
+    monkeypatch.setattr(people_sync, "_resolve_sync_credentials", lambda claim, *, session_org_id: "Bearer t")
+    monkeypatch.setattr(people_sync, "run_people_sync", fake_run)
+    monkeypatch.setattr(worker, "touch_livestorm_sync", lambda sync_id: touched.append(sync_id) or True)
+    monkeypatch.setattr(worker, "publish_progress_sync", lambda kind, sid, stage, **k: progress.append((sid, stage)))
+    monkeypatch.setattr(worker, "clear_progress_sync", lambda *a, **k: None)
+    monkeypatch.setattr(worker, "PEOPLE_SYNC_LOCK_POLL_SECONDS", 0.01)
+    monkeypatch.setattr(worker, "PEOPLE_SYNC_LOCK_HEARTBEAT_SECONDS", 0.03)
+
+    async def run_three():
+        ctx = {"redis": _FakeLockRedis()}
+        # A lock that is never released fails the test instead of hanging it.
+        runs = asyncio.gather(*(worker.run_people_sync(ctx, f"sync{n}", f"s{n}") for n in (1, 2, 3)))
+        results = await asyncio.wait_for(runs, timeout=5)
+        return ctx, results
+
+    ctx, results = asyncio.run(run_three())
+    assert [result["status"] for result in results] == ["completed"] * 3, "the waiting sync ran after the first"
+    assert most["org-a"] == 1, "one sync per org at a time"
+    assert most["total"] == 2, "another org's sync doesn't wait"
+    assert touched and set(touched) <= {"sync1", "sync2"}, "the waiting sync keeps its row fresh for the sweeper"
+    assert any(stage == "waiting" for _sid, stage in progress)
+    assert ctx["redis"].values == {}, "every lock was released by its owner"
+
+
+def test_the_org_lock_is_released_only_by_its_owner(test_redis):
+    import redis.asyncio as redis_async
+
+    async def scenario():
+        client = redis_async.Redis.from_url(queue.get_redis_url())  # the test database, set by the fixture
+        key = worker.people_sync_lock_key("org-a")
+        try:
+            async with worker._people_sync_org_lock({"redis": client}, "org-a", "sync-1", "s1"):
+                ttl = await client.ttl(key)
+                assert worker.PEOPLE_SYNC_JOB_TIMEOUT_SECONDS < ttl <= worker.PEOPLE_SYNC_LOCK_TTL_SECONDS
+                # The lock expired and another sync took it: leaving must not free it.
+                await client.set(key, "next-owner")
+            assert await client.get(key) == b"next-owner"
+            await client.delete(key)
+            async with worker._people_sync_org_lock({"redis": client}, "org-a", "sync-2", "s2"):
+                assert await client.exists(key)
+            assert not await client.exists(key), "its owner releases it"
+        finally:
+            await client.aclose()
+
+    asyncio.run(scenario())
+
+
+@pytest.fixture
+def lock_env(monkeypatch):
+    """`worker.run_people_sync` with its claim, org, cap, credentials and sync
+    faked. Job `syncN` claims session `sN`; s1 to s3 are org-a's."""
+    env = SimpleNamespace(
+        orgs={"s1": "org-a", "s2": "org-a", "s3": "org-a"}, claims={}, touch_ok=True, hold_s=0.3,
+        marked=[], touched=[], resolved=[], ran=[], progress=[], cleared=[],
+    )
+
+    def claim(sync_id):
+        return env.claims.get(sync_id) or {"session_id": sync_id.replace("sync", "s"), "reason": "manual", "connection_id": "c", "credential_user_id": ""}
+
+    def fake_run(api_key, session_id, sync, *, deadline, should_stop):
+        env.ran.append(session_id)
+        time.sleep(env.hold_s)
+        return {"status": "completed", "calls": 1, "people": 1, "recordCount": 1}
+
+    monkeypatch.setattr(worker, "claim_livestorm_sync", claim)
+    monkeypatch.setattr(people_sync, "session_organization", lambda sid: env.orgs[sid])
+    monkeypatch.setattr(people_sync, "check_daily_cap", lambda sync_id, org: None)
+    monkeypatch.setattr(
+        people_sync, "_resolve_sync_credentials", lambda claim, *, session_org_id: env.resolved.append(claim["session_id"]) or "Bearer t",
+    )
+    monkeypatch.setattr(people_sync, "run_people_sync", fake_run)
+    monkeypatch.setattr(people_sync, "update_livestorm_sync", lambda sync_id, **kw: env.marked.append((sync_id, kw)) or True)
+    monkeypatch.setattr(worker, "touch_livestorm_sync", lambda sync_id: env.touched.append(sync_id) or env.touch_ok)
+    monkeypatch.setattr(worker, "publish_progress_sync", lambda kind, sid, stage, **k: env.progress.append((sid, stage)))
+    monkeypatch.setattr(worker, "clear_progress_sync", lambda kind, key: env.cleared.append(key))
+    monkeypatch.setattr(worker, "PEOPLE_SYNC_LOCK_POLL_SECONDS", 0.01)
+    monkeypatch.setattr(worker, "PEOPLE_SYNC_LOCK_HEARTBEAT_SECONDS", 0.03)
+    return env
+
+
+def _org_lock_held_elsewhere() -> _FakeLockRedis:
+    redis = _FakeLockRedis()
+    redis.values[worker.people_sync_lock_key("org-a")] = "another-sync"
+    return redis
+
+
+def test_only_one_sync_per_org_waits_and_the_next_fails_at_once(lock_env):
+    # A waiting sync holds one of the worker's max_jobs slots, which every
+    # org's jobs share: one org holds two at most (one running, one waiting).
+    async def run_three():
+        ctx = {"redis": _FakeLockRedis()}
+        runs = asyncio.gather(*(worker.run_people_sync(ctx, f"sync{n}", f"s{n}") for n in (1, 2, 3)), return_exceptions=True)
+        return ctx, await asyncio.wait_for(runs, timeout=5)
+
+    ctx, results = asyncio.run(run_three())
+    busy = [result for result in results if isinstance(result, BaseException)]
+    assert len(busy) == 1 and isinstance(busy[0], people_sync.PeopleSyncFailed), results
+    assert "already waiting" in str(busy[0])
+    assert [result["status"] for result in results if isinstance(result, dict)] == ["completed"] * 2
+    assert sorted(lock_env.ran) == sorted(lock_env.resolved) and len(lock_env.ran) == 2, "the refused sync made no call"
+    refused = [(sync_id, update) for sync_id, update in lock_env.marked if update["status"] == "error"]
+    assert len(refused) == 1 and "already waiting" in refused[0][1]["error"]
+    assert sorted(lock_env.cleared) == ["s1", "s2", "s3"]
+    assert ctx["redis"].values == {}, "the lock and the waiting place are both released"
+
+
+def test_a_sync_cancelled_while_it_waits_for_the_org_lock_is_marked_error(lock_env):
+    async def scenario():
+        redis = _org_lock_held_elsewhere()
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(worker.run_people_sync({"redis": redis}, "sync1", "s1"), timeout=0.1)
+        return redis
+
+    redis = asyncio.run(scenario())
+    assert lock_env.ran == [] and lock_env.resolved == [], "no thread, no credentials"
+    assert lock_env.marked[-1][1]["status"] == "error" and "interrupted" in lock_env.marked[-1][1]["error"]
+    assert redis.values == {worker.people_sync_lock_key("org-a"): "another-sync"}, "its waiting place is freed, the other lock kept"
+    assert lock_env.cleared == ["s1"]
+
+
+def test_a_sync_swept_while_it_waits_stops_waiting(lock_env):
+    lock_env.touch_ok = False  # the sweeper closed the row meanwhile
+
+    async def scenario():
+        redis = _org_lock_held_elsewhere()
+        with pytest.raises(people_sync.PeopleSyncFailed, match="closed while it waited"):
+            await asyncio.wait_for(worker.run_people_sync({"redis": redis}, "sync1", "s1"), timeout=5)
+        return redis
+
+    redis = asyncio.run(scenario())
+    assert lock_env.touched == ["sync1"] and lock_env.ran == [] and lock_env.resolved == []
+    assert redis.values == {worker.people_sync_lock_key("org-a"): "another-sync"}
+
+
+def test_a_claim_for_another_session_makes_no_call(lock_env):
+    lock_env.claims["sync1"] = {"session_id": "s2", "reason": "manual", "connection_id": "c", "credential_user_id": ""}
+    with pytest.raises(people_sync.PeopleSyncFailed, match="another session"):
+        asyncio.run(worker.run_people_sync({"redis": _FakeLockRedis()}, "sync1", "s1"))
+    assert lock_env.resolved == [] and lock_env.ran == []
+    assert lock_env.marked[-1] == ("sync1", {"status": "error", "error": "The people sync's row belongs to another session.", "pages_fetched": None})
+
+
+WORKER_SIDE_SYNC_FUNCTIONS = {"run_people_sync", "_people_attributes"}
+
+
+def _top_level_functions_naming(source: str, names: set) -> set:
+    found = set()
+    for statement in ast.parse(source).body:
+        for node in ast.walk(statement):
+            named = (
+                (isinstance(node, ast.Name) and node.id in names)
+                or (isinstance(node, ast.Attribute) and node.attr in names)
+                or (isinstance(node, ast.alias) and node.name in names)
+            )
+            if named:
+                found.add(statement.name if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)) else None)
+    return found
+
+
+def _code_naming(source: str, names: set) -> set:
+    """The names in `names` that a module's code uses (a name, an attribute or
+    an import; never a string or a comment)."""
+    found = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Name) and node.id in names:
+            found.add(node.id)
+        elif isinstance(node, ast.Attribute) and node.attr in names:
+            found.add(node.attr)
+        elif isinstance(node, ast.alias) and node.name in names:
+            found.add(node.name)
+    return found
+
+
+def test_web_process_cannot_paginate_people_inline(sync_start, monkeypatch):
+    # The paginated people list (about one call per 50 registrants) runs only
+    # in the worker: outside the client, only people_sync's worker side names
+    # the pagers, and no module but the worker calls that worker side
+    # (the worker defines its own `run_people_sync`, the arq job).
+    pagers = {"fetch_session_people", "fetch_people_attributes"}
+    package = Path(people_sync.__file__).parent
+    worker_only = {package / "livestorm" / "client.py", package / "people_sync.py", package / "worker.py"}
+    checked = 0
+    for path in package.rglob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        if path == package / "people_sync.py":
+            assert _top_level_functions_naming(source, pagers) == WORKER_SIDE_SYNC_FUNCTIONS
+        if path in worker_only:
+            continue
+        assert not pagers & set(re.findall(r"\w+", source)), f"{path.name} names a people pager"
+        assert not _code_naming(source, WORKER_SIDE_SYNC_FUNCTIONS), f"{path.name} calls the people sync's worker side"
+        checked += 1
+    assert checked > 20, "the walk covers the web modules"
+    # The check itself catches an inline call, as in an api_logic helper.
+    inline = "def _inline(api_key, sync):\n    from livestorm_app import people_sync\n    return people_sync.run_people_sync(api_key, 's1', sync, deadline=0)\n"
+    assert _code_naming(inline, WORKER_SIDE_SYNC_FUNCTIONS) == {"run_people_sync"}
+
+    # And a POST /roster-sync with every Livestorm call trapped only queues the job.
+    def no_call(*args, **kwargs):
+        raise AssertionError("the web process called Livestorm")
+
+    monkeypatch.setattr(livestorm_client, "livestorm_get", no_call)
+    monkeypatch.setattr(people_sync, "fetch_session_fields", lambda sid, fields, *, organization_id: {"organization_id": "org-a"})
+    monkeypatch.setattr(people_sync, "fetch_roster_status", lambda sid, scope: {"session_id": sid, "roster": None, "sync": None})
+    caller = auth.Caller(kind="user", org_id="org-a", connection={"connection_id": "conn-a", "access_token": "t"})
+    answer = routes_sessions.start_roster_sync("s1", caller=caller)
+    assert answer["started"] is True
+    assert sync_start.enqueued == [("run_people_sync", "livestorm_sync:sync-new", "sync-new", "s1")]
+
+
+def test_a_closed_sync_is_not_reopened_by_a_late_reconcile(test_database):
+    db.upsert_cached_session("key-a", "sess-a", organization_id="org-a")
+    sync_id = db.create_livestorm_sync("sess-a", reason="initial", connection_id="conn-a")["sync_id"]
+    db.update_livestorm_sync(sync_id, status="completed", pages_fetched=3)
+    assert db.update_livestorm_sync(sync_id, status="error", error="lost", only_from=("pending", "running")) is False
+    assert _sync_row(sync_id)["status"] == "completed"
+    assert db.touch_livestorm_sync(sync_id) is False, "only a running sync is kept fresh"

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from http.cookiejar import DefaultCookiePolicy
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -491,12 +491,23 @@ def monthly_remaining(headers: Any) -> Optional[int]:
     return int(text) if text.isascii() and text.isdigit() else None
 
 
+def requests_sent(response: Any) -> int:
+    """How many HTTP requests one answer of `livestorm_get` took. The shared
+    session's retries (`_CappedRetry`) send a GET again after a 429, a 5xx or
+    a connection error before it returns, and urllib3 records each retry in
+    the final response's retry history. 1 when there is no history."""
+    retries = getattr(getattr(response, "raw", None), "retries", None)
+    history = getattr(retries, "history", None)
+    return len(history) + 1 if isinstance(history, tuple) else 1
+
+
 def _pages(
     key: str,
     url: str,
     *,
     page_size: int,
     deadline: Optional[float],
+    on_page: Optional[Callable[[int], None]] = None,
 ) -> Iterator[Tuple[Dict[str, Any], Any]]:
     """Yield `(payload, response)` for each page of a paginated GET.
 
@@ -505,7 +516,11 @@ def _pages(
     each request it checks `deadline` (a `time.monotonic()` value) and raises
     `LivestormDeadlineExceeded` once it has passed. An HTTP error raises. It
     never stops early without raising: a next page it already read, or one
-    past `MAX_PAGES`, raises `LivestormPaginationError`.
+    past `MAX_PAGES`, raises `LivestormPaginationError`. `on_page`, when
+    given, is called once per answer, an error answer included, before it is
+    read, with the number of HTTP requests behind it, retries included
+    (`requests_sent`; the people sync counts its calls with it). Whatever it
+    raises stops the list.
     """
     headers = build_headers(key)
     page_number = START_PAGE_NUMBER
@@ -519,6 +534,8 @@ def _pages(
             raise LivestormDeadlineExceeded("Livestorm took too long to list every page; nothing was kept.")
         seen_pages.add(page_number)
         response = livestorm_get(url, headers=headers, params={"page[number]": page_number, "page[size]": page_size})
+        if on_page is not None:
+            on_page(requests_sent(response))
         response.raise_for_status()
         payload = response.json()
         if not isinstance(payload, dict):
@@ -540,6 +557,7 @@ def fetch_session_people(
     *,
     deadline: float,
     page_size: int = LIVESTORM_MAX_PAGE_SIZE,
+    on_page: Optional[Callable[[int], None]] = None,
 ) -> Dict[str, Any]:
     """Every person of a session, from the paginated people list.
 
@@ -561,7 +579,8 @@ def fetch_session_people(
     `time.monotonic()` value (`LivestormDeadlineExceeded`), and when the list
     doesn't reach its last page (`LivestormPaginationError`: a next page
     already read, or more than `MAX_PAGES`), so a caller never gets part of
-    a list. Worker only: a large session takes many calls.
+    a list. Worker only: a large session takes many calls. `on_page` gets
+    each answer's request count (`_pages`).
     """
     url = f"{API_BASE}/sessions/{session_id}/people"
     people: Dict[str, Dict[str, Any]] = {}
@@ -569,7 +588,7 @@ def fetch_session_people(
     remaining: Optional[int] = None
     pages_fetched = 0
     duplicates = 0
-    for payload, response in _pages(key, url, page_size=_page_size(page_size), deadline=deadline):
+    for payload, response in _pages(key, url, page_size=_page_size(page_size), deadline=deadline, on_page=on_page):
         pages_fetched += 1
         count = extract_record_count(payload)
         record_count = count if count is not None else record_count
@@ -597,6 +616,7 @@ def fetch_people_attributes(
     *,
     deadline: Optional[float] = None,
     page_size: int = LIVESTORM_MAX_PAGE_SIZE,
+    on_page: Optional[Callable[[int], None]] = None,
 ) -> Dict[str, Any]:
     """The workspace's people attributes (`GET /people_attributes`, paginated).
 
@@ -606,13 +626,14 @@ def fetch_people_attributes(
     with no attributes, and the caller labels fields from the event instead.
     Any other HTTP error raises, and so do passing `deadline`
     (`LivestormDeadlineExceeded`) and a list that doesn't reach its last
-    page (`LivestormPaginationError`).
+    page (`LivestormPaginationError`). `on_page` gets each answer's request
+    count, the refused one included (`_pages`).
     """
     url = f"{API_BASE}/people_attributes"
     records: List[Any] = []
     http_status = None
     try:
-        for payload, response in _pages(key, url, page_size=_page_size(page_size), deadline=deadline):
+        for payload, response in _pages(key, url, page_size=_page_size(page_size), deadline=deadline, on_page=on_page):
             records.extend(extract_records(payload))
             http_status = getattr(response, "status_code", None)
     except requests.HTTPError as exc:
