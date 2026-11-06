@@ -37,7 +37,7 @@ import contextlib
 import logging
 import threading
 from datetime import datetime, timedelta, timezone
-from typing import Any, AsyncIterator, Dict
+from typing import Any, AsyncIterator, Dict, Optional, Tuple
 
 from arq import cron
 from arq.worker import func
@@ -49,6 +49,7 @@ from livestorm_app.db import (
     database_enabled,
     ensure_database_schema,
     fetch_cached_session,
+    fetch_session_fields,
     get_db_connection,
     update_transcript_job_progress,
     update_transcript_job_status,
@@ -214,6 +215,46 @@ def _read_gladia_key_or_raise() -> str:
     return key
 
 
+def _transcription_options(session_id: str) -> Tuple[Dict[str, Any], Optional[int]]:
+    """The Gladia options for a new transcript of `session_id`, and the count
+    of people on stage they were built from.
+
+    The speaker cap follows the people on stage of the cached session
+    (`record.inputs.count_people_on_stage`, which picks the people source as
+    the v1 record does; docs/product.md §13, "Speaker cap"). When that count
+    is unknown (no cached people, nobody marked on stage, or any failure
+    here), the cap stays at Gladia's default ceiling: options never fail a
+    transcription. One light read with `ALL_ORGS`: the worker has no caller,
+    and the job was started by one who could read the session.
+    """
+    from livestorm_app.gladia.transcriber import speaker_options
+
+    people_on_stage: Optional[int] = None
+    try:
+        # Imported here, the only place the worker runs v1 code, so an error
+        # in `record/` falls back to the default cap (tests/test_roster.py).
+        from livestorm_app.record.inputs import count_people_on_stage
+
+        fields = fetch_session_fields(session_id, ["session_payload"], organization_id=ALL_ORGS)
+        # Only the include list is cached today. Once stored person rows
+        # exist, pass them here (`roster_rows`), as the record route does.
+        people_on_stage = count_people_on_stage(fields or {})
+    except Exception:
+        logger.exception("[run_transcription] session_id=%s people on stage unknown; default speaker cap", session_id)
+        people_on_stage = None
+    return speaker_options(people_on_stage), people_on_stage
+
+
+def _record_people_on_stage(transcript_payload: Any, people_on_stage: Optional[int]) -> None:
+    """Note in the transcript's provenance (`stormiq`, written by the
+    transcriber) the count of people on stage its speaker cap came from."""
+    if not isinstance(transcript_payload, dict):
+        return
+    provenance = transcript_payload.get("stormiq")
+    if isinstance(provenance, dict):
+        provenance["people_on_stage"] = people_on_stage
+
+
 def _map_gladia_step_to_stage(step: str) -> str:
     """Translate Gladia's progress `step` to our stage-floor vocabulary.
 
@@ -245,6 +286,9 @@ async def run_transcription(
     The job args hold no credentials (arq stores them in Redis and logs
     them). The Livestorm credential reference is read from the job's row
     when the job is claimed; the Gladia key comes from the worker's env.
+    The speaker cap comes from the cached session's people
+    (`_transcription_options`), and the count it used is noted in the
+    transcript's `stormiq` block.
 
     Returns a small status payload (for arq's result cache); the real
     result lives in `session_cache.transcript_payload`. A job whose row is
@@ -294,6 +338,13 @@ async def run_transcription(
 
     try:
         gladia_api_key = _read_gladia_key_or_raise()
+        gladia_options, people_on_stage = await asyncio.to_thread(_transcription_options, session_id)
+        logger.info(
+            "[run_transcription] job_id=%s people_on_stage=%s max_speakers=%s",
+            job_id,
+            people_on_stage,
+            gladia_options["diarization_config"]["max_speakers"],
+        )
         async with _transcription_slot(ctx, job_id):
             # Resolved after the wait for a slot, so the token is fresh.
             api_key = await asyncio.to_thread(livestorm_auth_for_job, connection_id)
@@ -303,8 +354,10 @@ async def run_transcription(
                 gladia_api_key,
                 session_id,
                 livestorm_api_key=api_key,
+                gladia_options=gladia_options,
                 on_progress=on_gladia_progress,
             )
+        _record_people_on_stage(transcript_payload, people_on_stage)
         publish_progress_sync("transcript", session_id, "persisting")
         upsert_cached_session(api_key, session_id, transcript_payload=transcript_payload)
         update_transcript_job_status(job_id, "completed")

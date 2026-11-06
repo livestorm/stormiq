@@ -1024,3 +1024,46 @@ def test_no_pager_asks_livestorm_for_more_than_50(monkeypatch, requested, sent):
     livestorm_client.fetch_event_past_sessions("Bearer t", "e1", page_size=requested)
     livestorm_client.fetch_workspace_events_page("Bearer t", page_size=requested)
     assert [call["page[size]"] for call in calls] == [sent] * 4
+
+
+# ── Gladia: the speaker cap ────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("people_on_stage", "max_speakers"),
+    [
+        (1, 3),  # 1 + 2 is the floor too: with a margin of 2 the floor never binds
+        (2, 4),
+        (5, 7),
+        (18, 20),
+        (19, 20),  # the ceiling
+        (60, 20),
+        (None, 20),  # unknown keeps the ceiling
+        (0, 20),
+        (-1, 20),
+        (True, 20),  # not a count
+        ("3", 20),
+    ],
+)
+def test_the_speaker_cap_is_people_on_stage_plus_two_between_3_and_20(people_on_stage, max_speakers):
+    from livestorm_app.gladia import transcriber
+
+    assert transcriber.max_speakers_for(people_on_stage) == max_speakers
+    assert transcriber.speaker_options(people_on_stage) == {
+        "diarization_config": {"min_speakers": 1, "max_speakers": max_speakers}
+    }
+
+
+def test_the_speaker_cap_floor_binds_when_the_margin_is_smaller(monkeypatch):
+    from livestorm_app.gladia import transcriber
+
+    monkeypatch.setattr(transcriber, "MAX_SPEAKERS_MARGIN", 0)
+    assert [transcriber.max_speakers_for(count) for count in (1, 2, 3, 4)] == [3, 3, 3, 4]
+
+
+def test_the_speaker_cap_ceiling_is_the_default_request():
+    from livestorm_app.gladia import transcriber
+
+    assert transcriber.DEFAULT_GLADIA_OPTIONS["diarization_config"]["max_speakers"] == transcriber.MAX_SPEAKERS_CEILING == 20
+    request = transcriber._build_gladia_request("https://gladia.example/a", transcriber.speaker_options(2))
+    assert request["diarization_config"] == {"min_speakers": 1, "max_speakers": 4}

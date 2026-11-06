@@ -7,8 +7,8 @@ Two sources give the same `Roster` (`RosterMeta.source`):
 - `paginated`: stored rows from Livestorm's paginated people endpoint, once
   StormIQ syncs them (`roster_from_rows`, fed a `RosterRows`).
 
-`record/inputs.load_record_inputs` picks the source, so nothing else depends
-on it.
+`record/inputs.py` picks the source (`load_record_inputs`, and
+`count_people_on_stage` for the speaker cap), so nothing else depends on it.
 
 What a row holds comes from `livestorm.payloads.parse_person`: the email
 domain, never the address; the referrer's host, never the URL; no phone,
@@ -30,7 +30,10 @@ The rules (docs/product.md §13, "Roster"):
   (`lead_time_bucket`); time zones play no part;
 - coverage: complete only when the source says so and the people count
   matches Livestorm's own count of the list. The include list has no such
-  count yet, so it reads partial.
+  count yet, so it reads partial;
+- people on stage: organizers and guest speakers (`people_on_stage`). The
+  worker caps the speakers of a new transcript with that count, read through
+  `record/inputs.count_people_on_stage`.
 
 Pure functions: no database, network or web framework.
 """
@@ -748,6 +751,17 @@ def escalate_roles(roster: Roster, signals: Mapping[str, RoleSignals]) -> Roster
     attended_rows = [{"role": role} for role, came in zip(roles, attended, strict=True) if came]
     meta = replace(roster.meta, role_counts=_role_counts(rows), attended_role_counts=_role_counts(attended_rows))
     return Roster(people=escalated, meta=meta)
+
+
+def people_on_stage(roster: Roster) -> int:
+    """How many people of the roster Livestorm marks as on stage: organizers
+    (`is_organizer`) and guest speakers (`is_guest_speaker`), each person
+    once. Attendance plays no part, so a host whose attendance flag is wrong
+    still counts."""
+    people = roster.people
+    if people.empty:
+        return 0
+    return int((people["is_organizer"] | people["is_guest_speaker"]).sum())
 
 
 # ── Views ───────────────────────────────────────────────────────────────────

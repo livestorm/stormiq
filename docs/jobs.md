@@ -22,10 +22,11 @@ The frontend calls `POST /api/sessions/{id}/fetch-base`, then `POST /api/session
 The worker, in `worker.run_transcription(job_id, session_id)`:
 
 1. **Claims the row.** One UPDATE moves it from `pending` to `running` and reads and clears `connection_id`. A row that is no longer `pending` (swept, or closed as lost) is skipped, so no paid work starts.
+   Then it **sets the speaker cap** (`_transcription_options`): one light read of the cached session's people (`fetch_session_fields`, `session_payload`) gives the people on stage (`record/inputs.count_people_on_stage`), and Gladia's `max_speakers` follows ([providers.md](providers.md#gladia-configuration)). An unknown count, or any failure here, keeps the default cap of 20; it never fails the job. The job's arguments stay `(job_id, session_id)`.
 2. **Waits for a slot.** At most `MAX_CONCURRENT_TRANSCRIPTIONS` (2) run per worker, because download and ffmpeg are memory-heavy. While it waits, progress is refreshed every minute so the sweeper leaves the row alone.
 3. **Resolves credentials.** `GLADIA_KEY` comes from the worker's env; the Livestorm token from the claimed connection id, refreshed if close to expiry (`auth.livestorm_auth_for_job`).
 4. **Transcribes** in a thread (`asyncio.to_thread`): download the recording, upload it to Gladia, poll. Progress goes to `transcript_jobs.progress` and to Redis. While Gladia works, the transcriber reports progress on every status change and at least once a minute (`PROGRESS_HEARTBEAT_SECONDS`), which keeps `updated_at` fresh.
-5. **Saves** `session_cache.transcript_payload`, marks the job `completed` and clears progress. If saving fails, the job is marked `error`, never `completed`.
+5. **Saves** `session_cache.transcript_payload`, with the people-on-stage count noted in its `stormiq` block, marks the job `completed` and clears progress. If saving fails, the job is marked `error`, never `completed`.
 6. **On any exception, timeout or cancellation** (worker shutdown), sets `status='error'` with a message and clears progress. A cancelled transcription also signals its thread, which stops at its next progress report.
 
 Each transcript poll also reconciles the row with arq (as in step 2), so a job that died in the queue shows as an error within minutes. The poll response carries `progress` (the raw Gladia step) and `progressRedis` (stage-floor progress with a percent).

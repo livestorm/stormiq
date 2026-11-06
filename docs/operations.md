@@ -102,6 +102,7 @@ TEST_DATABASE_URL             # Enables the real-Postgres tests. Must be a local
 TEST_REDIS_URL                # Enables the real-Redis tests. Local host and a dedicated db index: the fixture flushes it.
 
 PORT                          # Set by Render; defaults to 10000
+RENDER                        # Set by Render on every service. Turns off local-dev mode and tags Gladia jobs env=render (local otherwise)
 ```
 
 ## Observability
