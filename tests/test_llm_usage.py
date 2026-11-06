@@ -9,6 +9,7 @@ in test_data_integrity.py and test_db_scope.py.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 from datetime import datetime, timezone
@@ -284,11 +285,13 @@ def test_the_cost_uses_the_model_that_answered(http, rows, anthropic, served, mi
     ]
 
 
-def test_a_refusal_is_recorded_and_still_reads_as_empty(http, rows, anthropic):
-    # Classic behaviour is unchanged: the empty text fails the job as "empty".
+def test_a_refusal_is_recorded_and_raised(http, rows, anthropic):
+    # A refused classic output says so (it used to read as "empty"); test_llm_responses.py has the rest.
     script, _ = http
     script.append(FakeResponse(anthropic_body("", "refusal", stop_details={"type": "refusal", "category": "bio"})))
-    assert llm_client.call_llm("key", "claude-haiku-4-5-20251001", [], ctx=CTX) == ""
+    with pytest.raises(llm_client.LLMRefused) as refused:
+        llm_client.call_llm("key", "claude-haiku-4-5-20251001", [], ctx=CTX)
+    assert str(refused.value) == "The model declined this session. Nothing was saved."
     assert [(row["outcome"], row["stop_reason"], row["refusal_category"]) for row in rows] == [("refused", "refusal", "bio")]
 
 
@@ -554,6 +557,8 @@ def test_an_unpriced_model_never_makes_an_automatic_call_under_a_budget(automati
 
 def test_the_truncation_retry_is_checked_again(automatic, monkeypatch, http, rows, anthropic):
     # The main call is under budget; its own cost takes the org over, so the retry is never sent.
+    # (The v1 jobs don't retry a cut-off answer; this one is given a retry to test the check.)
+    monkeypatch.setitem(jobs._SPECS, "chat_labels", dataclasses.replace(jobs.job_spec("chat_labels"), truncation_retry=True))
     monkeypatch.setattr(db, "llm_spend_since", lambda org, since: sum(row["cost_usd_micros"] or 0 for row in rows))
     monkeypatch.setenv(usage.ORG_DAILY_LLM_BUDGET_ENV, "0.002")  # 2,000 micros; one call costs 2,700
     script, sent = http

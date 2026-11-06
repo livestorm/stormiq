@@ -47,7 +47,9 @@ The OpenAI rows are unverified until a live check; their `temperature` and token
 
 Smart Recap deliberately uses a stronger model than the other classic outputs. The classic outputs still send no effort, and their callers pass the answer tokens above as `max_tokens`. Nothing runs the v1 jobs yet, and they have no OpenAI model until the live check.
 
-**Budget** (`ai.jobs.budget`). A job's `max_tokens` is its answer tokens, plus room for thinking when the model thinks by default (`THINKING_HEADROOM`: 4,000 at low effort, 16,000 at medium, 32,000 at high, 48,000 at xhigh, 64,000 at max), capped at the model's largest `max_tokens`. Above 16,000, `budget` marks the call to stream. No call streams yet: streaming arrives with the Anthropic SDK transport, and until then every LLM call is the non-streaming request in the timeouts table below. The headroom is a guess until `llm_usage` holds enough rows per job to calibrate it. On their defaults, the v1 jobs get 6,000, 12,000, 48,000 (marked to stream) and 6,000.
+A spec also says whether an answer cut off at the token limit is asked for once more (`truncation_retry`): yes for every classic output, as before; no for the v1 jobs, whose budgets already hold thinking headroom ([Structured outputs and refusals](#structured-outputs-and-refusals)).
+
+**Budget** (`ai.jobs.budget`). A job's `max_tokens` is its answer tokens, plus room for thinking when the model thinks by default (`THINKING_HEADROOM`: 4,000 at low effort, 16,000 at medium, 32,000 at high, 48,000 at xhigh, 64,000 at max), capped at the model's largest `max_tokens`. Above 16,000, `budget` marks the call to stream. No call streams yet: streaming arrives with the Anthropic SDK transport, and until then every LLM call is the non-streaming request in the timeouts table below. The headroom is a guess until `llm_usage` holds enough rows per job to calibrate it. On their defaults, the v1 jobs get 6,000, 12,000, 48,000 (marked to stream) and 6,000. A v1 call whose budget is marked to stream (the understanding job) is refused before it is sent, until streaming exists.
 
 ### Which model a job uses
 
@@ -78,11 +80,36 @@ The image model is the `image_model` setting, then `IMAGE_MODEL`, then `gpt-imag
 
 **Temperature.** Every classic output asks for a low `temperature` (0.2, or 0.1 for translation). Claude 4.7 and later models reject a non-default temperature, so `llm_client._anthropic_send` sends it only when `llm_client.anthropic_accepts_temperature` says the model accepts it. A catalog model answers from its `temperature_ok`: Haiku 4.5 and Sonnet 4.6 accept it, the others don't. An id outside the catalog keeps the rule by version (`llm_client.claude_version_accepts_temperature`): Claude models up to 4.6 accept it, and any other or unknown id gets no temperature and samples at the default. This holds only on the API version the app sends (`config.ANTHROPIC_API_VERSION`, `2023-06-01`): from `2026-10-21` on, every model rejects `temperature`, and the helper then sends it to none. The OpenAI adapter always sends it.
 
+### Structured outputs and refusals
+
+Each adapter (`llm_client._anthropic_send`, `llm_client._openai_send`) returns one `LLMResult`: the text, why the model stopped (`complete`, `max_tokens`, `refusal` or `other`, plus the provider's own value), Anthropic's refusal category, the model that answered, the request id (`request-id`, or OpenAI's `x-request-id`) and the token usage. There are two ways to call a model:
+
+- `llm_client.call_llm`, for the classic outputs. Each passes its own model, messages, `temperature` and `max_tokens`, and gets the text back. Their requests don't change.
+- `llm_client.generate_text(kind, …)` and `llm_client.generate_json(kind, schema, …)`, for the v1 jobs. The model comes from the job (`ai.jobs.resolve_model`), `max_tokens` from its budget (`ai.jobs.budget`), and no `temperature` is sent. A model outside the catalog, or a JSON step on a model whose row doesn't accept structured outputs (`ModelCaps.structured_outputs`), is refused before any paid call. Nothing calls them yet.
+
+**Why the model stopped** is checked in this order, on both providers:
+
+| Stop | Anthropic | OpenAI | What happens |
+|---|---|---|---|
+| refusal | `stop_reason: "refusal"`; `stop_details.category` when given (it can be null) | `message.refusal` set, or `finish_reason: "content_filter"` | `LLMRefused` at once: "The model declined this session. Nothing was saved." Never retried; partial text and OpenAI's refusal wording are dropped |
+| cut off | `stop_reason: "max_tokens"` | `finish_reason: "length"` | asked once more at double the budget if the job's spec says so (`JobSpec.truncation_retry`; `llm_client.retry_budget` caps it at 16,000 and the model's limit), else `LLMOutputTruncated` |
+| complete | `end_turn` or `stop_sequence` | `stop` | the text; a JSON step validates it against its schema |
+| anything else | `pause_turn`, `tool_use`, … | `tool_calls`, … | `call_llm` returns the text as before; `generate_text` and `generate_json` raise `LLMInvalidOutput` |
+
+The text is read from the `text` blocks only, so a leading `thinking` block (the 5.5 models may send an empty one) or a fallback block is never part of the answer. The refusal category is kept only when it is a short tag, and only in the usage row and its log line, never in the message the user sees. No server-side fallback is sent for refusals: whether Sonnet and Opus 5.5 should use one is still an open owner question, and Haiku 5.5 has none.
+
+**JSON steps.** A JSON step's schema is a Pydantic model registered with `ai.schemas.json_schema`. Registering builds its strict JSON schema at import (`ai.schemas.strict_json_schema`), so an unsupported model fails the import rather than a paid call. The schema is sent as:
+
+- Anthropic: `output_config: {format: {type: "json_schema", schema}}`, with no beta header;
+- OpenAI: `response_format: {type: "json_schema", json_schema: {name, strict: true, schema}}`.
+
+The strict schema is a subset of JSON Schema that both providers accept. StormIQ chose this common subset; each provider accepts a little more. Every object closes (`additionalProperties: false`) and requires all its fields, and an optional field is `X | None` without a default. Nested models are written out in place, with no `$ref`: the providers accept references, but inlining keeps the schema simple and makes a recursive model easy to refuse. Recursion, free-form objects (`dict[str, X]`), tuples and untyped values are refused. Keywords outside the subset are left out of what is sent: bounds such as `minimum`, `maximum`, `minLength`, `maxLength`, `pattern`, `minItems` and `maxItems`, and `format` and `title`. Pydantic checks them on the answer. The answer must parse and validate against the full model (`model_validate_json`), or `LLMInvalidOutput` is raised. The error names how many checks failed and their kinds, never the answer's text.
+
+A refusal or a cut-off raises before validation, so neither becomes `LLMInvalidOutput`. A complete answer can still fail: it can come back empty, or break a bound that only Pydantic checks, since the model never sees it. There is no repair call, so such an answer fails the step. Put a bound on a JSON step only when breaking it should fail the job.
+
 ### Usage and the daily budget
 
-Each adapter (`llm_client._anthropic_send`, `llm_client._openai_send`) returns one `LLMResult`: the text, why the model stopped (`complete`, `max_tokens`, `refusal` or `other`, plus the provider's own value), Anthropic's refusal category, the model that answered, the request id (`request-id`, or OpenAI's `x-request-id`) and the token usage. `llm_client.call_llm` still returns only the text, so the classic outputs behave as before: a refusal still reads as an empty answer.
-
-`call_llm` records every answered text-model call, the truncation retry included, as one `llm_usage` row and one log line (`ai.usage.record_call`; [data-model.md](data-model.md#llm_usage), [operations.md](operations.md#observability)). The two providers' usage objects are normalised to the same counts (`ai.usage.anthropic_usage`, `ai.usage.openai_usage`):
+`llm_client` records every answered text-model call, the truncation retry included, as one `llm_usage` row and one log line (`ai.usage.record_call`; [data-model.md](data-model.md#llm_usage), [operations.md](operations.md#observability)). The two providers' usage objects are normalised to the same counts (`ai.usage.anthropic_usage`, `ai.usage.openai_usage`):
 
 | Count | Anthropic | OpenAI |
 |---|---|---|
@@ -94,9 +121,9 @@ Each adapter (`llm_client._anthropic_send`, `llm_client._openai_send`) returns o
 
 The cost is estimated when the row is written, from the price of the model that answered (`ai.usage.estimate_cost_usd_micros`); a served id outside the catalog is priced as the model asked for. A model with no price in the catalog (the OpenAI rows) gets no cost; its tokens are still counted.
 
-The cover image call (OpenAI Images, `cover_image.generate_cover_image_with_openai`) doesn't go through `call_llm`. It leaves no `llm_usage` row and isn't held to the daily budget, although the worker starts it on its own after a Professional Smart Recap ([jobs.md](jobs.md#cover-images)). Logging it is on the [roadmap](roadmap.md#5-models).
+The cover image call (OpenAI Images, `cover_image.generate_cover_image_with_openai`) doesn't go through `llm_client`. It leaves no `llm_usage` row and isn't held to the daily budget, although the worker starts it on its own after a Professional Smart Recap ([jobs.md](jobs.md#cover-images)). Logging it is on the [roadmap](roadmap.md#5-models).
 
-**Daily budget.** `ORG_DAILY_LLM_BUDGET_USD` stops one organization's automatic text jobs for the rest of the UTC day once its estimated spend reaches it. It applies only to the job kinds marked `automatic` in `ai/jobs.py` (`ai.jobs.automatic_kinds`), and none is yet, so today it limits nothing. A job a user starts, every classic output included, is never held to it. `call_llm` checks it in the worker before each send, the truncation retry included (`ai.usage.check_org_budget`):
+**Daily budget.** `ORG_DAILY_LLM_BUDGET_USD` stops one organization's automatic text jobs for the rest of the UTC day once its estimated spend reaches it. It applies only to the job kinds marked `automatic` in `ai/jobs.py` (`ai.jobs.automatic_kinds`), and none is yet, so today it limits nothing. A job a user starts, every classic output included, is never held to it. `llm_client` checks it in the worker before each send, the truncation retry included (`ai.usage.check_org_budget`):
 
 - An automatic job on a session with no organization never runs: there is nobody to charge, and the spend is never summed over every org (`db.llm_spend_since` refuses a blank scope).
 - Unset means no limit. A value that isn't a dollar amount stops automatic jobs until it is fixed.

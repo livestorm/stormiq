@@ -119,7 +119,7 @@ Admin-editable overrides for provider and model selection (`/api/admin/settings`
 
 ## `llm_usage`
 
-One row per text-model call that got an answer (HTTP 200), made through `llm_client.call_llm` and written by `ai.usage.record_call` through `db.insert_llm_usage`. The cover image call has no row. A truncated, refused or retried call has its own row; a call that failed in transport has none (it is only in the log). See [providers.md](providers.md#usage-and-the-daily-budget).
+One row per text-model call that got an answer (HTTP 200), made through `llm_client` (`call_llm`, `generate_text`, `generate_json`) and written by `ai.usage.record_call` through `db.insert_llm_usage`. The cover image call has no row. A truncated, refused or retried call has its own row, and so does an answer that failed its schema; a call that failed in transport has none (it is only in the log). See [providers.md](providers.md#usage-and-the-daily-budget).
 
 ```sql
 llm_usage (
@@ -137,8 +137,8 @@ llm_usage (
   max_tokens            INTEGER,
   streamed              BOOLEAN NOT NULL DEFAULT FALSE,
   stop_reason           TEXT NOT NULL,    -- the provider's own value: 'end_turn', 'length', …
-  refusal_category      TEXT,             -- Anthropic's stop_details.category, when it gives one
-  outcome               TEXT NOT NULL,    -- 'ok' | 'truncated' | 'refused' | 'other_stop'
+  refusal_category      TEXT,             -- Anthropic's stop_details.category, when it gives a short tag
+  outcome               TEXT NOT NULL,    -- 'ok' | 'truncated' | 'refused' | 'other_stop' | 'invalid_output' (an answer that failed its schema, or an empty v1 answer)
   input_tokens          INTEGER NOT NULL DEFAULT 0,  -- uncached input
   output_tokens         INTEGER NOT NULL DEFAULT 0,  -- thinking and reasoning included
   cache_read_tokens     INTEGER NOT NULL DEFAULT 0,

@@ -1,11 +1,12 @@
 """Usage logging for text-model calls, and the org budget for automatic jobs.
 
 Every text-model call that gets an answer (HTTP 200) is recorded once by
-`llm_client.call_llm`, through `record_call`: one `llm_usage` row and one
-`llm_usage …` log line. A truncated, refused or retried call is recorded
-too. A call that fails in transport has no usage and is only in the log.
-The cover image call (`ai.cover_image`) doesn't go through `call_llm`, so it
-is neither recorded nor held to the budget.
+`llm_client` (`call_llm`, `generate_text`, `generate_json`), through
+`record_call`: one `llm_usage` row and one `llm_usage …` log line. A
+truncated, refused or retried call is recorded too, and so is a JSON answer
+that fails its schema. A call that fails in transport has no usage and is
+only in the log. The cover image call (`ai.cover_image`) doesn't go through
+`llm_client`, so it is neither recorded nor held to the budget.
 
 A row holds ids, the model, token counts, the estimated cost, the time taken
 and the stop reason. Never a prompt, an output, a name or a key.
@@ -40,13 +41,16 @@ logger = logging.getLogger(__name__)
 
 ORG_DAILY_LLM_BUDGET_ENV = "ORG_DAILY_LLM_BUDGET_USD"
 
-# What a call's stop means for its output, stored as `llm_usage.outcome`.
+# What a call's stop means for its output, stored as `llm_usage.outcome`. A JSON
+# step whose complete answer doesn't match its schema, or a v1 call that
+# answered nothing, is recorded as "invalid_output" (`INVALID_OUTPUT`).
 OUTCOMES: Dict[str, str] = {
     "complete": "ok",
     "max_tokens": "truncated",
     "refusal": "refused",
     "other": "other_stop",
 }
+INVALID_OUTPUT = "invalid_output"
 
 
 @dataclass(frozen=True)
@@ -90,6 +94,11 @@ def _mapping(value: Any) -> Mapping[str, Any]:
 
 # Short enum-like strings a usage object carries (service tier, iteration type).
 _TAG_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
+
+
+def tag_or_none(value: Any) -> Optional[str]:
+    """`value` when it is a short enum-like tag (a refusal category, say), else None."""
+    return value if isinstance(value, str) and _TAG_RE.match(value) else None
 
 
 def sanitize_usage(value: Any, depth: int = 0) -> Any:
@@ -179,8 +188,10 @@ def build_usage_row(
     provider: str,
     model_requested: str,
     max_tokens: int,
+    outcome: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """The `llm_usage` row for one answered call (`db.insert_llm_usage`)."""
+    """The `llm_usage` row for one answered call (`db.insert_llm_usage`). `outcome`
+    overrides the one read from the stop (`INVALID_OUTPUT`)."""
     ctx = ctx or CallContext(job_kind="unknown")
     usage = result.usage
     priced_model = result.model_served if catalog_model(result.model_served) else model_requested
@@ -198,7 +209,7 @@ def build_usage_row(
         "streamed": False,
         "stop_reason": str(result.stop_raw or ""),
         "refusal_category": _id_or_none(result.refusal_category),
-        "outcome": OUTCOMES.get(result.stop, "other_stop"),
+        "outcome": outcome or OUTCOMES.get(result.stop, "other_stop"),
         "input_tokens": usage.input_tokens,
         "output_tokens": usage.output_tokens,
         "cache_read_tokens": usage.cache_read_tokens,
@@ -267,6 +278,7 @@ def record_call(
     provider: str,
     model_requested: str,
     max_tokens: int,
+    outcome: Optional[str] = None,
 ) -> None:
     """Log one answered call and save its `llm_usage` row. Never raises: the
     call's output is complete and paid for, so losing its usage row must not
@@ -276,6 +288,7 @@ def record_call(
             logger.warning("llm_usage: a model call had no call context; it is recorded as job=unknown")
         row = build_usage_row(
             ctx, result, purpose=purpose, provider=provider, model_requested=model_requested, max_tokens=max_tokens,
+            outcome=outcome,
         )
         line = usage_log_line(row)
     except Exception as exc:
@@ -317,8 +330,9 @@ def check_org_budget(job_kind: str, organization_id: str, model: str, *, now: Op
     """Raise OrgBudgetExceeded when an automatic job may not make a paid call to `model`.
 
     Checked in the worker before each send, the truncation retry included
-    (`llm_client.call_llm`). A job a user starts returns at once, without
-    reading anything. An automatic job needs an org to charge: a session
+    (`llm_client.call_llm`, `generate_text`, `generate_json`). A job a user
+    starts returns at once, without reading anything. An automatic job needs
+    an org to charge: a session
     without one never runs it, whatever the budget. With no budget set there
     is no limit. Otherwise the model must have a price in the catalog, so its
     spend is counted, and the org's estimated spend since midnight UTC (every
