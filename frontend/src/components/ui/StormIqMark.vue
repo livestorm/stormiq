@@ -1,9 +1,10 @@
 <script setup>
-// The StormIQ mark: a circle with three ascending bars, plus the "Storm" + "IQ"
+// The StormIQ mark: an "IQ" monogram in a circle, plus the "Storm" + "IQ"
 // wordmark. StormIQ's own identity, never the Livestorm logo (docs/brand.md).
-// The same geometry is drawn in pdf.py (PDF headers) and public/favicon.svg.
-// In the top bar and the classic sidebar the wordmark stands alone
-// (`:mark="false"`), followed by the "for Livestorm" lockup (ForLivestorm.vue).
+// The monogram fills the square spots (collapsed sidebar, compact top bar),
+// and the same geometry is public/favicon.svg. Wherever there is room (top
+// bar, classic sidebar, PDFs) the wordmark stands alone (`:mark="false"`),
+// followed by the "for Livestorm" lockup (ForLivestorm.vue).
 defineProps({
   size: { type: Number, default: 28 },
   wordmark: { type: Boolean, default: true },
@@ -15,9 +16,9 @@ defineProps({
   <span class="siq-mark">
     <svg v-if="mark" :width="size" :height="size" viewBox="0 0 28 28" aria-hidden="true" focusable="false">
       <circle cx="14" cy="14" r="14" class="siq-mark-disc" />
-      <rect x="7.5" y="14" width="3" height="7" rx="1.5" class="siq-mark-bar" />
-      <rect x="12.5" y="10.5" width="3" height="10.5" rx="1.5" class="siq-mark-bar" />
-      <rect x="17.5" y="7" width="3" height="14" rx="1.5" class="siq-mark-bar" />
+      <rect x="6.6" y="8.2" width="3.4" height="11.6" rx="1.7" class="siq-mark-letter" />
+      <circle cx="17.6" cy="13.6" r="4.4" class="siq-mark-stroke" />
+      <path d="M19.9 16.4 22.4 19.4" class="siq-mark-stroke" />
     </svg>
     <span v-if="wordmark" class="siq-mark-word">Storm<span class="siq-mark-iq">IQ</span></span>
   </span>
@@ -39,8 +40,15 @@ defineProps({
   fill: var(--siq-mark-fill);
 }
 
-.siq-mark-bar {
-  fill: var(--siq-mark-bars);
+.siq-mark-letter {
+  fill: var(--siq-mark-ink);
+}
+
+.siq-mark-stroke {
+  fill: none;
+  stroke: var(--siq-mark-ink);
+  stroke-width: 3.2;
+  stroke-linecap: round;
 }
 
 .siq-mark-word {

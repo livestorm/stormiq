@@ -51,7 +51,7 @@ Every colour is a CSS custom property in `frontend/src/design/tokens.css`, named
 | `s1`, `s2`, `s3`, `other` | chart series: audience, questions, host team, reference and "Other" | `#0B54FE`, `#DE7835`, `#0C7C59`, `#A4B5C1` | `#447CFD`, `#CB4A1A`, `#0C7C59`, `#8094A3` |
 | `logo-on-light` / `logo-on-dark` | which Livestorm logo file the lockup shows (`display` values) | `block` / `none` | `none` / `block` |
 | `lockup-ink` / `lockup-rule` | the lockup's "for" and its divider | `muted` / `hairline-head` | `muted` / `hairline-head` (classic frame: `#A4B5C1` / `rgba(255,255,255,0.12)`) |
-| `mark-fill` / `mark-iq` / `mark-bars` | the StormIQ mark | `#0B42C3` / `#0B42C3` / white | `#447CFD` / `#88C0CD` / white |
+| `mark-fill` / `mark-iq` / `mark-ink` | the "IQ" monogram's disc, the wordmark's "IQ", the monogram's letters | `#0B42C3` / `#0B42C3` / white | `#447CFD` / `#88C0CD` / white |
 | `ridge-fill`, `img-outline` | the session ridge, outlines on images | `rgba(18,38,43,0.07)`, `rgba(0,0,0,0.1)` | `rgba(255,255,255,0.10)`, `rgba(255,255,255,0.1)` |
 
 Rules: on light surfaces CTAs and links are Livestorm Blue; on dark surfaces CTAs are Winter Green 700. The light `fair-fill` is below 3:1 on white, so a status fill never stands alone: it always has its value and an icon + word beside it. Charts use at most three series plus "Other", with direct labels; text is never in a series colour. An entity keeps its colour everywhere.
@@ -120,13 +120,13 @@ In Windows High Contrast (`forced-colors: active`) the browser removes box-shado
 
 ### The "StormIQ for Livestorm" lockup
 
-The headers show StormIQ as a co-brand: the wordmark "Storm" + "IQ" (no disc), the "Beta" tag in the v1 top bar, then a 1px divider, the word "for" and the official Livestorm logo (`ForLivestorm.vue`). In the classic sidebar the wordmark sits above "for" and the logo, without the divider; the collapsed sidebar and the compact top bar keep the StormIQ mark, which fits a square.
+The headers show StormIQ as a co-brand: the wordmark "Storm" + "IQ" (no disc), the "Beta" tag in the v1 top bar, then a 1px divider, the word "for" and the official Livestorm logo (`ForLivestorm.vue`). In the classic sidebar the wordmark sits above "for" and the logo, without the divider. PDFs are headed by the same lockup, with the on-light logo (`pdf.py`, `livestorm_app/assets/livestorm-logo-on-light.png`, rendered unchanged from the kit's SVG; PDFs are always light). Spots that only fit a square show the "IQ" monogram instead (below).
 
 The logo files in `frontend/src/assets/livestorm/` are the brand kit's own (brand.livestorm.co), with only a `viewBox` added so they scale: `logo-on-light.svg` (Winter Green) on light surfaces, `logo-on-dark.svg` (white) on dark ones. The `logo-on-light` and `logo-on-dark` tokens pick the file, so it follows the theme, and the classic frame always shows the on-dark file. Follow Livestorm's logo rules: a solid surface behind it, clear space around it, never stretched, recoloured or shown without its box, and never replaced by "Livestorm" set in type. The lockup says what StormIQ is for; it never makes StormIQ look like a Livestorm product, so the "not an official Livestorm product" notice stays.
 
-### The StormIQ mark
+### The "IQ" monogram and the wordmark
 
-A circle (`mark-fill`) with three ascending white rounded bars, then the wordmark "Storm" + "IQ" (IQ in `mark-iq`), Sora 600 at 18/24, followed in the top bar by a small "Beta" tag. It is drawn by `StormIqMark.vue` in the app (the full mark in the collapsed classic sidebar, the compact top bar and `/design`; the wordmark alone, `:mark="false"`, in the lockup), by `frontend/public/favicon.svg` as the favicon (with `favicon.ico` and `apple-touch-icon.png` rendered from the same geometry for browsers and home screens that don't take SVG), and by `pdf.py` on PDFs. The classic design is dark only, so there the mark always uses its on-dark colours (`#447CFD` disc, `#88C0CD` IQ) whatever the theme. It is never the Livestorm logo or icon.
+The wordmark is "Storm" + "IQ" (IQ in `mark-iq`), Sora 600 at 18/24; it opens the lockup. Where only a square fits, StormIQ shows its monogram: a circle (`mark-fill`) with a white "I" and "Q" (`mark-ink`), 28×28 units. It is a circle on purpose, so it never echoes Livestorm's rounded-square box. Both are drawn by `StormIqMark.vue` (the monogram in the collapsed classic sidebar, the compact top bar and `/design`; the wordmark alone, `:mark="false"`, in the lockup) and the monogram by `frontend/public/favicon.svg` as the favicon, with `favicon.ico` (16, 32, 48 px) and `apple-touch-icon.png` (180 px on white) rendered from that file for browsers and home screens that don't take SVG. The classic design is dark only, so there they always use their on-dark colours (`#447CFD` disc, `#88C0CD` IQ) whatever the theme. Neither is ever the Livestorm logo or icon.
 
 ---
 
@@ -316,9 +316,9 @@ colors: {
 
 ## What this app is NOT
 
-- Not an official Livestorm product. The app's headers show the "StormIQ for Livestorm" lockup, with the official Livestorm logo after "for"; the Livestorm logo or icon is never StormIQ's own logo, and the favicon and PDFs use the StormIQ mark
+- Not an official Livestorm product. The app's headers show the "StormIQ for Livestorm" lockup, with the official Livestorm logo after "for"; PDFs carry the same lockup. The Livestorm logo or icon is never StormIQ's own logo or app icon: square spots (the favicon) use the "IQ" monogram
 - Use "StormIQ" as the app name
 - The app should feel brand-adjacent, not brand-impersonating
-- PDF exports are headed by the StormIQ mark, drawn in `pdf.py`: a `#0B42C3` circle with three ascending white rounded bars, then the wordmark "Storm" + "IQ" (IQ in `#0B42C3`). Their footer repeats the "not an official Livestorm product" notice (in French for French exports)
+- PDF exports are headed by the "StormIQ for Livestorm" lockup (`pdf.py`): the wordmark "Storm" + "IQ" (IQ in `#0B42C3`), a thin divider, "for" and the official on-light Livestorm logo. Their footer repeats the "not an official Livestorm product" notice (in French for French exports)
 - No real person's photo or likeness in the UI: decorative visuals are CSS shapes or StormIQ illustrations (the Surprise Me! tab shows a CSS spotlight)
 - Exported files are named `stormiq-…`, never `livestorm-…`

@@ -55,7 +55,7 @@
   --siq-low-tint: #fdf7f7;
   --siq-mark-fill: #0b42c3;
   --siq-mark-iq: #0b42c3;
-  --siq-mark-bars: #ffffff;
+  --siq-mark-ink: #ffffff;
   /* The "for Livestorm" lockup: which official logo file shows, and its ink. */
   --siq-logo-on-light: block;
   --siq-logo-on-dark: none;
