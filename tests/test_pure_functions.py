@@ -19,6 +19,8 @@ from livestorm_app.analytics import transcript as transcript_analytics
 from livestorm_app.livestorm import client as livestorm_client
 from livestorm_app.livestorm import payloads as livestorm_payloads
 
+from fake_anthropic import FakeAnthropic, install
+
 
 # ── Content repurposing: LLM JSON bundle parsing ──────────────────────────
 
@@ -370,22 +372,14 @@ def test_pdf_has_the_stormiq_mark_and_the_unofficial_notice(monkeypatch):
     ],
 )
 def test_temperature_is_sent_only_to_models_that_accept_it(monkeypatch, model, sends_temperature):
-    sent: list = []
-
-    class FakeResponse:
-        def json(self):
-            return {"stop_reason": "end_turn", "content": [{"type": "text", "text": "ok"}]}
-
-    def fake_post(url, headers, payload, provider):
-        sent.append(payload)
-        return FakeResponse()
-
-    monkeypatch.setattr(llm_client, "_post_with_retry", fake_post)
+    fake = FakeAnthropic([{"stop_reason": "end_turn", "content": [{"type": "text", "text": "ok"}]}])
+    install(monkeypatch, fake)
     result = llm_client._anthropic_send("key", model, [{"role": "user", "content": "Hi"}], 0.2, 100)
     assert (result.text, result.truncated) == ("ok", False)
-    assert ("temperature" in sent[0]) is sends_temperature
+    sent = fake.body(0)  # the JSON body `llm_client._post_message` wrote
+    assert ("temperature" in sent) is sends_temperature
     if sends_temperature:
-        assert sent[0]["temperature"] == 0.2
+        assert sent["temperature"] == 0.2
 
 
 def test_no_model_takes_temperature_from_api_version_2026_10_21():

@@ -2,8 +2,9 @@
 `llm_usage` row and log line, the cost estimate, and the org budget for
 automatic jobs.
 
-Pure tests on synthetic provider responses: no provider is called and no
-database is touched (the row writer is replaced). The real-Postgres cases are
+Pure tests on synthetic provider responses: no provider is called (Anthropic
+is a fake SDK client, `tests/fake_anthropic.py`) and no database is touched
+(the row writer is replaced). The real-Postgres cases are
 in test_data_integrity.py and test_db_scope.py.
 """
 
@@ -21,6 +22,8 @@ from livestorm_app.ai import generation, jobs, usage
 from livestorm_app.ai.models import CATALOG
 from livestorm_app.ai.usage import CallContext, LLMUsage
 from livestorm_app.queue import ai_job_id
+
+from fake_anthropic import scripted_providers
 
 SECRET = "sk-test-SECRET"
 # Free text a provider might one day put in its usage object; it must never be stored.
@@ -61,15 +64,11 @@ def openai_body(content="# Output", finish="stop", *, refusal=None, usage_obj=No
 
 @pytest.fixture
 def http(monkeypatch):
-    """Replace the provider POST: each call takes the next scripted response."""
+    """Replace the providers: each call takes the next scripted response
+    (Anthropic through a fake SDK client, OpenAI's POST)."""
     script: list = []
     sent: list = []
-
-    def fake_post(url, headers, payload, provider):
-        sent.append({"url": url, "headers": headers, "payload": payload, "provider": provider})
-        return script.pop(0)
-
-    monkeypatch.setattr(llm_client, "_post_with_retry", fake_post)
+    scripted_providers(monkeypatch, script, sent)
     return script, sent
 
 

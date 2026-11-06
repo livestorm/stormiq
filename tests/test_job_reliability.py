@@ -700,7 +700,8 @@ def test_caller_hands_jobs_a_connection_id_not_a_token(monkeypatch):
     assert auth.Caller(kind="local_dev", org_id="", local_dev=True).job_connection_id() == ""
 
 
-# ── LLM retries ────────────────────────────────────────────────────────────
+# ── OpenAI retries (requests) ──────────────────────────────────────────────
+# Anthropic's transport (the SDK) and its retries: test_llm_transport.py.
 
 
 def _response(status: int, retry_after: str | None = None) -> requests.Response:
@@ -729,7 +730,7 @@ def llm_http(monkeypatch):
 
 
 def _post():
-    return llm_client._post_with_retry("https://llm.example/v1", {}, {}, provider="anthropic")
+    return llm_client._post_with_retry("https://llm.example/v1", {}, {}, provider="openai")
 
 
 def test_llm_retries_overload_and_server_errors(llm_http):

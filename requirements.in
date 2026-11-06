@@ -9,3 +9,6 @@ python-dotenv>=1.0.1
 imageio-ffmpeg>=0.5.1
 arq>=0.26.1
 redis>=5.0.7
+# The Anthropic SDK (llm_client). 1.x sends API version 2023-06-01, which the
+# classic outputs need for their temperature; 2.x sends 2026-10-21. See docs/providers.md.
+anthropic>=1.17.0,<2

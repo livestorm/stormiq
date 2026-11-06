@@ -17,7 +17,12 @@ START_PAGE_NUMBER = 0
 
 # Anthropic (Claude) — used when LLM_PROVIDER=anthropic (the default).
 # Text model ids live in ai/models.py, each job's default in ai/jobs.py.
-ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
+# The SDK client (llm_client) is given this base URL, so ANTHROPIC_BASE_URL in
+# the environment can't send the key elsewhere.
+ANTHROPIC_BASE_URL = "https://api.anthropic.com"
+# The API version the `anthropic` SDK sends: 1.x sends 2023-06-01, the last
+# version that takes `temperature` (llm_client.anthropic_accepts_temperature
+# reads it). tests/test_llm_transport.py checks the SDK sends this one.
 ANTHROPIC_API_VERSION = "2023-06-01"
 
 # Cover image generation. The cover is built from the session's

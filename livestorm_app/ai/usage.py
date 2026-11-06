@@ -206,7 +206,7 @@ def build_usage_row(
         "model_served": _id_or_none(result.model_served),
         "effort": None,
         "max_tokens": int(max_tokens),
-        "streamed": False,
+        "streamed": bool(getattr(result, "streamed", False)),
         "stop_reason": str(result.stop_raw or ""),
         "refusal_category": _id_or_none(result.refusal_category),
         "outcome": outcome or OUTCOMES.get(result.stop, "other_stop"),

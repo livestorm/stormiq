@@ -1,0 +1,204 @@
+{
+  "about": "The Anthropic request bodies the requests transport sent before the SDK swap: llm_client._anthropic_send at c253aab, captured from requests' prepared request (requests.adapters.HTTPAdapter.send). tests/test_llm_transport.py checks the SDK client sends the same bytes for the same call. Synthetic content.",
+  "url": "https://api.anthropic.com/v1/messages",
+  "cases": [
+    {
+      "name": "overall analysis, Haiku 4.5, French, two system messages",
+      "call": {
+        "model": "claude-haiku-4-5-20251001",
+        "messages": [
+          {
+            "role": "system",
+            "content": "You analyse a finished webinar.\nWrite four sections."
+          },
+          {
+            "role": "system",
+            "content": "Respond only in French."
+          },
+          {
+            "role": "user",
+            "content": "Transcript:\n[00:00] Bienvenue à cette démo. On commence « maintenant »."
+          },
+          {
+            "role": "user",
+            "content": "{\"session\": {\"title\": \"Démo produit : présentation\", \"duration_minutes\": 42}, \"chat\": [{\"t\": \"00:03\", \"text\": \"Bonjour à tous — ça marche ?\"}]}"
+          }
+        ],
+        "temperature": 0.2,
+        "max_tokens": 2500,
+        "json_format": null
+      },
+      "headers": {
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+      },
+      "body": "{\"model\": \"claude-haiku-4-5-20251001\", \"max_tokens\": 2500, \"messages\": [{\"role\": \"user\", \"content\": \"Transcript:\\n[00:00] Bienvenue \\u00e0 cette d\\u00e9mo. On commence \\u00ab maintenant \\u00bb.\"}, {\"role\": \"user\", \"content\": \"{\\\"session\\\": {\\\"title\\\": \\\"D\\u00e9mo produit : pr\\u00e9sentation\\\", \\\"duration_minutes\\\": 42}, \\\"chat\\\": [{\\\"t\\\": \\\"00:03\\\", \\\"text\\\": \\\"Bonjour \\u00e0 tous \\u2014 \\u00e7a marche ?\\\"}]}\"}], \"temperature\": 0.2, \"system\": \"You analyse a finished webinar.\\nWrite four sections.\\n\\nRespond only in French.\"}"
+    },
+    {
+      "name": "Smart Recap, Sonnet 4.6",
+      "call": {
+        "model": "claude-sonnet-4-6",
+        "messages": [
+          {
+            "role": "system",
+            "content": "Write a hype recap in English."
+          },
+          {
+            "role": "user",
+            "content": "Session data: 3 questions, 12 chat messages."
+          }
+        ],
+        "temperature": 0.2,
+        "max_tokens": 900,
+        "json_format": null
+      },
+      "headers": {
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+      },
+      "body": "{\"model\": \"claude-sonnet-4-6\", \"max_tokens\": 900, \"messages\": [{\"role\": \"user\", \"content\": \"Session data: 3 questions, 12 chat messages.\"}], \"temperature\": 0.2, \"system\": \"Write a hype recap in English.\"}"
+    },
+    {
+      "name": "translation, Haiku 4.5, temperature 0.1",
+      "call": {
+        "model": "claude-haiku-4-5-20251001",
+        "messages": [
+          {
+            "role": "system",
+            "content": "You translate markdown reports between English and French."
+          },
+          {
+            "role": "system",
+            "content": "Translate from English to French. Return only translated markdown."
+          },
+          {
+            "role": "user",
+            "content": "# Overall\n\n- Engagement was high\n- 3 questions"
+          }
+        ],
+        "temperature": 0.1,
+        "max_tokens": 6000,
+        "json_format": null
+      },
+      "headers": {
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+      },
+      "body": "{\"model\": \"claude-haiku-4-5-20251001\", \"max_tokens\": 6000, \"messages\": [{\"role\": \"user\", \"content\": \"# Overall\\n\\n- Engagement was high\\n- 3 questions\"}], \"temperature\": 0.1, \"system\": \"You translate markdown reports between English and French.\\n\\nTranslate from English to French. Return only translated markdown.\"}"
+    },
+    {
+      "name": "content repurposing truncation retry, Haiku 4.5, 16,000 tokens",
+      "call": {
+        "model": "claude-haiku-4-5-20251001",
+        "messages": [
+          {
+            "role": "system",
+            "content": "Return a JSON object with summary, blog, email and social_media."
+          },
+          {
+            "role": "user",
+            "content": "Transcript text"
+          }
+        ],
+        "temperature": 0.2,
+        "max_tokens": 16000,
+        "json_format": null
+      },
+      "headers": {
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+      },
+      "body": "{\"model\": \"claude-haiku-4-5-20251001\", \"max_tokens\": 16000, \"messages\": [{\"role\": \"user\", \"content\": \"Transcript text\"}], \"temperature\": 0.2, \"system\": \"Return a JSON object with summary, blog, email and social_media.\"}"
+    },
+    {
+      "name": "Opus 4.8 takes no temperature",
+      "call": {
+        "model": "claude-opus-4-8",
+        "messages": [
+          {
+            "role": "system",
+            "content": "Analyse."
+          },
+          {
+            "role": "user",
+            "content": "Data"
+          }
+        ],
+        "temperature": 0.2,
+        "max_tokens": 2500,
+        "json_format": null
+      },
+      "headers": {
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+      },
+      "body": "{\"model\": \"claude-opus-4-8\", \"max_tokens\": 2500, \"messages\": [{\"role\": \"user\", \"content\": \"Data\"}], \"system\": \"Analyse.\"}"
+    },
+    {
+      "name": "no system message",
+      "call": {
+        "model": "claude-haiku-4-5-20251001",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Data"
+          }
+        ],
+        "temperature": 0.2,
+        "max_tokens": 2500,
+        "json_format": null
+      },
+      "headers": {
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+      },
+      "body": "{\"model\": \"claude-haiku-4-5-20251001\", \"max_tokens\": 2500, \"messages\": [{\"role\": \"user\", \"content\": \"Data\"}], \"temperature\": 0.2}"
+    },
+    {
+      "name": "a v1 JSON step, Haiku 5.5",
+      "call": {
+        "model": "claude-haiku-5-5",
+        "messages": [
+          {
+            "role": "system",
+            "content": "Read the session."
+          },
+          {
+            "role": "user",
+            "content": "Session data"
+          }
+        ],
+        "temperature": null,
+        "max_tokens": 6000,
+        "json_format": {
+          "name": "Reading",
+          "schema": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "summary"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "public",
+                  "internal"
+                ]
+              },
+              "summary": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "headers": {
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+      },
+      "body": "{\"model\": \"claude-haiku-5-5\", \"max_tokens\": 6000, \"messages\": [{\"role\": \"user\", \"content\": \"Session data\"}], \"system\": \"Read the session.\", \"output_config\": {\"format\": {\"type\": \"json_schema\", \"schema\": {\"type\": \"object\", \"additionalProperties\": false, \"required\": [\"kind\", \"summary\"], \"properties\": {\"kind\": {\"type\": \"string\", \"enum\": [\"public\", \"internal\"]}, \"summary\": {\"type\": \"string\"}}}}}}"
+    }
+  ]
+}

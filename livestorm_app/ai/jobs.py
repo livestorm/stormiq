@@ -38,8 +38,11 @@ _PROVIDER_NAMES = {"anthropic": "Anthropic", "openai": "OpenAI"}
 # that think by default. A guess until llm_usage holds enough rows per job to calibrate it.
 THINKING_HEADROOM: Dict[str, int] = {"low": 4_000, "medium": 16_000, "high": 32_000, "xhigh": 48_000, "max": 64_000}
 # Above this max_tokens, `budget` marks a call to stream so it can't hit the
-# HTTP timeout. Nothing streams yet: that comes with the SDK transport.
+# HTTP timeout (`llm_client._stream_message`, Anthropic only). The classic
+# outputs never stream.
 STREAM_ABOVE_TOKENS = 16_000
+# A streamed call's wall-clock limit unless its spec sets one (`JobSpec.call_deadline_s`).
+DEFAULT_CALL_DEADLINE_S = 600
 
 
 @dataclass(frozen=True)
@@ -58,6 +61,10 @@ class JobSpec:
     # An answer cut off at max_tokens is asked for once more with double the
     # budget (`llm_client.retry_budget`). Off: the job fails at once.
     truncation_retry: bool = False
+    # A streamed call is stopped, and the job fails, once this many seconds have
+    # passed since it started, whether or not the stream is sending anything
+    # (`llm_client._StreamDeadline` shuts the connection).
+    call_deadline_s: int = DEFAULT_CALL_DEADLINE_S
 
     def default_model(self, provider: str) -> Optional[str]:
         return self.default_anthropic if provider == "anthropic" else self.default_openai
