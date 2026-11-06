@@ -11,14 +11,17 @@ import copy
 import hashlib
 import importlib.util
 import json
+import logging
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+import requests
 
 from livestorm_app import api_logic, db, llm_client, worker
 from livestorm_app.ai import generation
+from livestorm_app.ai.usage import LLMUsage
 from livestorm_app.db import ALL_ORGS
 from livestorm_app.gladia import transcriber
 from livestorm_app.livestorm import client as livestorm_client
@@ -206,12 +209,16 @@ def test_incomplete_repurposing_bundle_is_not_saved(runner_backend, monkeypatch)
 def _fake_provider(monkeypatch, responses: list):
     calls: list = []
 
-    def fake_call(api_key, model, messages, temperature, max_tokens):
+    def fake_send(api_key, model, messages, temperature, max_tokens):
         calls.append(max_tokens)
-        return responses[len(calls) - 1]
+        text, truncated = responses[len(calls) - 1]
+        return llm_client.LLMResult(
+            text=text, stop="max_tokens" if truncated else "complete", stop_raw="max_tokens" if truncated else "end_turn",
+            refusal_category=None, model_served=model, request_id=None, usage=LLMUsage(), duration_ms=1,
+        )
 
     monkeypatch.setattr(llm_client, "get_provider", lambda: "anthropic")
-    monkeypatch.setattr(llm_client, "_call_anthropic", fake_call)
+    monkeypatch.setattr(llm_client, "_anthropic_send", fake_send)
     return calls
 
 
@@ -232,6 +239,106 @@ def test_complete_output_is_returned_without_retry(monkeypatch):
     calls = _fake_provider(monkeypatch, [("complete", False)])
     assert llm_client.call_llm("k", "m", [], max_tokens=900) == "complete"
     assert calls == [900]
+
+
+# ── Model usage rows (real Postgres) ──────────────────────────────────────
+
+SECRET_KEY = "sk-test-SECRET"
+_TRANSCRIPT = {"text": "Welcome everyone. Today we walk through the roadmap."}
+
+
+def _answer(text: str, stop: str = "end_turn") -> dict:
+    return {
+        "model": "claude-sonnet-4-6",
+        "content": [{"type": "text", "text": text}],
+        "stop_reason": stop,
+        "usage": {"input_tokens": 2000, "output_tokens": 400, "service_tier": "standard", "note": "free text with spaces"},
+    }
+
+
+def _provider_http(monkeypatch, answers: list) -> list:
+    """Fake Anthropic at the HTTP boundary, so the real adapter builds the request."""
+    sent: list = []
+
+    def fake_post(url, **kwargs):
+        sent.append(kwargs["headers"])
+        response = requests.Response()
+        response.status_code = 200
+        response._content = json.dumps(answers.pop(0)).encode()
+        response.headers["request-id"] = f"req_{len(sent)}"
+        return response
+
+    monkeypatch.setattr(llm_client, "get_provider", lambda: "anthropic")
+    monkeypatch.setattr(llm_client.requests, "post", fake_post)
+    return sent
+
+
+def _usage_rows(session_id: str) -> list:
+    with db.get_db_connection() as conn:
+        rows = conn.execute("SELECT * FROM llm_usage WHERE session_id = %s ORDER BY id", (session_id,)).fetchall()
+    return [dict(row) for row in rows]
+
+
+def test_each_model_call_saves_one_usage_row(test_database, monkeypatch, caplog):
+    db.upsert_cached_session("key-a", "sess-u", organization_id="org-a", transcript_payload=_TRANSCRIPT)
+    sent = _provider_http(monkeypatch, [_answer("# Partial", "max_tokens"), _answer("# Hype recap")])
+    with caplog.at_level(logging.INFO):
+        api_logic.run_smart_recap(SECRET_KEY, "sess-u", "hype")
+
+    assert _row("sess-u")["smart_recap_bundle"] == {"hype": "# Hype recap"}
+    rows = _usage_rows("sess-u")
+    assert [(row["purpose"], row["outcome"], row["max_tokens"]) for row in rows] == [
+        ("main", "truncated", 900), ("truncation_retry", "ok", 1800),
+    ]
+    assert [row["request_id"] for row in rows] == ["req_1", "req_2"]
+    for row in rows:
+        assert (row["job_kind"], row["job_id"], row["organization_id"]) == ("smart_recap", "smart_recap:sess-u:hype", "org-a")
+        assert (row["provider"], row["model_requested"], row["model_served"]) == ("anthropic", "claude-sonnet-4-6", "claude-sonnet-4-6")
+        # Sonnet 4.6: $3 in and $15 out per million tokens.
+        assert (row["input_tokens"], row["output_tokens"], row["cost_usd_micros"]) == (2000, 400, 2000 * 3 + 400 * 15)
+        # The provider's usage object, its free-text "note" dropped.
+        assert row["usage_raw"] == {"input_tokens": 2000, "output_tokens": 400, "service_tier": "standard"}
+        assert row["created_at"] is not None and row["duration_ms"] >= 0
+    # The key went to the provider, and nowhere else.
+    assert [headers["x-api-key"] for headers in sent] == [SECRET_KEY, SECRET_KEY]
+    assert SECRET_KEY not in caplog.text and SECRET_KEY not in repr(rows)
+    assert "Hype recap" not in repr(rows), "a usage row never holds the output"
+
+
+def test_a_failed_usage_insert_keeps_the_output(test_database, monkeypatch, caplog):
+    # Owner decision: the output is complete and paid for, so the job saves it and logs the row
+    # (docs/data-model.md#caching-rules).
+    db.upsert_cached_session("key-a", "sess-u", organization_id="org-a", transcript_payload=_TRANSCRIPT)
+    with db.get_db_connection() as conn:
+        conn.execute("DROP TABLE llm_usage")
+        conn.commit()
+    _provider_http(monkeypatch, [_answer("# Hype recap")])
+    api_logic.run_smart_recap(SECRET_KEY, "sess-u", "hype")
+
+    assert _row("sess-u")["smart_recap_bundle"] == {"hype": "# Hype recap"}
+    errors = [record.getMessage() for record in caplog.records if record.levelno >= logging.ERROR]
+    assert len(errors) == 1
+    assert "llm_usage insert failed (UndefinedTable sqlstate=42P01)" in errors[0]
+    for part in ("job=smart_recap", "org=org-a", "session=sess-u", "in=2000", "out=400", "usd=0.012000"):
+        assert part in errors[0], part
+    assert SECRET_KEY not in caplog.text
+
+
+def test_usage_rows_outlive_a_deleted_session(test_database, monkeypatch):
+    # Usage rows hold no content, so deleting the session keeps them.
+    db.upsert_cached_session("key-a", "sess-u", organization_id="org-a", transcript_payload=_TRANSCRIPT)
+    _provider_http(monkeypatch, [_answer("# Hype recap")])
+    api_logic.run_smart_recap("llm-key", "sess-u", "hype")
+    assert db.admin_delete_session("sess-u")
+    assert _row("sess-u") is None
+    assert len(_usage_rows("sess-u")) == 1
+    db.ensure_database_schema()  # idempotent with the table and its indexes
+    assert len(_usage_rows("sess-u")) == 1
+
+
+def test_a_usage_row_takes_known_columns_only(test_database):
+    with pytest.raises(ValueError, match="Unknown llm_usage columns"):
+        db.insert_llm_usage({"job_kind": "x", "prompt": "never stored"})
 
 
 # ── Transcription heartbeat and failure handling ─────────────────────────

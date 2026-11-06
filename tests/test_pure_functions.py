@@ -381,8 +381,8 @@ def test_temperature_is_sent_only_to_models_that_accept_it(monkeypatch, model, s
         return FakeResponse()
 
     monkeypatch.setattr(llm_client, "_post_with_retry", fake_post)
-    text, truncated = llm_client._call_anthropic("key", model, [{"role": "user", "content": "Hi"}], 0.2, 100)
-    assert (text, truncated) == ("ok", False)
+    result = llm_client._anthropic_send("key", model, [{"role": "user", "content": "Hi"}], 0.2, 100)
+    assert (result.text, result.truncated) == ("ok", False)
     assert ("temperature" in sent[0]) is sends_temperature
     if sends_temperature:
         assert sent[0]["temperature"] == 0.2

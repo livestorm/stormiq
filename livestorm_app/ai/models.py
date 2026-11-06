@@ -16,14 +16,16 @@ Status says where a model may be chosen:
 - `hidden`: known, so its parameters are right, but never offered. A saved
   setting may still name it, and it is still used (`ai.jobs.resolve_model`).
 
-Anthropic rows follow the claude-api reference (2026-10). OpenAI rows are
-unverified until a live check; their temperature and token parameter match
-what today's adapter sends. `gpt-4o*` and `gpt-4.1*` shut down on 2027-01-14.
+Anthropic rows follow the claude-api reference (2026-10), prices included
+(`PRICES_AS_OF`). OpenAI rows are unverified until a live check; their
+temperature and token parameter match what today's adapter sends, and they
+have no price yet, so their usage rows carry no cost. `gpt-4o*` and
+`gpt-4.1*` shut down on 2027-01-14.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Dict, Literal, Optional, Tuple
 
 Provider = Literal["anthropic", "openai"]
@@ -32,6 +34,48 @@ Status = Literal["offered", "legacy", "hidden"]
 PROVIDERS: Tuple[str, ...] = ("anthropic", "openai")
 
 ALL_EFFORTS = ("low", "medium", "high", "xhigh", "max")
+
+# The date the prices below were checked. A usage row's cost is estimated with
+# the prices in force when it was written (`ai.usage.estimate_cost_usd_micros`).
+PRICES_AS_OF = "2026-10-06"
+
+
+@dataclass(frozen=True)
+class Price:
+    """US dollars per million tokens."""
+
+    input: float  # uncached input
+    output: float  # thinking included
+    cache_write_5m: float
+    cache_write_1h: float
+    cache_read: float
+    # A second rate card for long prompts (Claude Haiku 5.5 above 100K input tokens).
+    long_prompt_above: int = 0
+    long_prompt: Optional["Price"] = None
+
+    def for_prompt(self, prompt_tokens: int) -> "Price":
+        """The rate card for a prompt of `prompt_tokens` input tokens, cached ones included."""
+        if self.long_prompt is not None and prompt_tokens > self.long_prompt_above:
+            return self.long_prompt
+        return self
+
+
+def _anthropic_price(input: float, output: float, *, cache_read: Optional[float] = None) -> Price:
+    """Cache writes cost 1.25x the input price (5 minutes) or 2x (1 hour); reads 0.1x
+    unless the model's card says otherwise."""
+    return Price(
+        input=input,
+        output=output,
+        cache_write_5m=input * 1.25,
+        cache_write_1h=input * 2,
+        cache_read=input * 0.1 if cache_read is None else cache_read,
+    )
+
+
+# Claude Haiku 5.5 charges more for a prompt above 100K tokens.
+_HAIKU_5_5_PRICE = replace(
+    _anthropic_price(0.10, 0.50), long_prompt_above=100_000, long_prompt=_anthropic_price(0.50, 2.50),
+)
 
 
 @dataclass(frozen=True)
@@ -50,6 +94,7 @@ class ModelCaps:
     min_cache_tokens: int  # shortest prefix that caches
     structured_outputs: bool  # accepts a JSON schema for the answer
     token_param: str = "max_tokens"  # OpenAI's newer models take max_completion_tokens
+    price: Optional[Price] = None  # None: unknown, so usage rows carry no cost
 
 
 def _claude(
@@ -64,6 +109,7 @@ def _claude(
     mid_conversation_system: bool,
     server_fallback: bool = False,
     min_cache_tokens: int,
+    price: Price,
     adaptive_thinking: bool = True,
 ) -> ModelCaps:
     return ModelCaps(
@@ -80,6 +126,7 @@ def _claude(
         server_fallback=server_fallback,
         min_cache_tokens=min_cache_tokens,
         structured_outputs=True,
+        price=price,
     )
 
 
@@ -105,23 +152,26 @@ def _openai(id: str, label: str, *, max_output: int, thinks: bool = False, token
 CATALOG: Tuple[ModelCaps, ...] = (
     # Claude 5.5: think by default (Opus always), no sampling parameters.
     _claude("claude-haiku-5-5", "Claude Haiku 5.5", "offered", thinks=True,
-            mid_conversation_system=True, min_cache_tokens=512),  # no server-side fallback
+            mid_conversation_system=True, min_cache_tokens=512,  # no server-side fallback
+            price=_HAIKU_5_5_PRICE),
     _claude("claude-sonnet-5-5", "Claude Sonnet 5.5", "offered", thinks=True,
-            mid_conversation_system=True, server_fallback=True, min_cache_tokens=512),
+            mid_conversation_system=True, server_fallback=True, min_cache_tokens=512,
+            price=_anthropic_price(2.00, 10.00, cache_read=0.20)),
     _claude("claude-opus-5-5", "Claude Opus 5.5", "offered", thinks=True,
-            mid_conversation_system=True, server_fallback=True, min_cache_tokens=512),
+            mid_conversation_system=True, server_fallback=True, min_cache_tokens=512,
+            price=_anthropic_price(4.00, 20.00, cache_read=0.20)),
     # The classic outputs' models. They answer directly unless asked to think.
     _claude("claude-haiku-4-5-20251001", "Claude Haiku 4.5", "legacy", max_output=64_000, thinks=False,
             adaptive_thinking=False, effort_levels=(), temperature_ok=True,
-            mid_conversation_system=False, min_cache_tokens=4096),
+            mid_conversation_system=False, min_cache_tokens=4096, price=_anthropic_price(1.00, 5.00)),
     _claude("claude-sonnet-4-6", "Claude Sonnet 4.6", "legacy", thinks=False,
             effort_levels=("low", "medium", "high", "max"), temperature_ok=True,
-            mid_conversation_system=False, min_cache_tokens=1024),
+            mid_conversation_system=False, min_cache_tokens=1024, price=_anthropic_price(3.00, 15.00)),
     _claude("claude-opus-4-8", "Claude Opus 4.8", "legacy", thinks=False,
-            mid_conversation_system=True, min_cache_tokens=1024),
+            mid_conversation_system=True, min_cache_tokens=1024, price=_anthropic_price(5.00, 25.00)),
     # Admin offered Opus 4.7 until Opus 4.8 replaced it; a saved setting may name it.
     _claude("claude-opus-4-7", "Claude Opus 4.7", "hidden", thinks=False,
-            mid_conversation_system=False, min_cache_tokens=2048),
+            mid_conversation_system=False, min_cache_tokens=2048, price=_anthropic_price(5.00, 25.00)),
     _openai("gpt-4o-mini", "GPT-4o mini", max_output=16_384),
     _openai("gpt-4o", "GPT-4o", max_output=16_384),
     _openai("gpt-4.1-mini", "GPT-4.1 mini", max_output=32_768),

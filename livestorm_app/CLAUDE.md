@@ -14,6 +14,7 @@ The HTTP routes live in `routes/`, one module per area; `../app.py` creates the 
 - All SQL lives in `db.py` and goes through the pooled `get_db_connection()`. Pass values as query parameters, never by string formatting.
 - Schema changes go in `ensure_database_schema()` and must be idempotent (`IF NOT EXISTS`); there is no migration tool.
 - Write an AI bundle with `merge_cached_bundle_entry` (one language or tone), never by rewriting the whole bundle. Writes raise on failure; don't swallow them.
+- One narrow exception, decided by the owner: a failed `insert_llm_usage` doesn't fail the AI job. `ai.usage.record_call` logs the row as a line at ERROR (no content, no secrets) and the job saves its output, which is complete and paid for. Don't extend this to any other write. → [docs/data-model.md](../docs/data-model.md#caching-rules)
 - Hot paths (polls, job starts, the v1 record) read with `fetch_session_fields`; add a field to `_SESSION_FIELD_SQL` rather than loading the full row. → [docs/data-model.md](../docs/data-model.md)
 
 **Jobs (`queue.py`, `worker.py`)**
@@ -30,6 +31,8 @@ The HTTP routes live in `routes/`, one module per area; `../app.py` creates the 
 - Text model ids and what each accepts live in `ai/models.py` (the catalog); each AI job's default model, effort and budget in `ai/jobs.py`. A job gets its model from `ai.jobs.resolve_model` (the classic runners call `llm_client.get_llm_model(kind)`); never hard-code a text model id elsewhere. `frontend/src/views/AdminView.vue` keeps its own lists until Admin reads them from the server, and `tests/test_model_catalog.py` checks the server accepts them.
 - Read a model's parameters from its catalog row (`temperature_ok`, `effort_levels`, `max_output`…), not from the shape of its id.
 - A new model setting key is checked in `ai.jobs.check_model_setting`; a saved id that is no longer offered keeps being used, with a WARNING, so classic outputs never change silently. → [docs/providers.md](../docs/providers.md#choosing-the-provider-and-models)
+- Every text-model call (`llm_client.call_llm`) passes an `ai.usage.CallContext` (job kind, session, org, arq job id; ids only) so it is recorded in `llm_usage` once per answered call. A usage row or log line never holds a prompt, an output, a name or a key. A provider adapter returns an `llm_client.LLMResult` and never raises on an odd usage object.
+- A job that runs without a user asking is marked `automatic` in `ai/jobs.py`; `llm_client.call_llm` then checks the org's daily budget before each send, the truncation retry included (`ai.usage.check_org_budget`). Jobs a user starts are never held to it. The cover image call bypasses `call_llm`, so it is neither logged nor budgeted yet. → [docs/providers.md](../docs/providers.md#usage-and-the-daily-budget)
 
 **Workspace reads**
 - Get transcript insights through `api_logic._cached_transcript_insights`, once per read, and copy a shared DataFrame before modifying it.
@@ -52,12 +55,13 @@ The HTTP routes live in `routes/`, one module per area; `../app.py` creates the 
 | File | Covers |
 |---|---|
 | `test_access_control.py` | every session route × anonymous, other org, same org, admin; admin routes for anonymous and non-admins; which settings Admin may save |
-| `test_db_scope.py` | org-scoped SQL |
-| `test_data_integrity.py` | bundle writes, write failures, incomplete AI output, join links never saved, `rewrite_base_payloads` |
+| `test_db_scope.py` | org-scoped SQL, the per-org model spend (`llm_spend_since`) |
+| `test_data_integrity.py` | bundle writes, write failures, incomplete AI output, join links never saved, `rewrite_base_payloads`, one `llm_usage` row per model call, a failed usage insert keeping the output, usage rows outliving a deleted session |
 | `test_job_reliability.py` | dedupe, retries, timeouts, the transcript job lifecycle, cancellation, the Gladia request built once, the speaker cap read from the cached people, Gladia job metadata (ids only) and the transcript's provenance, the media probe |
 | `test_gladia_merge.py` | merging a long recording's Gladia chunks (synthetic payloads), and what classic insights read from the result |
 | `test_performance.py` | the insights cache, the v1 record cache, field reads, pools, the Redis cooldown, outputs-only polls |
 | `test_pure_functions.py` | metrics and formulas, PDF rendering, the Anthropic request's `temperature`, the join-link strip, the Livestorm pagers, the speaker cap |
+| `test_llm_usage.py` | one `LLMResult` per answered call on both providers, stop reasons, usage normalisation, the cost estimate, the usage row and log line (never content or keys), a failed insert, each classic runner's and generator's call context, the daily budget for automatic jobs (the truncation retry checked again, an unpriced model refused) |
 | `test_model_catalog.py` | the model catalog, the job registry and budgets, `resolve_model`'s order and stale settings, the model setting check, AdminView's lists against the server, the kind each classic runner asks for |
 | `test_session_clock.py` | the session clock, its fallbacks, minute bins and evidence ids (`record/`); the payload shapes script's local-database check and chat author check |
 | `test_roster.py` | `parse_person`, roles, organizers, channels, lead time, field definitions, `P-` refs, the prompt and display views, people on stage, the record-inputs loader (`record/`); classic code never imports `record/` (only the record route's loader and the transcription options do, inside the function) |

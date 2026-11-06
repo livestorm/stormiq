@@ -116,12 +116,58 @@ system_settings (
 
 Admin-editable overrides for provider and model selection (`/api/admin/settings`, see [providers.md](providers.md#choosing-the-provider-and-models)). `llm_model.<provider>.<kind>` picks one AI job's model on one provider, for example `llm_model.anthropic.smart_recap`; the two older model keys name no provider: `llm_default_model` covers four jobs and `llm_smart_recap_model` covers Smart Recap. Model values are checked against the catalog when saved (`ai.jobs.check_model_setting`). Each process caches a value for 60 s and keeps serving the last known value if the database is briefly unreachable.
 
+## `llm_usage`
+
+One row per text-model call that got an answer (HTTP 200), made through `llm_client.call_llm` and written by `ai.usage.record_call` through `db.insert_llm_usage`. The cover image call has no row. A truncated, refused or retried call has its own row; a call that failed in transport has none (it is only in the log). See [providers.md](providers.md#usage-and-the-daily-budget).
+
+```sql
+llm_usage (
+  id                    BIGSERIAL PRIMARY KEY,
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  organization_id       TEXT,             -- the session's org; NULL when the session has none
+  session_id            TEXT,
+  job_kind              TEXT NOT NULL,    -- the ai/jobs.py kind: 'overall_analysis', 'translation', …
+  job_id                TEXT,             -- the deterministic arq id, e.g. 'overall_analysis:{session}:French'; never a connection id
+  purpose               TEXT NOT NULL,    -- 'main' | 'truncation_retry' | 'completeness_retry' | 'language_retry'
+  provider              TEXT NOT NULL,    -- 'anthropic' | 'openai'
+  model_requested       TEXT NOT NULL,
+  model_served          TEXT,             -- the model the provider says answered
+  effort                TEXT,             -- NULL: the classic outputs send none
+  max_tokens            INTEGER,
+  streamed              BOOLEAN NOT NULL DEFAULT FALSE,
+  stop_reason           TEXT NOT NULL,    -- the provider's own value: 'end_turn', 'length', …
+  refusal_category      TEXT,             -- Anthropic's stop_details.category, when it gives one
+  outcome               TEXT NOT NULL,    -- 'ok' | 'truncated' | 'refused' | 'other_stop'
+  input_tokens          INTEGER NOT NULL DEFAULT 0,  -- uncached input
+  output_tokens         INTEGER NOT NULL DEFAULT 0,  -- thinking and reasoning included
+  cache_read_tokens     INTEGER NOT NULL DEFAULT 0,
+  cache_write_tokens    INTEGER NOT NULL DEFAULT 0,  -- all cache writes, 1-hour ones included
+  cache_write_1h_tokens INTEGER NOT NULL DEFAULT 0,
+  reasoning_tokens      INTEGER,          -- OpenAI only
+  cost_usd_micros       BIGINT,           -- estimated cost in millionths of a dollar; NULL for a model with no price
+  duration_ms           INTEGER,          -- transport retries included
+  request_id            TEXT,             -- the provider's request id
+  prompt_hash           TEXT,             -- NULL until the v1 request layouts
+  dossier_hash          TEXT,             -- NULL until the v1 dossier
+  record_version        TEXT,             -- v1 jobs only
+  usage_raw             JSONB             -- the provider's usage object: counts and short tags only
+)
+-- idx_llm_usage_session_id        (session_id, created_at DESC)
+-- idx_llm_usage_organization_id   (organization_id, created_at DESC)  -- the daily budget's spend read
+```
+
+- A row holds no prompt, no output, no name and no key ([security.md](security.md#model-usage-rows)). `usage_raw` keeps only numbers and short enum-like tags (`ai.usage.sanitize_usage`).
+- There is no foreign key to `session_cache`, on purpose: deleting a session keeps its usage rows, which hold no content, so past spend stays counted.
+- `db.llm_spend_since(organization_id, since)` sums one org's `cost_usd_micros`. A blank scope raises and `ALL_ORGS` is refused, so it never sums every org. Rows without a cost count 0.
+- Nothing reads the table in the app yet besides the budget check.
+
 ## Caching rules
 
 - **Cache first.** Every fetch route checks `session_cache` before calling Livestorm or Gladia. `force_refresh: true` is the only bypass. Entries never expire.
 - **One row holds the latest of everything.** There is no history of analyses: regenerating an output replaces that language's (or tone's) entry.
 - **Bundle columns are written one entry at a time.** AI runners never rewrite a whole bundle: `db.merge_cached_bundle_entry(session_id, column, key, value)` sets one language or tone with a single `jsonb_set` UPDATE, so concurrent jobs on the same session (English and French, or two recap tones) can't erase each other's results. Never write a bundle column with `upsert_cached_session` from a worker job.
 - **Writes fail loudly.** `upsert_cached_session`, `merge_cached_bundle_entry` and `rewrite_base_payloads` raise on database errors; a job is only `completed` once its result is saved.
+- **One narrow exception: usage rows.** `insert_llm_usage` raises too, but its one caller, `ai.usage.record_call`, catches the failure, logs the whole row as a line at ERROR (no prompt, output or key) and lets the job go on to save its output. The output is complete and already paid for; failing the job would make the user pay for it again. This is an owner decision, and it covers `llm_usage` only.
 - **No registrant join links.** The session, chat and questions payloads are saved without each person's `password_key` and `connection_link` ([security.md](security.md#data-stormiq-doesnt-keep)). Every other key Livestorm returns is kept.
 - **Every write bumps `updated_at`.** The in-process transcript-insights cache and the v1 record cache are keyed on it ([architecture.md](architecture.md#reading-a-workspace), [the v1 record](architecture.md#reading-the-v1-record)). The one exception is `db.rewrite_base_payloads`, for maintenance scripts. It replaces base payloads without bumping `updated_at`, so the library keeps its order. It writes only if `updated_at` still matches the value the script read, so it never overwrites a newer save. Use it only for changes nothing in the app reads, such as removing join links. `db.scan_base_payloads` reads the rows for it in batches.
 

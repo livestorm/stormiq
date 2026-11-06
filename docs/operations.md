@@ -72,6 +72,8 @@ The worker resolves every credential itself, because job arguments never carry s
 LLM_PROVIDER                  # Optional: "anthropic" (default) or "openai". The admin setting overrides it.
 CLAUDE_API_KEY                # Required when the provider is anthropic
 OPENAI_API_KEY                # Required when the provider is openai; always required for cover images
+ORG_DAILY_LLM_BUDGET_USD      # Optional, worker. Daily spend cap per org for automatic text jobs (none exists yet), in
+                              # dollars, per UTC day. Unset: no limit. Never applies to jobs a user starts or to covers.
 
 # Livestorm
 LIVESTORM_OAUTH_CLIENT_ID     # Required for OAuth
@@ -108,7 +110,8 @@ RENDER                        # Set by Render on every service. Turns off local-
 ## Observability
 
 - **Request timing.** Every `/api/*` request except `/api/health` logs one line, `timing method=GET route=/api/sessions/{session_id} status=200 ms=84.2 bytes=1834402`, with the route template rather than ids. Search Render's logs for `timing route=`.
-- There is no analytics, error-reporting service or per-user usage tracking: logs go to stderr only.
+- **Model usage.** Every answered text-model call (`llm_client.call_llm`) writes one `llm_usage` row ([data-model.md](data-model.md#llm_usage)) and logs one line on the worker, `llm_usage job=smart_recap purpose=main org=… session=… job_id=… provider=anthropic model=claude-sonnet-4-6 served=claude-sonnet-4-6 max_tokens=900 stop=end_turn outcome=ok refusal=- in=2000 out=400 cache_read=0 cache_write=0 cache_write_1h=0 reasoning=- usd=0.012000 ms=8123 request_id=…`, with no prompt, output or key. Search Render's logs for `llm_usage job=`. If the row can't be saved, the same line is logged at ERROR after `llm_usage insert failed (…)`, so the numbers survive. The cover image call is not logged there. The table is read with SQL for now; an Admin view is on the [roadmap](roadmap.md#5-models).
+- There is no analytics or error-reporting service: logs go to stderr only.
 
 ## Benchmark
 

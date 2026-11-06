@@ -35,7 +35,7 @@ PER_JOB_SETTING_PREFIX = "llm_model."
 _PROVIDER_NAMES = {"anthropic": "Anthropic", "openai": "OpenAI"}
 
 # Room for thinking on top of the visible answer, per effort, for models
-# that think by default. A guess until usage is logged per job.
+# that think by default. A guess until llm_usage holds enough rows per job to calibrate it.
 THINKING_HEADROOM: Dict[str, int] = {"low": 4_000, "medium": 16_000, "high": 32_000, "xhigh": 48_000, "max": 64_000}
 # Above this max_tokens, `budget` marks a call to stream so it can't hit the
 # HTTP timeout. Nothing streams yet: that comes with the SDK transport.
@@ -52,6 +52,9 @@ class JobSpec:
     effort: Effort  # sent only to models that accept it
     answer_tokens: int  # the cap for the visible answer
     legacy_setting: Optional[str] = None  # the older setting that also picks this job's model
+    # Runs without a user asking (on first open, after a fetch). Only these
+    # jobs are held to the org's daily budget (`ai.usage.check_org_budget`).
+    automatic: bool = False
 
     def default_model(self, provider: str) -> Optional[str]:
         return self.default_anthropic if provider == "anthropic" else self.default_openai
@@ -96,6 +99,11 @@ def job_spec(kind: str) -> JobSpec:
     if spec is None:
         raise ValueError(f"Unknown AI job kind: {kind!r}")
     return spec
+
+
+def automatic_kinds() -> frozenset:
+    """The job kinds that run without a user asking. None does yet."""
+    return frozenset(spec.kind for spec in JOB_SPECS if spec.automatic)
 
 
 def allowed_models(provider: str, kind: str) -> Tuple[ModelCaps, ...]:

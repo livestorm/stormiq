@@ -34,6 +34,7 @@ from livestorm_app.queue import (
     transcription_job_id,
 )
 from livestorm_app.ai.cover_image import generate_cover_image_with_openai
+from livestorm_app.ai.usage import CallContext
 from livestorm_app.ai.generation import (
     _bundle_has_all_sections,
     analyze_with_openai,
@@ -1069,6 +1070,18 @@ def _require_cached_payloads(session_id: str, *, organization_id: OrgScope) -> D
     return cached
 
 
+def _llm_call_context(job_kind: str, flow: str, session_id: str, dimension: str, cached: Dict[str, Any]) -> CallContext:
+    """Who a classic runner's model calls are for, for their `llm_usage` rows:
+    the model's job kind ("translation" for a French version), the session,
+    its org from the cached row, and the arq id of the job running them."""
+    return CallContext(
+        job_kind=job_kind,
+        session_id=str(session_id or "").strip(),
+        organization_id=str(cached.get("organization_id") or "").strip(),
+        job_id=ai_job_id(flow, session_id, dimension),
+    )
+
+
 def _require_generated_text(text: Any, label: str) -> str:
     """Return stripped model output, or raise so the job fails visibly.
 
@@ -1108,6 +1121,7 @@ def run_overall_analysis(api_analysis_key: str, session_id: str, output_language
             source_markdown=source_markdown,
             source_language=OUTPUT_LANGUAGE_MAP.get(source_language, source_language),
             target_language=OUTPUT_LANGUAGE_MAP.get(output_language, output_language),
+            ctx=_llm_call_context("translation", "overall_analysis", session_id, output_language, cached),
         )
     else:
         analysis_md = analyze_with_openai(
@@ -1134,6 +1148,7 @@ def run_overall_analysis(api_analysis_key: str, session_id: str, output_language
                 if isinstance(session_payload, dict)
                 else None
             ),
+            ctx=_llm_call_context("overall_analysis", "overall_analysis", session_id, output_language, cached),
         )
 
     analysis_md = _require_generated_text(analysis_md, "overall analysis")
@@ -1169,6 +1184,7 @@ def run_deep_analysis(api_analysis_key: str, session_id: str, output_language: s
             source_language=OUTPUT_LANGUAGE_MAP.get(source_language, source_language),
             target_language=OUTPUT_LANGUAGE_MAP.get(output_language, output_language),
             max_tokens=8000,
+            ctx=_llm_call_context("translation", "deep_analysis", session_id, output_language, cached),
         )
     else:
         deep_analysis_md = analyze_with_openai(
@@ -1193,6 +1209,7 @@ def run_deep_analysis(api_analysis_key: str, session_id: str, output_language: s
                 else None
             ),
             max_tokens=5000,
+            ctx=_llm_call_context("deep_analysis", "deep_analysis", session_id, output_language, cached),
         )
     deep_analysis_md = _require_generated_text(deep_analysis_md, "deep analysis")
     merge_cached_bundle_entry(
@@ -1299,6 +1316,7 @@ def run_smart_recap(api_analysis_key: str, session_id: str, tone: str) -> Dict[s
         derived_stats={},
         transcript_text=build_transcript_plain_text(transcript_payload),
         max_tokens=900,
+        ctx=_llm_call_context("smart_recap", "smart_recap", session_id, tone, cached),
     )
     markdown = _require_generated_text(markdown, "smart recap")
     merge_cached_bundle_entry(session_id, "smart_recap_bundle", tone, markdown)
@@ -1368,6 +1386,7 @@ def run_content_repurposing(api_analysis_key: str, session_id: str, output_langu
             source_bundle=source_bundle,
             source_language=OUTPUT_LANGUAGE_MAP.get(source_language, source_language),
             target_language=OUTPUT_LANGUAGE_MAP.get(output_language, output_language),
+            ctx=_llm_call_context("translation", "content_repurposing", session_id, output_language, cached),
         )
     else:
         bundle = generate_content_repurpose_bundle_with_openai(
@@ -1375,6 +1394,7 @@ def run_content_repurposing(api_analysis_key: str, session_id: str, output_langu
             model=get_llm_model("content_repurposing"),
             output_language=OUTPUT_LANGUAGE_MAP.get(output_language, output_language),
             transcript_text=build_transcript_plain_text(transcript_payload),
+            ctx=_llm_call_context("content_repurposing", "content_repurposing", session_id, output_language, cached),
         )
     if not isinstance(bundle, dict) or not _bundle_has_all_sections(bundle):
         missing = missing_bundle_sections(bundle)

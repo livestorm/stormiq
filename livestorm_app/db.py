@@ -392,6 +392,58 @@ def ensure_database_schema() -> None:
                 )
                 """
             )
+            # One row per answered text-model call (ai/usage.py): ids, the model,
+            # token counts, the estimated cost, timings and the stop reason.
+            # Never a prompt, an output or a key. No foreign key to
+            # session_cache: the rows hold no content and outlive a deleted
+            # session, so past spend stays counted.
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS llm_usage (
+                    id                    BIGSERIAL PRIMARY KEY,
+                    created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    organization_id       TEXT,
+                    session_id            TEXT,
+                    job_kind              TEXT NOT NULL,
+                    job_id                TEXT,
+                    purpose               TEXT NOT NULL,
+                    provider              TEXT NOT NULL,
+                    model_requested       TEXT NOT NULL,
+                    model_served          TEXT,
+                    effort                TEXT,
+                    max_tokens            INTEGER,
+                    streamed              BOOLEAN NOT NULL DEFAULT FALSE,
+                    stop_reason           TEXT NOT NULL,
+                    refusal_category      TEXT,
+                    outcome               TEXT NOT NULL,
+                    input_tokens          INTEGER NOT NULL DEFAULT 0,
+                    output_tokens         INTEGER NOT NULL DEFAULT 0,
+                    cache_read_tokens     INTEGER NOT NULL DEFAULT 0,
+                    cache_write_tokens    INTEGER NOT NULL DEFAULT 0,
+                    cache_write_1h_tokens INTEGER NOT NULL DEFAULT 0,
+                    reasoning_tokens      INTEGER,
+                    cost_usd_micros       BIGINT,
+                    duration_ms           INTEGER,
+                    request_id            TEXT,
+                    prompt_hash           TEXT,
+                    dossier_hash          TEXT,
+                    record_version        TEXT,
+                    usage_raw             JSONB
+                )
+                """
+            )
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_llm_usage_session_id
+                ON llm_usage (session_id, created_at DESC)
+                """
+            )
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_llm_usage_organization_id
+                ON llm_usage (organization_id, created_at DESC)
+                """
+            )
         connection.commit()
 
 
@@ -1283,6 +1335,71 @@ def admin_list_users() -> List[Dict[str, Any]]:
     except Exception:
         logger.exception("Failed to list admin users")
         return []
+
+
+# ── Model usage (ai/usage.py) ──────────────────────────────────────────────
+
+_LLM_USAGE_COLUMNS = (
+    "organization_id", "session_id", "job_kind", "job_id", "purpose", "provider",
+    "model_requested", "model_served", "effort", "max_tokens", "streamed",
+    "stop_reason", "refusal_category", "outcome",
+    "input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens",
+    "cache_write_1h_tokens", "reasoning_tokens", "cost_usd_micros", "duration_ms",
+    "request_id", "prompt_hash", "dossier_hash", "record_version", "usage_raw",
+)
+
+
+def insert_llm_usage(row: Dict[str, Any]) -> None:
+    """Save one `llm_usage` row (built by `ai.usage.build_usage_row`).
+
+    Raises on failure, like every write. Its one caller, `ai.usage.record_call`,
+    logs the failure and lets the job go on: the one exception to "writes
+    raise" (docs/data-model.md).
+    """
+    if not database_enabled():
+        return
+    unknown = sorted(set(row) - set(_LLM_USAGE_COLUMNS))
+    if unknown:
+        raise ValueError(f"Unknown llm_usage columns: {unknown}")
+    columns = [column for column in _LLM_USAGE_COLUMNS if column in row]
+    placeholders = ["%s::jsonb" if column == "usage_raw" else "%s" for column in columns]
+    values = [
+        json.dumps(row[column]) if column == "usage_raw" and row[column] is not None else row[column]
+        for column in columns
+    ]
+    with get_db_connection() as connection:
+        connection.execute(
+            f"INSERT INTO llm_usage ({', '.join(columns)}) VALUES ({', '.join(placeholders)})",
+            values,
+        )
+        connection.commit()
+
+
+def llm_spend_since(organization_id: OrgScope, since: datetime) -> int:
+    """One org's estimated model spend since `since`, in millionths of a dollar.
+
+    One org only: a blank scope raises `ScopeMatchesNothing` and `ALL_ORGS`
+    raises ValueError, so a budget check can never sum every org. Rows
+    without a cost (a model with no price in the catalog) count 0. Raises
+    when the database can't be read, so a budget check fails closed.
+    """
+    org_filter = _org_filter(organization_id)
+    if org_filter is None:
+        raise ValueError("llm_spend_since reads one organization, never ALL_ORGS.")
+    if since.tzinfo is None:
+        raise ValueError("llm_spend_since needs a timezone-aware datetime.")
+    if not database_enabled():
+        raise RuntimeError("Database is not configured.")
+    with get_db_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT COALESCE(SUM(cost_usd_micros), 0) AS spent
+            FROM llm_usage
+            WHERE organization_id = %s AND created_at >= %s
+            """,
+            (org_filter, since),
+        ).fetchone()
+    return int(row["spent"]) if row else 0
 
 
 # ── System settings ───────────────────────────────────────────────────────────
