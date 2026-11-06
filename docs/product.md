@@ -494,7 +494,7 @@ v1 Report (behind `?ui=v1`). No page shows it yet. One row per person in the ses
 |---|---|
 | Person | One per Livestorm people id; a person listed twice counts once (the first copy is kept). What a person row reads and leaves out: [security.md](security.md#what-v1-code-reads-about-people) |
 | Role | Team when Livestorm's `role` is exactly `team_member`, as in the classic rules. Otherwise guest speaker when `is_guest_speaker` is true. Otherwise audience. A team member who is also a guest speaker is team; an unknown role is audience. The string `"true"` counts as true. What a person did can raise the role (their own chat messages, an answer they wrote): [Authors](#authors-v1-report) |
-| Audience member (v1) | A person whose role is audience. On an internal session nobody is relabelled: the roster flags the session as internal, and each measure applies the internal rule |
+| Audience member (v1) | A person whose role is audience. On an internal session nobody is relabelled: the roster flags the session as internal, and each audience-only measure counts everyone ([Measures](#measures-v1-report)) |
 | Organizer | `session_role` is `organizer` (a host on stage). A flag beside the role; it never changes the role |
 | Counts by role | People per role, over everyone and over attendees (`attended` true), after any role raised by chat or an answer. A person whose attendance is unknown is not an attendee |
 | Internal | The classic [Internal session](#audience-level) rule, applied to the roster's people. That rule doesn't count a team member who is also a guest speaker as team, while Role does, so a team share taken from the counts by role can differ. Measures read the roster's internal flag; they never recompute it from the counts |
@@ -519,6 +519,65 @@ v1 Report (behind `?ui=v1`). No page shows it yet. Who wrote each chat message, 
 | Role raised by chat or an answer | A person's role rises to team when a chat message resolved to them is `from_team_member` (role source `chat_flag`), or when they wrote an answer, since answering is a team action (`written_answer`). It rises to guest speaker when one of their messages is `from_guest_speaker` and they are not team (`chat_flag`). A role never falls. On an internal session nothing is raised: roles stay Livestorm's. The roster's internal flag never changes: it reads Livestorm's own roles |
 | Team item | A chat message is team when its own `from_team_member` or `from_guest_speaker` is true, whether or not its author resolved. A question is team when its asker resolved to a person who is team or a guest speaker (after any role raised), and not team otherwise. A written answer is always team, whatever its responder's role: a responder who reads as audience is most likely a team member registered as a participant |
 | Contributor | A person whom a chat message or a question resolved to. One person who chats and asks counts once. Unresolved authors are not contributors |
+
+### Measures (v1 Report)
+
+v1 Report (behind `?ui=v1`). No page shows them yet; the record route sends them as `record.measures` ([api.md](api.md#the-v1-record)). Every number the Report shows is a measure, computed by the server: the page renders its fields and computes nothing. Code: `livestorm_app/record/measures.py` (`REGISTRY`, `compute_measures`).
+
+| Term | Rule |
+|---|---|
+| Measure | One number with how it was got: `value`, `num` and `den` (a ratio's numerator and denominator; for a median, `den` is how many values it is over), `state`, `coverage`, `excluded`, `livestorm` (Livestorm's own figure) and `rows` (a breakdown). Its id never changes meaning; its version goes up when its formula, exclusions or gates change |
+| Metrics version | The version of the whole set (`METRICS_VERSION`, 1). It goes up whenever a measure's version changes, or a measure is added or removed |
+| State | The first that applies. **Unavailable**: a source wasn't fetched (the session, its people, the chat or the questions); nothing is computed. **Unresolved**: the measure needs to know who wrote, and a source it reads has items of which not one author resolved ([Authors](#authors-v1-report)); each measure says which sources. The value, the numerator and the denominator are hidden: a count of the resolved part would read as complete. The coverage fields say what is missing. **Insufficient**: a gate isn't met; the value is hidden, the counts are shown. **Approximation**: the method itself is approximate. **Partial**: computed over incomplete inputs: the roster is partial, someone's attendance is unknown, or an author didn't resolve. **Ok** |
+| Gate | The minimum a measure needs before it shows a value. Gates are provisional; changing one bumps the measure's version |
+| Coverage | What the measure read and how complete it was. Every measure that reads people carries the roster's coverage, its people count and Livestorm's count of the list. The include list reads partial, so these measures read partial until StormIQ syncs the full list |
+| Audience-only | A measure that leaves out team members and guest speakers ([Roster](#roster-v1-report): roles after any role raised by chat or an answer), and says how many: `excluded.team`, `excluded.guestSpeakers`, and their sum `excluded.total`, the n of "excludes your team (n)". On an internal session everyone counts as audience, as in the classic app: nothing is left out (all three are 0), `excluded.internal` is true, and a measure is never 0 of 0 |
+| Nothing to divide | A ratio with a denominator of 0 has no value, never 0 |
+| Rounding | Values are rounded to 4 decimal places; `num` and `den` are exact |
+
+#### Roster coverage
+
+`m.roster_coverage`. People in the roster ÷ Livestorm's count of the list. No gate. Partial unless the roster is complete. The include list has no count yet, so its value is empty and its state partial. Coverage also gives the source and when it was synced.
+
+#### Audience registrants
+
+`m.audience_registrants`. Audience members in the roster. Audience-only, over everyone registered. No gate.
+
+#### Team count
+
+`m.team_count`. Team members plus guest speakers. Rows: each role's people and attendees. No gate. Roles are never relabelled: on an internal session this still counts only team members and guest speakers (everyone, in an all-team meeting), while the audience-only measures count everyone.
+
+#### Audience attendees
+
+`m.audience_attendees`. Audience members with `attended` true. A person whose attendance is unknown is not an attendee, and makes the measure partial (`coverage.attendanceUnknown`). Audience-only, over attendees. No gate.
+
+#### Show-up rate
+
+`m.show_up_rate`. Audience attendees ÷ audience registrants. Gate: at least 1 audience registrant. Partial when the roster is partial or an attendance is unknown. Audience-only, over everyone registered. Needs the session payload as well as the roster. Livestorm's figure: `attendees_count ÷ registrants_count`, as sent with the session; it may count the team, and it is empty when `registrants_count` is 0 or missing.
+
+#### Time in the room
+
+`m.time_in_room`. The median, over audience attendees, of each one's attendance ÷ the session's length, capped at 1. The length is the [session end](#session-clock-v1-report) (`ended_at − started_at`, else `duration`). A negative attendance counts as 0. Attendees without an attendance duration are left out and counted (`coverage.durationUnknown`). `coverage.medianAttendanceS` is the same median in seconds (each attendance capped at the session's length), and `coverage.sessionLengthS` the length, so the page can say "36 of 45 min". Gates: at least 1 attendee with a duration, and a session length of at least 1 second. Always an approximation: Livestorm's attendance duration doesn't say when someone was in the room. The state stays approximation on a partial roster or with unknown durations; coverage says so. Audience-only, over attendees.
+
+#### Wrote in chat or Q&A
+
+`m.wrote_rate`. Audience attendees who wrote ÷ audience attendees. Wrote means a chat message or a question resolved to the person ([Authors](#authors-v1-report)), at any time: in the waiting room, live or after the end. Gate: at least 10 audience attendees; below it, the counts only. Unresolved when the chat has messages and none of their authors resolved (a chat cached before StormIQ fetched people links), or there are questions and none of their askers resolved: that source's writers are unknown, so the numerator is hidden rather than read as nobody. Partial when the roster is partial, an attendance is unknown, or a chat message or question didn't resolve (`coverage.unresolvedItems`); the value then counts only the people who resolved. Audience-only, over attendees.
+
+#### Questions and answers
+
+`m.questions_qa`. Answered questions ÷ questions. Every question counts, whoever asked. A question is answered when it has a written response, a `responded_at`, or the oral flag (`response_orally`, else `responded_orally`, as in [Audience-level](#audience-level)). Rows: written (response text), oral (the oral flag, no text), marked (`responded_at` only) and open. Gate: at least 1 question. Questions the speakers covered without marking them wait for the transcript.
+
+#### Time to answer
+
+`m.time_to_answer`. The median of `responded_at − created_at`, in seconds, over answered questions with both times. An answer in the same second counts as 0; an answer timed before its question is left out. Gate: at least 3 such questions. Coverage: answered questions, and how many had both times.
+
+#### Author resolution
+
+`m.author_resolution`. Distinct authors of chat messages, questions and written answers who resolved to a roster person ÷ distinct authors. Rows: each source's [author coverage](#authors-v1-report). Gate: at least 1 author. Unresolved when the chat has messages and none of their authors resolved, since the chat's authors are then unknown and the share would count the questions and answers alone; the numerator is hidden, and the denominator counts only the authors with a people id. Partial when an item didn't resolve or the roster is partial. A diagnostic.
+
+#### Livestorm counts
+
+`m.livestorm_counts`. Livestorm's own counters, for provenance: the session's `registrants_count` and `attendees_count`, and the sums of each person's `messages_count`, `questions_count`, `votes_count` and `up_votes_count` (rows, with their source). No value of its own. Partial while the roster is, since the sums are over its people.
 
 ### Speaking burst detection
 

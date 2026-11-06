@@ -2,14 +2,16 @@
 
 Covers `api_logic.get_session_record` and `record/assemble.py` on the
 synthetic webinar of `synthetic_session.py`: the response's shape and
-values, what it never carries, the internal flag, errors, the committed
-frontend fixture, and the classic workspace staying exactly as it was.
+values, the measures it serves, what it never carries, the internal flag,
+errors, the committed frontend fixture, and the classic workspace staying
+exactly as it was. Each measure's own rules are in `test_measures.py`.
 No database, Redis or network: the scoped reads are patched at `api_logic`.
 """
 
 from __future__ import annotations
 
 import copy
+import dataclasses
 import json
 
 import pytest
@@ -18,7 +20,7 @@ from fastapi.testclient import TestClient
 import app as app_module
 import synthetic_session as synthetic
 from livestorm_app import api_logic, auth, oauth_client
-from livestorm_app.record import assemble
+from livestorm_app.record import assemble, measures
 from synthetic_session import DURATION_S, LATE_START_S, ORGANIZATION_ID, SESSION_ID, T0
 
 PATH = f"/api/sessions/{SESSION_ID}/record"
@@ -97,7 +99,8 @@ def test_the_owner_gets_the_clock_the_roster_header_and_the_pulse(client):
         }
     }
     record = body["record"]
-    assert list(record) == ["version", "roster", "pulse"] and record["version"] == assemble.RECORD_VERSION == 1
+    assert list(record) == ["version", "roster", "pulse", "metricsVersion", "measuresSource", "measures"]
+    assert record["version"] == assemble.RECORD_VERSION == 2
     assert record["roster"] == {
         "source": "session_include",
         "complete": None,
@@ -130,6 +133,27 @@ def test_the_pulse_counts_every_event_once_on_the_session_clock(client):
     assert pulse["unplaced"] == 0
 
 
+def test_the_record_serves_every_measure_live(client):
+    record = get(client).json()["record"]
+    assert record["metricsVersion"] == measures.METRICS_VERSION == 1
+    assert record["measuresSource"] == "live"
+    assert list(record["measures"]) == list(measures.REGISTRY)
+    measures.validate_measures(record["measures"])
+    show_up = record["measures"]["m.show_up_rate"]
+    assert show_up == {
+        "id": "m.show_up_rate",
+        "version": 1,
+        "value": 0.7143,
+        "num": 5,
+        "den": 7,
+        "state": "partial",  # the include list's coverage is partial
+        "coverage": {"roster": "partial", "people": 10, "recordCount": None, "attendanceUnknown": 0},
+        "excluded": {"team": 2, "guestSpeakers": 1, "total": 3, "internal": False},
+        "livestorm": {"attendeesCount": 8, "registrantsCount": 10, "value": 0.8},
+        "rows": None,
+    }
+
+
 def test_a_session_without_started_at_has_no_clock_and_places_nothing(rows):
     row = rows[SESSION_ID]
     attributes = row["session_payload"]["data"]["attributes"]
@@ -155,6 +179,8 @@ def test_an_empty_row_still_answers(rows):
     assert record["meta"]["clock"]["endSource"] == "none"
     assert record["record"]["roster"]["peopleCount"] == 0 and record["record"]["roster"]["internal"] is False
     assert record["record"]["pulse"]["minutes"] == [] and record["record"]["pulse"]["unplaced"] == 0
+    assert {item["state"] for item in record["record"]["measures"].values()} == {"unavailable"}
+    assert all(item["value"] is None for item in record["record"]["measures"].values())
 
 
 def test_the_response_is_strict_json():
@@ -230,6 +256,16 @@ def test_an_all_hands_keeps_its_lanes():
     assert sum(row["teamChat"] for row in pulse["minutes"]) == 12
 
 
+def test_an_all_hands_counts_everyone_in_its_audience_measures():
+    """Audience-only measures take everyone as the audience on an internal
+    session, and say so: never 0 of 0."""
+    found = record_for(_all_hands(synthetic.cached_row()))["record"]["measures"]
+    assert found["m.audience_registrants"]["value"] == 10
+    assert (found["m.show_up_rate"]["num"], found["m.show_up_rate"]["den"]) == (8, 10)
+    for measure_id in ("m.audience_registrants", "m.audience_attendees", "m.show_up_rate", "m.time_in_room", "m.wrote_rate"):
+        assert found[measure_id]["excluded"] == {"team": 0, "guestSpeakers": 0, "total": 0, "internal": True}, measure_id
+
+
 # ── Access and errors ───────────────────────────────────────────────────────
 
 
@@ -251,6 +287,26 @@ def test_a_bug_in_the_record_returns_500_and_leaves_classic_working(client, monk
     assert response.json() == {"detail": {"resource": "Session record", "message": "The session record could not be built."}}
     assert "internal detail" not in response.text
     assert get(client, path=f"/api/sessions/{SESSION_ID}").status_code == 200
+
+
+def test_an_invalid_set_of_measures_is_never_served_or_cached(client, monkeypatch):
+    """`measures_for_read` checks the set before it leaves: a measure whose
+    version doesn't match the registry fails the read, and nothing is cached."""
+    computed = assemble.compute_measures
+
+    def stale(inputs):
+        found = computed(inputs)
+        show_up = found["m.show_up_rate"]
+        found["m.show_up_rate"] = dataclasses.replace(show_up, version=show_up.version + 1)
+        return found
+
+    monkeypatch.setattr(assemble, "compute_measures", stale)
+    with pytest.raises(ValueError, match="m.show_up_rate"):
+        api_logic.get_session_record(SESSION_ID, organization_id=ORGANIZATION_ID)
+    assert len(api_logic._record_cache) == 0
+    response = get(client)
+    assert response.status_code == 500 and "m.show_up_rate" not in response.text
+    assert len(api_logic._record_cache) == 0
 
 
 # ── The frontend fixture ────────────────────────────────────────────────────

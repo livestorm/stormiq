@@ -1019,8 +1019,8 @@ def test_starting_the_app_and_reading_a_classic_workspace_never_loads_the_record
         "assert synthetic.classic_workspace(synthetic.cached_row())['sessionId'] == synthetic.SESSION_ID\n"
         "loaded = sorted(name for name in sys.modules if name.startswith('livestorm_app.record'))\n"
         "assert loaded == [], loaded\n"
-        "assert synthetic.record_response()['record']['version'] == 1\n"
-        "assert 'livestorm_app.record.assemble' in sys.modules\n"
+        "assert synthetic.record_response()['record']['version'] == sys.modules['livestorm_app.record.assemble'].RECORD_VERSION\n"
+        "assert 'livestorm_app.record.measures' in sys.modules\n"
     )
     completed = subprocess.run(
         [sys.executable, "-c", script, str(REPO_ROOT), str(REPO_ROOT / "tests")],

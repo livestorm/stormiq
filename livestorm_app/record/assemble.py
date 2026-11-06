@@ -6,7 +6,10 @@ computed part of the response:
 - `meta.clock`: the session clock (`record/clock.py`);
 - `record.roster`: the roster's header, counts only;
 - `record.pulse`: chat, questions and written answers per session minute,
-  plus the before and after edges (`clock.minute_bins`).
+  plus the before and after edges (`clock.minute_bins`);
+- `record.metricsVersion`, `record.measuresSource` and `record.measures`:
+  every measure of the registry (`record/measures.py`), through
+  `measures_for_read`.
 
 The caller (`api_logic.get_session_record`) does the scoped read, caches
 this block and adds `sessionId` and `updatedAt`. Bump `RECORD_VERSION`
@@ -29,9 +32,15 @@ from typing import Any, Dict, Mapping, Optional
 from livestorm_app.record.clock import AFTER, BEFORE, MinuteSeries, minute_bins
 from livestorm_app.record.evidence import audience_events
 from livestorm_app.record.inputs import RecordInputs
+from livestorm_app.record.measures import METRICS_VERSION, compute_measures, validate_measures
 from livestorm_app.record.roster import Roster
 
-RECORD_VERSION = 1
+RECORD_VERSION = 2
+
+# Where the measures come from: computed from the cached payloads when the
+# block is built (the caller caches the block per process; nothing is
+# stored). Stored measures will say so when they exist.
+MEASURES_LIVE = "live"
 
 # The Pulse's lanes, in display order: `clock.EVENT_LANES` and their JSON
 # names. The speech lanes join when the recording is aligned with the clock.
@@ -117,10 +126,22 @@ def pulse(series: MinuteSeries) -> Dict[str, Any]:
     }
 
 
+def measures_for_read(inputs: RecordInputs) -> Dict[str, Any]:
+    """`record.metricsVersion`, `record.measuresSource` and `record.measures`
+    (id → `MeasureValue.to_json`, in registry order).
+
+    Live only: every measure is computed from `inputs` and checked with
+    `measures.validate_measures`, and nothing is written. An invalid set
+    raises, so the route answers 500 rather than serve it."""
+    measures = {measure_id: value.to_json() for measure_id, value in compute_measures(inputs).items()}
+    validate_measures(measures)
+    return {"metricsVersion": METRICS_VERSION, "measuresSource": MEASURES_LIVE, "measures": measures}
+
+
 def assemble_record(inputs: RecordInputs) -> Dict[str, Any]:
     """The computed block of the record response: `{meta: {clock}, record}`.
-    The clock and the roster come from `inputs`; the events are placed and
-    binned once here."""
+    The clock, the roster and the authors come from `inputs`; the events are
+    placed and binned once here, and the measures computed once."""
     events = audience_events(inputs.chat_payload, inputs.questions_payload, inputs.clock)
     return {
         "meta": {"clock": clock_meta(inputs)},
@@ -128,5 +149,6 @@ def assemble_record(inputs: RecordInputs) -> Dict[str, Any]:
             "version": RECORD_VERSION,
             "roster": roster_header(inputs.roster),
             "pulse": pulse(minute_bins(events, base=inputs.clock)),
+            **measures_for_read(inputs),
         },
     }

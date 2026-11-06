@@ -141,6 +141,7 @@ class QuestionItem(NamedTuple):
     responded_at: Any  # as sent
     responder_id: Optional[str]  # `response_author_id`: a people id
     response: str  # the written answer; "" when unanswered or answered orally only
+    answered_orally: bool = False  # `response_orally`, else `responded_orally` (`oral_flag`)
 
 
 def people_link(record: Mapping[str, Any]) -> Optional[str]:
@@ -181,6 +182,17 @@ def chat_items(chat_payload: Any) -> List[ChatItem]:
     return items
 
 
+def oral_flag(attributes: Mapping[str, Any]) -> bool:
+    """Whether a question was answered orally (live). The API spells the
+    field `response_orally`; older payloads spell it `responded_orally`. The
+    API's spelling wins when it is sent, as in the classic rule
+    (`analytics/audience._answered_orally_series`)."""
+    value = attributes.get("response_orally")
+    if value is None:
+        value = attributes.get("responded_orally")
+    return _flag(value)
+
+
 def question_items(questions_payload: Any) -> List[QuestionItem]:
     """The questions in payload order; a repeated Livestorm id counts once."""
     items = []
@@ -195,6 +207,7 @@ def question_items(questions_payload: Any) -> List[QuestionItem]:
                 responded_at=attributes.get("responded_at"),
                 responder_id=_clean_id(attributes.get("response_author_id")),
                 response=_text(attributes.get("response")),
+                answered_orally=oral_flag(attributes),
             )
         )
     return items

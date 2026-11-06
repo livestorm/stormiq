@@ -12,7 +12,7 @@
     }
   },
   "record": {
-    "version": 1,
+    "version": 2,
     "roster": {
       "source": "session_include",
       "complete": null,
@@ -262,6 +262,312 @@
         }
       },
       "unplaced": 0
+    },
+    "metricsVersion": 1,
+    "measuresSource": "live",
+    "measures": {
+      "m.roster_coverage": {
+        "id": "m.roster_coverage",
+        "version": 1,
+        "value": null,
+        "num": 10,
+        "den": null,
+        "state": "partial",
+        "coverage": {
+          "roster": "partial",
+          "people": 10,
+          "recordCount": null,
+          "source": "session_include",
+          "syncedAt": null
+        },
+        "excluded": null,
+        "livestorm": null,
+        "rows": null
+      },
+      "m.audience_registrants": {
+        "id": "m.audience_registrants",
+        "version": 1,
+        "value": 7,
+        "num": null,
+        "den": null,
+        "state": "partial",
+        "coverage": {
+          "roster": "partial",
+          "people": 10,
+          "recordCount": null
+        },
+        "excluded": {
+          "team": 2,
+          "guestSpeakers": 1,
+          "total": 3,
+          "internal": false
+        },
+        "livestorm": null,
+        "rows": null
+      },
+      "m.team_count": {
+        "id": "m.team_count",
+        "version": 1,
+        "value": 3,
+        "num": null,
+        "den": null,
+        "state": "partial",
+        "coverage": {
+          "roster": "partial",
+          "people": 10,
+          "recordCount": null
+        },
+        "excluded": null,
+        "livestorm": null,
+        "rows": [
+          {
+            "key": "team",
+            "people": 2,
+            "attendees": 2
+          },
+          {
+            "key": "guest_speaker",
+            "people": 1,
+            "attendees": 1
+          }
+        ]
+      },
+      "m.audience_attendees": {
+        "id": "m.audience_attendees",
+        "version": 1,
+        "value": 5,
+        "num": null,
+        "den": null,
+        "state": "partial",
+        "coverage": {
+          "roster": "partial",
+          "people": 10,
+          "recordCount": null,
+          "attendanceUnknown": 0
+        },
+        "excluded": {
+          "team": 2,
+          "guestSpeakers": 1,
+          "total": 3,
+          "internal": false
+        },
+        "livestorm": null,
+        "rows": null
+      },
+      "m.show_up_rate": {
+        "id": "m.show_up_rate",
+        "version": 1,
+        "value": 0.7143,
+        "num": 5,
+        "den": 7,
+        "state": "partial",
+        "coverage": {
+          "roster": "partial",
+          "people": 10,
+          "recordCount": null,
+          "attendanceUnknown": 0
+        },
+        "excluded": {
+          "team": 2,
+          "guestSpeakers": 1,
+          "total": 3,
+          "internal": false
+        },
+        "livestorm": {
+          "attendeesCount": 8,
+          "registrantsCount": 10,
+          "value": 0.8
+        },
+        "rows": null
+      },
+      "m.time_in_room": {
+        "id": "m.time_in_room",
+        "version": 1,
+        "value": 0.75,
+        "num": null,
+        "den": 5,
+        "state": "approximation",
+        "coverage": {
+          "roster": "partial",
+          "people": 10,
+          "recordCount": null,
+          "durationUnknown": 0,
+          "sessionLengthS": 1800.0,
+          "medianAttendanceS": 1350.0
+        },
+        "excluded": {
+          "team": 2,
+          "guestSpeakers": 1,
+          "total": 3,
+          "internal": false
+        },
+        "livestorm": null,
+        "rows": null
+      },
+      "m.wrote_rate": {
+        "id": "m.wrote_rate",
+        "version": 1,
+        "value": null,
+        "num": 5,
+        "den": 5,
+        "state": "insufficient",
+        "coverage": {
+          "roster": "partial",
+          "people": 10,
+          "recordCount": null,
+          "chatAuthors": "resolved",
+          "questionAuthors": "resolved",
+          "unresolvedItems": 0
+        },
+        "excluded": {
+          "team": 2,
+          "guestSpeakers": 1,
+          "total": 3,
+          "internal": false
+        },
+        "livestorm": null,
+        "rows": null
+      },
+      "m.questions_qa": {
+        "id": "m.questions_qa",
+        "version": 1,
+        "value": 0.75,
+        "num": 3,
+        "den": 4,
+        "state": "ok",
+        "coverage": {
+          "questions": 4
+        },
+        "excluded": null,
+        "livestorm": null,
+        "rows": [
+          {
+            "key": "written",
+            "questions": 2
+          },
+          {
+            "key": "oral",
+            "questions": 1
+          },
+          {
+            "key": "marked",
+            "questions": 0
+          },
+          {
+            "key": "open",
+            "questions": 1
+          }
+        ]
+      },
+      "m.time_to_answer": {
+        "id": "m.time_to_answer",
+        "version": 1,
+        "value": null,
+        "num": null,
+        "den": 2,
+        "state": "insufficient",
+        "coverage": {
+          "answered": 3,
+          "timed": 2
+        },
+        "excluded": null,
+        "livestorm": null,
+        "rows": null
+      },
+      "m.author_resolution": {
+        "id": "m.author_resolution",
+        "version": 1,
+        "value": 1.0,
+        "num": 8,
+        "den": 8,
+        "state": "partial",
+        "coverage": {
+          "roster": "partial",
+          "people": 10,
+          "recordCount": null
+        },
+        "excluded": null,
+        "livestorm": null,
+        "rows": [
+          {
+            "key": "chat",
+            "items": 17,
+            "withoutAuthor": 0,
+            "resolvedItems": 17,
+            "authors": 7,
+            "resolvedAuthors": 7,
+            "resolvedShare": 1.0,
+            "state": "resolved"
+          },
+          {
+            "key": "question",
+            "items": 4,
+            "withoutAuthor": 0,
+            "resolvedItems": 4,
+            "authors": 4,
+            "resolvedAuthors": 4,
+            "resolvedShare": 1.0,
+            "state": "resolved"
+          },
+          {
+            "key": "answer",
+            "items": 2,
+            "withoutAuthor": 0,
+            "resolvedItems": 2,
+            "authors": 1,
+            "resolvedAuthors": 1,
+            "resolvedShare": 1.0,
+            "state": "resolved"
+          }
+        ]
+      },
+      "m.livestorm_counts": {
+        "id": "m.livestorm_counts",
+        "version": 1,
+        "value": null,
+        "num": null,
+        "den": null,
+        "state": "partial",
+        "coverage": {
+          "roster": "partial",
+          "people": 10,
+          "recordCount": null
+        },
+        "excluded": null,
+        "livestorm": null,
+        "rows": [
+          {
+            "key": "registrants",
+            "value": 10,
+            "source": "session"
+          },
+          {
+            "key": "attendees",
+            "value": 8,
+            "source": "session"
+          },
+          {
+            "key": "messages",
+            "value": 12,
+            "source": "people"
+          },
+          {
+            "key": "questions",
+            "value": 4,
+            "source": "people"
+          },
+          {
+            "key": "votes",
+            "value": 0,
+            "source": "people"
+          },
+          {
+            "key": "upVotes",
+            "value": 2,
+            "source": "people"
+          }
+        ]
+      }
     }
   }
 }
