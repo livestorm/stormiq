@@ -2,15 +2,18 @@
 // The StormIQ mark: a circle with three ascending bars, plus the "Storm" + "IQ"
 // wordmark. StormIQ's own identity, never the Livestorm logo (docs/brand.md).
 // The same geometry is drawn in pdf.py (PDF headers) and public/favicon.svg.
+// In the top bar and the classic sidebar the wordmark stands alone
+// (`:mark="false"`), followed by the "for Livestorm" lockup (ForLivestorm.vue).
 defineProps({
   size: { type: Number, default: 28 },
   wordmark: { type: Boolean, default: true },
+  mark: { type: Boolean, default: true },
 });
 </script>
 
 <template>
   <span class="siq-mark">
-    <svg :width="size" :height="size" viewBox="0 0 28 28" aria-hidden="true" focusable="false">
+    <svg v-if="mark" :width="size" :height="size" viewBox="0 0 28 28" aria-hidden="true" focusable="false">
       <circle cx="14" cy="14" r="14" class="siq-mark-disc" />
       <rect x="7.5" y="14" width="3" height="7" rx="1.5" class="siq-mark-bar" />
       <rect x="12.5" y="10.5" width="3" height="10.5" rx="1.5" class="siq-mark-bar" />

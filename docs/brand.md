@@ -49,6 +49,8 @@ Every colour is a CSS custom property in `frontend/src/design/tokens.css`, named
 | `fair` / `fair-fill` / `fair-tint` | | `#916308` / `#D3A20D` / `#FFF4D1` | `#FED348` / `#FED348` / `rgba(254,211,72,0.14)` |
 | `low` / `low-fill` / `low-tint` | | `#BE3A37` / `#BE3A37` / `#FDF7F7` | `#EB9E9F` / `#E26F71` / `rgba(226,111,113,0.14)` |
 | `s1`, `s2`, `s3`, `other` | chart series: audience, questions, host team, reference and "Other" | `#0B54FE`, `#DE7835`, `#0C7C59`, `#A4B5C1` | `#447CFD`, `#CB4A1A`, `#0C7C59`, `#8094A3` |
+| `logo-on-light` / `logo-on-dark` | which Livestorm logo file the lockup shows (`display` values) | `block` / `none` | `none` / `block` |
+| `lockup-ink` / `lockup-rule` | the lockup's "for" and its divider | `muted` / `hairline-head` | `muted` / `hairline-head` (classic frame: `#A4B5C1` / `rgba(255,255,255,0.12)`) |
 | `mark-fill` / `mark-iq` / `mark-bars` | the StormIQ mark | `#0B42C3` / `#0B42C3` / white | `#447CFD` / `#88C0CD` / white |
 | `ridge-fill`, `img-outline` | the session ridge, outlines on images | `rgba(18,38,43,0.07)`, `rgba(0,0,0,0.1)` | `rgba(255,255,255,0.10)`, `rgba(255,255,255,0.1)` |
 
@@ -116,9 +118,15 @@ The page follows the system (`prefers-color-scheme`) until the user clicks the t
 
 In Windows High Contrast (`forced-colors: active`) the browser removes box-shadows, which v1 uses for card edges, the active tab and the account menu, so each component draws real borders there instead (`CanvasText`, and `Highlight` for the current page or tab).
 
+### The "StormIQ for Livestorm" lockup
+
+The headers show StormIQ as a co-brand: the wordmark "Storm" + "IQ" (no disc), the "Beta" tag in the v1 top bar, then a 1px divider, the word "for" and the official Livestorm logo (`ForLivestorm.vue`). In the classic sidebar the wordmark sits above "for" and the logo, without the divider; the collapsed sidebar and the compact top bar keep the StormIQ mark, which fits a square.
+
+The logo files in `frontend/src/assets/livestorm/` are the brand kit's own (brand.livestorm.co), with only a `viewBox` added so they scale: `logo-on-light.svg` (Winter Green) on light surfaces, `logo-on-dark.svg` (white) on dark ones. The `logo-on-light` and `logo-on-dark` tokens pick the file, so it follows the theme, and the classic frame always shows the on-dark file. Follow Livestorm's logo rules: a solid surface behind it, clear space around it, never stretched, recoloured or shown without its box, and never replaced by "Livestorm" set in type. The lockup says what StormIQ is for; it never makes StormIQ look like a Livestorm product, so the "not an official Livestorm product" notice stays.
+
 ### The StormIQ mark
 
-A circle (`mark-fill`) with three ascending white rounded bars, then the wordmark "Storm" + "IQ" (IQ in `mark-iq`), Sora 600 at 18/24, followed in the top bar by a small "Beta" tag. It is drawn by `StormIqMark.vue` in the app (both designs), by `frontend/public/favicon.svg` as the favicon (with `favicon.ico` and `apple-touch-icon.png` rendered from the same geometry for browsers and home screens that don't take SVG), and by `pdf.py` on PDFs. The classic design is dark only, so there the mark always uses its on-dark colours (`#447CFD` disc, `#88C0CD` IQ) whatever the theme. It is never the Livestorm logo or icon.
+A circle (`mark-fill`) with three ascending white rounded bars, then the wordmark "Storm" + "IQ" (IQ in `mark-iq`), Sora 600 at 18/24, followed in the top bar by a small "Beta" tag. It is drawn by `StormIqMark.vue` in the app (the full mark in the collapsed classic sidebar, the compact top bar and `/design`; the wordmark alone, `:mark="false"`, in the lockup), by `frontend/public/favicon.svg` as the favicon (with `favicon.ico` and `apple-touch-icon.png` rendered from the same geometry for browsers and home screens that don't take SVG), and by `pdf.py` on PDFs. The classic design is dark only, so there the mark always uses its on-dark colours (`#447CFD` disc, `#88C0CD` IQ) whatever the theme. It is never the Livestorm logo or icon.
 
 ---
 
@@ -299,16 +307,16 @@ colors: {
 
 ## Logo usage
 
-- White logo on dark backgrounds (`#12262B` or `#0B42C3`)
-- Blue logo on light backgrounds
-- Never stretch, recolor, or place on clashing backgrounds
-- Logo SVG: `https://cdn.prod.website-files.com/60ad0f9314e628baa6971a76/60c70e483f9c48981582e18b_Logo-Livestorm-2021-White.svg`
+- The official files, from Livestorm's brand kit (brand.livestorm.co), are in `frontend/src/assets/livestorm/`: `logo-on-dark.svg` (white, the Primary logo, on Winter Green or other dark surfaces) and `logo-on-light.svg` (Winter Green, the Secondary logo, on white or light surfaces)
+- A solid surface behind it and clear space around it, at least the height of the storm
+- Never stretch, recolour, or show the storm without its box, and never set "Livestorm" in type instead of the logo
+- StormIQ shows it only in the "for Livestorm" lockup, never as its own logo
 
 ---
 
 ## What this app is NOT
 
-- Not an official Livestorm product — do not use the Livestorm logo or icon as the app logo; the app, the favicon and PDFs use the StormIQ mark
+- Not an official Livestorm product. The app's headers show the "StormIQ for Livestorm" lockup, with the official Livestorm logo after "for"; the Livestorm logo or icon is never StormIQ's own logo, and the favicon and PDFs use the StormIQ mark
 - Use "StormIQ" as the app name
 - The app should feel brand-adjacent, not brand-impersonating
 - PDF exports are headed by the StormIQ mark, drawn in `pdf.py`: a `#0B42C3` circle with three ascending white rounded bars, then the wordmark "Storm" + "IQ" (IQ in `#0B42C3`). Their footer repeats the "not an official Livestorm product" notice (in French for French exports)

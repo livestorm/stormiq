@@ -2,6 +2,10 @@
 
 What has shipped, newest first. What's next is in [roadmap.md](roadmap.md).
 
+## November 2026: "StormIQ for Livestorm"
+
+- **Co-brand lockup in the headers.** The v1 top bar now reads "StormIQ", the Beta tag, then "for" and the official Livestorm logo; the StormIQ disc is gone from it. The expanded classic sidebar shows "StormIQ" with "for Livestorm" under it. The logo is the brand kit's file, on-light or on-dark to match the theme (`ForLivestorm.vue`, `--siq-logo-on-*` tokens). The favicon, PDFs, the collapsed sidebar and the compact top bar keep the StormIQ mark, and the "not an official Livestorm product" notice stays ([brand.md](brand.md#the-stormiq-for-livestorm-lockup)).
+
 ## November 2026: all-hands fixes
 
 - **Chat Messages counts the chat.** Session Overview's Chat Messages added up each person's `messages_count`, which Livestorm sometimes reports as 0 for everyone even when the chat has messages. It now counts the audience messages in the cached chat, as the Chat page does, and uses `messages_count` only when no chat is cached ([product.md §13](product.md#13-glossary-of-metrics-and-formulas)). The session summary sent to the AI counts the same way, an empty cached chat as 0. A person's own message count (People table, Engagement Score) still comes from `messages_count`.

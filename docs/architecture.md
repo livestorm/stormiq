@@ -65,7 +65,8 @@ Two designs live side by side while the redesign ships: the classic app (sidebar
 | `src/utils/csv.js` | CSV export for every table |
 | `src/styles.css` | Global styles of the classic design |
 | `src/design/` | The v1 design system: `tokens.css` (every `--siq-*` token for light and dark, Sora), `uiVersion.js` (the switch), `theme.js` and `useTheme.js` (light/dark) |
-| `src/components/ui/` | v1 base components: `TopBar`, `ThemeToggle`, `Card`, `CardHeader`, `IconTile`, `StatCard`, `Collapsible`, `StatusWord`, `Chip`, `UiButton`, `TipBar`, `Icon` (vendored Lucide icons), `StormIqMark` |
+| `src/components/ui/` | v1 base components: `TopBar`, `ThemeToggle`, `Card`, `CardHeader`, `IconTile`, `StatCard`, `Collapsible`, `StatusWord`, `Chip`, `UiButton`, `TipBar`, `Icon` (vendored Lucide icons), `StormIqMark`, `ForLivestorm` (the "for Livestorm" lockup) |
+| `src/assets/livestorm/` | The official Livestorm logo, on-light and on-dark, as supplied by Livestorm's brand kit |
 | `public/` | Copied as-is into the build root: the StormIQ mark as `favicon.svg`, `favicon.ico` and `apple-touch-icon.png`, and `fonts/` (Sora and its licence) |
 | `tests/` | Vitest |
 
