@@ -19,15 +19,16 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
+import httpx2
 import psycopg
 import pytest
-import requests
 import synthetic_session as synthetic
+from fake_anthropic import FakeAnthropic, install, install_mock_transport
 from pydantic import BaseModel
 
 from livestorm_app import api_logic, db, llm_client, worker
 from livestorm_app.ai import generation, schemas
-from livestorm_app.ai.usage import CallContext, LLMUsage
+from livestorm_app.ai.usage import CallContext
 from livestorm_app.db import ALL_ORGS
 from livestorm_app.gladia import transcriber
 from livestorm_app.livestorm import client as livestorm_client
@@ -212,19 +213,26 @@ def test_incomplete_repurposing_bundle_is_not_saved(runner_backend, monkeypatch)
 # ── LLM truncation ────────────────────────────────────────────────────────
 
 
+class _MaxTokensSent(list):
+    """The `max_tokens` of each call the fake SDK client received."""
+
+    def __init__(self, fake: FakeAnthropic):
+        super().__init__()
+        fake.on_request = lambda index: self.append(fake.requests[index]["max_tokens"])
+
+
 def _fake_provider(monkeypatch, responses: list):
-    calls: list = []
+    """Anthropic as a fake SDK client: each call answers with the next (text, truncated)."""
+    answers = iter(responses)
 
-    def fake_send(api_key, model, messages, temperature, max_tokens):
-        calls.append(max_tokens)
-        text, truncated = responses[len(calls) - 1]
-        return llm_client.LLMResult(
-            text=text, stop="max_tokens" if truncated else "complete", stop_raw="max_tokens" if truncated else "end_turn",
-            refusal_category=None, model_served=model, request_id=None, usage=LLMUsage(), duration_ms=1,
-        )
+    def next_step():
+        text, truncated = next(answers)
+        return {"model": "m", "content": [{"type": "text", "text": text}], "stop_reason": "max_tokens" if truncated else "end_turn"}
 
+    fake = FakeAnthropic(next_step=next_step)
+    calls = _MaxTokensSent(fake)
     monkeypatch.setattr(llm_client, "get_provider", lambda: "anthropic")
-    monkeypatch.setattr(llm_client, "_anthropic_send", fake_send)
+    install(monkeypatch, fake)
     return calls
 
 
@@ -263,19 +271,16 @@ def _answer(text: str, stop: str = "end_turn") -> dict:
 
 
 def _provider_http(monkeypatch, answers: list) -> list:
-    """Fake Anthropic at the HTTP boundary, so the real adapter builds the request."""
+    """Fake Anthropic at the HTTP boundary, under the real SDK client, so the
+    real adapter and the SDK build the request. Returns each request's headers."""
     sent: list = []
 
-    def fake_post(url, **kwargs):
-        sent.append(kwargs["headers"])
-        response = requests.Response()
-        response.status_code = 200
-        response._content = json.dumps(answers.pop(0)).encode()
-        response.headers["request-id"] = f"req_{len(sent)}"
-        return response
+    def handler(request):
+        sent.append(request.headers)
+        return httpx2.Response(200, headers={"request-id": f"req_{len(sent)}"}, json=answers.pop(0))
 
     monkeypatch.setattr(llm_client, "get_provider", lambda: "anthropic")
-    monkeypatch.setattr(llm_client.requests, "post", fake_post)
+    install_mock_transport(monkeypatch, handler)
     return sent
 
 

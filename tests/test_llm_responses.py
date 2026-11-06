@@ -1,9 +1,9 @@
 """Structured outputs and refusals: the strict JSON schemas, what each provider
 is sent for a JSON step, and what each stop does to the answer.
 
-Pure tests on synthetic provider responses: the provider is replaced at the
-module boundary (`llm_client._post_with_retry`) and the usage writer collects
-rows instead of saving them. The real-Postgres cases (a refusal saves nothing
+Pure tests on synthetic provider responses: Anthropic is a fake SDK client
+(`tests/fake_anthropic.py`), OpenAI's POST (`llm_client._post_with_retry`) is
+replaced, and the usage writer collects rows instead of saving them. The real-Postgres cases (a refusal saves nothing
 but its usage row) are in test_data_integrity.py.
 """
 
@@ -20,6 +20,8 @@ from pydantic import BaseModel, Field
 from livestorm_app import api_logic, db, llm_client
 from livestorm_app.ai import generation, jobs, models, schemas, usage
 from livestorm_app.ai.usage import CallContext
+
+from fake_anthropic import FakeStreamScript, scripted_providers
 
 SECRET = "sk-test-SECRET"
 # Content a model might answer with; it must never reach an error, a log or a usage row.
@@ -205,15 +207,11 @@ def openai_body(content: Optional[str] = "", finish: str = "stop", *, refusal: O
 
 @pytest.fixture
 def http(monkeypatch):
-    """Replace the provider POST: each call takes the next scripted response."""
+    """Replace the providers: each call takes the next scripted response
+    (Anthropic through a fake SDK client, OpenAI's POST)."""
     script: list = []
     sent: list = []
-
-    def fake_post(url, headers, payload, provider):
-        sent.append({"url": url, "headers": headers, "payload": payload, "provider": provider})
-        return script.pop(0)
-
-    monkeypatch.setattr(llm_client, "_post_with_retry", fake_post)
+    scripted_providers(monkeypatch, script, sent)
     monkeypatch.setattr(db, "get_setting", lambda key, default=None: default)
     return script, sent
 
@@ -327,12 +325,36 @@ def test_a_model_outside_the_catalog_is_never_called(http, rows, anthropic, regi
     assert sent == []
 
 
-def test_a_budget_that_must_stream_waits_for_the_sdk_transport(http, rows, anthropic):
+def test_a_budget_that_must_stream_streams_from_anthropic(http, rows, anthropic):
+    # The understanding job's 48,000 tokens are over the 16,000 a call may wait for unstreamed.
+    script, sent = http
+    script.append(FakeStreamScript(anthropic_body("Understood.", model="claude-sonnet-5-5")))
+    ctx = CallContext("understanding", "sess-1", "org-a")
+    assert llm_client.generate_text("understanding", MESSAGES, api_key="key", ctx=ctx) == "Understood."
+    assert (sent[0]["stream"], sent[0]["payload"]["max_tokens"]) == (True, 48_000)
+    assert "temperature" not in sent[0]["payload"]
+    assert [(row["streamed"], row["max_tokens"], row["outcome"]) for row in rows] == [(True, 48_000, "ok")]
+
+
+def test_a_budget_that_must_stream_is_refused_on_openai(http, rows, openai, monkeypatch):
+    # StormIQ's OpenAI calls don't stream, so the call is refused before it is sent.
+    monkeypatch.setitem(jobs._SPECS, "understanding", dataclasses.replace(jobs.job_spec("understanding"), default_openai="gpt-5.4-mini"))
+    monkeypatch.setitem(models._BY_ID, "gpt-5.4-mini", dataclasses.replace(models.catalog_model("gpt-5.4-mini"), max_output=64_000))
     _, sent = http
     ctx = CallContext("understanding", "sess-1", "org-a")
     with pytest.raises(llm_client.LLMError, match="must stream"):
         llm_client.generate_text("understanding", MESSAGES, api_key="key", ctx=ctx)
     assert sent == []
+
+
+def test_only_a_budget_that_must_stream_streams(http, rows, anthropic, registered):
+    script, sent = http
+    script.append(FakeResponse(anthropic_body(_json())))
+    llm_client.generate_json("profile", Reading, MESSAGES, api_key="key", ctx=PROFILE)
+    script.append(FakeResponse(anthropic_body("# Recap", model="claude-sonnet-4-6")))
+    llm_client.call_llm("key", "claude-sonnet-4-6", MESSAGES, temperature=0.2, max_tokens=16_000)
+    assert [call["stream"] for call in sent] == [False, False]
+    assert [row["streamed"] for row in rows] == [False, False]
 
 
 # ── Refusals ───────────────────────────────────────────────────────────────

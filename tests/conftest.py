@@ -21,6 +21,11 @@ for _name in (
     "GLADIA_KEY",
     "CLAUDE_API_KEY",
     "OPENAI_API_KEY",
+    # Read by the Anthropic SDK itself (llm_client passes the key and host explicitly).
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_CUSTOM_HEADERS",
+    "ANTHROPIC_LOG",
     "SESSION_SECRET",
     "LIVESTORM_OAUTH_CLIENT_ID",
     "LIVESTORM_OAUTH_CLIENT_SECRET",

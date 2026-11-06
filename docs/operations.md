@@ -38,6 +38,7 @@ Three committed fixtures come from `tests/synthetic_session.py`, a made-up webin
 ## Dependencies
 
 - Python: edit `requirements.in` or `requirements-dev.in`, then `make lock` (uv, with hashes).
+- `anthropic`, the official Anthropic SDK, carries every Anthropic call ([providers.md](providers.md#the-anthropic-sdk)). It is pinned below 2 (`anthropic>=1.17.0,<2`): 1.x sends API version `2023-06-01`, which the classic outputs need for their `temperature`, and 2.x sends `2026-10-21`, which refuses it. Moving to 2.x waits until no call sends `temperature`; a test fails if the SDK sends another version than `config.ANTHROPIC_API_VERSION`. It brings `httpx2`, the maintained fork of `httpx` that the SDK uses for HTTP ([httpx2.pydantic.dev](https://httpx2.pydantic.dev)); the tests declare it in `requirements-dev.in` for its mock transport. FastAPI's `TestClient` still uses `httpx`.
 - Frontend: `npm install <pkg>` in `frontend/`; commit `package-lock.json`.
 - Node: the version lives in `frontend/.nvmrc` and must match the Dockerfile's build stage; `engines.node` in `frontend/package.json` sets the patched minimum. Bump all three together.
 
@@ -71,6 +72,11 @@ The worker resolves every credential itself, because job arguments never carry s
 # LLM provider (text generation)
 LLM_PROVIDER                  # Optional: "anthropic" (default) or "openai". The admin setting overrides it.
 CLAUDE_API_KEY                # Required when the provider is anthropic
+ANTHROPIC_LOG                 # Leave unset. When set, the Anthropic SDK logs each request's options, prompts included.
+ANTHROPIC_CUSTOM_HEADERS      # Leave unset. The SDK would add its headers to every Anthropic request, so while it is set
+                              # every Anthropic call fails before it is sent.
+                              # ANTHROPIC_API_KEY and ANTHROPIC_BASE_URL are ignored: llm_client passes the key and
+                              # the host to the SDK explicitly.
 OPENAI_API_KEY                # Required when the provider is openai; always required for cover images
 ORG_DAILY_LLM_BUDGET_USD      # Optional, worker. Daily spend cap per org for automatic text jobs (none exists yet), in
                               # dollars, per UTC day. Unset: no limit. Never applies to jobs a user starts or to covers.
@@ -125,6 +131,8 @@ RENDER                        # Set by Render on every service. Turns off local-
 ## Scripts
 
 `scripts/` holds one-off backfills and diagnostics, run by hand. Read a script's docstring before running it: the backfills write to whatever `DATABASE_URL` points at, and some call paid APIs (`backfill_cover_images.py` costs about $0.17 per cover).
+
+`llm_smoke.py --i-understand-this-costs` makes real, paid calls (well under a dollar in all) to check that the models StormIQ plans to use accept the parameters it plans to send: each planned parameter and each v1 job's shape on the offered Claude models, three calls that show whether a cached prefix is read, and the OpenAI rows' parameters. It reads `CLAUDE_API_KEY` and `OPENAI_API_KEY` from the environment, never `.env`, skips a provider without a key, touches no database, and prints one line per call: whether it was accepted (or the HTTP status and error type it got), the stop reason and, for the cache calls, `cache_read_tokens`. Never a prompt, an answer or a key. The last line counts the calls not accepted and the cache misses (a repeated cached prefix that read 0 tokens from the cache); it exits 1 when either is above 0. Run it by hand only; its docstring lists every call.
 
 `strip_registrant_join_links.py` removes registrant join links from rows saved before they were stripped on fetch. It is a dry run unless you pass `--apply`. It refuses a non-local database unless you also pass `--allow-remote-database`, and it doesn't read `.env`. It prints session ids and counts only.
 

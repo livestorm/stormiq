@@ -31,18 +31,33 @@ cut off at the token limit is retried once if the job's spec says so
 (`JobSpec.truncation_retry`), else `LLMOutputTruncated`; then a JSON answer
 must match its schema (`LLMInvalidOutput`). Nothing is returned for the
 caller to save on any of these errors.
+
+Transport. Anthropic goes through the official SDK (`anthropic` 1.x, which
+sends API version 2023-06-01): one client per process (`_anthropic_client`)
+with the SDK's own retries off, and StormIQ's retry policy around it
+(`_with_transport_retry`). A v1 call whose budget is large streams, stopped
+at a wall-clock deadline (`JobSpec.call_deadline_s`, `_StreamDeadline`); the
+classic outputs never stream, and their request bodies are byte for byte the
+ones the old `requests` transport sent (`_post_message`). OpenAI stays on
+`requests` (`_post_with_retry`). A failed Anthropic call raises
+`LLMProviderError`, which names the HTTP status and error type only. See
+docs/providers.md.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import random
 import re
+import socket
+import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Literal, Optional, Type, TypeVar
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Type, TypeVar
 
+import anthropic
 import requests
 from pydantic import BaseModel, ValidationError
 
@@ -62,6 +77,7 @@ from livestorm_app.ai.usage import (
 logger = logging.getLogger(__name__)
 
 SchemaModel = TypeVar("SchemaModel", bound=BaseModel)
+Sent = TypeVar("Sent")
 
 
 def get_provider() -> str:
@@ -125,6 +141,7 @@ class LLMResult:
     request_id: Optional[str]
     usage: LLMUsage
     duration_ms: int  # transport retries included
+    streamed: bool = False  # the answer came as a stream (Anthropic only)
 
     @property
     def truncated(self) -> bool:
@@ -173,10 +190,24 @@ class LLMInvalidOutput(LLMError):
     empty, or the model stopped for a reason StormIQ doesn't expect."""
 
 
+class LLMProviderError(LLMError):
+    """The Anthropic call failed without an answer: an HTTP error, a timeout,
+    a lost connection or a stream stopped part-way. The message names the HTTP
+    status, the API's error type or the error class, never a body, a URL or
+    a key. Unlike the SDK's own errors, it survives arq's stored result
+    (`queue._job_status` reads it back), so the poll shows the message."""
+
+
+class LLMDeadlineExceeded(LLMProviderError):
+    """A streamed answer ran past its job's wall-clock deadline
+    (`JobSpec.call_deadline_s`), so the stream was closed. Its partial text
+    is dropped."""
+
+
 # Ceiling for the automatic retry after truncation. Stays within the output
 # limits of every configured model (gpt-4o-mini caps at ~16k tokens), and
-# under the size a call must stream at (`ai.jobs.STREAM_ABOVE_TOKENS`):
-# nothing streams until the SDK transport.
+# under the size a call must stream at (`ai.jobs.STREAM_ABOVE_TOKENS`): the
+# classic outputs never stream.
 TRUNCATION_RETRY_MAX_TOKENS = 16000
 
 Sender = Callable[..., LLMResult]
@@ -232,7 +263,9 @@ def call_llm(
     """Call the active LLM provider for a classic output and return the generated text.
 
     `messages` may contain role="system" entries — the Anthropic adapter
-    extracts them into the top-level `system` parameter automatically.
+    extracts them into the top-level `system` parameter automatically. A
+    classic call never streams, so its request is the one the classic
+    outputs always sent.
 
     A refusal raises LLMRefused at once: no retry, and nothing of a partial
     answer is returned. If the model stops at `max_tokens`, the call is
@@ -276,7 +309,9 @@ def call_llm(
 
 
 def _job_model(kind: str, ctx: CallContext, *, structured: bool):
-    """The job's spec, provider, model row and budget, checked before any paid call."""
+    """The job's spec, provider, model row and budget, checked before any paid call.
+    A budget that must stream is sent to Anthropic only: StormIQ's OpenAI
+    calls don't stream."""
     from livestorm_app.ai.jobs import budget, job_spec, resolve_model
 
     spec = job_spec(kind)
@@ -292,12 +327,18 @@ def _job_model(kind: str, ctx: CallContext, *, structured: bool):
     if structured and not caps.structured_outputs:
         raise LLMError(f"{caps.label} can't return structured output, so {spec.label} can't use it.")
     max_tokens, stream = budget(spec, caps)
-    if stream:
+    if stream and provider != "anthropic":
         raise LLMError(
             f"{spec.label} needs {max_tokens} output tokens, which must stream; "
-            "streaming comes with the Anthropic SDK transport."
+            "StormIQ streams only from Anthropic. Choose an Anthropic model."
         )
     return spec, provider, caps, max_tokens
+
+
+def _must_stream(max_tokens: int) -> bool:
+    from livestorm_app.ai.jobs import STREAM_ABOVE_TOKENS
+
+    return max_tokens > STREAM_ABOVE_TOKENS
 
 
 def _generate(
@@ -317,7 +358,10 @@ def _generate(
 
     def attempt(budget: int, call_purpose: str):
         check_org_budget(ctx.job_kind, ctx.organization_id, caps.id)
-        result = send(api_key, caps.id, messages, None, budget, json_format=json_format)
+        options: Dict[str, Any] = {"json_format": json_format}
+        if _must_stream(budget):  # Anthropic only (`_job_model`)
+            options.update(stream=True, deadline_s=spec.call_deadline_s)
+        result = send(api_key, caps.id, messages, None, budget, **options)
         value: Any = None
         problem: Optional[str] = None
         if result.stop == "complete":
@@ -376,11 +420,14 @@ def generate_text(
     purpose: str = "main",
 ) -> str:
     """A v1 job's text answer. The model and `max_tokens` come from the job
-    (`ai.jobs.resolve_model`, `ai.jobs.budget`); no `temperature` is sent.
+    (`ai.jobs.resolve_model`, `ai.jobs.budget`); no `temperature` is sent. A
+    budget above `ai.jobs.STREAM_ABOVE_TOKENS` streams, stopped at the job's
+    `call_deadline_s`.
 
     Raises LLMRefused, LLMOutputTruncated (after the retry, when the job's
-    spec has one) or LLMInvalidOutput (empty, or an unexpected stop). Every
-    answered call is recorded in `llm_usage`.
+    spec has one), LLMInvalidOutput (empty, or an unexpected stop) or, on
+    Anthropic, LLMProviderError (the call failed, or a stream ran past its
+    deadline). Every answered call is recorded in `llm_usage`.
     """
     return _generate(kind, messages, api_key=api_key, ctx=ctx, purpose=purpose, schema=None)
 
@@ -469,6 +516,75 @@ _ANTHROPIC_STOPS: Dict[str, Stop] = {
 }
 
 
+# The SDK client's timeouts: every request, and every wait between two chunks
+# of a stream, gives up after 300 s; connecting, after 10 s. A non-streaming
+# call sends nothing until the whole answer is generated, so 300 s must cover
+# a 16k-token completion.
+ANTHROPIC_TIMEOUT = anthropic.Timeout(300.0, connect=10.0)
+
+_client_lock = threading.Lock()
+_client: Optional[anthropic.Anthropic] = None
+
+
+def _build_anthropic_client(api_key: str, *, http_client: Any = None) -> anthropic.Anthropic:
+    """A new SDK client. The key and the base URL are passed explicitly, so the
+    SDK never reads ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL, a profile or
+    federation settings. It would still add ANTHROPIC_CUSTOM_HEADERS to every
+    request, over the key and the API version it is given, so a process with
+    that variable set gets no client (`_refuse_sdk_custom_headers`).
+    `max_retries=0` turns the SDK's own retries off: they would retry
+    timeouts, which can bill an answer twice (`_with_transport_retry` is the
+    policy). `http_client` is for tests (an httpx2 mock transport)."""
+    from livestorm_app.config import ANTHROPIC_BASE_URL
+
+    _refuse_sdk_custom_headers()
+    _keep_sdk_debug_log_off()
+    return anthropic.Anthropic(
+        api_key=api_key,
+        base_url=ANTHROPIC_BASE_URL,
+        max_retries=0,
+        timeout=ANTHROPIC_TIMEOUT,
+        http_client=http_client,
+    )
+
+
+def _anthropic_client(api_key: str) -> anthropic.Anthropic:
+    """The process's SDK client, built on first use with the key the worker
+    read from its own environment (`worker._read_llm_key_or_raise`). A
+    different key builds a new one. The key lives only in the client: never
+    in a log, a row or an error."""
+    global _client
+    with _client_lock:
+        if _client is None or _client.api_key != api_key:
+            _client = _build_anthropic_client(api_key)
+        return _client
+
+
+def _refuse_sdk_custom_headers() -> None:
+    """The SDK reads ANTHROPIC_CUSTOM_HEADERS whatever it is given, and its
+    headers win over the client's own: one stray line could send every call
+    with another key or another API version (2026-10-21 refuses the classic
+    outputs' `temperature`). No call is made while it is set. The error names
+    the variable, never its value."""
+    if (os.getenv("ANTHROPIC_CUSTOM_HEADERS") or "").strip():
+        raise LLMError(
+            "ANTHROPIC_CUSTOM_HEADERS is set on the worker, so no Anthropic call was made: "
+            "the Anthropic SDK would add those headers to every request. Unset it."
+        )
+
+
+def _keep_sdk_debug_log_off() -> None:
+    """The SDK logs each request's options, the prompt included, at DEBUG.
+    Unless ANTHROPIC_LOG set its logger's level, keep it at INFO so a DEBUG
+    root logger can't turn that on. ANTHROPIC_LOG must stay unset outside
+    local debugging (docs/operations.md)."""
+    sdk_logger = logging.getLogger("anthropic")
+    if sdk_logger.level == logging.NOTSET:
+        sdk_logger.setLevel(logging.INFO)
+    if (os.getenv("ANTHROPIC_LOG") or "").strip():
+        logger.warning("ANTHROPIC_LOG is set: the Anthropic SDK may log request details, prompts included. Unset it.")
+
+
 def _anthropic_send(
     api_key: str,
     model: str,
@@ -477,39 +593,221 @@ def _anthropic_send(
     max_tokens: int,
     *,
     json_format: Optional[JsonFormat] = None,
+    stream: bool = False,
+    deadline_s: Optional[float] = None,
 ) -> LLMResult:
-    """One Messages API call. Text comes from the text blocks only (never a
-    thinking or fallback block); a refusal keeps none of it.
+    """One Messages API call through the SDK client. Text comes from the text
+    blocks only (never a thinking or fallback block); a refusal keeps none of it.
 
     `temperature` None sends none. `json_format` asks for an answer that
     follows its schema (`output_config.format`, type `json_schema`).
-    """
-    from livestorm_app.config import ANTHROPIC_API_VERSION, ANTHROPIC_MESSAGES_URL
 
+    Without `stream`, the body is written by `_post_message`, byte for byte
+    as the old `requests` transport wrote it
+    (tests/fixtures/anthropic-requests-before-sdk.json). `stream` streams the
+    answer (`_stream_message`), stopped after `deadline_s` seconds. Transient
+    failures are retried by `_with_transport_retry`; a failed call raises
+    LLMProviderError.
+    """
     system_parts = [m["content"] for m in messages if m["role"] == "system"]
     user_messages = [m for m in messages if m["role"] != "system"]
 
+    # The fields, and their order, of the old `requests` transport.
     payload: Dict[str, Any] = {
         "model": model,
         "max_tokens": max_tokens,
         "messages": user_messages,
     }
-    if temperature is not None and anthropic_accepts_temperature(model, ANTHROPIC_API_VERSION):
+    # The API takes `temperature` only before version 2026-10-21 (the helper checks).
+    if temperature is not None and anthropic_accepts_temperature(model):
         payload["temperature"] = temperature
     if system_parts:
         payload["system"] = "\n\n".join(system_parts)
     if json_format is not None:
         payload["output_config"] = {"format": {"type": "json_schema", "schema": json_format.schema}}
 
-    headers = {
-        "x-api-key": api_key,
-        "anthropic-version": ANTHROPIC_API_VERSION,
-        "content-type": "application/json",
-    }
-
+    client = _anthropic_client(api_key)
     started = time.monotonic()
-    resp = _post_with_retry(ANTHROPIC_MESSAGES_URL, headers, payload, provider="anthropic")
-    body = resp.json()
+    try:
+        if stream:
+            message, request_id = _with_transport_retry(lambda: _stream_message(client, _stream_params(payload), deadline_s))
+        else:
+            message = _with_transport_retry(lambda: _post_message(client, payload))
+            request_id = getattr(message, "_request_id", None)
+    except LLMError:
+        raise
+    except anthropic.AnthropicError as exc:
+        raise _provider_error(exc) from exc
+    return _anthropic_result(_message_body(message), request_id, started, streamed=stream)
+
+
+def _post_message(client: anthropic.Anthropic, payload: Dict[str, Any]) -> Any:
+    """One non-streamed Messages call through the SDK client, its body written
+    here as `requests` wrote it (`json.dumps`: its separators, ASCII escapes,
+    the payload's key order). `messages.create` would write compact UTF-8 in
+    the SDK's own key order, so a classic output's request would no longer be
+    the bytes it sent before. Same client, headers, timeouts and errors."""
+    return client.post(
+        "/v1/messages",
+        cast_to=anthropic.types.Message,
+        content=json.dumps(payload, allow_nan=False).encode("utf-8"),
+        options={"headers": {"content-type": "application/json"}},
+    )
+
+
+def _stream_params(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """`messages.stream` keyword arguments for a payload. SDK 1.x has no
+    `temperature` argument; `extra_body` puts it in the JSON as is (a v1 call,
+    the only kind that streams, sends none)."""
+    params = {key: value for key, value in payload.items() if key != "temperature"}
+    if "temperature" in payload:
+        params["extra_body"] = {"temperature": payload["temperature"]}
+    return params
+
+
+def _stream_message(client: anthropic.Anthropic, params: Dict[str, Any], deadline_s: Optional[float]) -> Tuple[Any, Optional[str]]:
+    """Stream one answer and return (the final message, its request id).
+
+    A failure before the first event (an HTTP error when the stream opens, or
+    an `error` event first) raises the SDK's error, for `_with_transport_retry`
+    to judge. From the first event on, output may be billed: any failure, and
+    the deadline, raise LLMProviderError, which is never retried, and the
+    partial answer is dropped.
+
+    `deadline_s` is wall-clock time from the call's start. Checking it at each
+    event is not enough: the SDK drops the server's `ping` events before this
+    loop sees them, so a model that thinks for minutes without sending text
+    yields nothing to check, and each ping restarts the 300 s read timeout.
+    A timer (`_StreamDeadline`) therefore shuts the connection at the
+    deadline, and the read in progress fails at once. The stream asks for a
+    connection of its own (`Connection: close`), so the timer can never shut
+    one that another call reuses.
+    """
+    started = time.monotonic()
+    with client.messages.stream(**params, extra_headers={"connection": "close"}) as stream:
+        deadline = _StreamDeadline(stream, deadline_s - (time.monotonic() - started)) if deadline_s is not None else None
+        seen_event = False
+        try:
+            for _event in stream:
+                seen_event = True
+                if deadline_s is not None and time.monotonic() - started > deadline_s:
+                    raise _deadline_exceeded(params, deadline_s, stream)
+            if deadline is not None and deadline.finish():
+                raise _deadline_exceeded(params, deadline_s, stream)
+            message = stream.get_final_message()
+        except LLMError:
+            raise
+        except Exception as exc:
+            if deadline is not None and deadline.finish():  # the timer shut the connection
+                raise _deadline_exceeded(params, deadline_s, stream) from exc
+            if isinstance(exc, anthropic.AnthropicError):
+                if not seen_event:
+                    raise
+                logger.warning(
+                    "Anthropic stream for %s failed after its first event (%s); not retried (request_id=%s)",
+                    params.get("model"), type(exc).__name__, stream.request_id,
+                )
+            else:  # the connection broke while reading (httpx2's own errors)
+                logger.warning(
+                    "Anthropic stream for %s broke (%s); not retried (request_id=%s)",
+                    params.get("model"), type(exc).__name__, stream.request_id,
+                )
+            raise _provider_error(exc) from exc
+        finally:
+            if deadline is not None:
+                deadline.finish()
+        return message, stream.request_id
+
+
+def _deadline_exceeded(params: Dict[str, Any], deadline_s: float, stream: Any) -> LLMDeadlineExceeded:
+    logger.warning(
+        "Anthropic stream for %s passed its %.0f s deadline; closed, not retried (request_id=%s)",
+        params.get("model"), deadline_s, stream.request_id,
+    )
+    return LLMDeadlineExceeded(f"The model's answer took longer than {deadline_s:.0f} s, so it was stopped. Nothing was saved.")
+
+
+class _StreamDeadline:
+    """Stops a stream when its deadline passes, whatever the stream is doing:
+    a timer thread shuts the connection's socket and closes the stream, and
+    the read blocked in `_stream_message` fails at once (closing the response
+    alone would leave that read waiting for its 300 s timeout).
+    `finish()` stops the timer and says whether it fired; after it, the timer
+    touches nothing."""
+
+    def __init__(self, stream: Any, seconds: float):
+        self._stream = stream
+        self._lock = threading.Lock()
+        self._finished = False
+        self._fired = False
+        self._timer = threading.Timer(max(seconds, 0.0), self._fire)
+        self._timer.daemon = True
+        self._timer.start()
+
+    def _fire(self) -> None:
+        with self._lock:
+            if self._finished:
+                return
+            self._fired = True
+        try:
+            _shut_socket(self._stream)
+            self._stream.close()
+        except Exception as exc:  # the read still ends, at the latest at its read timeout
+            logger.warning("Could not close an Anthropic stream at its deadline (%s)", type(exc).__name__)
+
+    def finish(self) -> bool:
+        with self._lock:
+            self._finished = True
+        self._timer.cancel()
+        return self._fired
+
+
+def _shut_socket(stream: Any) -> None:
+    """Shut the socket under a stream (httpx2's `network_stream` response
+    extension), which wakes a read blocked on it in another thread. Nothing
+    to shut on a mock transport, or once the stream closed its connection."""
+    response = getattr(stream, "response", None)
+    network_stream = (getattr(response, "extensions", None) or {}).get("network_stream")
+    sock = network_stream.get_extra_info("socket") if network_stream is not None else None
+    if sock is not None:
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:  # already closed: the stream ended on its own
+            pass
+
+
+def _message_body(message: Any) -> Dict[str, Any]:
+    """The SDK's message as plain data, as the API sent it. Read as data, not
+    through the SDK's types, so an odd field can't cost a paid answer."""
+    try:
+        body = message.to_dict(warnings=False)
+    except Exception:
+        logger.warning("Could not read the Anthropic message (%s)", type(message).__name__)
+        body = {}
+    return body if isinstance(body, dict) else {}
+
+
+def _provider_error(exc: BaseException) -> LLMProviderError:
+    """A failed Anthropic call as an error the job can raise and arq can store.
+    It names the HTTP status and the API's error type (a short tag), or the
+    error's class: never the API's message, a body, a URL or a key."""
+    if isinstance(exc, anthropic.APITimeoutError):
+        reason = "no answer in time"
+    elif isinstance(exc, anthropic.APIStatusError):
+        kind = tag_or_none(exc.type)
+        if exc.status_code >= 400:
+            reason = f"HTTP {exc.status_code}" + (f" {kind}" if kind else "")
+        else:  # an `error` event in the stream
+            reason = f"error while answering: {kind or 'no type given'}"
+    elif isinstance(exc, anthropic.APIConnectionError):
+        reason = "connection error"
+    else:
+        reason = f"the stream broke: {type(exc).__name__}"
+    return LLMProviderError(f"The Anthropic call failed ({reason}). Nothing was saved. Please try again.")
+
+
+def _anthropic_result(body: Dict[str, Any], request_id: Optional[str], started: float, *, streamed: bool) -> LLMResult:
+    """One answered Messages call (its JSON body) as an LLMResult."""
     stop_raw = str(body.get("stop_reason") or "")
     stop_details = body.get("stop_details") if isinstance(body.get("stop_details"), dict) else {}
     text = "".join(
@@ -526,9 +824,10 @@ def _anthropic_send(
         # Branch on stop_reason only: stop_details can be null on a refusal.
         refusal_category=tag_or_none(stop_details.get("category")),
         model_served=str(body.get("model") or ""),
-        request_id=_header(resp, "request-id"),
+        request_id=str(request_id) if request_id else None,
         usage=anthropic_usage(body.get("usage")),
         duration_ms=_elapsed_ms(started),
+        streamed=streamed,
     )
 
 
@@ -595,7 +894,7 @@ def _openai_send(
     )
 
 
-# ── Shared retry helper ────────────────────────────────────────────────────────
+# ── Retries ────────────────────────────────────────────────────────────────────
 
 # Rate limits, overload (Anthropic 529) and transient server errors are worth
 # retrying: the provider did not produce (or bill) an answer.
@@ -603,8 +902,9 @@ RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504, 529})
 LLM_MAX_ATTEMPTS = 4
 LLM_BACKOFF_BASE_SECONDS = 2.0
 LLM_BACKOFF_MAX_SECONDS = 30.0
-# (connect, read). Non-streaming calls send nothing until the whole answer is
-# generated, so the read timeout must cover a 16k-token completion.
+# OpenAI's (connect, read). Non-streaming calls send nothing until the whole
+# answer is generated, so the read timeout must cover a 16k-token completion.
+# Anthropic's are ANTHROPIC_TIMEOUT, the same values.
 LLM_REQUEST_TIMEOUT = (10, 300)
 
 
@@ -624,6 +924,58 @@ def _retry_delay(attempt: int, retry_after: str | None = None) -> float:
     return min(backoff + random.uniform(0, backoff / 2), LLM_BACKOFF_MAX_SECONDS)
 
 
+def _anthropic_retryable(exc: anthropic.APIStatusError) -> bool:
+    """An HTTP error worth retrying: the codes `_post_with_retry` retries (the
+    SDK raises 529 as OverloadedError, which is not an InternalServerError),
+    or an `overloaded_error` event that opened a stream."""
+    return exc.status_code in RETRYABLE_STATUS_CODES or exc.type == "overloaded_error"
+
+
+def _with_transport_retry(send: Callable[[], Sent], max_attempts: int = LLM_MAX_ATTEMPTS) -> Sent:
+    """Call Anthropic through the SDK (`send`), retrying transient failures.
+    The same policy as `_post_with_retry`, read from the SDK's errors.
+
+    Retried: RETRYABLE_STATUS_CODES and connection errors. These almost
+    always mean no answer was produced, but not always: a gateway 502/504
+    or a connection reset after the request was sent can hide an answer
+    that was generated and billed, and the retry then pays once more. That
+    rare double charge is accepted over failing the whole job. Not retried:
+    a read timeout, where the model is most likely still generating (and
+    billing) the answer; and any other 4xx, which would fail again.
+
+    The SDK raises every timeout, a connect timeout included, as
+    APITimeoutError, a subclass of APIConnectionError: it is caught first and
+    never retried, so a connect timeout is no longer retried (requests
+    counted it as a connection error). A stream is retried only when it fails
+    before its first event: `_stream_message` raises anything later as
+    LLMProviderError, which this never catches.
+    """
+    for attempt in range(max_attempts):
+        last_attempt = attempt == max_attempts - 1
+        try:
+            return send()
+        except anthropic.APITimeoutError:
+            raise
+        except anthropic.APIStatusError as exc:
+            if last_attempt or not _anthropic_retryable(exc):
+                raise
+            wait = _retry_delay(attempt, exc.response.headers.get("retry-after"))
+            logger.warning(
+                "Anthropic HTTP %d (%s) on attempt %d/%d — retrying in %.1fs",
+                exc.status_code, tag_or_none(exc.type) or "-", attempt + 1, max_attempts, wait,
+            )
+        except anthropic.APIConnectionError as exc:
+            if last_attempt:
+                raise
+            wait = _retry_delay(attempt)
+            logger.warning(
+                "Anthropic connection error on attempt %d/%d (%s) — retrying in %.1fs",
+                attempt + 1, max_attempts, type(exc.__cause__ or exc).__name__, wait,
+            )
+        time.sleep(wait)
+    raise AssertionError("unreachable: the last attempt returns or raises")
+
+
 def _post_with_retry(
     url: str,
     headers: Dict[str, str],
@@ -631,7 +983,8 @@ def _post_with_retry(
     provider: str,
     max_attempts: int = LLM_MAX_ATTEMPTS,
 ) -> requests.Response:
-    """POST to the provider, retrying transient failures.
+    """POST to the provider (OpenAI; Anthropic goes through
+    `_with_transport_retry`), retrying transient failures.
 
     Retried: RETRYABLE_STATUS_CODES and connection errors. These almost
     always mean no answer was produced, but not always: a gateway 502/504

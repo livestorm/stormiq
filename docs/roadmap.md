@@ -67,7 +67,8 @@ Comparative (2 sessions) and cumulative (up to 10) analysis. Depends on the card
 - Admin: one model per job, read from the server (`llm_model.<provider>.<kind>` is saved and used, but Admin doesn't show it yet).
 - Admin: usage and cost per day, job and model, read from `llm_usage` (every text-model call is logged there; nothing shows it yet).
 - Set `ORG_DAILY_LLM_BUDGET_USD` before the first automatic text job ships, and fill the OpenAI prices first if that job may run on OpenAI: with a budget set, an automatic job never calls an unpriced model ([providers.md](providers.md#usage-and-the-daily-budget)).
-- Stream large v1 calls through the Anthropic SDK, so the understanding job (48,000 tokens) can run; `llm_client.generate_text` and `generate_json` refuse it until then. Send each v1 job's effort with it, and decide on the server-side fallback for refusals on Sonnet and Opus 5.5 ([providers.md](providers.md#structured-outputs-and-refusals)).
+- Send each v1 job's effort, and the server-side fallback for refusals on Sonnet and Opus 5.5 (never Haiku 5.5), with the v1 request layouts ([providers.md](providers.md#structured-outputs-and-refusals)).
+- Record the tokens of an Anthropic stream that fails or passes its deadline after its first event: they may be billed, but the call leaves no `llm_usage` row, so the daily budget doesn't count them ([providers.md](providers.md#the-anthropic-sdk)).
 - Ask the classic content bundle for its JSON with a schema (`llm_client.generate_json`) instead of in the prompt, which would drop the "incomplete JSON" retry ([ai-outputs.md](ai-outputs.md#content-repurposing)).
 - Log the cover image call in `llm_usage` and hold it to the daily budget. The worker already starts it on its own after a Professional Smart Recap, through its own OpenAI Images request ([jobs.md](jobs.md#cover-images)).
 
