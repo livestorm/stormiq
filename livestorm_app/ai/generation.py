@@ -74,7 +74,10 @@ def _bundle_has_all_sections(bundle: Dict[str, str]) -> bool:
 
 
 # The `llm_usage` purpose of each content-bundle attempt: the first call, the
-# retry for missing sections, and the retry for the wrong language.
+# retry for missing sections, and the retry for the wrong language. A refusal
+# (`llm_client.LLMRefused`) ends the loop after its one paid call: asking again
+# would most likely be declined, and paid for, again. A cut-off answer
+# (`llm_client.LLMOutputTruncated`) ends it too.
 _BUNDLE_ATTEMPT_PURPOSES = ("main", "completeness_retry", "language_retry")
 
 

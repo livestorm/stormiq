@@ -55,6 +55,9 @@ class JobSpec:
     # Runs without a user asking (on first open, after a fetch). Only these
     # jobs are held to the org's daily budget (`ai.usage.check_org_budget`).
     automatic: bool = False
+    # An answer cut off at max_tokens is asked for once more with double the
+    # budget (`llm_client.retry_budget`). Off: the job fails at once.
+    truncation_retry: bool = False
 
     def default_model(self, provider: str) -> Optional[str]:
         return self.default_anthropic if provider == "anthropic" else self.default_openai
@@ -65,22 +68,24 @@ class JobSpec:
 
 JOB_SPECS: Tuple[JobSpec, ...] = (
     # v1 jobs. Nothing runs them yet; their OpenAI models wait for the live check.
+    # A cut-off answer fails them at once: their budgets already hold thinking headroom.
     JobSpec("profile", "Session profile", "v1", "claude-haiku-5-5", None, "low", 2_000),
     JobSpec("chat_labels", "Chat labels", "v1", "claude-haiku-5-5", None, "low", 8_000),
     JobSpec("understanding", "Session understanding", "v1", "claude-sonnet-5-5", None, "medium", 32_000),
     JobSpec("verify_meaning", "Meaning check", "v1", "claude-haiku-5-5", None, "low", 2_000),
-    # The classic outputs. Their callers still pass today's max_tokens.
+    # The classic outputs. Their callers still pass today's max_tokens, and a
+    # cut-off answer is retried once, as before.
     JobSpec("overall_analysis", "Overall Analysis", "legacy", "claude-haiku-4-5-20251001", "gpt-4o-mini",
-            "low", 2_500, LEGACY_DEFAULT_SETTING),
+            "low", 2_500, LEGACY_DEFAULT_SETTING, truncation_retry=True),
     JobSpec("deep_analysis", "Deep Analysis", "legacy", "claude-haiku-4-5-20251001", "gpt-4o-mini",
-            "medium", 5_000, LEGACY_DEFAULT_SETTING),
+            "medium", 5_000, LEGACY_DEFAULT_SETTING, truncation_retry=True),
     JobSpec("smart_recap", "Smart Recap", "legacy", "claude-sonnet-4-6", "gpt-5.4-mini",
-            "low", 900, LEGACY_RECAP_SETTING),
+            "low", 900, LEGACY_RECAP_SETTING, truncation_retry=True),
     JobSpec("content_repurposing", "Content Repurposing", "legacy", "claude-haiku-4-5-20251001", "gpt-4o-mini",
-            "medium", 12_000, LEGACY_DEFAULT_SETTING),
+            "medium", 12_000, LEGACY_DEFAULT_SETTING, truncation_retry=True),
     # French versions of the analyses (6,000 or 8,000 tokens) and of the content bundle (12,000).
     JobSpec("translation", "Translation", "legacy", "claude-haiku-4-5-20251001", "gpt-4o-mini",
-            "low", 12_000, LEGACY_DEFAULT_SETTING),
+            "low", 12_000, LEGACY_DEFAULT_SETTING, truncation_retry=True),
 )
 
 _SPECS: Dict[str, JobSpec] = {spec.kind: spec for spec in JOB_SPECS}

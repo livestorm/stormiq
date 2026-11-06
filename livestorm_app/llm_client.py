@@ -13,8 +13,24 @@ changes. See docs/providers.md.
 
 Each provider adapter (`_anthropic_send`, `_openai_send`) returns one
 `LLMResult`: the text, why the model stopped, the model that answered, the
-request id and the token usage. `call_llm` records every answered call in
-`llm_usage` (`ai.usage.record_call`) and returns the text.
+request id and the token usage. Every answered call is recorded in
+`llm_usage` (`ai.usage.record_call`).
+
+Two ways in:
+
+- `call_llm`, for the classic outputs: their own model, messages,
+  `temperature` and `max_tokens`, as before. It returns the text.
+- `generate_text(kind, …)` and `generate_json(kind, schema, …)`, for the
+  v1 jobs: the model and budget come from the job registry (`ai/jobs.py`),
+  no `temperature` is sent, and a JSON step sends its registered schema
+  (`ai/schemas.py`) and gets back the validated answer.
+
+Both check why the model stopped, in this order: a refusal raises
+`LLMRefused` at once (never retried, its partial text dropped); an answer
+cut off at the token limit is retried once if the job's spec says so
+(`JobSpec.truncation_retry`), else `LLMOutputTruncated`; then a JSON answer
+must match its schema (`LLMInvalidOutput`). Nothing is returned for the
+caller to save on any of these errors.
 """
 
 from __future__ import annotations
@@ -25,22 +41,27 @@ import random
 import re
 import time
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Literal, Optional
+from typing import Any, Callable, Dict, List, Literal, Optional, Type, TypeVar
 
 import requests
+from pydantic import BaseModel, ValidationError
 
-from livestorm_app.ai.models import catalog_model
+from livestorm_app.ai.models import ModelCaps, catalog_model
 from livestorm_app.ai.usage import (
+    INVALID_OUTPUT,
     CallContext,
     LLMUsage,
     anthropic_usage,
     check_org_budget,
     openai_usage,
     record_call,
+    tag_or_none,
 )
 
 
 logger = logging.getLogger(__name__)
+
+SchemaModel = TypeVar("SchemaModel", bound=BaseModel)
 
 
 def get_provider() -> str:
@@ -87,7 +108,8 @@ def get_llm_model(kind: str) -> str:
 
 # Why the model stopped, the same for both providers: "complete" (it finished),
 # "max_tokens" (cut off at the token limit), "refusal" (it declined), "other"
-# (any other stop; its text is used as before).
+# (any other stop: `call_llm` uses its text as before; `generate_text` and
+# `generate_json` refuse it).
 Stop = Literal["complete", "max_tokens", "refusal", "other"]
 
 
@@ -109,6 +131,14 @@ class LLMResult:
         return self.stop == "max_tokens"
 
 
+@dataclass(frozen=True)
+class JsonFormat:
+    """A strict JSON schema the answer must follow (`ai.schemas.strict_json_schema`)."""
+
+    name: str  # the schema's registered name; OpenAI requires one
+    schema: Dict[str, Any]
+
+
 class LLMError(RuntimeError):
     """A model call ended without an answer StormIQ can save."""
 
@@ -117,11 +147,76 @@ class LLMOutputTruncated(LLMError):
     """The model stopped at its token limit, so the output is incomplete."""
 
 
+REFUSED_MESSAGE = "The model declined this session. Nothing was saved."
+
+
+class LLMRefused(LLMError):
+    """The model declined to answer. StormIQ never asks again, and keeps none
+    of a partial answer. Its message is what the user sees, and it is the same
+    whatever the category: the category stays on `category` and in the call's
+    `llm_usage` row (`refusal_category`), never in the message.
+
+    arq pickles a failed job's exception and the web process reads it back
+    for the poll (`queue._job_status`), so it is rebuilt from its category
+    (`__reduce__`), not from its message."""
+
+    def __init__(self, category: Optional[str] = None):
+        self.category = tag_or_none(category)
+        super().__init__(REFUSED_MESSAGE)
+
+    def __reduce__(self):
+        return (type(self), (self.category,))
+
+
+class LLMInvalidOutput(LLMError):
+    """The answer can't be used: it doesn't match the job's schema, it is
+    empty, or the model stopped for a reason StormIQ doesn't expect."""
+
+
 # Ceiling for the automatic retry after truncation. Stays within the output
-# limits of every configured model (gpt-4o-mini caps at ~16k tokens).
+# limits of every configured model (gpt-4o-mini caps at ~16k tokens), and
+# under the size a call must stream at (`ai.jobs.STREAM_ABOVE_TOKENS`):
+# nothing streams until the SDK transport.
 TRUNCATION_RETRY_MAX_TOKENS = 16000
 
-Sender = Callable[[str, str, List[Dict[str, str]], float, int], LLMResult]
+Sender = Callable[..., LLMResult]
+
+
+def _sender(provider: str) -> Sender:
+    return _anthropic_send if provider == "anthropic" else _openai_send
+
+
+def _active_provider() -> str:
+    # Anything but "anthropic" goes to OpenAI, as it always has.
+    return "anthropic" if get_provider() == "anthropic" else "openai"
+
+
+def retry_budget(max_tokens: int, model: str) -> int:
+    """The `max_tokens` of the one retry after a cut-off answer: double, capped
+    at `TRUNCATION_RETRY_MAX_TOKENS` and at the model's own limit. No larger
+    than `max_tokens` means there is no retry."""
+    caps = catalog_model(model)
+    larger = min(max_tokens * 2, TRUNCATION_RETRY_MAX_TOKENS)
+    return min(larger, caps.max_output) if caps is not None else larger
+
+
+def _job_retries_truncation(ctx: Optional[CallContext]) -> bool:
+    """`JobSpec.truncation_retry` for the call's job. A call without a context,
+    or of a kind the registry doesn't know, retries as it always has."""
+    from livestorm_app.ai.jobs import job_spec
+
+    if ctx is None:
+        return True
+    try:
+        return job_spec(ctx.job_kind).truncation_retry
+    except ValueError:
+        return True
+
+
+def _truncated_error(max_tokens: int) -> LLMOutputTruncated:
+    return LLMOutputTruncated(
+        f"The AI answer was cut off at its length limit ({max_tokens} tokens), so it was not saved. Please try again."
+    )
 
 
 def call_llm(
@@ -134,14 +229,18 @@ def call_llm(
     ctx: Optional[CallContext] = None,
     purpose: str = "main",
 ) -> str:
-    """Call the active LLM provider and return the generated text.
+    """Call the active LLM provider for a classic output and return the generated text.
 
     `messages` may contain role="system" entries — the Anthropic adapter
     extracts them into the top-level `system` parameter automatically.
 
-    If the model stops at `max_tokens`, the call is retried once with a
-    larger budget; if the answer is still cut off, LLMOutputTruncated is
-    raised so a partial result is never saved as if it were complete.
+    A refusal raises LLMRefused at once: no retry, and nothing of a partial
+    answer is returned. If the model stops at `max_tokens`, the call is
+    retried once with a larger budget (`retry_budget`) when the job's spec
+    allows it (`JobSpec.truncation_retry`; every classic output does); if the
+    answer is still cut off, LLMOutputTruncated is raised so a partial result
+    is never saved as if it were complete. Any other stop returns its text,
+    as before; callers fail the job on an empty one.
 
     `ctx` says which job and session the call is for. Every answered call,
     the retry included, gets one `llm_usage` row (`purpose` names the call:
@@ -149,29 +248,164 @@ def call_llm(
     automatic job is checked against its org's daily budget
     (`ai.usage.check_org_budget`); a job a user started never is.
     """
-    provider = "anthropic" if get_provider() == "anthropic" else "openai"
-    send: Sender = _anthropic_send if provider == "anthropic" else _openai_send
+    provider = _active_provider()
+    send = _sender(provider)
 
     def attempt(budget: int, call_purpose: str) -> LLMResult:
         if ctx is not None:
             check_org_budget(ctx.job_kind, ctx.organization_id, model)
         result = send(api_key, model, messages, temperature, budget)
         record_call(ctx, result, purpose=call_purpose, provider=provider, model_requested=model, max_tokens=budget)
+        if result.stop == "refusal":
+            raise LLMRefused(result.refusal_category)
         return result
 
     result = attempt(max_tokens, purpose)
     if not result.truncated:
         return result.text
-    larger_budget = min(max_tokens * 2, TRUNCATION_RETRY_MAX_TOKENS)
+    larger_budget = retry_budget(max_tokens, model) if _job_retries_truncation(ctx) else max_tokens
     if larger_budget > max_tokens:
         logger.warning("LLM output hit max_tokens=%d; retrying once with %d", max_tokens, larger_budget)
         result = attempt(larger_budget, "truncation_retry")
         if not result.truncated:
             return result.text
-    raise LLMOutputTruncated(
-        f"The AI answer was cut off at its length limit ({max(larger_budget, max_tokens)} tokens), "
-        "so it was not saved. Please try again."
-    )
+    raise _truncated_error(max(larger_budget, max_tokens))
+
+
+# ── v1 jobs: text and JSON through the job registry ───────────────────────
+
+
+def _job_model(kind: str, ctx: CallContext, *, structured: bool):
+    """The job's spec, provider, model row and budget, checked before any paid call."""
+    from livestorm_app.ai.jobs import budget, job_spec, resolve_model
+
+    spec = job_spec(kind)
+    if ctx is None or ctx.job_kind != spec.kind:
+        raise ValueError(f"A {spec.kind} call needs a CallContext for {spec.kind}")
+    provider = _active_provider()
+    choice = resolve_model(spec.kind, provider)
+    caps: Optional[ModelCaps] = choice.caps
+    if caps is None:
+        raise LLMError(
+            f"{choice.model_id} is not in the model catalog, so {spec.label} can't use it. Choose a listed model in Admin."
+        )
+    if structured and not caps.structured_outputs:
+        raise LLMError(f"{caps.label} can't return structured output, so {spec.label} can't use it.")
+    max_tokens, stream = budget(spec, caps)
+    if stream:
+        raise LLMError(
+            f"{spec.label} needs {max_tokens} output tokens, which must stream; "
+            "streaming comes with the Anthropic SDK transport."
+        )
+    return spec, provider, caps, max_tokens
+
+
+def _generate(
+    kind: str,
+    messages: List[Dict[str, str]],
+    *,
+    api_key: str,
+    ctx: CallContext,
+    purpose: str,
+    schema: Optional[Type[BaseModel]],
+) -> Any:
+    from livestorm_app.ai.schemas import strict_json_schema
+
+    spec, provider, caps, max_tokens = _job_model(kind, ctx, structured=schema is not None)
+    json_format = JsonFormat(schema.__name__, strict_json_schema(schema)) if schema is not None else None
+    send = _sender(provider)
+
+    def attempt(budget: int, call_purpose: str):
+        check_org_budget(ctx.job_kind, ctx.organization_id, caps.id)
+        result = send(api_key, caps.id, messages, None, budget, json_format=json_format)
+        value: Any = None
+        problem: Optional[str] = None
+        if result.stop == "complete":
+            try:
+                value, problem = _read_answer(result.text, schema)
+            except Exception as exc:  # the call is paid for: its usage row is still written
+                value, problem = None, f"could not be read ({type(exc).__name__})"
+        record_call(
+            ctx, result, purpose=call_purpose, provider=provider, model_requested=caps.id, max_tokens=budget,
+            outcome=INVALID_OUTPUT if problem else None,
+        )
+        if result.stop == "refusal":
+            raise LLMRefused(result.refusal_category)
+        return result, value, problem
+
+    result, value, problem = attempt(max_tokens, purpose)
+    used = max_tokens
+    if result.truncated and spec.truncation_retry:
+        larger_budget = retry_budget(max_tokens, caps.id)
+        if larger_budget > max_tokens:
+            logger.warning("LLM output for %s hit max_tokens=%d; retrying once with %d", kind, max_tokens, larger_budget)
+            result, value, problem = attempt(larger_budget, "truncation_retry")
+            used = larger_budget
+    if result.truncated:
+        raise _truncated_error(used)
+    if result.stop != "complete":
+        raise LLMInvalidOutput(
+            f"The model stopped unexpectedly ({tag_or_none(result.stop_raw) or 'no reason given'}) during {spec.label}. "
+            "Nothing was saved."
+        )
+    if problem:
+        logger.warning("LLM answer for %s was not usable: %s", kind, problem)
+        raise LLMInvalidOutput(f"The model's answer for {spec.label} {problem}. Nothing was saved.")
+    return value
+
+
+def _read_answer(text: str, schema: Optional[Type[BaseModel]]):
+    """(value, problem): the usable answer, or why it isn't. The problem names
+    no content: never the answer's text or its values."""
+    if schema is None:
+        return (text, None) if text.strip() else (None, "was empty")
+    try:
+        return schema.model_validate_json(text), None
+    except ValidationError as exc:
+        kinds = sorted({str(error.get("type") or "") for error in exc.errors(include_input=False, include_url=False)})
+        count = exc.error_count()
+        return None, f"did not match its format ({count} failed check{'' if count == 1 else 's'}: {', '.join(kinds)})"
+
+
+def generate_text(
+    kind: str,
+    messages: List[Dict[str, str]],
+    *,
+    api_key: str,
+    ctx: CallContext,
+    purpose: str = "main",
+) -> str:
+    """A v1 job's text answer. The model and `max_tokens` come from the job
+    (`ai.jobs.resolve_model`, `ai.jobs.budget`); no `temperature` is sent.
+
+    Raises LLMRefused, LLMOutputTruncated (after the retry, when the job's
+    spec has one) or LLMInvalidOutput (empty, or an unexpected stop). Every
+    answered call is recorded in `llm_usage`.
+    """
+    return _generate(kind, messages, api_key=api_key, ctx=ctx, purpose=purpose, schema=None)
+
+
+def generate_json(
+    kind: str,
+    schema: Type[SchemaModel],
+    messages: List[Dict[str, str]],
+    *,
+    api_key: str,
+    ctx: CallContext,
+    purpose: str = "main",
+) -> SchemaModel:
+    """A v1 JSON step's answer, validated against `schema` (registered with
+    `ai.schemas.json_schema`). The provider is sent the strict schema
+    (Anthropic `output_config.format`, OpenAI strict `response_format`); the
+    model must accept structured outputs (`ModelCaps.structured_outputs`).
+
+    Checks, in order: refusal (LLMRefused), the token limit
+    (LLMOutputTruncated), any other unexpected stop, then the answer against
+    the full Pydantic model, bounds included (LLMInvalidOutput). A call
+    whose answer fails the schema is recorded with the outcome
+    "invalid_output".
+    """
+    return _generate(kind, messages, api_key=api_key, ctx=ctx, purpose=purpose, schema=schema)
 
 
 def _header(resp: Any, name: str) -> Optional[str]:
@@ -239,10 +473,17 @@ def _anthropic_send(
     api_key: str,
     model: str,
     messages: List[Dict[str, str]],
-    temperature: float,
+    temperature: Optional[float],
     max_tokens: int,
+    *,
+    json_format: Optional[JsonFormat] = None,
 ) -> LLMResult:
-    """One Messages API call. Text comes from the text blocks only."""
+    """One Messages API call. Text comes from the text blocks only (never a
+    thinking or fallback block); a refusal keeps none of it.
+
+    `temperature` None sends none. `json_format` asks for an answer that
+    follows its schema (`output_config.format`, type `json_schema`).
+    """
     from livestorm_app.config import ANTHROPIC_API_VERSION, ANTHROPIC_MESSAGES_URL
 
     system_parts = [m["content"] for m in messages if m["role"] == "system"]
@@ -253,10 +494,12 @@ def _anthropic_send(
         "max_tokens": max_tokens,
         "messages": user_messages,
     }
-    if anthropic_accepts_temperature(model, ANTHROPIC_API_VERSION):
+    if temperature is not None and anthropic_accepts_temperature(model, ANTHROPIC_API_VERSION):
         payload["temperature"] = temperature
     if system_parts:
         payload["system"] = "\n\n".join(system_parts)
+    if json_format is not None:
+        payload["output_config"] = {"format": {"type": "json_schema", "schema": json_format.schema}}
 
     headers = {
         "x-api-key": api_key,
@@ -274,11 +517,14 @@ def _anthropic_send(
         for block in body.get("content", [])
         if isinstance(block, dict) and block.get("type") == "text"
     )
+    stop = _ANTHROPIC_STOPS.get(stop_raw, "other")
     return LLMResult(
-        text=text.strip(),
-        stop=_ANTHROPIC_STOPS.get(stop_raw, "other"),
+        # A refusal (before or during the answer) keeps none of its partial text.
+        text="" if stop == "refusal" else text.strip(),
+        stop=stop,
         stop_raw=stop_raw,
-        refusal_category=str(stop_details.get("category") or "") or None,
+        # Branch on stop_reason only: stop_details can be null on a refusal.
+        refusal_category=tag_or_none(stop_details.get("category")),
         model_served=str(body.get("model") or ""),
         request_id=_header(resp, "request-id"),
         usage=anthropic_usage(body.get("usage")),
@@ -299,19 +545,31 @@ def _openai_send(
     api_key: str,
     model: str,
     messages: List[Dict[str, str]],
-    temperature: float,
+    temperature: Optional[float],
     max_tokens: int,
+    *,
+    json_format: Optional[JsonFormat] = None,
 ) -> LLMResult:
-    """One Chat Completions call. A `message.refusal` is a refusal whatever the finish reason."""
+    """One Chat Completions call. A `message.refusal` is a refusal whatever the
+    finish reason, and so is `content_filter`; a refusal keeps no text, and the
+    refusal's own wording is never kept.
+
+    `temperature` None sends none. `json_format` asks for a strict JSON schema
+    answer (`response_format`, type `json_schema`, `strict: true`).
+    """
     from livestorm_app.config import OPENAI_CHAT_COMPLETIONS_URL
 
     token_param = "max_completion_tokens" if str(model or "").startswith("gpt-5") else "max_tokens"
-    payload: Dict[str, Any] = {
-        "model": model,
-        "temperature": temperature,
-        "messages": messages,
-        token_param: max_tokens,
-    }
+    payload: Dict[str, Any] = {"model": model}
+    if temperature is not None:
+        payload["temperature"] = temperature
+    payload["messages"] = messages
+    payload[token_param] = max_tokens
+    if json_format is not None:
+        payload["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {"name": json_format.name, "strict": True, "schema": json_format.schema},
+        }
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -326,7 +584,7 @@ def _openai_send(
     stop_raw = str(choice.get("finish_reason") or "")
     stop: Stop = "refusal" if message.get("refusal") else _OPENAI_STOPS.get(stop_raw, "other")
     return LLMResult(
-        text=str(message.get("content") or "").strip(),
+        text="" if stop == "refusal" else str(message.get("content") or "").strip(),
         stop=stop,
         stop_raw=stop_raw,
         refusal_category=None,

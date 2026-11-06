@@ -395,6 +395,8 @@ All four assets are generated together. English is generated first; French is tr
 
 All AI outputs are persisted to the session cache, so re-opening the workspace shows the previously generated content without re-running the model.
 
+Only a complete output is saved. When the model declines a session, the output shows "The model declined this session. Nothing was saved." and nothing is kept; it used to say the model returned an empty output. An empty answer, or one cut off at its length limit after one retry, fails the same way with its own message ([ai-outputs.md](ai-outputs.md#saving-rules)).
+
 Every PDF is headed by the StormIQ mark and ends each page with the "not an official Livestorm product" notice, in French for French exports. Bold text renders as bold (and `***bold italic***` as bold italic), and markdown separator lines (`---`) as a thin rule. Exported files are named `stormiq-…` (for example `stormiq-deep-analysis-english-<session>.pdf`).
 
 ---

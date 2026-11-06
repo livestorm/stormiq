@@ -18,10 +18,11 @@ from pathlib import Path
 
 import pytest
 import requests
+from pydantic import BaseModel
 
 from livestorm_app import api_logic, db, llm_client, worker
-from livestorm_app.ai import generation
-from livestorm_app.ai.usage import LLMUsage
+from livestorm_app.ai import generation, schemas
+from livestorm_app.ai.usage import CallContext, LLMUsage
 from livestorm_app.db import ALL_ORGS
 from livestorm_app.gladia import transcriber
 from livestorm_app.livestorm import client as livestorm_client
@@ -334,6 +335,59 @@ def test_usage_rows_outlive_a_deleted_session(test_database, monkeypatch):
     assert len(_usage_rows("sess-u")) == 1
     db.ensure_database_schema()  # idempotent with the table and its indexes
     assert len(_usage_rows("sess-u")) == 1
+
+
+def _refusal(category) -> dict:
+    # A refusal mid-answer: partial text, which must never be saved.
+    return {
+        "model": "claude-haiku-4-5-20251001",
+        "content": [{"type": "text", "text": "# Partial recap"}],
+        "stop_reason": "refusal",
+        "stop_details": {"type": "refusal", "category": category} if category else None,
+        "usage": {"input_tokens": 2000, "output_tokens": 15},
+    }
+
+
+@pytest.mark.parametrize(
+    ("run", "column", "dimension", "category"),
+    [
+        (api_logic.run_smart_recap, "smart_recap_bundle", "hype", "bio"),
+        (api_logic.run_content_repurposing, "content_repurpose_bundle", "English", None),
+    ],
+)
+def test_a_refusal_saves_nothing_but_its_usage_row(test_database, monkeypatch, run, column, dimension, category):
+    db.upsert_cached_session("key-a", "sess-u", organization_id="org-a", transcript_payload=_TRANSCRIPT)
+    sent = _provider_http(monkeypatch, [_refusal(category)] * 3)
+    with pytest.raises(llm_client.LLMRefused) as refused:
+        run(SECRET_KEY, "sess-u", dimension)
+    assert str(refused.value) == "The model declined this session. Nothing was saved.", "no category in the message"
+    assert not _row("sess-u")[column], "no bundle entry"
+    assert len(sent) == 1, "one paid call: a refusal is never asked again"
+    rows = _usage_rows("sess-u")
+    assert [(row["purpose"], row["outcome"], row["stop_reason"], row["refusal_category"]) for row in rows] == [
+        ("main", "refused", "refusal", category),
+    ]
+    assert rows[0]["organization_id"] == "org-a" and rows[0]["output_tokens"] == 15
+    assert "Partial" not in repr(rows)
+
+
+def test_an_invalid_structured_answer_is_recorded_and_not_returned(test_database, monkeypatch):
+    class Verdict(BaseModel):
+        holds: bool
+
+    monkeypatch.setattr(schemas, "SCHEMAS", dict(schemas.SCHEMAS))
+    monkeypatch.setattr(schemas, "_STRICT", dict(schemas._STRICT))
+    schemas.json_schema(Verdict)
+    answer = {**_answer('{"holds": "maybe"}'), "model": "claude-haiku-5-5"}
+    _provider_http(monkeypatch, [answer])
+    ctx = CallContext("verify_meaning", "sess-v", "org-a", "verify_meaning:sess-v:_")
+    with pytest.raises(llm_client.LLMInvalidOutput, match="did not match its format"):
+        llm_client.generate_json("verify_meaning", Verdict, [{"role": "user", "content": "Check"}], api_key=SECRET_KEY, ctx=ctx)
+    rows = _usage_rows("sess-v")
+    assert [(row["job_kind"], row["outcome"], row["stop_reason"], row["model_requested"]) for row in rows] == [
+        ("verify_meaning", "invalid_output", "end_turn", "claude-haiku-5-5"),
+    ]
+    assert "maybe" not in repr(rows)
 
 
 def test_a_usage_row_takes_known_columns_only(test_database):
