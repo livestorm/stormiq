@@ -338,15 +338,24 @@ def test_pdf_renders_bold_and_drops_separator_lines():
     assert any(isinstance(item, HRFlowable) for item in story)
 
 
-def test_pdf_has_the_stormiq_mark_and_the_unofficial_notice(monkeypatch):
+def test_pdf_has_the_cobrand_lockup_and_the_unofficial_notice(monkeypatch):
     import reportlab.rl_config
 
     monkeypatch.setattr(reportlab.rl_config, "pageCompression", 0)  # readable content streams
     data = pdf.analysis_markdown_to_pdf_bytes("Hello **world**", "Smart Recap")
     assert data.startswith(b"%PDF")
-    assert b"/Subtype /Image" not in data, "the PDF embeds no logo image"
-    assert b"(Storm) Tj" in data and b"(IQ) Tj" in data
+    assert b"(Storm) Tj" in data and b"(IQ) Tj" in data and b"(for) Tj" in data
+    # The Livestorm logo is the one picture: its pixels plus its transparency mask.
+    assert data.count(b"/Subtype /Image") == 2 and b"/SMask" in data
     assert b"not an official Livestorm product" in data
+
+
+def test_pdf_lockup_logo_is_the_brand_kit_file():
+    from PIL import Image
+
+    with Image.open(pdf.LIVESTORM_LOGO_PNG) as logo:
+        assert logo.mode == "RGBA"
+        assert abs(logo.width / logo.height - pdf.LIVESTORM_LOGO_RATIO) < 0.01
 
 
 # ── LLM client: temperature only where the model accepts it ────────────────

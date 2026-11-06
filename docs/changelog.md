@@ -4,6 +4,8 @@ What has shipped, newest first. What's next is in [roadmap.md](roadmap.md).
 
 ## November 2026: "StormIQ for Livestorm"
 
+- **The lockup everywhere, and an "IQ" monogram for square spots.** PDFs are now headed by "StormIQ | for [Livestorm logo]" (the official on-light logo, rendered unchanged from the brand kit, `livestorm_app/assets/`). The favicon (`favicon.svg`, `.ico`, the apple-touch icon), the collapsed classic sidebar and the compact top bar show a new "IQ" monogram in a circle instead of the three-bar mark ([brand.md](brand.md#the-iq-monogram-and-the-wordmark)).
+
 - **Co-brand lockup in the headers.** The v1 top bar now reads "StormIQ", the Beta tag, then "for" and the official Livestorm logo; the StormIQ disc is gone from it. The expanded classic sidebar shows "StormIQ" with "for Livestorm" under it. The logo is the brand kit's file, on-light or on-dark to match the theme (`ForLivestorm.vue`, `--siq-logo-on-*` tokens). The favicon, PDFs, the collapsed sidebar and the compact top bar keep the StormIQ mark, and the "not an official Livestorm product" notice stays ([brand.md](brand.md#the-stormiq-for-livestorm-lockup)).
 
 ## November 2026: all-hands fixes

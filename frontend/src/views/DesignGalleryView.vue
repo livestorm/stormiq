@@ -27,7 +27,7 @@ const TOKEN_GROUPS = [
   { title: "Actions", tokens: ["cta", "cta-hover", "cta-ink"] },
   { title: "Status", tokens: ["good", "good-fill", "good-tint", "fair", "fair-fill", "fair-tint", "low", "low-fill", "low-tint"] },
   { title: "Chart series", tokens: ["s1", "s2", "s3", "other"] },
-  { title: "Mark", tokens: ["mark-fill", "mark-iq", "mark-bars"] },
+  { title: "Mark", tokens: ["mark-fill", "mark-iq", "mark-ink"] },
 ];
 
 const tokenValues = ref({});

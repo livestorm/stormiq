@@ -5,12 +5,19 @@ from __future__ import annotations
 import re
 import sys
 from io import BytesIO
+from pathlib import Path
 from typing import Any, List
 
-# StormIQ's own mark heads every PDF; never the Livestorm logo (CLAUDE.md rule 6).
-MARK_FILL = "#0B42C3"
-MARK_IQ = "#0B42C3"
+# Every PDF is headed by the "StormIQ for Livestorm" lockup (CLAUDE.md rule 6,
+# docs/brand.md): the StormIQ wordmark, a thin divider, "for" and Livestorm's
+# official on-light logo, embedded unchanged as rendered from the brand kit's
+# SVG (frontend/src/assets/livestorm/logo-on-light.svg). PDFs are always light.
 WORDMARK_COLOR = "#12262B"
+WORDMARK_IQ = "#0B42C3"
+LOCKUP_MUTED = "#5D6D79"
+LOCKUP_RULE = "#D5DCDE"
+LIVESTORM_LOGO_PNG = Path(__file__).resolve().parent / "assets" / "livestorm-logo-on-light.png"
+LIVESTORM_LOGO_RATIO = 922 / 155  # width / height of the brand kit's file
 # Same wording as the app's sidebar notice (frontend/src/App.vue), and its
 # French translation for French exports.
 PDF_FOOTER_TEXT = (
@@ -40,52 +47,62 @@ def is_horizontal_rule(line: str) -> bool:
     return bool(_RULE_RE.fullmatch(line.strip()))
 
 
-def _stormiq_mark_flowable() -> Any:
-    """The StormIQ mark: a blue circle with three ascending white bars, then
-    the wordmark "Storm" + "IQ" (IQ in blue). Drawn, not an image file."""
+def _lockup_flowable() -> Any:
+    """The "StormIQ for Livestorm" lockup: the wordmark "Storm" + "IQ" (IQ in
+    blue), a thin divider, "for" and the official Livestorm logo."""
     from reportlab.lib import colors
     from reportlab.platypus import Flowable
 
-    class StormIQMark(Flowable):
-        # Geometry from the mark's 28x28 SVG, in its units (y measured up).
-        _UNITS = 28.0
-        _BARS = ((7.5, 3.0, 7.0), (12.5, 3.0, 10.5), (17.5, 3.0, 14.0))  # x, width, height; bottoms at y=7
-
-        def __init__(self, size: float = 22.0, font_size: float = 15.0) -> None:
+    class StormIQLockup(Flowable):
+        def __init__(self, font_size: float = 15.0, logo_height: float = 13.0) -> None:
             super().__init__()
-            self.size = size
             self.font_size = font_size
+            self.logo_height = logo_height
             self.hAlign = "LEFT"
 
-        def wrap(self, avail_width: float, avail_height: float):  # noqa: D401 - reportlab API
+        def _parts(self):
             from reportlab.pdfbase.pdfmetrics import stringWidth
 
-            text_width = stringWidth("StormIQ", "Helvetica-Bold", self.font_size)
-            self.width = self.size + 8 + text_width
-            self.height = self.size
+            word = stringWidth("StormIQ", "Helvetica-Bold", self.font_size)
+            for_width = stringWidth("for", "Helvetica", self.font_size * 0.7)
+            rule_x = word + 10
+            for_x = rule_x + 10
+            logo_x = for_x + for_width + 6
+            logo_width = self.logo_height * LIVESTORM_LOGO_RATIO
+            return rule_x, for_x, logo_x, logo_width
+
+        def wrap(self, avail_width: float, avail_height: float):  # noqa: D401 - reportlab API
+            _, _, logo_x, logo_width = self._parts()
+            self.width = logo_x + logo_width
+            self.height = max(self.font_size, self.logo_height) + 4
             return self.width, self.height
 
         def draw(self) -> None:
             from reportlab.pdfbase.pdfmetrics import stringWidth
 
             canvas = self.canv
-            scale = self.size / self._UNITS
+            rule_x, for_x, logo_x, logo_width = self._parts()
+            mid = self.height / 2
+            text_y = mid - self.font_size * 0.35
             canvas.saveState()
-            canvas.setFillColor(colors.HexColor(MARK_FILL))
-            canvas.circle(self.size / 2, self.size / 2, self.size / 2, stroke=0, fill=1)
-            canvas.setFillColor(colors.white)
-            for x, width, height in self._BARS:
-                canvas.roundRect(x * scale, 7 * scale, width * scale, height * scale, 1.5 * scale, stroke=0, fill=1)
-            text_x = self.size + 8
-            text_y = (self.size - self.font_size * 0.7) / 2
             canvas.setFont("Helvetica-Bold", self.font_size)
             canvas.setFillColor(colors.HexColor(WORDMARK_COLOR))
-            canvas.drawString(text_x, text_y, "Storm")
-            canvas.setFillColor(colors.HexColor(MARK_IQ))
-            canvas.drawString(text_x + stringWidth("Storm", "Helvetica-Bold", self.font_size), text_y, "IQ")
+            canvas.drawString(0, text_y, "Storm")
+            canvas.setFillColor(colors.HexColor(WORDMARK_IQ))
+            canvas.drawString(stringWidth("Storm", "Helvetica-Bold", self.font_size), text_y, "IQ")
+            canvas.setStrokeColor(colors.HexColor(LOCKUP_RULE))
+            canvas.setLineWidth(0.75)
+            canvas.line(rule_x, mid - 7, rule_x, mid + 7)
+            canvas.setFont("Helvetica", self.font_size * 0.7)
+            canvas.setFillColor(colors.HexColor(LOCKUP_MUTED))
+            canvas.drawString(for_x, mid - self.font_size * 0.25, "for")
+            canvas.drawImage(
+                str(LIVESTORM_LOGO_PNG), logo_x, mid - self.logo_height / 2,
+                width=logo_width, height=self.logo_height, mask="auto",
+            )
             canvas.restoreState()
 
-    return StormIQMark()
+    return StormIQLockup()
 
 
 def footer_text(language: str = "English") -> str:
@@ -111,7 +128,7 @@ def _footer_drawer(text: str) -> Any:
 
 
 def build_pdf_story(markdown_text: str, title: str) -> List[Any]:
-    """The flowables of a PDF: the StormIQ mark, the title, then the markdown."""
+    """The flowables of a PDF: the "StormIQ for Livestorm" lockup, the title, then the markdown."""
     try:
         from reportlab.lib import colors
         from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
@@ -141,7 +158,7 @@ def build_pdf_story(markdown_text: str, title: str) -> List[Any]:
         spaceBefore=8,
     )
 
-    story: List[Any] = [_stormiq_mark_flowable(), Spacer(1, 14)]
+    story: List[Any] = [_lockup_flowable(), Spacer(1, 14)]
     story.extend([Paragraph(inline_markdown_to_markup(title), title_style), Spacer(1, 8)])
 
     cleaned_lines: List[str] = []
