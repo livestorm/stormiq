@@ -12,6 +12,7 @@ FastAPI app (via `livestorm_app.queue.enqueue_unique_job_sync`):
     - run_smart_recap_job(session_id, tone)
     - run_content_repurposing_job(session_id, output_language)
     - run_cover_image_job(session_id)   (chained after a Professional recap)
+    - run_people_sync(sync_id, session_id)
 
 plus a no-op `ping` and the stuck-job sweeper cron.
 
@@ -21,8 +22,8 @@ Hard rules:
   arq: never pass a secret, or a connection id (it is also the user's
   session cookie). API keys come from the worker's own env; Livestorm
   credentials are resolved from the connection id stored on the job's
-  `transcript_jobs` row (`db.claim_transcript_job`, then
-  `auth.livestorm_auth_for_job`).
+  `transcript_jobs` or `livestorm_sync_jobs` row (`db.claim_transcript_job`
+  or `db.claim_livestorm_sync`, then `auth.livestorm_auth_for_job`).
 - Every handler must publish progress at each meaningful stage via
   `livestorm_app.progress.publish_progress_sync`. The UI depends on it.
 - On any error, the handler is responsible for writing the failure state
@@ -36,6 +37,8 @@ import asyncio
 import contextlib
 import logging
 import threading
+import time
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncIterator, Dict, Optional, Tuple
 
@@ -45,12 +48,15 @@ from arq.worker import func
 from livestorm_app.config import get_runtime_secret, load_env_file
 from livestorm_app.db import (
     ALL_ORGS,
+    claim_livestorm_sync,
     claim_transcript_job,
     database_enabled,
     ensure_database_schema,
     fetch_cached_session,
     fetch_session_fields,
     get_db_connection,
+    sweep_stuck_livestorm_syncs,
+    touch_livestorm_sync,
     update_transcript_job_progress,
     update_transcript_job_status,
     upsert_cached_session,
@@ -122,11 +128,29 @@ def _sweep_stuck_transcript_jobs_sync() -> int:
         return 0
 
 
+def _sweep_stuck_people_syncs_sync() -> int:
+    """Close `livestorm_sync_jobs` rows stuck in 'pending' or 'running' for
+    STALE_AFTER: 'error', connection id cleared (`db.sweep_stuck_livestorm_syncs`).
+    A people sync times out after 15 minutes, its wait for the org's lock
+    included, so a row silent for an hour was lost (a Redis restart, a killed
+    worker). Returns the number of rows closed."""
+    if not database_enabled():
+        return 0
+    try:
+        return sweep_stuck_livestorm_syncs(datetime.now(timezone.utc) - STALE_AFTER)
+    except Exception:
+        logger.exception("Stuck people-sync sweep failed")
+        return 0
+
+
 async def sweep_stuck_jobs(ctx: Dict[str, Any]) -> None:
-    """Cron handler: scan transcript_jobs for stalled rows every 10 minutes."""
+    """Cron handler: close stalled transcript_jobs and livestorm_sync_jobs rows every 10 minutes."""
     affected = await asyncio.to_thread(_sweep_stuck_transcript_jobs_sync)
     if affected:
         logger.warning("[sweeper] Marked %d stuck transcript job(s) as error", affected)
+    syncs = await asyncio.to_thread(_sweep_stuck_people_syncs_sync)
+    if syncs:
+        logger.warning("[sweeper] Marked %d stuck people sync(s) as error", syncs)
 
 
 # ── Stub no-op job ─────────────────────────────────────────────────────────
@@ -607,6 +631,195 @@ async def _enqueue_default_cover_image(ctx: Dict[str, Any], session_id: str) -> 
         )
 
 
+# ── People sync job ────────────────────────────────────────────────────────
+#
+# Reads a session's complete people list from Livestorm (about one call per
+# 50 registrants) and saves it as the session's roster. The web process
+# creates the `livestorm_sync_jobs` row and enqueues this job with ids only
+# (`people_sync.start_people_sync`); the orchestration lives in
+# `people_sync.py`, run here in a thread.
+#
+# At most one people sync per org runs at a time: a Redis lock,
+# `stormiq:livestorm-sync:{org}`, keeps one org's syncs from adding up
+# against its Livestorm rate limit. A job that finds it held waits, with a
+# heartbeat (as `_transcription_slot` does), and the wait counts toward its
+# timeout. A waiting job holds one of the worker's `max_jobs` slots, so only
+# one sync per org may wait (`stormiq:livestorm-sync-wait:{org}`); a third
+# fails at once with a clear message, and one org can never fill the slots
+# every org's jobs share. Both keys outlive the timeout
+# (`PEOPLE_SYNC_LOCK_TTL_SECONDS`), so a killed worker's keys free
+# themselves, and only their owner deletes them (the token check in
+# `_RELEASE_LOCK_SCRIPT`).
+
+PEOPLE_SYNC_JOB_TIMEOUT_SECONDS = 60 * 15  # about 100 calls for 5,000 registrants, plus the wait for the org's lock
+PEOPLE_SYNC_LOCK_TTL_SECONDS = PEOPLE_SYNC_JOB_TIMEOUT_SECONDS + 5 * 60
+PEOPLE_SYNC_LOCK_POLL_SECONDS = 2.0
+PEOPLE_SYNC_LOCK_HEARTBEAT_SECONDS = 60
+# The pager stops itself this long before the job's time limit, so the job
+# fails with a clear message rather than being cancelled mid-page.
+PEOPLE_SYNC_DEADLINE_MARGIN_SECONDS = 30
+
+# Deletes the lock only if it still holds this job's token: a job whose lock
+# expired must never release the next owner's.
+_RELEASE_LOCK_SCRIPT = """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+    return redis.call('del', KEYS[1])
+end
+return 0
+"""
+
+
+def people_sync_lock_key(organization_id: str) -> str:
+    """The per-org lock. A session without an org (local dev only) shares one."""
+    return f"stormiq:livestorm-sync:{str(organization_id or '').strip() or '-'}"
+
+
+def people_sync_wait_key(organization_id: str) -> str:
+    """The per-org waiting place: held by the one sync that waits for the lock."""
+    return f"stormiq:livestorm-sync-wait:{str(organization_id or '').strip() or '-'}"
+
+
+async def _release_people_sync_key(redis: Any, key: str, token: str, sync_id: str) -> None:
+    try:
+        await redis.eval(_RELEASE_LOCK_SCRIPT, 1, key, token)
+    except Exception:
+        logger.warning("[run_people_sync] sync_id=%s could not release a people-sync key; it expires on its own", sync_id, exc_info=True)
+
+
+@contextlib.asynccontextmanager
+async def _people_sync_org_lock(
+    ctx: Dict[str, Any], organization_id: str, sync_id: str, session_id: str,
+) -> AsyncIterator[None]:
+    """Hold the org's people-sync lock for the duration of a sync.
+
+    While another sync of the org holds it, the job takes the org's one
+    waiting place and waits: every PEOPLE_SYNC_LOCK_HEARTBEAT_SECONDS it
+    refreshes its row's `updated_at` (so the sweeper leaves it alone) and its
+    progress (so the user sees why). A row closed meanwhile (swept) stops the
+    wait. When another sync already waits, it raises `PeopleSyncBusy` at
+    once. Both keys are released in `finally`, only by their owner.
+    """
+    from livestorm_app import people_sync
+
+    redis = ctx.get("redis") if isinstance(ctx, dict) else None
+    if redis is None:
+        logger.warning("[run_people_sync] sync_id=%s no Redis in the job context; running without the org lock", sync_id)
+        yield
+        return
+    key = people_sync_lock_key(organization_id)
+    token = uuid.uuid4().hex
+    if not await redis.set(key, token, nx=True, ex=PEOPLE_SYNC_LOCK_TTL_SECONDS):
+        wait_key = people_sync_wait_key(organization_id)
+        if not await redis.set(wait_key, token, nx=True, ex=PEOPLE_SYNC_LOCK_TTL_SECONDS):
+            raise people_sync.PeopleSyncBusy()
+        try:
+            loop = asyncio.get_running_loop()
+            next_heartbeat = loop.time()
+            while not await redis.set(key, token, nx=True, ex=PEOPLE_SYNC_LOCK_TTL_SECONDS):
+                if loop.time() >= next_heartbeat:
+                    if not await asyncio.to_thread(touch_livestorm_sync, sync_id):
+                        raise RuntimeError("The people sync was closed while it waited for another sync of this organization.")
+                    publish_progress_sync(
+                        "roster", session_id, "waiting", label="Waiting for another people sync of this organization to finish…",
+                    )
+                    next_heartbeat = loop.time() + PEOPLE_SYNC_LOCK_HEARTBEAT_SECONDS
+                await asyncio.sleep(PEOPLE_SYNC_LOCK_POLL_SECONDS)
+        finally:
+            await _release_people_sync_key(redis, wait_key, token, sync_id)
+    try:
+        yield
+    finally:
+        await _release_people_sync_key(redis, key, token, sync_id)
+
+
+async def run_people_sync(
+    ctx: Dict[str, Any],
+    sync_id: str,
+    session_id: str,
+) -> Dict[str, Any]:
+    """Read a session's people from Livestorm and save its roster.
+
+    Args:
+        sync_id:     livestorm_sync_jobs.sync_id created at enqueue time
+        session_id:  the session it belongs to
+
+    The arguments hold no credentials. The job claims its row
+    (`db.claim_livestorm_sync`, which hands the stored connection id over
+    once and clears it); a row that is no longer 'pending' (swept, closed as
+    lost) is skipped with no Livestorm call. It then takes the org's lock
+    (`_people_sync_org_lock`), checks the daily cap again
+    (`people_sync.check_daily_cap`), checks that the connection belongs to
+    the session's org and resolves its token
+    (`people_sync._resolve_sync_credentials`), and runs
+    `people_sync.run_people_sync` in a thread. Progress goes to Redis under
+    "roster" and is cleared in `finally`.
+
+    Returns counts only (arq keeps results in Redis). On error, timeout or
+    cancellation the row is marked 'error' (connection id cleared) and the
+    job fails; nothing is retried. A failure reaches arq only as
+    `people_sync.PeopleSyncFailed` with the row's message, never the
+    original exception: arq pickles it into Redis, and a `requests`
+    exception carries the user's token and the upstream body.
+    """
+    from livestorm_app import people_sync
+
+    logger.info("[run_people_sync] sync_id=%s session_id=%s start", sync_id, session_id)
+    started = time.monotonic()
+    claim = await asyncio.to_thread(claim_livestorm_sync, sync_id)
+    if claim is None:
+        logger.warning("[run_people_sync] sync_id=%s is no longer pending; skipping", sync_id)
+        return {"status": "skipped"}
+    publish_progress_sync("roster", session_id, "queued")
+
+    # Set when the job is cancelled (timeout, shutdown). The sync's thread
+    # can't be killed; it stops at its next page or before it writes.
+    cancelled = threading.Event()
+    try:
+        if claim["session_id"] != str(session_id or "").strip():
+            raise RuntimeError("The people sync's row belongs to another session.")
+        organization_id = await asyncio.to_thread(people_sync.session_organization, session_id)
+        async with _people_sync_org_lock(ctx, organization_id, sync_id, session_id):
+            # Under the lock every earlier sync of the org has recorded its
+            # calls, so the cap check is exact here.
+            await asyncio.to_thread(people_sync.check_daily_cap, sync_id, organization_id)
+            # Resolved after the wait for the lock, so the token is fresh.
+            api_key = await asyncio.to_thread(
+                people_sync._resolve_sync_credentials, claim, session_org_id=organization_id,
+            )
+            deadline = started + PEOPLE_SYNC_JOB_TIMEOUT_SECONDS - PEOPLE_SYNC_DEADLINE_MARGIN_SECONDS
+            counts = await asyncio.to_thread(
+                people_sync.run_people_sync,
+                api_key,
+                session_id,
+                {"sync_id": sync_id, "reason": claim["reason"], "organization_id": organization_id},
+                deadline=deadline,
+                should_stop=cancelled.is_set,
+            )
+        logger.info(
+            "[run_people_sync] sync_id=%s session_id=%s done calls=%s people=%s",
+            sync_id, session_id, counts.get("calls"), counts.get("people"),
+        )
+        return counts
+    except asyncio.CancelledError:
+        # Timeout or worker shutdown. CancelledError is not an Exception.
+        cancelled.set()
+        logger.warning("[run_people_sync] sync_id=%s session_id=%s cancelled", sync_id, session_id)
+        people_sync.mark_sync_failed(sync_id, people_sync.PeopleSyncStopped("cancelled"))
+        raise
+    except Exception as exc:
+        if isinstance(exc, people_sync.EXPECTED_REFUSALS):
+            logger.warning("[run_people_sync] sync_id=%s session_id=%s not run (%s)", sync_id, session_id, type(exc).__name__)
+        else:
+            # The traceback stays server-side; it holds no token.
+            logger.exception("[run_people_sync] sync_id=%s session_id=%s failed", sync_id, session_id)
+        people_sync.mark_sync_failed(sync_id, exc)
+        # Our own message only, with no cause or context attached: arq
+        # pickles this into Redis (see the docstring).
+        raise people_sync.PeopleSyncFailed(people_sync.failure_message(exc)) from None
+    finally:
+        clear_progress_sync("roster", session_id)
+
+
 # ── Worker lifecycle ───────────────────────────────────────────────────────
 
 
@@ -669,6 +882,7 @@ class WorkerSettings:
         func(run_smart_recap_job, timeout=LLM_JOB_TIMEOUT_SECONDS),
         func(run_content_repurposing_job, timeout=LLM_JOB_TIMEOUT_SECONDS),
         func(run_cover_image_job, timeout=COVER_IMAGE_JOB_TIMEOUT_SECONDS),
+        func(run_people_sync, timeout=PEOPLE_SYNC_JOB_TIMEOUT_SECONDS),
     ]
 
     cron_jobs = [
@@ -680,7 +894,8 @@ class WorkerSettings:
     # - Most failures are deterministic (missing MP4 recording, expired
     #   Livestorm token, audio too long) — retrying makes them worse
     # The handler writes status='error' on failure and the user can
-    # re-trigger from the UI.
+    # re-trigger from the UI. The same holds for every job: a people sync
+    # spends Livestorm calls, and its user retries with POST /roster-sync.
     max_tries = 1
 
     on_startup = on_startup

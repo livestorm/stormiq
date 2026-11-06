@@ -984,6 +984,8 @@ RECORD_PACKAGE = ("livestorm_app", "record")
 RECORD_ENTRY_POINTS = {
     ("livestorm_app", "api_logic"): {"get_session_record"},
     ("livestorm_app", "worker"): {"_transcription_options"},
+    # The people sync's worker side: field definitions, `P-` refs and the session's end.
+    ("livestorm_app", "people_sync"): {"run_people_sync"},
 }
 
 
@@ -1076,7 +1078,8 @@ def _classic_sources():
 
 def test_classic_code_does_not_import_the_record_package():
     """A bug in `record/` must not be able to break a classic read. Outside
-    `record/`, only the record route's loader imports it, inside its body."""
+    `record/`, only the functions in RECORD_ENTRY_POINTS import it (the record
+    route's loader and two worker-side functions), inside their body."""
     offenders = []
     for path in _classic_sources():
         parts = path.relative_to(REPO_ROOT).with_suffix("").parts

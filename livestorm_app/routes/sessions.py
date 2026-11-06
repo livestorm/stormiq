@@ -1,4 +1,4 @@
-"""One session: cover image, cached workspace, the v1 record, fetches, the transcript job and download, speaker labels."""
+"""One session: cover image, cached workspace, the v1 record, fetches, the transcript job and download, speaker labels, the people sync."""
 
 from __future__ import annotations
 
@@ -26,6 +26,13 @@ from livestorm_app.auth import (
 )
 from livestorm_app.db import (
     fetch_cover_image,
+)
+from livestorm_app.people_sync import (
+    PeopleSyncCapReached,
+    PeopleSyncUnavailable,
+    RosterSessionNotFound,
+    read_roster_status,
+    request_people_sync,
 )
 from livestorm_app.routes.common import SessionId, logger, raise_http_error
 from livestorm_app.routes.models import FetchSessionRequest, SpeakerLabelsRequest
@@ -186,4 +193,59 @@ def update_speaker_labels(session_id: SessionId, request: SpeakerLabelsRequest, 
         return save_speaker_labels(api_key, session_id, request.speaker_names, organization_id=caller.read_scope)
     except Exception as exc:
         raise_http_error("Speaker labels", exc)
+        raise
+
+
+PEOPLE_SYNC_RESOURCE = "People sync"
+
+
+def _session_not_found() -> HTTPException:
+    return HTTPException(status_code=404, detail={"resource": PEOPLE_SYNC_RESOURCE, "message": "No cached session found."})
+
+
+@router.get("/api/sessions/{session_id}/roster-status")
+def get_roster_status(session_id: SessionId, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
+    """The v1 roster's header and the latest people sync (`people_sync.read_roster_status`),
+    polled by the v1 Report while a sync runs. Never a person."""
+    try:
+        return read_roster_status(session_id, organization_id=caller.read_scope)
+    except RosterSessionNotFound as exc:
+        raise _session_not_found() from exc
+    except Exception as exc:
+        raise_http_error(PEOPLE_SYNC_RESOURCE, exc)
+        raise
+
+
+@router.post("/api/sessions/{session_id}/roster-sync")
+def start_roster_sync(session_id: SessionId, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
+    """Start reading the session's people from Livestorm in the worker
+    (`people_sync.request_people_sync`): a retry after an error, or a refresh.
+    Starts nothing for a session of another org, within the cooldown, or over
+    the org's daily call cap (429)."""
+    try:
+        return request_people_sync(
+            session_id,
+            read_scope=caller.read_scope,
+            caller_org_id=caller.org_id,
+            job_connection_id=caller.job_connection_id(),
+            local_dev=caller.local_dev,
+        )
+    except RosterSessionNotFound as exc:
+        raise _session_not_found() from exc
+    except PeopleSyncCapReached as exc:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "resource": PEOPLE_SYNC_RESOURCE,
+                "message": str(exc),
+                "details": {"resource": PEOPLE_SYNC_RESOURCE, "dailyCallCap": exc.limit, "callsLast24h": exc.used},
+            },
+        ) from exc
+    except PeopleSyncUnavailable as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"resource": PEOPLE_SYNC_RESOURCE, "message": str(exc), "details": {"resource": PEOPLE_SYNC_RESOURCE}},
+        ) from exc
+    except Exception as exc:
+        raise_http_error(PEOPLE_SYNC_RESOURCE, exc)
         raise

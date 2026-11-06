@@ -25,7 +25,7 @@ from livestorm_app.routes import common as routes_common
 from livestorm_app.routes import models as routes_models
 from livestorm_app.routes import sessions as routes_sessions
 from livestorm_app.routes import spa as routes_spa
-from livestorm_app import api_logic, auth, oauth_client
+from livestorm_app import api_logic, auth, oauth_client, people_sync
 from livestorm_app.db import ALL_ORGS
 
 
@@ -84,6 +84,7 @@ class FakeBackend:
         self.upserts: list = []
         self.enqueued: list = []
         self.job_connections: list = []
+        self.sync_connections: list = []
 
     def fetch_cached_session(self, api_key, session_id, *, organization_id):
         if session_id == SESSION_ID and _visible(organization_id):
@@ -107,6 +108,15 @@ class FakeBackend:
     def enqueue_unique_job_sync(self, function_name, job_id, *args, **kwargs):
         self.enqueued.append((function_name, job_id, *args))
         return {"jobId": job_id, "jobStatus": "pending", "enqueued": True}
+
+    def fetch_roster_status(self, session_id, organization_id):
+        if session_id == SESSION_ID and _visible(organization_id):
+            return {"session_id": SESSION_ID, "roster": None, "sync": None}
+        return None
+
+    def create_livestorm_sync(self, session_id, *, reason, connection_id="", **kwargs):
+        self.sync_connections.append(connection_id)
+        return {"sync_id": "sync-new", "status": "pending", "created": True}
 
 
 def _livestorm_refuses(*_args, **_kwargs):
@@ -158,6 +168,14 @@ def backend(monkeypatch):
     monkeypatch.setattr(api_logic, "create_transcript_job", create_transcript_job)
     monkeypatch.setattr(api_logic, "read_progress", lambda *a, **k: None)
     monkeypatch.setattr(api_logic, "read_job_status_sync", lambda job_id: {"jobStatus": "running"})
+    # The people sync (people_sync.py): its scope check, roster status, row and enqueue.
+    monkeypatch.setattr(people_sync, "fetch_session_fields", fake.fetch_session_fields)
+    monkeypatch.setattr(people_sync, "fetch_roster_status", fake.fetch_roster_status)
+    monkeypatch.setattr(people_sync, "create_livestorm_sync", fake.create_livestorm_sync)
+    monkeypatch.setattr(people_sync, "enqueue_unique_job_sync", fake.enqueue_unique_job_sync)
+    monkeypatch.setattr(people_sync, "livestorm_sync_calls_since", lambda org, since: 0)
+    monkeypatch.setattr(people_sync, "read_job_status_sync", lambda job_id: {"jobStatus": "running"})
+    monkeypatch.setattr(people_sync, "read_progress", lambda *a, **k: None)
     monkeypatch.setattr(api_logic, "analysis_markdown_to_pdf_bytes", lambda markdown, title, language="English": markdown.encode())
     return fake
 
@@ -214,9 +232,11 @@ def _call(
 def test_route_inventory_covers_every_session_route():
     # Guards the enumeration itself: if this drops, the parametrized tests
     # below would silently check nothing.
-    assert len(SESSION_ROUTES) >= 21
+    assert len(SESSION_ROUTES) >= 23
     assert len(ADMIN_ROUTES) >= 8
-    assert "GET /api/sessions/{session_id}/record" in {param.id for param in SESSION_ROUTES}
+    ids = {param.id for param in SESSION_ROUTES}
+    assert "GET /api/sessions/{session_id}/record" in ids
+    assert {"GET /api/sessions/{session_id}/roster-status", "POST /api/sessions/{session_id}/roster-sync"} <= ids
 
 
 @pytest.mark.parametrize("method,path", SESSION_ROUTES)
@@ -225,6 +245,7 @@ def test_anonymous_caller_gets_401(client, backend, method, path):
     assert response.status_code == 401, response.text
     assert MARKER not in response.text
     assert backend.upserts == [] and backend.enqueued == []
+    assert backend.sync_connections == [], "no sync row holds an anonymous caller's cookie"
 
 
 @pytest.mark.parametrize("force_refresh", [False, True], ids=["cached", "forceRefresh"])
@@ -239,6 +260,7 @@ def test_other_org_cannot_read_write_or_enqueue(client, backend, method, path, c
     assert b"job-t" not in response.content, "an outsider learned the owner's transcript job"
     assert backend.upserts == [], "an outsider wrote to another org's session"
     assert backend.enqueued == [], "an outsider enqueued work on another org's session"
+    assert backend.sync_connections == [], "an outsider's connection id (its session cookie) was stored on a sync row"
 
 
 def test_owner_can_start_transcript_for_an_uncached_session(client, backend):
@@ -256,6 +278,40 @@ def test_owner_can_start_transcript_for_an_uncached_session(client, backend):
     assert backend.job_connections == ["conn-a"]
     assert backend.enqueued == [("run_transcription", "transcription:job-new", "job-new", "sess-new")]
     assert not any("conn-a" in str(arg) for arg in backend.enqueued[0])
+
+
+def test_owner_starts_a_people_sync_with_ids_only_in_the_queue(client, backend):
+    response = _call(client, "POST", "/api/sessions/{session_id}/roster-sync", cookie="conn-a")
+    assert response.status_code == 200, response.text
+    assert response.json() == {"sessionId": SESSION_ID, "status": "pending", "syncId": "sync-new", "started": True, "skipped": None}
+    # The connection id waits on the sync row until the worker claims it.
+    assert backend.sync_connections == ["conn-a"]
+    assert backend.enqueued == [("run_people_sync", "livestorm_sync:sync-new", "sync-new", SESSION_ID)]
+    assert "conn-a" not in response.text and "token-conn-a" not in response.text
+
+
+@pytest.mark.parametrize("cookie", ["conn-b", "conn-no-org"])
+@pytest.mark.parametrize(
+    "method,route", [("GET", "/api/sessions/{session_id}/roster-status"), ("POST", "/api/sessions/{session_id}/roster-sync")],
+)
+def test_the_people_sync_routes_look_missing_to_another_org(client, backend, method, route, cookie):
+    # Exactly 404, as for a session that doesn't exist: a 403 would tell an
+    # outsider the session is there.
+    response = _call(client, method, route, cookie=cookie)
+    assert response.status_code == 404, response.text
+    assert response.json()["detail"] == {"resource": "People sync", "message": "No cached session found."}
+    assert backend.sync_connections == [] and backend.enqueued == []
+
+
+def test_admin_reading_another_orgs_session_starts_no_people_sync(client, backend):
+    # conn-admin belongs to org-b: it may read org-a's session, but its
+    # Livestorm token must never be used on another org's session.
+    response = _call(client, "POST", "/api/sessions/{session_id}/roster-sync", cookie="conn-admin")
+    assert response.status_code == 200, response.text
+    assert response.json()["started"] is False and response.json()["skipped"] == "other_org"
+    assert backend.enqueued == [] and backend.sync_connections == []
+    status = _call(client, "GET", "/api/sessions/{session_id}/roster-status", cookie="conn-admin")
+    assert status.status_code == 200 and status.json()["status"] == "none"
 
 
 def test_outsider_cannot_claim_an_uncached_session(client, backend):
