@@ -23,6 +23,7 @@ import concurrent.futures
 import dataclasses
 import logging
 import os
+import pickle
 import threading
 import time
 from typing import Any, Awaitable, Callable, Dict, Optional, TypeVar
@@ -215,6 +216,42 @@ def enqueue_unique_job_sync(
     except Exception:
         logger.exception("Failed to enqueue arq job %s (%s)", function_name, job_id)
         return None
+
+
+# ── Stored job results ──────────────────────────────────────────────────────
+#
+# arq keeps each job's result in Redis for an hour (`keep_result`), and the
+# poll reads a failed job's error back from it (`_job_status`). The poll uses
+# only the error's message, so that is all the worker stores: a failed job's
+# exception becomes a `JobFailed` carrying its message and nothing else.
+
+
+class JobFailed(RuntimeError):
+    """A failed job's error as the worker stores it: its message only."""
+
+
+def storable_job_error(exc: BaseException) -> JobFailed:
+    """The text the poll shows for `exc` (its message, or its class name
+    when it has none), as an exception that holds nothing else."""
+    try:
+        message = str(exc)
+    except Exception:
+        message = ""
+    return JobFailed(message or type(exc).__name__)
+
+
+def job_result_serializer(data: Any) -> bytes:
+    """The worker's arq serializer (`WorkerSettings.job_serializer`).
+
+    It pickles what arq gives it, as arq's default does, except a failed
+    job's result: arq hands over the exception object itself (key `r` of
+    the result dict), which is replaced with `storable_job_error(...)`.
+    Job arguments and successful results are pickled unchanged, and the
+    web process reads both with arq's default `pickle.loads`.
+    """
+    if isinstance(data, dict) and isinstance(data.get("r"), BaseException):
+        data = {**data, "r": storable_job_error(data["r"])}
+    return pickle.dumps(data)
 
 
 # ── Job status lookup (sync) ───────────────────────────────────────────────

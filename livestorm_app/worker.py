@@ -59,7 +59,7 @@ from livestorm_app.progress import (
     clear_progress_sync,
     publish_progress_sync,
 )
-from livestorm_app.queue import cover_image_job_id, get_redis_settings
+from livestorm_app.queue import cover_image_job_id, get_redis_settings, job_result_serializer
 
 
 logger = logging.getLogger(__name__)
@@ -652,9 +652,14 @@ class WorkerSettings:
       hour; `queue.enqueue_unique_job_sync` clears it when a user retries.
     - `job_timeout` (default 300s) — applies to `ping` only; every real
       job sets its own timeout below.
+
+    `job_serializer` stores a failed job's error as its message only
+    (`queue.job_result_serializer`); everything else is pickled as arq's
+    default does.
     """
 
     redis_settings = get_redis_settings()
+    job_serializer = job_result_serializer
 
     functions = [
         ping,

@@ -78,7 +78,7 @@ Smart Recap is on demand only: nothing generates it automatically.
 | `ping` | 5 min (arq default) |
 
 - A timeout fails the job. The thread it started is not killed, which is why every HTTP call also has its own timeout ([providers.md](providers.md)).
-- arq retries nothing (`max_tries=1`): failures are mostly deterministic, and re-runs cost money. A transcription marks its `transcript_jobs` row `error`. AI and cover jobs log and re-raise; arq keeps the error in the job's result for an hour, and the poll returns it. The user retries from the UI.
+- arq retries nothing (`max_tries=1`): failures are mostly deterministic, and re-runs cost money. A transcription marks its `transcript_jobs` row `error`. AI and cover jobs log and re-raise; arq keeps the error in the job's result for an hour, and the poll returns it. The worker stores only the error's message there, never the exception object (`queue.job_result_serializer`, set as `WorkerSettings.job_serializer`). The user retries from the UI.
 - If the worker process is killed mid-job (OOM, not a normal shutdown), arq keeps reporting that job as running until its in-progress key expires: the longest job timeout plus 10 s, about 2 hours. Until then the same output can't be regenerated. Deleting `arq:in-progress:{job id}` in Redis frees it.
 - `ping` returns `"pong"`. Enqueue it to check the web → Redis → worker path after a deploy.
 
@@ -88,7 +88,7 @@ Smart Recap is on demand only: nothing generates it automatically.
 |---|---|
 | Is this output done? | `session_cache` (durable) |
 | Which stage is it in? | Redis key `stormiq:progress:{kind}:{key}` (30 min TTL) |
-| Did it fail, and why? | arq job state (1 h TTL); `transcript_jobs` for transcriptions |
+| Did it fail, and why? | arq job state (1 h TTL; a failed job's message only); `transcript_jobs` for transcriptions |
 
 A Redis restart loses queued jobs and progress, never results: queued transcriptions show as errors within about 2 minutes, and users retry.
 
@@ -96,5 +96,5 @@ A Redis restart loses queued jobs and progress, never results: queued transcript
 
 - Handlers take `ctx` (arq's per-job context) and a minimal payload. Never pass a secret or a connection id.
 - If users watch the job, publish progress at each meaningful stage (`progress.publish_progress_sync`) and clear it in `finally`; the UI depends on it.
-- Re-raise failures so arq records them. If the job has its own Postgres row, as transcription does, mark it `error` first.
+- Re-raise failures so arq records them. If the job has its own Postgres row, as transcription does, mark it `error` first. arq stores only the exception's message, and the poll shows it to the user: write a message that says what failed, with no key, token or upstream body in it.
 - Register the handler in `WorkerSettings.functions` with its own `timeout`, and give it a deterministic job id in `queue.py`.
