@@ -13,6 +13,7 @@ id below is made up.
 from __future__ import annotations
 
 import copy
+import dataclasses
 import json
 import math
 import re
@@ -75,7 +76,7 @@ GROUPED = (
     "m.lead_time_show_up",
     "m.replay_caught_up",
 )
-TRANSCRIPT = ("m.transcript_health",)
+TRANSCRIPT = ("m.transcript_health", "m.clock_alignment")
 AUDIENCE_MEASURES = tuple(measure_id for measure_id, definition in REGISTRY.items() if definition.excludes)
 
 # Every registry pin ever published, by METRICS_VERSION. Never edit an entry:
@@ -85,6 +86,7 @@ PUBLISHED_PINS = {
     2: "0b51257a2ab5dd195a1840683fe81f5185cc8130b75104834617845b359100ea",
     3: "864d68d8871758f3a65cce51e25a172b4026a366c9eda7998a272486567e8432",
     4: "371ad80ebb3c49f67537164dae3c8e33b359f0dfb3e9761fc9db464be99f9f46",
+    5: "75c8565904ab4520049f3e65e4b13435bea2610c28359ea32600dfd0dafe9653",
 }
 
 
@@ -421,7 +423,7 @@ def test_a_stored_roster_without_a_session_payload():
     assert unavailable == {
         "m.show_up_rate", "m.livestorm_counts", "m.wrote_rate", "m.questions_qa", "m.time_to_answer", "m.author_resolution",
         "m.chat_concentration", "m.room_map", "m.channel_quality", "m.segment_quality", "m.lead_time_show_up",
-        "m.transcript_health",
+        "m.transcript_health", "m.clock_alignment",
     }
     assert found["m.lead_time_show_up"]["coverage"] == {"missing": ["session"]}, "no start, no lead time"
     assert found["m.show_up_rate"]["coverage"] == {"missing": ["session"]}
@@ -1797,6 +1799,54 @@ def test_transcript_health_without_a_transcript_is_unavailable(payload):
     assert item["coverage"] == {"missing": ["transcript"]}
 
 
+def test_clock_alignment_is_the_share_of_anchors_that_agree_with_the_probe_in_coverage():
+    """The synthetic webinar: a link, a call to the chat and a question read
+    aloud agree on an offset of about +19 s (rules: test_alignment.py)."""
+    item = compute(synthetic.cached_row())["m.clock_alignment"]
+    assert (item["value"], item["num"], item["den"], item["state"]) == (1.0, 3, 3, OK)
+    assert item["coverage"] == {
+        "status": "verified",
+        "source": "anchors",
+        "offsetS": 18.9,
+        "plusminusS": 5.7,
+        "reasons": [],
+        "anchors": {"link": 1, "wave": 1, "readAloud": 1, "mediaTime": 0},
+        "durationGapS": 0,
+    }
+    assert item["excluded"] is None and item["livestorm"] is None and item["rows"] is None
+
+
+@pytest.mark.parametrize(
+    "status, state, value",
+    [("verified", OK, 1.0), ("assumed", APPROXIMATION, 1.0), ("misaligned", INSUFFICIENT, None)],
+)
+def test_clock_alignment_states_follow_the_clock(status, state, value):
+    """The same three agreeing anchors under each status: ok only when the
+    clock is verified, an approximation when it is assumed, and the share
+    hidden when it is misaligned (its counts and status still shown)."""
+    inputs = load_record_inputs(synthetic.cached_row())
+    changed = dataclasses.replace(inputs, alignment=dataclasses.replace(inputs.alignment, status=status))
+    item = compute_measures(changed)["m.clock_alignment"].to_json()
+    assert (item["value"], item["num"], item["den"], item["state"]) == (value, 3, 3, state)
+    assert item["coverage"]["status"] == status
+
+
+def test_clock_alignment_without_anchors_is_insufficient_not_zero():
+    """Nothing to compare: the share is hidden, and the coverage says the
+    clock is assumed (durations agree, offset 0 applied)."""
+    item = one("m.clock_alignment", webinar())
+    assert (item["value"], item["num"], item["den"], item["state"]) == (None, 0, 0, INSUFFICIENT)
+    assert (item["coverage"]["status"], item["coverage"]["offsetS"], item["coverage"]["reasons"]) == ("assumed", 0, ["no_anchors"])
+
+
+def test_clock_alignment_without_a_transcript_or_a_start():
+    assert one("m.clock_alignment", webinar(), transcript_payload=None)["coverage"] == {"missing": ["transcript"]}
+    no_start = one("m.clock_alignment", webinar(), started_at=None)
+    assert (no_start["state"], no_start["coverage"]["status"], no_start["coverage"]["reasons"]) == (
+        INSUFFICIENT, "unavailable", ["no_clock"],
+    )
+
+
 def test_the_synthetic_webinar():
     """The values the frontend fixture shows (record-v1.json)."""
     found = compute(synthetic.cached_row())
@@ -1813,13 +1863,14 @@ def test_the_synthetic_webinar():
         "m.time_to_answer": (None, None, 2, INSUFFICIENT),
         "m.author_resolution": (1.0, 8, 8, PARTIAL),
         "m.livestorm_counts": (None, None, None, PARTIAL),
-        "m.chat_concentration": (None, None, 13, INSUFFICIENT),
+        "m.chat_concentration": (None, None, 15, INSUFFICIENT),
         "m.room_map": (None, None, 5, INSUFFICIENT),
         "m.channel_quality": (None, None, None, INSUFFICIENT),
         "m.segment_quality": (None, None, None, INSUFFICIENT),
         "m.lead_time_show_up": (None, None, 7, INSUFFICIENT),
         "m.replay_caught_up": (None, 1, 2, INSUFFICIENT),
-        "m.transcript_health": (0.9169, None, 2753, OK),
+        "m.transcript_health": (0.9169, None, 2734, OK),
+        "m.clock_alignment": (1.0, 3, 3, OK),
     }
 
 

@@ -88,7 +88,10 @@ class ParsedTranscript:
     - `model`: the Gladia model (`request_params.model`);
     - `languages`: the detected languages, lower-cased, first one first;
     - `people_on_stage`, `max_speakers`: what the speaker cap was built from
-      and the cap sent (the `stormiq` block), when the payload has them.
+      and the cap sent (the `stormiq` block), when the payload has them;
+    - `media_creation_time`: the recording file's `creation_time` tag as
+      written (`stormiq.media`), for the alignment probe's `media_time`
+      anchor, which stays off until the tag is shown to mark the start.
     """
 
     utterances: pd.DataFrame
@@ -101,6 +104,7 @@ class ParsedTranscript:
     languages: Tuple[str, ...]
     people_on_stage: Optional[int]
     max_speakers: Optional[int]
+    media_creation_time: Optional[str] = None
 
 
 # ── Reading values ──────────────────────────────────────────────────────────
@@ -404,6 +408,7 @@ def parse_transcript(transcript_payload: Any) -> Optional[ParsedTranscript]:
         languages=tuple(languages),
         people_on_stage=_count(provenance.get("people_on_stage")),
         max_speakers=_count(provenance.get("max_speakers")),
+        media_creation_time=_text(_mapping(provenance.get("media")).get("creation_time")) or None,
     )
 
 

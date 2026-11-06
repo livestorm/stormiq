@@ -2,9 +2,10 @@
 
 Covers `api_logic.get_session_record` and `record/assemble.py` on the
 synthetic webinar of `synthetic_session.py`: the response's shape and
-values, the measures it serves, what it never carries, the internal flag,
-errors, the committed frontend fixture, and the classic workspace staying
-exactly as it was. Each measure's own rules are in `test_measures.py`.
+values (the clock's alignment and the Pulse's speech lanes included), the
+measures it serves, what it never carries, the internal flag, errors, the
+committed frontend fixture, and the classic workspace staying exactly as it
+was. The probe's own rules are in `test_alignment.py`. Each measure's own rules are in `test_measures.py`.
 No database, Redis or network: the scoped reads are patched at `api_logic`.
 """
 
@@ -13,6 +14,7 @@ from __future__ import annotations
 import copy
 import dataclasses
 import json
+import re
 
 import pytest
 from fastapi.testclient import TestClient
@@ -88,19 +90,19 @@ def test_the_owner_gets_the_clock_the_roster_header_and_the_pulse(client):
     body = response.json()
     assert list(body) == ["sessionId", "updatedAt", "meta", "record"]
     assert body["sessionId"] == SESSION_ID and body["updatedAt"] == "2026-10-02T08:30:00Z"
-    assert body["meta"] == {
-        "clock": {
-            "startedAtUnix": T0,
-            "endS": DURATION_S,
-            "endSource": "ended_at",
-            "lateStartS": LATE_START_S,
-            "timezone": "Europe/Paris",
-            "alignment": None,
-        }
+    assert list(body["meta"]) == ["clock"]
+    clock = dict(body["meta"]["clock"])
+    assert clock.pop("alignment")["status"] == "verified"
+    assert clock == {
+        "startedAtUnix": T0,
+        "endS": DURATION_S,
+        "endSource": "ended_at",
+        "lateStartS": LATE_START_S,
+        "timezone": "Europe/Paris",
     }
     record = body["record"]
     assert list(record) == ["version", "roster", "pulse", "transcriptHealth", "metricsVersion", "measuresSource", "measures"]
-    assert record["version"] == assemble.RECORD_VERSION == 4
+    assert record["version"] == assemble.RECORD_VERSION == 5
     assert record["roster"] == {
         "source": "session_include",
         "complete": None,
@@ -112,30 +114,130 @@ def test_the_owner_gets_the_clock_the_roster_header_and_the_pulse(client):
     }
 
 
+EVENT_LANES = ["audienceChat", "teamChat", "questions", "answers"]
+SPEECH_LANES = ["speakingS", "words"]
+
+
 def test_the_pulse_counts_every_event_once_on_the_session_clock(client):
     pulse = get(client).json()["record"]["pulse"]
-    lanes = ["audienceChat", "teamChat", "questions", "answers"]
+    lanes = EVENT_LANES + SPEECH_LANES
     assert pulse["lanes"] == lanes
     assert [row["minute"] for row in pulse["minutes"]] == list(range(DURATION_S // 60))
     assert all(list(row) == ["minute"] + lanes for row in pulse["minutes"])
-    totals = {lane: sum(row[lane] for row in pulse["minutes"]) for lane in lanes}
+    totals = {lane: sum(row[lane] for row in pulse["minutes"]) for lane in EVENT_LANES}
     edges = pulse["edges"]
     for edge in ("before", "after"):
-        for lane in lanes:
+        for lane in EVENT_LANES:
             totals[lane] += edges[edge]["counts"][lane]
-    # 13 audience and 4 team messages (one from the guest speaker), 4 questions, 2 written answers.
-    assert totals == {"audienceChat": 13, "teamChat": 4, "questions": 4, "answers": 2}
+    # 15 audience and 4 team messages (one from the guest speaker), 4 questions, 2 written answers.
+    assert totals == {"audienceChat": 15, "teamChat": 4, "questions": 4, "answers": 2}
     # The waiting room and the message after the end stay on the edges.
-    assert edges["before"] == {"counts": {"audienceChat": 3, "teamChat": 1, "questions": 1, "answers": 0}, "firstT": -300}
-    assert edges["after"] == {"counts": {"audienceChat": 1, "teamChat": 0, "questions": 0, "answers": 0}, "lastT": DURATION_S + 40}
+    assert edges["before"] == {
+        "counts": {"audienceChat": 3, "teamChat": 1, "questions": 1, "answers": 0, "speakingS": 0, "words": 0}, "firstT": -300,
+    }
+    assert edges["after"] == {
+        "counts": {"audienceChat": 1, "teamChat": 0, "questions": 0, "answers": 0, "speakingS": 0, "words": 0}, "lastT": DURATION_S + 40,
+    }
     assert pulse["minutes"][-1]["audienceChat"] == 1, "a message exactly at the end is in the last minute"
-    assert pulse["minutes"][4] == {"minute": 4, "audienceChat": 0, "teamChat": 1, "questions": 0, "answers": 0}, "guest speaker chat is team chat"
+    assert {lane: pulse["minutes"][4][lane] for lane in EVENT_LANES} == {"audienceChat": 0, "teamChat": 1, "questions": 0, "answers": 0}, (
+        "guest speaker chat is team chat"
+    )
+    assert pulse["minutes"][1]["audienceChat"] == 3, "the room answering the call to the chat"
     assert pulse["unplaced"] == 0
+
+
+def test_the_pulse_places_speech_with_the_verified_offset(client):
+    """The recording is aligned (verified at about +19 s), so speech joins
+    the Pulse: each utterance at `t = r + offset`, its seconds split across
+    minutes. No word or speaker leaves the server, only seconds and counts."""
+    body = get(client).json()
+    alignment = body["meta"]["clock"]["alignment"]
+    pulse = body["record"]["pulse"]
+    assert pulse["speech"] == {"shown": True, "offsetS": alignment["offsetS"], "reasons": []}
+    assert alignment["offsetS"] == 18.9
+    # The first words (recording second 3) are heard in minute 0, nothing is said before the start.
+    assert pulse["minutes"][0]["speakingS"] > 0 and pulse["edges"]["before"]["counts"]["speakingS"] == 0
+    speaking = sum(row["speakingS"] for row in pulse["minutes"])
+    words = sum(row["words"] for row in pulse["minutes"])
+    health = body["record"]["transcriptHealth"]
+    assert words == pytest.approx(health["words"]["count"], abs=0.5)
+    assert 0 < speaking <= health["coverage"]["speechS"] + 1
+
+
+def test_the_clock_carries_the_alignment_with_ids_and_times_only(client):
+    alignment = get(client).json()["meta"]["clock"]["alignment"]
+    assert list(alignment) == [
+        "version", "status", "source", "offsetS", "plusminusS", "allows", "nAnchors", "nAgree", "estimate", "durations",
+        "drift", "anchors", "reasons",
+    ]
+    assert (alignment["version"], alignment["status"], alignment["source"]) == (1, "verified", "anchors")
+    assert (alignment["offsetS"], alignment["plusminusS"], alignment["nAnchors"], alignment["nAgree"]) == (18.9, 5.7, 3, 3)
+    assert alignment["allows"] == {"seconds": True, "minutes": True}
+    assert alignment["durations"] == {
+        "sessionS": DURATION_S, "audioS": DURATION_S, "gapS": 0, "endSource": "ended_at", "durationAttrS": DURATION_S, "lo": -30, "hi": 30,
+    }
+    assert [(a["kind"], a["e"], a["u"], a["agrees"]) for a in alignment["anchors"]] == [
+        ("link", "C0005", ["U0003"], True),
+        ("wave", "C0006", ["U0004"], True),
+        ("read_aloud", "Q002", ["U0028"], True),
+    ]
+    assert alignment["reasons"] == []
+    measure = get(client).json()["record"]["measures"]["m.clock_alignment"]
+    assert (measure["value"], measure["num"], measure["den"], measure["state"]) == (1.0, 3, 3, "ok")
+    assert measure["coverage"]["status"] == "verified"
+
+
+def test_an_assumed_clock_places_speech_at_offset_0(rows):
+    """No chat and no questions, and the recording as long as the session:
+    no anchors, so the clock is assumed. Findings in minutes may run, so
+    the Pulse keeps its speech lanes, placed at offset 0 (not +18.9)."""
+    from livestorm_app.record import clock as record_clock
+    from livestorm_app.record.inputs import load_record_inputs
+
+    row = rows[SESSION_ID]
+    row["chat_payload"] = {"data": []}
+    row["questions_payload"] = {"data": []}
+    record = record_for(row)
+    alignment = record["meta"]["clock"]["alignment"]
+    assert (alignment["status"], alignment["offsetS"], alignment["reasons"]) == ("assumed", 0, ["no_anchors"])
+    assert alignment["allows"] == {"seconds": False, "minutes": True}
+    pulse = record["record"]["pulse"]
+    assert pulse["speech"] == {"shown": True, "offsetS": 0, "reasons": []}
+    assert pulse["lanes"] == EVENT_LANES + SPEECH_LANES
+
+    inputs = load_record_inputs(row)
+
+    def speaking(offset):
+        speech = record_clock.speech_events(inputs.transcript.utterances, offset)
+        return record_clock.minute_bins(inputs.events, speech, base=inputs.clock).minutes["speaking_s"].tolist()
+
+    served = [row["speakingS"] for row in pulse["minutes"]]
+    assert served == pytest.approx(speaking(0.0), abs=1e-3)
+    assert served != pytest.approx(speaking(18.9), abs=1e-3), "the test tells the offsets apart"
+    assert sum(row["words"] for row in pulse["minutes"]) == pytest.approx(record["record"]["transcriptHealth"]["words"]["count"], abs=0.5)
+
+
+def test_a_misaligned_clock_keeps_speech_off_the_pulse(rows):
+    """A recording ten minutes shorter than the session and nothing to
+    verify an offset: misaligned, so the Pulse has no speech lanes and says why."""
+    row = rows[SESSION_ID]
+    row["chat_payload"] = {"data": []}
+    row["questions_payload"] = {"data": []}
+    row["transcript_payload"]["result"]["metadata"]["audio_duration"] = float(DURATION_S - 600)
+    record = record_for(row)
+    alignment = record["meta"]["clock"]["alignment"]
+    assert (alignment["status"], alignment["offsetS"], alignment["reasons"]) == ("misaligned", None, ["duration_gap"])
+    assert alignment["allows"] == {"seconds": False, "minutes": False}
+    pulse = record["record"]["pulse"]
+    assert pulse["lanes"] == EVENT_LANES
+    assert pulse["speech"] == {"shown": False, "offsetS": None, "reasons": ["duration_gap"]}
+    assert all(list(row) == ["minute"] + EVENT_LANES for row in pulse["minutes"])
+    assert list(pulse["edges"]["before"]["counts"]) == EVENT_LANES
 
 
 def test_the_record_serves_every_measure_live(client):
     record = get(client).json()["record"]
-    assert record["metricsVersion"] == measures.METRICS_VERSION == 4
+    assert record["metricsVersion"] == measures.METRICS_VERSION == 5
     assert record["measuresSource"] == "live"
     assert list(record["measures"]) == list(measures.REGISTRY)
     measures.validate_measures(record["measures"])
@@ -175,11 +277,17 @@ def test_the_transcript_health_comes_with_the_record(client):
 
 def test_a_session_without_a_transcript_has_unavailable_health(rows):
     row = {**rows[SESSION_ID], "transcript_payload": None}
-    record = record_for(row)["record"]
+    response = record_for(row)
+    record = response["record"]
     assert record["transcriptHealth"]["state"] == "unavailable"
     assert record["transcriptHealth"]["reasons"] == ["no_transcript"]
     assert record["measures"]["m.transcript_health"]["state"] == "unavailable"
     assert record["measures"]["m.transcript_health"]["coverage"] == {"missing": ["transcript"]}
+    assert record["measures"]["m.clock_alignment"]["state"] == "unavailable"
+    alignment = response["meta"]["clock"]["alignment"]
+    assert (alignment["status"], alignment["reasons"], alignment["anchors"]) == ("unavailable", ["no_transcript"], [])
+    assert alignment["allows"] == {"seconds": False, "minutes": False}
+    assert record["pulse"]["speech"] == {"shown": False, "offsetS": None, "reasons": ["no_transcript"]}
 
 
 def test_a_session_without_started_at_has_no_clock_and_places_nothing(rows):
@@ -188,16 +296,19 @@ def test_a_session_without_started_at_has_no_clock_and_places_nothing(rows):
     del attributes["started_at"]
     del attributes["ended_at"]
     record = record_for(row)
-    assert record["meta"]["clock"] == {
+    clock = dict(record["meta"]["clock"])
+    alignment = clock.pop("alignment")
+    assert clock == {
         "startedAtUnix": None,  # never estimated_started_at
         "endS": DURATION_S,
         "endSource": "duration",
         "lateStartS": None,
         "timezone": "Europe/Paris",
-        "alignment": None,
     }
+    assert (alignment["status"], alignment["reasons"]) == ("unavailable", ["no_clock"])
     pulse = record["record"]["pulse"]
-    assert pulse["minutes"] == [] and pulse["unplaced"] == 17 + 4 + 2
+    assert pulse["minutes"] == [] and pulse["unplaced"] == 19 + 4 + 2
+    assert pulse["speech"]["shown"] is False
     assert all(count == 0 for edge in pulse["edges"].values() for count in edge["counts"].values())
 
 
@@ -222,12 +333,29 @@ def test_the_response_is_strict_json():
 
 
 def test_the_record_carries_no_person_message_or_join_link(client, rows):
+    """No name, email, company, Livestorm id other than the session's, chat
+    or question text, transcript word or speaker label: the alignment's
+    anchors carry our own ids (`C0005`, `Q002`, `U0003`) and times only."""
     source = json.dumps(rows[SESSION_ID], default=str)
     missing = [value for value in synthetic.PRIVATE_VALUES if value not in source]
     assert missing == [], "the scan would check nothing for these values"
     text = get(client).text
     assert [value for value in synthetic.PRIVATE_VALUES if value in text] == []
     assert "@" not in text
+    # Every text value of the alignment is a code or one of our own ids.
+    strings = list(_strings(get(client).json()["meta"]["clock"]["alignment"]))
+    assert strings and all(re.fullmatch(r"[CQAU]\d{3,4}|[a-z_]+", value) for value in strings), strings
+
+
+def _strings(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _strings(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _strings(item)
 
 
 def test_the_record_does_not_change_the_cached_row(rows):
@@ -284,7 +412,7 @@ def test_an_all_hands_keeps_its_lanes():
     pulse = record["pulse"]
     assert record["roster"]["internal"] is True
     assert sum(row["audienceChat"] for row in pulse["minutes"]) == 0
-    assert sum(row["teamChat"] for row in pulse["minutes"]) == 12
+    assert sum(row["teamChat"] for row in pulse["minutes"]) == 14
 
 
 def test_an_all_hands_counts_everyone_in_its_audience_measures():
