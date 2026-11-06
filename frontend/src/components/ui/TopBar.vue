@@ -3,11 +3,13 @@ import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
 import Icon from "./Icon.vue";
 import StormIqMark from "./StormIqMark.vue";
+import ForLivestorm from "./ForLivestorm.vue";
 import ThemeToggle from "./ThemeToggle.vue";
 import UiButton from "./UiButton.vue";
 
-// The v1 shell's top bar: the StormIQ mark and Beta tag, the main navigation,
-// the theme toggle and the account button. It wraps onto two lines on small
+// The v1 shell's top bar: the StormIQ wordmark, the Beta tag and the "for
+// Livestorm" lockup, the main navigation, the theme toggle and the account
+// button. It wraps onto two lines on small
 // screens. App.vue owns the signed-in state and the sign-in/out flows; this
 // component only shows them and emits "connect" / "logout".
 const props = defineProps({
@@ -86,9 +88,10 @@ function onLogout() {
     <div class="siq-topbar-inner">
       <div class="siq-topbar-brand">
         <RouterLink to="/single-analysis" class="siq-topbar-home siq-fx" aria-label="StormIQ, go to Sessions">
-          <StormIqMark />
+          <StormIqMark :mark="false" />
         </RouterLink>
         <span class="siq-topbar-beta">Beta</span>
+        <ForLivestorm />
       </div>
 
       <nav class="siq-topbar-nav" aria-label="Main">

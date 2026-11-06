@@ -56,6 +56,11 @@
   --siq-mark-fill: #0b42c3;
   --siq-mark-iq: #0b42c3;
   --siq-mark-bars: #ffffff;
+  /* The "for Livestorm" lockup: which official logo file shows, and its ink. */
+  --siq-logo-on-light: block;
+  --siq-logo-on-dark: none;
+  --siq-lockup-ink: var(--siq-muted);
+  --siq-lockup-rule: var(--siq-hairline-head);
   --siq-s1: #0b54fe;
   --siq-s2: #de7835;
   --siq-s3: #0c7c59;
@@ -163,6 +168,10 @@
     --siq-low-tint: rgba(226, 111, 113, 0.14);
     --siq-mark-fill: #447cfd;
     --siq-mark-iq: #88c0cd;
+    --siq-logo-on-light: none;
+    --siq-logo-on-dark: block;
+    --siq-lockup-ink: var(--siq-muted);
+    --siq-lockup-rule: var(--siq-hairline-head);
     --siq-s1: #447cfd;
     --siq-s2: #cb4a1a;
     --siq-s3: #0c7c59;
@@ -213,6 +222,10 @@
     --siq-low-tint: rgba(226, 111, 113, 0.14);
     --siq-mark-fill: #447cfd;
     --siq-mark-iq: #88c0cd;
+    --siq-logo-on-light: none;
+    --siq-logo-on-dark: block;
+    --siq-lockup-ink: var(--siq-muted);
+    --siq-lockup-rule: var(--siq-hairline-head);
     --siq-s1: #447cfd;
     --siq-s2: #cb4a1a;
     --siq-s3: #0c7c59;
@@ -227,13 +240,18 @@
 }
 
 /*
- * The classic design is dark only. The StormIQ mark it shows (sidebar,
- * compact top bar) keeps its on-dark colours whatever the system or saved
- * theme, so it never fades into the classic dark surfaces.
+ * The classic design is dark only. The StormIQ mark and the "for Livestorm"
+ * lockup it shows (sidebar, compact top bar) keep their on-dark colours
+ * whatever the system or saved theme, so they never fade into the classic
+ * dark surfaces.
  */
 [data-colors-semantic="dark"] {
   --siq-mark-fill: #447cfd;
   --siq-mark-iq: #88c0cd;
+  --siq-logo-on-light: none;
+  --siq-logo-on-dark: block;
+  --siq-lockup-ink: #a4b5c1;
+  --siq-lockup-rule: rgba(255, 255, 255, 0.12);
 }
 
 /* ── v1 page basics (only when the v1 switch is on) ────────────────────── */

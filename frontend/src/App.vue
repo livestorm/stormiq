@@ -4,6 +4,7 @@ import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
 import { api, onUnauthorized } from "./api";
 import SessionHero from "./components/SessionHero.vue";
 import StormIqMark from "./components/ui/StormIqMark.vue";
+import ForLivestorm from "./components/ui/ForLivestorm.vue";
 import TopBar from "./components/ui/TopBar.vue";
 import { isV1 } from "./design/uiVersion";
 import { useWorkspace } from "./store/workspace";
@@ -337,9 +338,10 @@ function toggleSidebar() {
 
     <aside class="sidebar" :class="{ collapsed: sidebarCollapsed, compact: isCompactViewport }">
       <div class="sidebar-brand" :class="{ collapsed: sidebarCollapsed }">
-        <StormIqMark :wordmark="false" :size="32" class="brand-logo" role="img" aria-label="StormIQ" />
-        <div v-if="!sidebarCollapsed" class="brand-copy">
+        <StormIqMark v-if="sidebarCollapsed" :wordmark="false" :size="32" class="brand-logo" role="img" aria-label="StormIQ" />
+        <div v-else class="brand-copy">
           <h1>StormIQ</h1>
+          <ForLivestorm :rule="false" :height="16" />
         </div>
         <button
           v-if="isCompactViewport"

@@ -7,6 +7,7 @@ import Collapsible from "../components/ui/Collapsible.vue";
 import Icon, { ICON_NAMES } from "../components/ui/Icon.vue";
 import StatCard from "../components/ui/StatCard.vue";
 import StatusWord from "../components/ui/StatusWord.vue";
+import ForLivestorm from "../components/ui/ForLivestorm.vue";
 import StormIqMark from "../components/ui/StormIqMark.vue";
 import ThemeToggle from "../components/ui/ThemeToggle.vue";
 import TipBar from "../components/ui/TipBar.vue";
@@ -286,9 +287,10 @@ watch(theme, async () => {
 
     <!-- Type and mark -->
     <section class="g-section" aria-labelledby="g-type">
-      <h2 id="g-type" class="g-section-title">Type (Sora) and the mark</h2>
+      <h2 id="g-type" class="g-section-title">Type (Sora), the lockup and the mark</h2>
       <Card>
         <div class="g-row g-marks">
+          <span class="g-row"><StormIqMark :mark="false" /><ForLivestorm /></span>
           <StormIqMark />
           <StormIqMark :size="40" :wordmark="false" />
           <StormIqMark :size="20" :wordmark="false" />
