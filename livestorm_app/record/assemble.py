@@ -3,10 +3,13 @@
 `assemble_record(inputs)` turns one session's `RecordInputs` into the
 computed part of the response:
 
-- `meta.clock`: the session clock (`record/clock.py`);
+- `meta.clock`: the session clock (`record/clock.py`) and where the
+  recording sits on it (`alignment`, `record/alignment.py`);
 - `record.roster`: the roster's header, counts only;
 - `record.pulse`: chat, questions and written answers per session minute,
-  plus the before and after edges (`clock.minute_bins`);
+  plus the before and after edges (`clock.minute_bins`), and speech
+  (speaking seconds and words) when the alignment allows findings in
+  minutes (`alignment.alignment_allows`);
 - `record.transcriptHealth`: how far the transcript can be trusted
   (`record/transcript_health.py`, built once by `inputs.load_record_inputs`);
 - `record.metricsVersion`, `record.measuresSource` and `record.measures`:
@@ -20,9 +23,10 @@ and of the response (`record.version`).
 
 Only counts and session-level facts leave here: no name, email, company,
 person or message id, or message or transcript text (the caller adds the
-session's own id). The transcript health carries our own utterance ids
-(`U0001`), never a word or a speaker label. A page gets people only through `roster.display_people`, and the
-header carries none.
+session's own id). The transcript health and the alignment carry our own
+ids (`U0001`, `C0001`, `Q001`) and times, never a word or a speaker label.
+A page gets people only through `roster.display_people`, and the header
+carries none.
 
 Pure functions: no database, network or web framework.
 """
@@ -32,13 +36,13 @@ from __future__ import annotations
 import math
 from typing import Any, Dict, Mapping, Optional
 
-from livestorm_app.record.clock import AFTER, BEFORE, MinuteSeries, minute_bins
-from livestorm_app.record.evidence import audience_events
+from livestorm_app.record.alignment import MINUTES, alignment_allows
+from livestorm_app.record.clock import AFTER, BEFORE, MinuteSeries, minute_bins, speech_events
 from livestorm_app.record.inputs import RecordInputs
 from livestorm_app.record.measures import METRICS_VERSION, compute_measures, validate_measures
 from livestorm_app.record.roster import Roster
 
-RECORD_VERSION = 4
+RECORD_VERSION = 5
 
 # Where the measures come from: computed from the cached payloads when the
 # block is built (the caller caches the block per process; nothing is
@@ -46,12 +50,17 @@ RECORD_VERSION = 4
 MEASURES_LIVE = "live"
 
 # The Pulse's lanes, in display order: `clock.EVENT_LANES` and their JSON
-# names. The speech lanes join when the recording is aligned with the clock.
+# names, then the speech lanes (`clock.SPEECH_LANES`), which join only when
+# the alignment allows findings in minutes.
 PULSE_LANES = (
     ("audience_chat", "audienceChat"),
     ("team_chat", "teamChat"),
     ("questions", "questions"),
     ("answers", "answers"),
+)
+SPEECH_PULSE_LANES = (
+    ("speaking_s", "speakingS"),
+    ("words", "words"),
 )
 
 
@@ -77,8 +86,8 @@ def _session_attributes(session_payload: Any) -> Mapping[str, Any]:
 
 def clock_meta(inputs: RecordInputs) -> Dict[str, Any]:
     """`meta.clock`. `startedAtUnix` is `started_at` only, never
-    `estimated_started_at`: without it there is no clock. `alignment` stays
-    None until the recording is aligned with the session clock."""
+    `estimated_started_at`: without it there is no clock. `alignment` is the
+    probe's result (`Alignment.to_json`): ids and times only."""
     base = inputs.clock
     zone = _session_attributes(inputs.session_payload).get("timezone")
     return {
@@ -87,7 +96,7 @@ def clock_meta(inputs: RecordInputs) -> Dict[str, Any]:
         "endSource": base.end_source,
         "lateStartS": _number(base.late_start_s),
         "timezone": (zone.strip() or None) if isinstance(zone, str) else None,
-        "alignment": None,
+        "alignment": inputs.alignment.to_json(),
     }
 
 
@@ -107,25 +116,47 @@ def roster_header(roster: Roster) -> Dict[str, Any]:
     }
 
 
-def _lane_counts(values: Mapping[str, Any]) -> Dict[str, int]:
-    return {name: int(values[lane]) for lane, name in PULSE_LANES}
+def _lane_values(values: Mapping[str, Any], speech: bool) -> Dict[str, Any]:
+    counts: Dict[str, Any] = {name: int(values[lane]) for lane, name in PULSE_LANES}
+    if speech:
+        counts.update({name: _number(values[lane]) for lane, name in SPEECH_PULSE_LANES})
+    return counts
 
 
-def pulse(series: MinuteSeries) -> Dict[str, Any]:
+def speech_state(inputs: RecordInputs) -> Dict[str, Any]:
+    """`record.pulse.speech`: whether the speech lanes are shown, the offset
+    they were placed with (`t = r + offsetS`), and otherwise why not (the
+    alignment's reasons). Shown only when there is a transcript and the
+    alignment allows findings in minutes (verified or assumed)."""
+    alignment = inputs.alignment
+    shown = inputs.transcript is not None and alignment_allows(alignment, MINUTES)
+    return {
+        "shown": shown,
+        "offsetS": _number(alignment.offset_s) if shown else None,
+        "reasons": [] if shown else list(alignment.reasons),
+    }
+
+
+def pulse(series: MinuteSeries, speech: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
     """`record.pulse`: one row per live minute (zero-filled) with a count per
-    lane, the before and after edges, and how many events have no session
-    time (`unplaced`)."""
-    rows = series.minutes[["minute"] + [lane for lane, _ in PULSE_LANES]].to_dict("records")
+    lane, the before and after edges, how many events have no session time
+    (`unplaced`), and the speech lanes' state (`speech_state`). Speaking
+    seconds and words join each row and edge only when they are shown."""
+    speech = speech or {"shown": False, "offsetS": None, "reasons": []}
+    shown = bool(speech["shown"])
+    lanes = PULSE_LANES + (SPEECH_PULSE_LANES if shown else ())
+    rows = series.minutes[["minute"] + [lane for lane, _ in lanes]].to_dict("records")
     before = series.edges[BEFORE]
     after = series.edges[AFTER]
     return {
-        "lanes": [name for _, name in PULSE_LANES],
-        "minutes": [{"minute": int(row["minute"]), **_lane_counts(row)} for row in rows],
+        "lanes": [name for _, name in lanes],
+        "minutes": [{"minute": int(row["minute"]), **_lane_values(row, shown)} for row in rows],
         "edges": {
-            "before": {"counts": _lane_counts(before["counts"]), "firstT": _number(before["first_t"])},
-            "after": {"counts": _lane_counts(after["counts"]), "lastT": _number(after["last_t"])},
+            "before": {"counts": _lane_values(before["counts"], shown), "firstT": _number(before["first_t"])},
+            "after": {"counts": _lane_values(after["counts"], shown), "lastT": _number(after["last_t"])},
         },
         "unplaced": int(series.unplaced),
+        "speech": dict(speech),
     }
 
 
@@ -143,15 +174,17 @@ def measures_for_read(inputs: RecordInputs) -> Dict[str, Any]:
 
 def assemble_record(inputs: RecordInputs) -> Dict[str, Any]:
     """The computed block of the record response: `{meta: {clock}, record}`.
-    The clock, the roster and the authors come from `inputs`; the events are
-    placed and binned once here, and the measures computed once."""
-    events = audience_events(inputs.chat_payload, inputs.questions_payload, inputs.clock)
+    The clock, the roster, the authors, the events and the alignment come
+    from `inputs`; the events and speech are binned once here, and the
+    measures computed once."""
+    speech = speech_state(inputs)
+    speech_df = speech_events(inputs.transcript.utterances, inputs.alignment.offset_s) if speech["shown"] else None
     return {
         "meta": {"clock": clock_meta(inputs)},
         "record": {
             "version": RECORD_VERSION,
             "roster": roster_header(inputs.roster),
-            "pulse": pulse(minute_bins(events, base=inputs.clock)),
+            "pulse": pulse(minute_bins(inputs.events, speech_df, base=inputs.clock), speech),
             "transcriptHealth": inputs.transcript_health,
             **measures_for_read(inputs),
         },

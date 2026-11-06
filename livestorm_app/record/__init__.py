@@ -11,13 +11,17 @@
   ids (`U0001`) and their words.
 - `transcript_health.py`: how far the transcript can be trusted (word
   confidence, speech coverage, speakers, language, unclear stretches).
+- `alignment.py`: where the recording sits on the session clock (links,
+  calls to the chat and questions read aloud against the durations), and
+  `alignment_allows`, the one gate that reads its status.
 - `inputs.py`: the single loader of a session's record inputs (payloads,
-  clock, roster, authors, the parsed transcript and its health).
+  clock, roster, authors, events, the parsed transcript, its health and
+  the alignment).
 - `measures.py`: the measures registry: every number the Report shows, with
   its numerator, denominator, state, coverage and exclusions.
 - `assemble.py`: the record as `GET /api/sessions/{id}/record` serves it
-  (the clock, the roster header, the Pulse, the transcript's health, the
-  measures).
+  (the clock and its alignment, the roster header, the Pulse, the
+  transcript's health, the measures).
 
 No database, network or web framework here. The classic app does not
 import this package: only `api_logic.get_session_record`, the v1 record

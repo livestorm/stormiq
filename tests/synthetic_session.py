@@ -7,7 +7,11 @@ seven audience members with UTMs, a referrer and a registration type, chat
 in the waiting room, live and after the end (each message linked to its
 author's people record), questions answered in writing, orally or not at
 all, a transcript of the whole session (with speaker labels, a stretch of
-unclear words and a phantom speaker) and a few AI outputs.
+unclear words and a phantom speaker) and a few AI outputs. The recording
+started about 20 seconds after `started_at`: the host announces the slides
+link (posted in the chat), calls the room to the chat (three people answer)
+and a guest reads a question aloud, so the alignment probe verifies an
+offset of about +19 s.
 
 Three committed files come from it:
 
@@ -66,8 +70,10 @@ PRIVATE_VALUES = (
     "@example.test", "example.test",
     "Example Co", "Sample Labs", "Head of Events", "Marketing lead",
     "p-host", "p-aud-", "u-aud-", "u-team-", "msg-", "qst-",
-    "Welcome", "pricing", "slides", "replay link", "Will the", "Is there an API",
-    "password_key", "connection_link", "synthetic-password-key",
+    "Welcome", "pricing", "slides", "replay link", "Will the", "Is there an API", "Lyon", "Berlin",
+    "password_key", "connection_link", "synthetic-password-key", "synthetic-gladia-job",
+    # Transcript text: words, never sent.
+    "joining from", "larger teams", "walk through", "share my screen",
 )
 
 
@@ -168,11 +174,11 @@ def people() -> List[Dict[str, Any]]:
                 utm_source="Newsletter", utm_medium="Email", utm_campaign="oct-launch",
                 password_key="synthetic-password-key",
                 connection_link="https://app.livestorm.test/p/x/live?key=synthetic-password-key"),
-        _person("p-aud-2", "Mila", "Ford", registered_s_before=2 * DAY, team_size="1-10", messages=2, questions=1,
+        _person("p-aud-2", "Mila", "Ford", registered_s_before=2 * DAY, team_size="1-10", messages=3, questions=1,
                 attendance_rate=80, referrer="https://www.linkedin.example/feed/?trk=synthetic", country=("DE", "Germany")),
         _person("p-aud-3", "Sam", "Reed", registered_s_before=5 * 3600, messages=2, questions=1, attendance_rate=75,
                 registration_type="detailed"),
-        _person("p-aud-4", "Lena", "Hart", registered_s_before=6 * DAY, team_size="51-200", messages=1, attendance_rate=60,
+        _person("p-aud-4", "Lena", "Hart", registered_s_before=6 * DAY, team_size="51-200", messages=2, attendance_rate=60,
                 utm_source="partner", country=("US", "United States")),
         _person("p-aud-5", "Omar", "Quinn", registered_s_before=-120, questions=1, attendance_rate=40,
                 company="Sample Labs"),
@@ -239,6 +245,8 @@ CHAT = (
     (-60, "u-team-1", "team", "Welcome! We start in a minute."),
     (-30, "u-aud-3", None, "Can you hear us?"),
     (45, "u-team-1", "team", "Slides: https://example.test/slides"),
+    (62, "u-aud-2", None, "Hi from Lyon"),
+    (66, "u-aud-4", None, "Hello from Berlin"),
     (70, "u-aud-1", None, "Thanks!"),
     (130, "u-aud-2", None, "Great intro"),
     (200, "u-aud-3", None, "What about pricing?"),
@@ -296,7 +304,7 @@ def questions_payload() -> Dict[str, Any]:
     one answered orally, one answered in writing, one left open."""
     items = (
         ("qst-001", -45, "p-aud-1", "Will the slides be shared?", 50, "Yes, see the chat.", False),
-        ("qst-002", 300, "p-aud-2", "How does pricing work for teams?", None, None, True),
+        ("qst-002", 300, "p-aud-2", "How does pricing work for larger teams with several hundred seats?", None, None, True),
         ("qst-003", 720, "p-aud-3", "Can we export to CSV?", 760, "Yes, from the Chat page.", False),
         ("qst-004", 1650, "p-aud-5", "Is there an API?", None, None, False),
     )
@@ -339,11 +347,19 @@ def _utterance(speaker: int, start: float, words: List[str], confidence: float =
     }
 
 
-# The scripted lines of the transcript: (speaker, start in recording seconds, words).
+# The scripted lines of the transcript: (speaker, start in recording seconds,
+# words). The recording started about 20 s after `started_at`, so a line at
+# recording second r is heard at session second r + 20: the host announces
+# the slides link just before it is posted (45 s), calls the room to the chat
+# before three greetings (62 to 70 s), and the guest reads the pricing
+# question (asked at 300 s) about ten seconds after it was asked.
 SCRIPT = (
     (0, 3.0, "welcome everyone thanks for joining us today".split()),
     (0, 12.0, "today we look at the new dashboard and the export".split()),
+    (0, 20.0, "i just put the slides link in the chat".split()),
+    (0, 30.0, "tell us in the chat where you are joining from".split()),
     (1, 60.0, "happy to be here let me share my screen".split()),
+    (1, 288.0, "great question how does pricing work for larger teams with several hundred seats".split()),
     (1, 300.0, "pricing works per team and scales with seats".split()),
     (0, 760.0, "yes you can export everything to csv".split()),
     (0, 1700.0, "thank you all see you next time".split()),

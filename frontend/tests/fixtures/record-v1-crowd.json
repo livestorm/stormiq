@@ -8,11 +8,41 @@
       "endSource": "ended_at",
       "lateStartS": 95,
       "timezone": "Europe/Paris",
-      "alignment": null
+      "alignment": {
+        "version": 1,
+        "status": "unavailable",
+        "source": "anchors",
+        "offsetS": null,
+        "plusminusS": null,
+        "allows": {
+          "seconds": false,
+          "minutes": false
+        },
+        "nAnchors": 0,
+        "nAgree": 0,
+        "estimate": null,
+        "durations": {
+          "sessionS": 1800,
+          "audioS": null,
+          "gapS": null,
+          "endSource": "ended_at",
+          "durationAttrS": 1800,
+          "lo": null,
+          "hi": null
+        },
+        "drift": {
+          "early": null,
+          "late": null
+        },
+        "anchors": [],
+        "reasons": [
+          "no_transcript"
+        ]
+      }
     }
   },
   "record": {
-    "version": 4,
+    "version": 5,
     "roster": {
       "source": "session_include",
       "complete": null,
@@ -261,7 +291,14 @@
           "lastT": null
         }
       },
-      "unplaced": 0
+      "unplaced": 0,
+      "speech": {
+        "shown": false,
+        "offsetS": null,
+        "reasons": [
+          "no_transcript"
+        ]
+      }
     },
     "transcriptHealth": {
       "version": 1,
@@ -280,7 +317,7 @@
         "speakerShares": false
       }
     },
-    "metricsVersion": 4,
+    "metricsVersion": 5,
     "measuresSource": "live",
     "measures": {
       "m.roster_coverage": {
@@ -1000,6 +1037,22 @@
       },
       "m.transcript_health": {
         "id": "m.transcript_health",
+        "version": 1,
+        "value": null,
+        "num": null,
+        "den": null,
+        "state": "unavailable",
+        "coverage": {
+          "missing": [
+            "transcript"
+          ]
+        },
+        "excluded": null,
+        "livestorm": null,
+        "rows": null
+      },
+      "m.clock_alignment": {
+        "id": "m.clock_alignment",
         "version": 1,
         "value": null,
         "num": null,

@@ -416,15 +416,16 @@ def get_cached_workspace(session_id: str, *, organization_id: OrgScope) -> Optio
 #
 # The computed block is cached per process, keyed by everything it reads:
 # the row's `updated_at` (every write to the row bumps it, the transcript's
-# and the speaker labels' included), the record's, the measures' and the
-# transcript health's versions (`RECORD_VERSION`, `METRICS_VERSION`,
-# `HEALTH_VERSION`), and what will change without a new row version
-# (`_record_input_versions`). Live state that changes without any of these
-# (none yet) must be read outside the cache, on every request.
+# and the speaker labels' included), the record's, the measures', the
+# transcript health's and the alignment probe's versions (`RECORD_VERSION`,
+# `METRICS_VERSION`, `HEALTH_VERSION`, `ALIGNMENT_VERSION`), and what will
+# change without a new row version (`_record_input_versions`). Live state
+# that changes without any of these (none yet) must be read outside the
+# cache, on every request.
 #
 # The transcript is the largest column: it is read only on a miss, in the
 # same read as the base payloads (a session without one reads a NULL), and
-# only its health stays in the cached block.
+# only its health and the alignment (ids and times) stay in the cached block.
 
 RECORD_FIELDS = (
     "session_payload", "event_payload", "chat_payload", "questions_payload",
@@ -491,12 +492,13 @@ def get_session_record(session_id: str, *, organization_id: OrgScope) -> Dict[st
     # it, so it loads with the first record request: an error in it can't
     # stop the app from starting or reach a classic read. Nothing else
     # outside `record/` imports it (tests/test_roster.py).
+    from livestorm_app.record.alignment import ALIGNMENT_VERSION
     from livestorm_app.record.assemble import RECORD_VERSION, assemble_record
     from livestorm_app.record.inputs import load_record_inputs
     from livestorm_app.record.measures import METRICS_VERSION
     from livestorm_app.record.transcript_health import HEALTH_VERSION
 
-    code_versions = (RECORD_VERSION, METRICS_VERSION, HEALTH_VERSION)
+    code_versions = (RECORD_VERSION, METRICS_VERSION, HEALTH_VERSION, ALIGNMENT_VERSION)
     input_versions = _record_input_versions(session_id, organization_id=organization_id)
     block = _cached_record_block(_record_cache_key(session_id, stamp.get("updated_at"), code_versions, input_versions))
     if block is None:

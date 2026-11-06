@@ -7,10 +7,13 @@ authors of the chat and the questions, resolved to roster people
 (`authors.resolve_authors`). The roster's roles are raised by what each
 person did: the team flags of the chat messages resolved to them, and the
 answers they wrote (`roster.escalate_roles`), except on an internal session.
-The transcript, when there is one, is parsed once here
-(`transcript.parse_transcript`) and its health built once
-(`transcript_health.build_transcript_health`), for the record block and the
-measures alike.
+The chat, questions and written answers are placed on the session clock
+once here (`evidence.audience_events`, with their resolved authors). The
+transcript, when there is one, is parsed once here
+(`transcript.parse_transcript`), its health built once
+(`transcript_health.build_transcript_health`), and the recording aligned
+with the session clock once (`alignment.probe_alignment`, from that parsed
+transcript and those events), for the record block and the measures alike.
 
 The roster comes from stored person rows when the caller has them
 (`roster_rows`), and from the session payload's `include=people` list
@@ -27,8 +30,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional
 
+import pandas as pd
+
+from livestorm_app.record.alignment import Alignment, probe_alignment
 from livestorm_app.record.authors import AuthorIndex, resolve_authors
 from livestorm_app.record.clock import ClockBase, clock_base
+from livestorm_app.record.evidence import audience_events
 from livestorm_app.record.roster import (
     Roster,
     RosterRows,
@@ -59,6 +66,11 @@ class RecordInputs:
     # (`record.transcriptHealth`), built once per load.
     transcript: Optional[ParsedTranscript]
     transcript_health: Mapping[str, Any]
+    # Chat, questions and written answers on the session clock, with their
+    # resolved authors (`evidence.audience_events`), and where the recording
+    # sits on that clock (`meta.clock.alignment`), each built once per load.
+    events: pd.DataFrame
+    alignment: Alignment
 
 
 def _mapping(value: Any) -> Optional[Mapping[str, Any]]:
@@ -149,11 +161,16 @@ def load_record_inputs(cached: Mapping[str, Any], *, roster_rows: Optional[Roste
         expected_language=_event_language(event_payload),
         speaker_names=cached.get("transcript_speaker_names"),
     )
+    roster = escalate_roles(roster, authors.role_signals)
+    events = audience_events(chat_payload, questions_payload, clock, authors)
+    alignment = probe_alignment(
+        transcript, events, clock, questions_payload=questions_payload, internal=bool(roster.meta.internal)
+    )
 
     return RecordInputs(
         session_id=session_id,
         clock=clock,
-        roster=escalate_roles(roster, authors.role_signals),
+        roster=roster,
         authors=authors,
         session_payload=session_payload,
         event_payload=event_payload,
@@ -162,4 +179,6 @@ def load_record_inputs(cached: Mapping[str, Any], *, roster_rows: Optional[Roste
         transcript_payload=transcript_payload,
         transcript=transcript,
         transcript_health=transcript_health,
+        events=events,
+        alignment=alignment,
     )

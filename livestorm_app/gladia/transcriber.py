@@ -293,8 +293,9 @@ def _probe_media_info(video_path: Path) -> dict[str, Any] | None:
     ffprobe when it is installed, otherwise the header `ffmpeg -i` prints (the
     Docker images ship only imageio-ffmpeg's ffmpeg). `creation_time` is kept
     as written: whether it marks the recording's start is not confirmed, so
-    nothing reads it yet. None when neither fact was found. Never raises: this
-    is provenance, not a reason to fail a paid transcription.
+    the alignment probe's anchor that would read it is off
+    (`record/alignment.MEDIA_TIME_ANCHOR`). None when neither fact was found.
+    Never raises: this is provenance, not a reason to fail a paid transcription.
     """
     try:
         info = _ffprobe_media_info(video_path) or _ffmpeg_media_info(video_path)

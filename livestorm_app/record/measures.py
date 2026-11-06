@@ -67,6 +67,7 @@ from typing import Any, Callable, Dict, FrozenSet, List, Literal, Mapping, Named
 import numpy as np
 import pandas as pd
 
+from livestorm_app.record.alignment import ANCHOR_KINDS, MINUTES, SECONDS, alignment_allows
 from livestorm_app.record.authors import KINDS, UNRESOLVED as AUTHORS_UNRESOLVED, AuthorCoverage
 from livestorm_app.record.clock import parse_time
 from livestorm_app.record.evidence import CHAT, QUESTION, question_items
@@ -115,8 +116,8 @@ AUDIENCE_ONLY = "team, guest speakers"
 # and in tests/test_measures.py. The pin also covers each measure's unit,
 # sources, exclusions and gates, so editing one without a new version fails
 # the test. Stored numbers are keyed by it.
-METRICS_VERSION = 4
-REGISTRY_PIN = "371ad80ebb3c49f67537164dae3c8e33b359f0dfb3e9761fc9db464be99f9f46"
+METRICS_VERSION = 5
+REGISTRY_PIN = "75c8565904ab4520049f3e65e4b13435bea2610c28359ea32600dfd0dafe9653"
 
 # Gate thresholds. Provisional: they move with a version bump.
 WROTE_RATE_MIN_ATTENDEES = 10
@@ -1104,6 +1105,46 @@ def _transcript_health(facts: _Facts) -> _Draft:
     )
 
 
+def _anchor_key(kind: str) -> str:
+    head, *rest = kind.split("_")
+    return head + "".join(part.title() for part in rest)
+
+
+def _clock_alignment(facts: _Facts) -> _Draft:
+    """The share of the alignment probe's anchors that agree on the offset
+    (`num` of `den`), with the probe's result in `coverage`
+    (`meta.clock.alignment`, built once by `inputs.load_record_inputs`):
+    the status, the offset applied, its ±, the reasons, the anchors found
+    per kind and the duration gap. No anchors: insufficient, never 0.
+
+    Its state follows the clock through the one gate
+    (`alignment.alignment_allows`), never the status itself: ok when
+    findings in seconds may run (verified), an approximation when only
+    findings in minutes may (assumed: offset 0 applied, not measured), and
+    insufficient otherwise (misaligned: the share is hidden, the counts
+    and the status stay)."""
+    alignment = facts.inputs.alignment
+    found = {_anchor_key(kind): 0 for kind in ANCHOR_KINDS}
+    for anchor in alignment.anchors:
+        found[_anchor_key(anchor.kind)] += 1
+    return _Draft(
+        value=_ratio(alignment.n_agree, alignment.n_anchors),
+        num=alignment.n_agree,
+        den=alignment.n_anchors,
+        quantities={"aligned": 1.0 if alignment_allows(alignment, MINUTES) else 0.0},
+        flags=_flags(approximation=not alignment_allows(alignment, SECONDS)),
+        coverage={
+            "status": alignment.status,
+            "source": alignment.source,
+            "offsetS": alignment.offset_s,
+            "plusminusS": alignment.plusminus_s,
+            "reasons": list(alignment.reasons),
+            "anchors": found,
+            "durationGapS": alignment.durations.get("gapS"),
+        },
+    )
+
+
 # ── The registry ────────────────────────────────────────────────────────────
 
 _ROSTER = (SOURCE_ROSTER,)
@@ -1162,6 +1203,10 @@ _DEFINITIONS = (
     ),
     MeasureDef(
         "m.transcript_health", 1, "ratio", (SOURCE_TRANSCRIPT,), "", (Gate("den", 1),), "transcript-health", _transcript_health,
+    ),
+    MeasureDef(
+        "m.clock_alignment", 1, "ratio", (SOURCE_SESSION, SOURCE_TRANSCRIPT), "", (Gate("den", 1), Gate("aligned", 1)),
+        "clock-alignment", _clock_alignment,
     ),
 )
 REGISTRY: Mapping[str, MeasureDef] = MappingProxyType({definition.id: definition for definition in _DEFINITIONS})

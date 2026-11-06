@@ -399,7 +399,8 @@ def record_reads(monkeypatch):
         (inputs, "roster_from_session_payload"),
         (inputs, "parse_transcript"),
         (inputs, "build_transcript_health"),
-        (assemble, "audience_events"),
+        (inputs, "audience_events"),
+        (inputs, "probe_alignment"),
         (assemble, "minute_bins"),
         (assemble, "compute_measures"),
     ):
@@ -417,13 +418,14 @@ def _read_record(state):
 
 ONCE = {
     "clock_base": 1, "roster_from_session_payload": 1, "parse_transcript": 1, "build_transcript_health": 1,
-    "audience_events": 1, "minute_bins": 1, "compute_measures": 1,
+    "audience_events": 1, "probe_alignment": 1, "minute_bins": 1, "compute_measures": 1,
 }
 
 
 def test_a_record_read_builds_the_clock_roster_transcript_bins_and_measures_once(record_reads):
-    """The transcript is parsed once per build, and its health built once,
-    for the record block and the measures alike."""
+    """The transcript is parsed once per build, its health built once, and
+    the events placed and the recording aligned once, for the record block
+    and the measures alike."""
     _read_record(record_reads)
     assert record_reads["builds"] == ONCE
     # The scope check, then the payloads in one read: never the AI outputs.
@@ -440,6 +442,7 @@ def test_the_cached_record_block_holds_the_health_not_the_transcript(record_read
     (block,) = api_logic._record_cache.values()
     text = json.dumps(block, default=lambda value: f"<{type(value).__name__}>")
     assert "<DataFrame>" not in text and "<ParsedTranscript>" not in text
+    assert "<TokenIndex>" not in text and "<Alignment>" not in text, "the alignment is cached as JSON, never its index"
     assert '"utterances":' not in text and "full_transcript" not in text and "welcome everyone" not in text
 
 
@@ -448,6 +451,15 @@ def test_a_new_health_version_misses_the_record_cache(record_reads, monkeypatch)
 
     _read_record(record_reads)
     monkeypatch.setattr(transcript_health, "HEALTH_VERSION", transcript_health.HEALTH_VERSION + 1)
+    _read_record(record_reads)
+    assert record_reads["builds"] == {name: 2 for name in ONCE}
+
+
+def test_a_new_alignment_version_misses_the_record_cache(record_reads, monkeypatch):
+    from livestorm_app.record import alignment
+
+    _read_record(record_reads)
+    monkeypatch.setattr(alignment, "ALIGNMENT_VERSION", alignment.ALIGNMENT_VERSION + 1)
     _read_record(record_reads)
     assert record_reads["builds"] == {name: 2 for name in ONCE}
 
@@ -519,6 +531,51 @@ def test_an_out_of_scope_record_read_stops_at_the_scope_check(record_reads):
             api_logic.get_session_record(session_id, organization_id=scope)
     assert record_reads["reads"] == [("updated_at",)] * 3
     assert record_reads["builds"] == {}
+
+
+# ── The alignment probe ─────────────────────────────────────────────────────
+
+
+def test_the_alignment_probe_stays_cheap_on_a_two_hour_session(monkeypatch):
+    """The benchmark's 2-hour session (random words from a 73-word
+    vocabulary, so most messages' words are everywhere): one token index
+    per probe, every message compared through it, and the order check
+    (`_lcs`) only for the few whose words fill at most `READ_MAX_WINDOWS`
+    windows. Nothing it finds there is unique, so no anchor."""
+    import importlib.util
+    from pathlib import Path
+
+    from livestorm_app.record import alignment, clock, evidence
+    from livestorm_app.record.transcript import parse_transcript
+
+    path = Path(__file__).resolve().parent.parent / "scripts" / "seed_benchmark_sessions.py"
+    spec = importlib.util.spec_from_file_location("seed_benchmark_sessions", path)
+    seed = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(seed)
+    rng = random.Random(5)
+    start = 1790845200
+    people = seed.build_people(rng, 50, start)
+    base = clock.clock_base(seed.build_session_payload("bench-long", "evt", 7200, people, start))
+    questions_payload = seed.build_questions(rng, 80, people, start, 7200)
+    events = evidence.audience_events(seed.build_chat(rng, 600, people, start, 7200), questions_payload, base)
+    transcript = parse_transcript(seed.build_transcript(rng, "bench-long", 7200))
+
+    counts = {"index": 0, "lcs": 0}
+    for name in ("TokenIndex", "_lcs"):
+        real = getattr(alignment, name)
+
+        def counted(*args, _real=real, _key="index" if name == "TokenIndex" else "lcs", **kwargs):
+            counts[_key] += 1
+            return _real(*args, **kwargs)
+
+        monkeypatch.setattr(alignment, name, counted)
+    started = time.monotonic()
+    result = alignment.probe_alignment(transcript, events, base, questions_payload=questions_payload)
+    elapsed = time.monotonic() - started
+    assert counts["index"] == 1
+    assert counts["lcs"] < len(events) / 10, counts
+    assert (result.status, result.n_anchors) == ("assumed", 0)
+    assert elapsed < 1, f"the probe took {elapsed:.2f} s on a 2-hour session"
 
 
 # ── Postgres: connection pool ───────────────────────────────────────────────

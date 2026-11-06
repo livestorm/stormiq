@@ -8,11 +8,90 @@
       "endSource": "ended_at",
       "lateStartS": 95,
       "timezone": "Europe/Paris",
-      "alignment": null
+      "alignment": {
+        "version": 1,
+        "status": "verified",
+        "source": "anchors",
+        "offsetS": 18.9,
+        "plusminusS": 5.7,
+        "allows": {
+          "seconds": true,
+          "minutes": true
+        },
+        "nAnchors": 3,
+        "nAgree": 3,
+        "estimate": {
+          "offsetS": 18.9,
+          "lo": 13.2,
+          "hi": 24.6,
+          "nAgree": 3
+        },
+        "durations": {
+          "sessionS": 1800,
+          "audioS": 1800,
+          "gapS": 0,
+          "endSource": "ended_at",
+          "durationAttrS": 1800,
+          "lo": -30,
+          "hi": 30
+        },
+        "drift": {
+          "early": {
+            "offsetS": 18.9,
+            "lo": 13.2,
+            "hi": 24.6,
+            "nAgree": 3
+          },
+          "late": null
+        },
+        "anchors": [
+          {
+            "kind": "link",
+            "e": "C0005",
+            "u": [
+              "U0003"
+            ],
+            "t": 45,
+            "r": 22.7,
+            "lo": -67.7,
+            "hi": 52.3,
+            "agrees": true,
+            "half": "early"
+          },
+          {
+            "kind": "wave",
+            "e": "C0006",
+            "u": [
+              "U0004"
+            ],
+            "t": 62,
+            "r": 34.4,
+            "lo": -17.4,
+            "hi": 24.6,
+            "agrees": true,
+            "half": "early",
+            "burst": 3
+          },
+          {
+            "kind": "read_aloud",
+            "e": "Q002",
+            "u": [
+              "U0028"
+            ],
+            "t": 300,
+            "r": 289.8,
+            "lo": 13.2,
+            "hi": 1810.2,
+            "agrees": true,
+            "half": "early"
+          }
+        ],
+        "reasons": []
+      }
     }
   },
   "record": {
-    "version": 4,
+    "version": 5,
     "roster": {
       "source": "session_include",
       "complete": null,
@@ -27,7 +106,9 @@
         "audienceChat",
         "teamChat",
         "questions",
-        "answers"
+        "answers",
+        "speakingS",
+        "words"
       ],
       "minutes": [
         {
@@ -35,210 +116,270 @@
           "audienceChat": 0,
           "teamChat": 1,
           "questions": 0,
-          "answers": 1
+          "answers": 1,
+          "speakingS": 15.8,
+          "words": 36
         },
         {
           "minute": 1,
-          "audienceChat": 1,
+          "audienceChat": 3,
           "teamChat": 0,
           "questions": 0,
-          "answers": 0
+          "answers": 0,
+          "speakingS": 33.7,
+          "words": 76
         },
         {
           "minute": 2,
           "audienceChat": 1,
           "teamChat": 0,
           "questions": 0,
-          "answers": 0
+          "answers": 0,
+          "speakingS": 45.3,
+          "words": 102
         },
         {
           "minute": 3,
           "audienceChat": 1,
           "teamChat": 0,
           "questions": 0,
-          "answers": 0
+          "answers": 0,
+          "speakingS": 45.3,
+          "words": 102
         },
         {
           "minute": 4,
           "audienceChat": 0,
           "teamChat": 1,
           "questions": 0,
-          "answers": 0
+          "answers": 0,
+          "speakingS": 45.3,
+          "words": 102
         },
         {
           "minute": 5,
           "audienceChat": 0,
           "teamChat": 0,
           "questions": 1,
-          "answers": 0
+          "answers": 0,
+          "speakingS": 31.9,
+          "words": 72
         },
         {
           "minute": 6,
           "audienceChat": 0,
           "teamChat": 0,
           "questions": 0,
-          "answers": 0
+          "answers": 0,
+          "speakingS": 45.3,
+          "words": 102
         },
         {
           "minute": 7,
           "audienceChat": 0,
           "teamChat": 0,
           "questions": 0,
-          "answers": 0
+          "answers": 0,
+          "speakingS": 45.3,
+          "words": 102
         },
         {
           "minute": 8,
           "audienceChat": 0,
           "teamChat": 0,
           "questions": 0,
-          "answers": 0
+          "answers": 0,
+          "speakingS": 45.3,
+          "words": 102
         },
         {
           "minute": 9,
           "audienceChat": 0,
           "teamChat": 0,
           "questions": 0,
-          "answers": 0
+          "answers": 0,
+          "speakingS": 45.3,
+          "words": 102
         },
         {
           "minute": 10,
           "audienceChat": 2,
           "teamChat": 0,
           "questions": 0,
-          "answers": 0
+          "answers": 0,
+          "speakingS": 45.3,
+          "words": 102
         },
         {
           "minute": 11,
           "audienceChat": 0,
           "teamChat": 0,
           "questions": 0,
-          "answers": 0
+          "answers": 0,
+          "speakingS": 45.3,
+          "words": 102
         },
         {
           "minute": 12,
           "audienceChat": 0,
           "teamChat": 0,
           "questions": 1,
-          "answers": 1
+          "answers": 1,
+          "speakingS": 39.3,
+          "words": 88.5
         },
         {
           "minute": 13,
           "audienceChat": 0,
           "teamChat": 0,
           "questions": 0,
-          "answers": 0
+          "answers": 0,
+          "speakingS": 39.25,
+          "words": 88.5
         },
         {
           "minute": 14,
           "audienceChat": 0,
           "teamChat": 0,
           "questions": 0,
-          "answers": 0
+          "answers": 0,
+          "speakingS": 45.3,
+          "words": 102
         },
         {
           "minute": 15,
           "audienceChat": 1,
           "teamChat": 1,
           "questions": 0,
-          "answers": 0
+          "answers": 0,
+          "speakingS": 31,
+          "words": 70
         },
         {
           "minute": 16,
           "audienceChat": 0,
           "teamChat": 0,
           "questions": 0,
-          "answers": 0
+          "answers": 0,
+          "speakingS": 45.3,
+          "words": 102
         },
         {
           "minute": 17,
           "audienceChat": 0,
           "teamChat": 0,
           "questions": 0,
-          "answers": 0
+          "answers": 0,
+          "speakingS": 45.3,
+          "words": 102
         },
         {
           "minute": 18,
           "audienceChat": 0,
           "teamChat": 0,
           "questions": 0,
-          "answers": 0
+          "answers": 0,
+          "speakingS": 45.3,
+          "words": 102
         },
         {
           "minute": 19,
           "audienceChat": 0,
           "teamChat": 0,
           "questions": 0,
-          "answers": 0
+          "answers": 0,
+          "speakingS": 45.3,
+          "words": 102
         },
         {
           "minute": 20,
           "audienceChat": 1,
           "teamChat": 0,
           "questions": 0,
-          "answers": 0
+          "answers": 0,
+          "speakingS": 45.3,
+          "words": 102
         },
         {
           "minute": 21,
           "audienceChat": 0,
           "teamChat": 0,
           "questions": 0,
-          "answers": 0
+          "answers": 0,
+          "speakingS": 45.3,
+          "words": 102
         },
         {
           "minute": 22,
           "audienceChat": 0,
           "teamChat": 0,
           "questions": 0,
-          "answers": 0
+          "answers": 0,
+          "speakingS": 45.3,
+          "words": 102
         },
         {
           "minute": 23,
           "audienceChat": 0,
           "teamChat": 0,
           "questions": 0,
-          "answers": 0
+          "answers": 0,
+          "speakingS": 45.3,
+          "words": 102
         },
         {
           "minute": 24,
           "audienceChat": 0,
           "teamChat": 0,
           "questions": 0,
-          "answers": 0
+          "answers": 0,
+          "speakingS": 45.3,
+          "words": 102
         },
         {
           "minute": 25,
           "audienceChat": 1,
           "teamChat": 0,
           "questions": 0,
-          "answers": 0
+          "answers": 0,
+          "speakingS": 45.3,
+          "words": 102
         },
         {
           "minute": 26,
           "audienceChat": 0,
           "teamChat": 0,
           "questions": 0,
-          "answers": 0
+          "answers": 0,
+          "speakingS": 45.3,
+          "words": 102
         },
         {
           "minute": 27,
           "audienceChat": 0,
           "teamChat": 0,
           "questions": 1,
-          "answers": 0
+          "answers": 0,
+          "speakingS": 45.3,
+          "words": 102
         },
         {
           "minute": 28,
           "audienceChat": 0,
           "teamChat": 0,
           "questions": 0,
-          "answers": 0
+          "answers": 0,
+          "speakingS": 26.15,
+          "words": 59
         },
         {
           "minute": 29,
           "audienceChat": 1,
           "teamChat": 0,
           "questions": 0,
-          "answers": 0
+          "answers": 0,
+          "speakingS": 0,
+          "words": 0
         }
       ],
       "edges": {
@@ -247,7 +388,9 @@
             "audienceChat": 3,
             "teamChat": 1,
             "questions": 1,
-            "answers": 0
+            "answers": 0,
+            "speakingS": 0,
+            "words": 0
           },
           "firstT": -300
         },
@@ -256,12 +399,19 @@
             "audienceChat": 1,
             "teamChat": 0,
             "questions": 0,
-            "answers": 0
+            "answers": 0,
+            "speakingS": 0,
+            "words": 0
           },
           "lastT": 1840
         }
       },
-      "unplaced": 0
+      "unplaced": 0,
+      "speech": {
+        "shown": true,
+        "offsetS": 18.9,
+        "reasons": []
+      }
     },
     "transcriptHealth": {
       "version": 1,
@@ -269,19 +419,19 @@
       "reasons": [],
       "model": "solaria-1",
       "words": {
-        "count": 2753,
-        "withConfidence": 2753,
+        "count": 2734,
+        "withConfidence": 2734,
         "meanConfidence": 0.9169,
         "lowConfidenceShare": 0.0062,
         "source": "utterances",
         "rebasedUtterances": 0
       },
       "coverage": {
-        "speechS": 1222.25,
+        "speechS": 1213.7,
         "audioS": 1800,
         "liveS": 1800,
-        "shareOfAudio": 0.679,
-        "shareOfLive": 0.679,
+        "shareOfAudio": 0.6743,
+        "shareOfLive": 0.6743,
         "firstSpeechR": 3,
         "tailS": 96.95
       },
@@ -319,7 +469,7 @@
         "speakerShares": true
       }
     },
-    "metricsVersion": 4,
+    "metricsVersion": 5,
     "measuresSource": "live",
     "measures": {
       "m.roster_coverage": {
@@ -547,9 +697,9 @@
         "rows": [
           {
             "key": "chat",
-            "items": 17,
+            "items": 19,
             "withoutAuthor": 0,
-            "resolvedItems": 17,
+            "resolvedItems": 19,
             "authors": 7,
             "resolvedAuthors": 7,
             "resolvedShare": 1.0,
@@ -604,7 +754,7 @@
           },
           {
             "key": "messages",
-            "value": 12,
+            "value": 14,
             "source": "people"
           },
           {
@@ -629,7 +779,7 @@
         "version": 1,
         "value": null,
         "num": null,
-        "den": 13,
+        "den": 15,
         "state": "insufficient",
         "coverage": {
           "roster": "partial",
@@ -922,19 +1072,44 @@
         "version": 1,
         "value": 0.9169,
         "num": null,
-        "den": 2753,
+        "den": 2734,
         "state": "ok",
         "coverage": {
           "health": "ok",
           "reasons": [],
           "model": "solaria-1",
-          "words": 2753,
+          "words": 2734,
           "lowConfidenceShare": 0.0062,
-          "speechShareOfAudio": 0.679,
+          "speechShareOfAudio": 0.6743,
           "speakersSubstantial": 2,
           "speakersExpected": 2,
           "splitRisk": false,
           "chunks": 1
+        },
+        "excluded": null,
+        "livestorm": null,
+        "rows": null
+      },
+      "m.clock_alignment": {
+        "id": "m.clock_alignment",
+        "version": 1,
+        "value": 1.0,
+        "num": 3,
+        "den": 3,
+        "state": "ok",
+        "coverage": {
+          "status": "verified",
+          "source": "anchors",
+          "offsetS": 18.9,
+          "plusminusS": 5.7,
+          "reasons": [],
+          "anchors": {
+            "link": 1,
+            "wave": 1,
+            "readAloud": 1,
+            "mediaTime": 0
+          },
+          "durationGapS": 0
         },
         "excluded": null,
         "livestorm": null,
