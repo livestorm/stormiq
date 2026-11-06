@@ -13,24 +13,70 @@ The services StormIQ calls, how models are chosen, and the timeout and retry rul
 
 ## Choosing the provider and models
 
-Each value is resolved in this order: the admin setting in `system_settings` (editable at `/admin`), then the env var, then the default in [`config.py`](../livestorm_app/config.py).
+The text provider is the `llm_provider` admin setting (editable at `/admin`), then the `LLM_PROVIDER` env var, then `anthropic`. Switching provider needs the matching key on the worker.
 
-| What | Admin setting | Env var | Default |
-|---|---|---|---|
-| Text provider | `llm_provider` | `LLM_PROVIDER` | `anthropic` |
-| Model for analysis, content and translation | `llm_default_model` | — | `claude-haiku-4-5-20251001` (Anthropic), `gpt-4o-mini` (OpenAI) |
-| Model for Smart Recap | `llm_smart_recap_model` | — | `claude-sonnet-4-6` (Anthropic), `gpt-5.4-mini` (OpenAI) |
-| Image model | `image_model` | `IMAGE_MODEL` | `gpt-image-2` |
+### The model catalog
 
-Smart Recap deliberately uses a stronger model than the other flows. Image size and quality come from `IMAGE_SIZE` (default `1536x1024`) and `IMAGE_QUALITY` (default `high`). Switching provider needs the matching key on the worker.
+[`ai/models.py`](../livestorm_app/ai/models.py) lists every text model id StormIQ knows (`CATALOG`), with what each one accepts: its largest `max_tokens`, whether it thinks by default, its effort levels, `temperature`, mid-conversation system messages, the server-side fallback, the shortest prefix that caches, and structured outputs. A model's status says where it may be chosen:
 
-The Admin page offers these models (`frontend/src/views/AdminView.vue`):
+| Status | Chosen for | Models |
+|---|---|---|
+| `offered` | the v1 jobs | Claude Haiku 5.5, Sonnet 5.5, Opus 5.5 |
+| `legacy` | the classic outputs | Claude Haiku 4.5, Sonnet 4.6, Opus 4.8; gpt-4o-mini, gpt-4o, gpt-4.1-mini, gpt-4.1, gpt-5.4-mini |
+| `hidden` | nothing, but a setting saved earlier still works | Claude Opus 4.7 (Admin offered it until Opus 4.8 replaced it) |
 
-- **Anthropic:** Claude Haiku 4.5 and Sonnet 4.6 (the defaults) and Opus 4.8. Models that think by default (Claude 5 and later: Opus 5, Sonnet 5, the 5.5 models, Fable) are not offered yet: thinking counts toward `max_tokens`, and the flows' budgets (900 tokens for Smart Recap, 2,500 for the overall analysis) are sized for models that answer directly. Offering them needs larger budgets and an explicit effort setting.
-- **OpenAI:** gpt-4o-mini, gpt-4o, gpt-4.1-mini and gpt-4.1. OpenAI shuts all four down on 2027-01-14 ([deprecations](https://developers.openai.com/api/docs/deprecations)); they must be replaced before then.
+The Claude 5.5 models think by default, and thinking counts toward `max_tokens`, so they are offered only where the budget has room for it. From Claude 5, the catalog lists only the 5.5 models, on purpose: Opus 5, Sonnet 5, Fable 5 and Fable 5.1 have no row, so Admin refuses them under every key. A model gets a row when a job needs it. The classic outputs' budgets (900 tokens for Smart Recap, 2,500 for the overall analysis) are sized for models that answer directly.
+
+The OpenAI rows are unverified until a live check; their `temperature` and token parameter match what the adapter sends today. OpenAI shuts gpt-4o-mini, gpt-4o, gpt-4.1-mini and gpt-4.1 down on 2027-01-14 ([deprecations](https://developers.openai.com/api/docs/deprecations)); they must be replaced before then.
+
+### One model per job
+
+[`ai/jobs.py`](../livestorm_app/ai/jobs.py) holds one `JobSpec` per AI job kind: its default model per provider, its effort and its answer budget. Only the model can be changed; effort and budget are code.
+
+| Job kind | Used for | Default model (Anthropic · OpenAI) | Effort | Answer tokens |
+|---|---|---|---|---|
+| `overall_analysis` | Overall Analysis | `claude-haiku-4-5-20251001` · `gpt-4o-mini` | low | 2,500 |
+| `deep_analysis` | Deep Analysis | `claude-haiku-4-5-20251001` · `gpt-4o-mini` | medium | 5,000 |
+| `smart_recap` | Smart Recap, every tone | `claude-sonnet-4-6` · `gpt-5.4-mini` | low | 900 |
+| `content_repurposing` | Content Repurposing | `claude-haiku-4-5-20251001` · `gpt-4o-mini` | medium | 12,000 |
+| `translation` | the French versions of Overall Analysis, Deep Analysis and Content Repurposing | `claude-haiku-4-5-20251001` · `gpt-4o-mini` | low | 6,000, 8,000 (deep) or 12,000 (content) |
+| `profile` | v1: the session profile | `claude-haiku-5-5` · none yet | low | 2,000 |
+| `chat_labels` | v1: chat labels, per batch | `claude-haiku-5-5` · none yet | low | 8,000 |
+| `understanding` | v1: the understanding passes | `claude-sonnet-5-5` · none yet | medium | 32,000 |
+| `verify_meaning` | v1: the meaning check | `claude-haiku-5-5` · none yet | low | 2,000 |
+
+Smart Recap deliberately uses a stronger model than the other classic outputs. The classic outputs still send no effort, and their callers pass the answer tokens above as `max_tokens`. Nothing runs the v1 jobs yet, and they have no OpenAI model until the live check.
+
+**Budget** (`ai.jobs.budget`). A job's `max_tokens` is its answer tokens, plus room for thinking when the model thinks by default (`THINKING_HEADROOM`: 4,000 at low effort, 16,000 at medium, 32,000 at high, 48,000 at xhigh, 64,000 at max), capped at the model's largest `max_tokens`. Above 16,000, `budget` marks the call to stream. No call streams yet: streaming arrives with the Anthropic SDK transport, and until then every LLM call is the non-streaming request in the timeouts table below. The headroom is a guess until usage is logged per job. On their defaults, the v1 jobs get 6,000, 12,000, 48,000 (marked to stream) and 6,000.
+
+### Which model a job uses
+
+`ai.jobs.resolve_model` (and `llm_client.get_llm_model(kind)`, which the classic runners call) takes the first of:
+
+1. the per-job setting `llm_model.<provider>.<kind>`, for example `llm_model.anthropic.smart_recap`;
+2. for the classic outputs only, the older key that names no provider: `llm_default_model` (four jobs: overall and deep analysis, content repurposing, translation) or `llm_smart_recap_model` (Smart Recap). These keys don't name a provider, so a saved id is used only while its provider is active. Under the other provider, the job skips it and logs a WARNING;
+3. the job's default for the active provider.
+
+A saved id that is not offered for the job (a setting saved before the catalog, or Opus 4.7) is still used, with a WARNING in the worker log: swapping it silently would change classic outputs. An id the catalog doesn't know is used with the active provider, as before. A v1 job on OpenAI fails with "No OpenAI model is set up for … yet."
+
+### What Admin may save
+
+`POST /api/admin/settings` checks model settings against the catalog (`ai.jobs.check_model_setting`) and refuses anything else with 400 and a message listing the choices:
+
+- `llm_model.<provider>.<kind>` takes a model offered for that job on that provider.
+- `llm_default_model` and `llm_smart_recap_model` take a classic-output model of either provider.
+- `llm_provider` is saved as given and checked where it is read: `llm_client.get_provider` ignores any value but `anthropic` or `openai` and falls back to `LLM_PROVIDER`.
+- `image_model` is saved and sent as given, except that an empty or retired id becomes gpt-image-2 (`cover_image.resolve_image_model`).
+
+The Admin page still has its own lists (`frontend/src/views/AdminView.vue`), and the server accepts every entry (`tests/test_model_catalog.py` checks this):
+
+- **Anthropic:** Claude Haiku 4.5 and Sonnet 4.6 (the defaults) and Opus 4.8.
+- **OpenAI:** gpt-4o-mini, gpt-4o, gpt-4.1-mini and gpt-4.1.
 - **Images:** gpt-image-2. gpt-image-1 was shut down on 2026-10-23: `cover_image.resolve_image_model` sends gpt-image-2 when the setting or `IMAGE_MODEL` still names it, and Admin shows gpt-image-2 as active.
 
-**Temperature.** Every flow asks for a low `temperature` (0.2, or 0.1 for translation). Claude 4.7 and later models reject a non-default temperature, so `llm_client._call_anthropic` sends it only when `llm_client.anthropic_accepts_temperature` says the model accepts it: Claude models up to 4.6 (Haiku 4.5, Sonnet 4.6, Opus 4.6 and older). Any other or unknown model id gets no temperature and samples at the default. This holds only on the API version the app sends (`config.ANTHROPIC_API_VERSION`, `2023-06-01`): from `2026-10-21` on, every model rejects `temperature`, and the helper then sends it to none. The OpenAI adapter always sends it.
+The image model is the `image_model` setting, then `IMAGE_MODEL`, then `gpt-image-2`. Image size and quality come from `IMAGE_SIZE` (default `1536x1024`) and `IMAGE_QUALITY` (default `high`).
+
+**Temperature.** Every classic output asks for a low `temperature` (0.2, or 0.1 for translation). Claude 4.7 and later models reject a non-default temperature, so `llm_client._call_anthropic` sends it only when `llm_client.anthropic_accepts_temperature` says the model accepts it. A catalog model answers from its `temperature_ok`: Haiku 4.5 and Sonnet 4.6 accept it, the others don't. An id outside the catalog keeps the rule by version (`llm_client.claude_version_accepts_temperature`): Claude models up to 4.6 accept it, and any other or unknown id gets no temperature and samples at the default. This holds only on the API version the app sends (`config.ANTHROPIC_API_VERSION`, `2023-06-01`): from `2026-10-21` on, every model rejects `temperature`, and the helper then sends it to none. The OpenAI adapter always sends it.
 
 ## Timeouts and retries
 

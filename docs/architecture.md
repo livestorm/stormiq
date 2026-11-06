@@ -29,7 +29,7 @@ Browser ── Vue SPA ──/api──▶ web: FastAPI (app.py) ─────
 | `livestorm_app/livestorm/` | Livestorm REST API: `client.py` (the shared HTTP session, fetchers, error formatting) and `payloads.py` (JSON:API parsing, pagination, event and session pickers, the registrant join-link strip, one person's facts for the v1 roster: `parse_person`) |
 | `livestorm_app/analytics/` | The deterministic pipeline: `session_overview.py` (people, hero stats, distributions), `audience.py` (chat and questions tables), `transcript.py` (transcript insights), `cross_source.py` (session-stage timeline) |
 | `livestorm_app/record/` | The v1 Report's session record, as pure functions over cached payloads: `clock.py` (the session clock and minute bins), `evidence.py` (chat, questions and written answers with stable ids), `roster.py` (one row per person: role, channel, lead time, `P-` ref; the prompt and display views), `inputs.py` (the single loader of a session's record inputs), `assemble.py` (the record route's response: the clock, the roster header, the Pulse). Outside it, only `api_logic.get_session_record` imports it, inside the function |
-| `livestorm_app/ai/` | `prompts.py` (system prompts from `prompts/`), `llm_inputs.py` (what the model is sent), `generation.py` (analyses, recap, content, translation), `cover_image.py` |
+| `livestorm_app/ai/` | `models.py` (the text model catalog), `jobs.py` (one spec per AI job kind and the model each uses), `prompts.py` (system prompts from `prompts/`), `llm_inputs.py` (what the model is sent), `generation.py` (analyses, recap, content, translation), `cover_image.py` |
 | `livestorm_app/pdf.py` | PDF rendering of AI outputs (reportlab) |
 | `livestorm_app/db.py` | Connection pool, schema bootstrap, every SQL query |
 | `livestorm_app/queue.py` | arq job ids, enqueue and status from sync code (`_QueueBridge`) |
@@ -40,7 +40,7 @@ Browser ── Vue SPA ──/api──▶ web: FastAPI (app.py) ─────
 | `livestorm_app/gladia/` | Gladia transcription client (`transcriber.py`) and a debugging CLI |
 | `livestorm_app/transcript_client.py` | The worker's entry point into Gladia (keeps the web process from importing it) |
 | `livestorm_app/timing.py` | Per-request timing log |
-| `livestorm_app/config.py` | URLs, model defaults, prompt paths, `.env` loader |
+| `livestorm_app/config.py` | URLs, the Anthropic API version, cover image defaults, prompt paths, `.env` loader |
 | `prompts/` | Every AI prompt, as plain text |
 | `scripts/` | Backfills, diagnostics, the local benchmark |
 | `tests/` | pytest, including the access-control route matrix |

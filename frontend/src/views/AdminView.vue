@@ -28,6 +28,9 @@ const savingKey = ref(null);
 const settingsError = ref("");
 const settingsSuccess = ref("");
 
+// The server refuses a model id outside its catalog (livestorm_app/ai/models.py,
+// checked by ai.jobs.check_model_setting), so every id here must be a
+// classic-output model there; tests/test_model_catalog.py checks it.
 // Claude 4.7 and later models take no `temperature`; llm_client sends it
 // only to the models that accept it (anthropic_accepts_temperature).
 // Models that think by default (Claude 5 and later) are not offered yet:

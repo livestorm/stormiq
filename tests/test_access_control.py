@@ -20,6 +20,7 @@ from fastapi.routing import APIRoute, iter_route_contexts
 from fastapi.testclient import TestClient
 
 import app as app_module
+from livestorm_app.routes import admin as routes_admin
 from livestorm_app.routes import common as routes_common
 from livestorm_app.routes import models as routes_models
 from livestorm_app.routes import sessions as routes_sessions
@@ -309,6 +310,71 @@ def test_admin_routes_reject_anonymous_and_non_admins(client, method, path):
 def test_admin_check_accepts_admin(client):
     client.cookies.set(oauth_client.LIVESTORM_OAUTH_COOKIE, "conn-admin")
     assert client.get("/api/admin/check").status_code == 200
+
+
+@pytest.fixture
+def saved_settings(monkeypatch):
+    saved: list = []
+    monkeypatch.setattr(routes_admin, "set_setting", lambda key, value: saved.append((key, value)))
+    return saved
+
+
+def _save_setting(client, key: str, value: str):
+    client.cookies.set(oauth_client.LIVESTORM_OAUTH_COOKIE, "conn-admin")
+    return client.post("/api/admin/settings", json={"key": key, "value": value})
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "message"),
+    [
+        ("llm_default_model", "not-a-model", "Unknown model id 'not-a-model'"),
+        ("llm_smart_recap_model", "claude-sonnet-5-5", "Claude Sonnet 5.5 is not offered for Smart Recap"),
+        ("llm_model.anthropic.understanding", "claude-haiku-4-5-20251001", "is not an Anthropic model offered for Session understanding"),
+        ("llm_model.openai.profile", "gpt-4o", "No OpenAI model is offered for Session profile yet"),
+    ],
+)
+def test_admin_settings_refuse_a_model_outside_the_catalog(client, saved_settings, key, value, message):
+    response = _save_setting(client, key, value)
+    assert response.status_code == 400
+    assert response.json()["detail"]["resource"] == "Setting"
+    assert message in response.json()["detail"]["message"]
+    assert saved_settings == []
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("llm_default_model", "claude-opus-4-8"),
+        ("llm_default_model", "gpt-4.1"),  # legacy keys take either provider's models
+        ("llm_smart_recap_model", "gpt-5.4-mini"),
+        ("llm_model.anthropic.understanding", "claude-opus-5-5"),
+        ("llm_model.openai.smart_recap", "gpt-4o"),
+        # Checked where they are read, as before.
+        ("llm_provider", "openai"),
+        ("image_model", "gpt-image-2"),
+    ],
+)
+def test_admin_settings_save_allowed_values(client, saved_settings, key, value):
+    response = _save_setting(client, key, f"  {value} ")
+    assert response.status_code == 200
+    assert saved_settings == [(key, value)]
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "message"),
+    [
+        ("llm_model.anthropic.not_a_job", "claude-opus-5-5", "Unknown setting key"),
+        ("llm_model.mistral.profile", "claude-opus-5-5", "Unknown setting key"),
+        ("something_else", "x", "Unknown setting key"),
+        ("llm_default_model", "   ", "Value cannot be empty"),
+        ("image_model", "", "Value cannot be empty"),
+    ],
+)
+def test_admin_settings_refuse_unknown_keys_and_empty_values(client, saved_settings, key, value, message):
+    response = _save_setting(client, key, value)
+    assert response.status_code == 400
+    assert message in response.json()["detail"]["message"]
+    assert saved_settings == []
 
 
 def test_inline_api_key_rejected_outside_local_dev(client, backend):

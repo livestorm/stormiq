@@ -107,13 +107,13 @@ Admins are this table plus the `ADMIN_EMAILS` env var (bootstrap admins, who can
 
 ```sql
 system_settings (
-  key        TEXT PRIMARY KEY,                 -- allow-listed in routes/admin.py: llm_provider, llm_default_model, llm_smart_recap_model, image_model
+  key        TEXT PRIMARY KEY,                 -- allow-listed in routes/admin.py: llm_provider, image_model, llm_default_model, llm_smart_recap_model, llm_model.<provider>.<kind>
   value      TEXT NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )
 ```
 
-Admin-editable overrides for provider and model selection (`/api/admin/settings`, see [providers.md](providers.md)). Each process caches a value for 60 s and keeps serving the last known value if the database is briefly unreachable.
+Admin-editable overrides for provider and model selection (`/api/admin/settings`, see [providers.md](providers.md#choosing-the-provider-and-models)). `llm_model.<provider>.<kind>` picks one AI job's model on one provider, for example `llm_model.anthropic.smart_recap`; the two older model keys name no provider: `llm_default_model` covers four jobs and `llm_smart_recap_model` covers Smart Recap. Model values are checked against the catalog when saved (`ai.jobs.check_model_setting`). Each process caches a value for 60 s and keeps serving the last known value if the database is briefly unreachable.
 
 ## Caching rules
 

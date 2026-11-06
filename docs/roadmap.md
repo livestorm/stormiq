@@ -63,7 +63,8 @@ Comparative (2 sessions) and cumulative (up to 10) analysis. Depends on the card
 ## 5. Models
 
 - Replace the four OpenAI text models before OpenAI shuts them down on 2027-01-14 ([providers.md](providers.md#choosing-the-provider-and-models)).
-- Offer the Claude models that think by default (Claude 5 and later) once each flow has a larger token budget and an explicit effort setting.
+- Offer the Claude models that think by default (Claude 5 and later) for the classic outputs once each has a larger token budget and sends its effort. The catalog already offers the 5.5 models for the v1 jobs ([providers.md](providers.md#the-model-catalog)).
+- Admin: one model per job, read from the server (`llm_model.<provider>.<kind>` is saved and used, but Admin doesn't show it yet).
 
 ## Maybe later
 

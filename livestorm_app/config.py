@@ -15,14 +15,10 @@ DEFAULT_PAGE_SIZE = LIVESTORM_MAX_PAGE_SIZE
 MAX_PAGES = 1000
 START_PAGE_NUMBER = 0
 
-DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
-SMART_RECAP_OPENAI_MODEL = "gpt-5.4-mini"
-
-# Anthropic (Claude) — used when LLM_PROVIDER=anthropic (the default)
+# Anthropic (Claude) — used when LLM_PROVIDER=anthropic (the default).
+# Text model ids live in ai/models.py, each job's default in ai/jobs.py.
 ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_API_VERSION = "2023-06-01"
-DEFAULT_CLAUDE_MODEL = "claude-haiku-4-5-20251001"
-SMART_RECAP_CLAUDE_MODEL = "claude-sonnet-4-6"
 
 # Cover image generation. The cover is built from the session's
 # Professional Smart Recap and rendered with the OpenAI Images API.
