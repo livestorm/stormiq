@@ -33,7 +33,7 @@ CI (`.github/workflows/ci.yml`) runs the same checks on every pull request:
 
 Backend tests that need Postgres or Redis are skipped unless `TEST_DATABASE_URL` or `TEST_REDIS_URL` is set; the Makefile sets both to the compose services. Both must be local hosts, and the Redis URL must name a dedicated database index (default `/15`), because the fixture flushes it.
 
-Two committed fixtures come from `tests/synthetic_session.py`, a made-up webinar. `frontend/tests/fixtures/record-v1.json` is the v1 record route's response for it; after a deliberate change to the record, regenerate it with `.venv/bin/python tests/synthetic_session.py`. `tests/fixtures/classic-workspace.json` freezes a copy of the session and its classic workspace; regenerate it (`--classic`) only when a classic change is intended, and say so in the PR. Tests fail when either drifts.
+Three committed fixtures come from `tests/synthetic_session.py`, a made-up webinar. `frontend/tests/fixtures/record-v1.json` is the v1 record route's response for it, and `record-v1-crowd.json` for a larger made-up webinar (`crowd_row`); after a deliberate change to the record, regenerate both with `.venv/bin/python tests/synthetic_session.py`. `tests/fixtures/classic-workspace.json` freezes a copy of the session and its classic workspace; regenerate it (`--classic`) only when a classic change is intended, and say so in the PR. Tests fail when any of them drifts.
 
 ## Dependencies
 
@@ -115,7 +115,7 @@ RENDER                        # Set by Render on every service. Turns off local-
 
 ## Benchmark
 
-`make bench` seeds a **local** database with synthetic sessions (10-minute, 2-hour, a running transcription, 40 cards) with `scripts/seed_benchmark_sessions.py`, then times the heaviest routes in-process with `scripts/benchmark_routes.py` (the workspace, the v1 record, polls, the card list): first-request and median ms, response size, and Postgres connections opened. Both scripts refuse non-local databases. Run it before and after a performance change.
+`make bench` seeds a **local** database with synthetic sessions (10-minute, 2-hour, a running transcription, 40 cards; their people come from many channels and answer select fields, so the v1 record's grouped measures do their full work) with `scripts/seed_benchmark_sessions.py`, then times the heaviest routes in-process with `scripts/benchmark_routes.py` (the workspace, the v1 record, polls, the card list): first-request and median ms, response size, and Postgres connections opened. Both scripts refuse non-local databases. Run it before and after a performance change.
 
 ## Scripts
 

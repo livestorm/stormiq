@@ -8,11 +8,13 @@ in the waiting room, live and after the end (each message linked to its
 author's people record), questions answered in writing, orally or not at
 all, a short transcript and a few AI outputs.
 
-Two committed files come from it:
+Three committed files come from it:
 
 - `frontend/tests/fixtures/record-v1.json`: the v1 record route's response
-  for this row, built by the real code. `tests/test_record_route.py` fails
-  when it drifts. Regenerate it after a deliberate change to the record:
+  for this row, built by the real code, and `record-v1-crowd.json`, its
+  response for a larger made-up webinar (`crowd_row`), whose grouped
+  measures pass their gates. `tests/test_record_route.py` fails when
+  either drifts. Regenerate both after a deliberate change to the record:
 
       .venv/bin/python tests/synthetic_session.py
 
@@ -51,6 +53,7 @@ UPDATED_AT = datetime(2026, 10, 2, 8, 30, tzinfo=timezone.utc)
 CREATED_AT = datetime(2026, 10, 1, 10, 0, tzinfo=timezone.utc)
 
 RECORD_FIXTURE = REPO_ROOT / "frontend" / "tests" / "fixtures" / "record-v1.json"
+RECORD_CROWD_FIXTURE = REPO_ROOT / "frontend" / "tests" / "fixtures" / "record-v1-crowd.json"
 CLASSIC_SNAPSHOT = REPO_ROOT / "tests" / "fixtures" / "classic-workspace.json"
 
 # Values a v1 record response must never carry: names, emails and their
@@ -411,6 +414,124 @@ def cached_row() -> Dict[str, Any]:
     }
 
 
+# ── A larger webinar, for the grouped measures ──────────────────────────────
+#
+# The webinar above is too small for the grouped measures' gates, so they
+# read insufficient there. The crowd has the same people on stage and 120
+# audience members built by fixed rules, so its record shows a row of each
+# kind: channels, Other and direct rows with rates, select values, merged
+# lead-time buckets, a room map and chat concentration.
+
+CROWD_SESSION_ID = "synthetic-crowd"
+CROWD_SIZE = 120
+CROWD_TEAM_SIZES = ("1-10", "11-50", "51-200", "201-1000")
+# Registered this long before the start, by index % 10: the 4-7 and 8-14
+# buckets are small and merge.
+CROWD_LEAD_S = (5 * 3600,) * 3 + (2 * DAY,) * 3 + (5 * DAY, 10 * DAY) + (20 * DAY,) * 2
+# Chat authors (crowd index: messages), all of them attendees.
+CROWD_CHAT = {0: 9, 1: 7, 2: 5, 4: 2, 5: 2, 6: 2, 8: 2, 9: 2, 10: 2, 12: 2, 13: 2, 14: 2}
+# The crowd's own values its record must never carry, besides `PRIVATE_VALUES`.
+CROWD_PRIVATE_VALUES = ("Crowd", "Member0", "p-crowd-", "u-crowd-", "msg-crowd-", "qst-crowd-", "Hi from the crowd")
+
+
+def _crowd_member(index: int) -> Dict[str, Any]:
+    """Crowd member `index`, by fixed rules. Channels: half from a
+    newsletter UTM, a sixth from a partner's site, a sixth from five small
+    social UTMs (they fold into Other) and a sixth with no source. One in
+    four didn't come (half of them watched the replay). Lead times follow
+    `CROWD_LEAD_S`; four people registered after the start."""
+    channel = index % 6
+    source: Dict[str, Any] = {}
+    if channel in (0, 1, 2):
+        source = {"utm_source": "newsletter", "utm_medium": "email"}
+    elif channel == 3:
+        source = {"referrer": "https://www.partner.example/post?ref=synthetic"}
+    elif channel == 4:
+        source = {"utm_source": f"social-{index // 6 % 5}"}
+    attended = index % 4 != 3
+    return _person(
+        f"p-crowd-{index:03d}",
+        "Crowd",
+        f"Member{index:03d}",
+        attended=attended,
+        registered_s_before=-120 if index % 30 == 29 else CROWD_LEAD_S[index % 10],
+        team_size="1000+" if index % 17 == 0 else CROWD_TEAM_SIZES[(index // 3) % 4],
+        attendance_rate=25 + (index * 37) % 76,
+        messages=CROWD_CHAT.get(index, 0),
+        has_viewed_replay=index % 8 == 7 or (attended and index % 10 == 0),
+        **source,
+    )
+
+
+def crowd_people() -> List[Dict[str, Any]]:
+    on_stage = [person for person in people() if person["id"] in ("p-host", "p-cohost", "p-guest")]
+    return on_stage + [_crowd_member(index) for index in range(CROWD_SIZE)]
+
+
+def crowd_chat_payload() -> Dict[str, Any]:
+    """`CROWD_CHAT`'s messages, spread over the session, and three from the host."""
+    authors = [index for index, count in CROWD_CHAT.items() for _ in range(count)]
+    data = []
+    for number, author in enumerate(authors + [None] * 3, start=1):
+        person_id = "p-host" if author is None else f"p-crowd-{author:03d}"
+        data.append(
+            {
+                "id": f"msg-crowd-{number:03d}",
+                "type": "chat_messages",
+                "attributes": {
+                    "text_content": "Hi from the crowd",
+                    "created_at": T0 + 30 * number,
+                    "author_id": f"u-crowd-{number:03d}",
+                    "from_team_member": author is None,
+                    "from_guest_speaker": False,
+                    "session_id": CROWD_SESSION_ID,
+                    "event_id": EVENT_ID,
+                },
+                "relationships": {"people": {"data": {"type": "people", "id": person_id}}},
+            }
+        )
+    return {"data": data, "pages_fetched": 1, "requested_page_size": 50}
+
+
+def crowd_questions_payload() -> Dict[str, Any]:
+    """Three questions from attendees: answered in writing, orally, or not."""
+    items = ((16, 400, 460, "Hi from the crowd", False), (20, 900, None, None, True), (24, 1500, None, None, False))
+    data = [
+        {
+            "id": f"qst-crowd-{number}",
+            "type": "questions",
+            "attributes": {
+                "question": "Hi from the crowd?",
+                "created_at": T0 + asked,
+                "responded_at": T0 + answered if answered is not None else None,
+                "response": response,
+                "response_orally": orally,
+                "question_author_id": f"p-crowd-{asker:03d}",
+                "response_author_id": "p-host" if response else None,
+                "session_id": CROWD_SESSION_ID,
+                "event_id": EVENT_ID,
+            },
+        }
+        for number, (asker, asked, answered, response, orally) in enumerate(items, start=1)
+    ]
+    return {"data": data, "pages_fetched": 1, "requested_page_size": 50}
+
+
+def crowd_row() -> Dict[str, Any]:
+    """The crowd's `session_cache` row, with the fields the record reads."""
+    payload = session_payload(crowd_people())
+    payload["data"]["id"] = CROWD_SESSION_ID
+    return {
+        "session_id": CROWD_SESSION_ID,
+        "organization_id": ORGANIZATION_ID,
+        "session_payload": payload,
+        "event_payload": event_payload(),
+        "chat_payload": crowd_chat_payload(),
+        "questions_payload": crowd_questions_payload(),
+        "updated_at": UPDATED_AT,
+    }
+
+
 # ── The committed files ─────────────────────────────────────────────────────
 
 DATETIME_COLUMNS = ("created_at", "updated_at", "cover_image_generated_at")
@@ -507,9 +628,10 @@ def classic_workspace(row: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def write_record_fixture() -> None:
-    RECORD_FIXTURE.parent.mkdir(parents=True, exist_ok=True)
-    RECORD_FIXTURE.write_text(dump(record_response()), encoding="utf-8")
-    print(f"wrote {RECORD_FIXTURE.relative_to(REPO_ROOT)}")
+    for path, row in ((RECORD_FIXTURE, cached_row()), (RECORD_CROWD_FIXTURE, crowd_row())):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(dump(record_response(row)), encoding="utf-8")
+        print(f"wrote {path.relative_to(REPO_ROOT)}")
 
 
 def write_classic_snapshot() -> None:

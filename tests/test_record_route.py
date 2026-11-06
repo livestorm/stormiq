@@ -100,7 +100,7 @@ def test_the_owner_gets_the_clock_the_roster_header_and_the_pulse(client):
     }
     record = body["record"]
     assert list(record) == ["version", "roster", "pulse", "metricsVersion", "measuresSource", "measures"]
-    assert record["version"] == assemble.RECORD_VERSION == 2
+    assert record["version"] == assemble.RECORD_VERSION == 3
     assert record["roster"] == {
         "source": "session_include",
         "complete": None,
@@ -135,7 +135,7 @@ def test_the_pulse_counts_every_event_once_on_the_session_clock(client):
 
 def test_the_record_serves_every_measure_live(client):
     record = get(client).json()["record"]
-    assert record["metricsVersion"] == measures.METRICS_VERSION == 1
+    assert record["metricsVersion"] == measures.METRICS_VERSION == 3
     assert record["measuresSource"] == "live"
     assert list(record["measures"]) == list(measures.REGISTRY)
     measures.validate_measures(record["measures"])
@@ -262,8 +262,27 @@ def test_an_all_hands_counts_everyone_in_its_audience_measures():
     found = record_for(_all_hands(synthetic.cached_row()))["record"]["measures"]
     assert found["m.audience_registrants"]["value"] == 10
     assert (found["m.show_up_rate"]["num"], found["m.show_up_rate"]["den"]) == (8, 10)
-    for measure_id in ("m.audience_registrants", "m.audience_attendees", "m.show_up_rate", "m.time_in_room", "m.wrote_rate"):
+    audience_only = [measure_id for measure_id, definition in measures.REGISTRY.items() if definition.excludes]
+    assert len(audience_only) == 11
+    for measure_id in audience_only:
         assert found[measure_id]["excluded"] == {"team": 0, "guestSpeakers": 0, "total": 0, "internal": True}, measure_id
+
+
+def test_an_all_hands_without_sources_or_select_fields_says_so():
+    """An internal meeting's people have no UTM, referrer, registration type
+    or select answer: the channel and segment measures are insufficient with
+    no rows, never "direct 100%", and their coverage says why."""
+    row = _all_hands(synthetic.cached_row())
+    for person in row["session_payload"]["included"]:
+        detail = person["attributes"]["registrant_detail"]
+        detail.update(utm_source=None, utm_medium=None, utm_campaign=None, referrer=None, registration_type=None)
+        detail["fields"] = [field for field in detail["fields"] if field["type"] == "text"]
+    found = record_for(row)["record"]["measures"]
+    channels = found["m.channel_quality"]
+    assert (channels["state"], channels["rows"]) == ("insufficient", [])
+    assert (channels["coverage"]["registrants"], channels["coverage"]["withSource"]) == (10, 0)
+    segments = found["m.segment_quality"]
+    assert (segments["state"], segments["rows"], segments["coverage"]["fields"][0]["answered"]) == ("insufficient", [], 0)
 
 
 # ── Access and errors ───────────────────────────────────────────────────────
@@ -324,6 +343,34 @@ def test_the_frontend_fixture_is_the_route_response(client):
 
 def test_the_frontend_fixture_has_the_current_record_version():
     assert fixture()["record"]["version"] == assemble.RECORD_VERSION
+
+
+def test_the_crowd_fixture_is_the_route_response_and_carries_no_person():
+    """`frontend/tests/fixtures/record-v1-crowd.json` is what the route
+    sends for the larger synthetic webinar. Regenerate it with the other
+    fixture: `.venv/bin/python tests/synthetic_session.py`."""
+    row = synthetic.crowd_row()
+    committed = synthetic.RECORD_CROWD_FIXTURE.read_text(encoding="utf-8")
+    assert synthetic.dump(record_for(row)) == committed
+    private = synthetic.PRIVATE_VALUES + synthetic.CROWD_PRIVATE_VALUES
+    source = json.dumps(row, default=str)
+    assert [value for value in synthetic.CROWD_PRIVATE_VALUES if value not in source] == []
+    assert [value for value in private if value in committed] == [] and "@" not in committed
+
+
+def test_the_crowd_fixture_shows_a_value_in_every_grouped_measure():
+    """So the frontend has a shown row of each kind to build against."""
+    found = json.loads(synthetic.RECORD_CROWD_FIXTURE.read_text(encoding="utf-8"))["record"]["measures"]
+    assert found["m.chat_concentration"]["value"] == 3
+    assert all(r["share"] is not None for r in found["m.room_map"]["rows"])
+    channel_kinds = {r["kind"] for r in found["m.channel_quality"]["rows"] if r["state"] == "ok" and r["showUpRate"] is not None}
+    assert channel_kinds == {"channel", "other", "none"}
+    segments = found["m.segment_quality"]["rows"]
+    assert {r["state"] for r in segments} == {"ok", "insufficient"}
+    lead = {r["key"]: r for r in found["m.lead_time_show_up"]["rows"]}
+    assert lead["4-7..8-14"]["buckets"] == ["4-7", "8-14"] and lead["4-7..8-14"]["showUpRate"] is not None
+    assert lead["after_start"]["state"] == "insufficient"
+    assert found["m.replay_caught_up"]["value"] is not None
 
 
 # ── Classic stays exactly as it was ─────────────────────────────────────────
