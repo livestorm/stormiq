@@ -8,6 +8,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from livestorm_app.ai.prompts import build_content_repurpose_bundle_prompt
+from livestorm_app.ai.usage import CallContext
 from livestorm_app.llm_client import call_llm
 
 logger = logging.getLogger(__name__)
@@ -72,6 +73,11 @@ def _bundle_has_all_sections(bundle: Dict[str, str]) -> bool:
     return not missing_bundle_sections(bundle)
 
 
+# The `llm_usage` purpose of each content-bundle attempt: the first call, the
+# retry for missing sections, and the retry for the wrong language.
+_BUNDLE_ATTEMPT_PURPOSES = ("main", "completeness_retry", "language_retry")
+
+
 def _bundle_language_looks_wrong(bundle: Dict[str, str], output_language: str) -> bool:
     output_language = str(output_language or "").strip().lower()
     if output_language != "french":
@@ -105,6 +111,7 @@ def translate_markdown_with_openai(
     source_language: str,
     target_language: str,
     max_tokens: int = 6000,
+    ctx: Optional[CallContext] = None,
 ) -> str:
     source_markdown = str(source_markdown or "").strip()
     if not source_markdown:
@@ -121,7 +128,7 @@ def translate_markdown_with_openai(
         {"role": "system", "content": f"Translate from {source_language} to {target_language}. Return only translated markdown."},
         {"role": "user", "content": source_markdown},
     ]
-    return call_llm(api_key, model, messages, temperature=0.1, max_tokens=max_tokens)
+    return call_llm(api_key, model, messages, temperature=0.1, max_tokens=max_tokens, ctx=ctx)
 
 
 def translate_content_repurpose_bundle_with_openai(
@@ -130,6 +137,7 @@ def translate_content_repurpose_bundle_with_openai(
     source_bundle: Dict[str, str],
     source_language: str,
     target_language: str,
+    ctx: Optional[CallContext] = None,
 ) -> Dict[str, str]:
     normalized_bundle = {
         key: str(value or "").strip()
@@ -169,7 +177,10 @@ def translate_content_repurpose_bundle_with_openai(
                     "content": f"The previous answer was not fully written in {target_language}. Rewrite all four sections entirely in {target_language}. Do not mix in the source language except unavoidable brand/platform names.",
                 }
             )
-        text = call_llm(api_key, model, messages + extra_messages, temperature=0.1, max_tokens=12000)
+        text = call_llm(
+            api_key, model, messages + extra_messages, temperature=0.1, max_tokens=12000,
+            ctx=ctx, purpose=_BUNDLE_ATTEMPT_PURPOSES[attempt],
+        )
         bundle = parse_content_repurpose_bundle_response(text)
         if _bundle_has_all_sections(bundle) and not _bundle_language_looks_wrong(bundle, target_language):
             return bundle
@@ -181,6 +192,7 @@ def generate_content_repurpose_bundle_with_openai(
     model: str,
     output_language: str,
     transcript_text: str,
+    ctx: Optional[CallContext] = None,
 ) -> Dict[str, str]:
     transcript_text = str(transcript_text or "").strip()
     if not transcript_text:
@@ -210,7 +222,10 @@ def generate_content_repurpose_bundle_with_openai(
                     "content": f"The previous answer was not fully written in {output_language}. Rewrite all four sections entirely in {output_language}. Do not mix in English except unavoidable brand/platform names.",
                 }
             )
-        text = call_llm(api_key, model, messages + extra_messages, temperature=0.2, max_tokens=12000)
+        text = call_llm(
+            api_key, model, messages + extra_messages, temperature=0.2, max_tokens=12000,
+            ctx=ctx, purpose=_BUNDLE_ATTEMPT_PURPOSES[attempt],
+        )
         bundle = parse_content_repurpose_bundle_response(text)
         if _bundle_has_all_sections(bundle) and not _bundle_language_looks_wrong(bundle, output_language):
             return bundle
@@ -235,6 +250,7 @@ def analyze_with_openai(
     session_payload: Optional[Dict[str, Any]] = None,
     transcript_text: str = "",
     max_tokens: int = 2500,
+    ctx: Optional[CallContext] = None,
 ) -> str:
     messages: List[Dict[str, str]] = [
         {"role": "system", "content": system_prompt},
@@ -288,4 +304,4 @@ def analyze_with_openai(
 
     # An empty answer is returned as-is: callers fail the job on it
     # (api_logic._require_generated_text) rather than saving a placeholder.
-    return call_llm(api_key, model, messages, temperature=0.2, max_tokens=max_tokens) or ""
+    return call_llm(api_key, model, messages, temperature=0.2, max_tokens=max_tokens, ctx=ctx) or ""

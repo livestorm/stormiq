@@ -17,7 +17,7 @@ The text provider is the `llm_provider` admin setting (editable at `/admin`), th
 
 ### The model catalog
 
-[`ai/models.py`](../livestorm_app/ai/models.py) lists every text model id StormIQ knows (`CATALOG`), with what each one accepts: its largest `max_tokens`, whether it thinks by default, its effort levels, `temperature`, mid-conversation system messages, the server-side fallback, the shortest prefix that caches, and structured outputs. A model's status says where it may be chosen:
+[`ai/models.py`](../livestorm_app/ai/models.py) lists every text model id StormIQ knows (`CATALOG`), with what each one accepts: its largest `max_tokens`, whether it thinks by default, its effort levels, `temperature`, mid-conversation system messages, the server-side fallback, the shortest prefix that caches, and structured outputs. Each Claude row also has its price per million tokens (input, output, cache writes and reads, and Haiku 5.5's second rate card above 100K prompt tokens), checked on the date in `PRICES_AS_OF`; usage rows estimate their cost from it ([Usage](#usage-and-the-daily-budget)). A model's status says where it may be chosen:
 
 | Status | Chosen for | Models |
 |---|---|---|
@@ -27,7 +27,7 @@ The text provider is the `llm_provider` admin setting (editable at `/admin`), th
 
 The Claude 5.5 models think by default, and thinking counts toward `max_tokens`, so they are offered only where the budget has room for it. From Claude 5, the catalog lists only the 5.5 models, on purpose: Opus 5, Sonnet 5, Fable 5 and Fable 5.1 have no row, so Admin refuses them under every key. A model gets a row when a job needs it. The classic outputs' budgets (900 tokens for Smart Recap, 2,500 for the overall analysis) are sized for models that answer directly.
 
-The OpenAI rows are unverified until a live check; their `temperature` and token parameter match what the adapter sends today. OpenAI shuts gpt-4o-mini, gpt-4o, gpt-4.1-mini and gpt-4.1 down on 2027-01-14 ([deprecations](https://developers.openai.com/api/docs/deprecations)); they must be replaced before then.
+The OpenAI rows are unverified until a live check; their `temperature` and token parameter match what the adapter sends today, and they have no price yet. OpenAI shuts gpt-4o-mini, gpt-4o, gpt-4.1-mini and gpt-4.1 down on 2027-01-14 ([deprecations](https://developers.openai.com/api/docs/deprecations)); they must be replaced before then.
 
 ### One model per job
 
@@ -47,7 +47,7 @@ The OpenAI rows are unverified until a live check; their `temperature` and token
 
 Smart Recap deliberately uses a stronger model than the other classic outputs. The classic outputs still send no effort, and their callers pass the answer tokens above as `max_tokens`. Nothing runs the v1 jobs yet, and they have no OpenAI model until the live check.
 
-**Budget** (`ai.jobs.budget`). A job's `max_tokens` is its answer tokens, plus room for thinking when the model thinks by default (`THINKING_HEADROOM`: 4,000 at low effort, 16,000 at medium, 32,000 at high, 48,000 at xhigh, 64,000 at max), capped at the model's largest `max_tokens`. Above 16,000, `budget` marks the call to stream. No call streams yet: streaming arrives with the Anthropic SDK transport, and until then every LLM call is the non-streaming request in the timeouts table below. The headroom is a guess until usage is logged per job. On their defaults, the v1 jobs get 6,000, 12,000, 48,000 (marked to stream) and 6,000.
+**Budget** (`ai.jobs.budget`). A job's `max_tokens` is its answer tokens, plus room for thinking when the model thinks by default (`THINKING_HEADROOM`: 4,000 at low effort, 16,000 at medium, 32,000 at high, 48,000 at xhigh, 64,000 at max), capped at the model's largest `max_tokens`. Above 16,000, `budget` marks the call to stream. No call streams yet: streaming arrives with the Anthropic SDK transport, and until then every LLM call is the non-streaming request in the timeouts table below. The headroom is a guess until `llm_usage` holds enough rows per job to calibrate it. On their defaults, the v1 jobs get 6,000, 12,000, 48,000 (marked to stream) and 6,000.
 
 ### Which model a job uses
 
@@ -76,7 +76,32 @@ The Admin page still has its own lists (`frontend/src/views/AdminView.vue`), and
 
 The image model is the `image_model` setting, then `IMAGE_MODEL`, then `gpt-image-2`. Image size and quality come from `IMAGE_SIZE` (default `1536x1024`) and `IMAGE_QUALITY` (default `high`).
 
-**Temperature.** Every classic output asks for a low `temperature` (0.2, or 0.1 for translation). Claude 4.7 and later models reject a non-default temperature, so `llm_client._call_anthropic` sends it only when `llm_client.anthropic_accepts_temperature` says the model accepts it. A catalog model answers from its `temperature_ok`: Haiku 4.5 and Sonnet 4.6 accept it, the others don't. An id outside the catalog keeps the rule by version (`llm_client.claude_version_accepts_temperature`): Claude models up to 4.6 accept it, and any other or unknown id gets no temperature and samples at the default. This holds only on the API version the app sends (`config.ANTHROPIC_API_VERSION`, `2023-06-01`): from `2026-10-21` on, every model rejects `temperature`, and the helper then sends it to none. The OpenAI adapter always sends it.
+**Temperature.** Every classic output asks for a low `temperature` (0.2, or 0.1 for translation). Claude 4.7 and later models reject a non-default temperature, so `llm_client._anthropic_send` sends it only when `llm_client.anthropic_accepts_temperature` says the model accepts it. A catalog model answers from its `temperature_ok`: Haiku 4.5 and Sonnet 4.6 accept it, the others don't. An id outside the catalog keeps the rule by version (`llm_client.claude_version_accepts_temperature`): Claude models up to 4.6 accept it, and any other or unknown id gets no temperature and samples at the default. This holds only on the API version the app sends (`config.ANTHROPIC_API_VERSION`, `2023-06-01`): from `2026-10-21` on, every model rejects `temperature`, and the helper then sends it to none. The OpenAI adapter always sends it.
+
+### Usage and the daily budget
+
+Each adapter (`llm_client._anthropic_send`, `llm_client._openai_send`) returns one `LLMResult`: the text, why the model stopped (`complete`, `max_tokens`, `refusal` or `other`, plus the provider's own value), Anthropic's refusal category, the model that answered, the request id (`request-id`, or OpenAI's `x-request-id`) and the token usage. `llm_client.call_llm` still returns only the text, so the classic outputs behave as before: a refusal still reads as an empty answer.
+
+`call_llm` records every answered text-model call, the truncation retry included, as one `llm_usage` row and one log line (`ai.usage.record_call`; [data-model.md](data-model.md#llm_usage), [operations.md](operations.md#observability)). The two providers' usage objects are normalised to the same counts (`ai.usage.anthropic_usage`, `ai.usage.openai_usage`):
+
+| Count | Anthropic | OpenAI |
+|---|---|---|
+| uncached input | `input_tokens` | `prompt_tokens` minus `cached_tokens` |
+| cache read | `cache_read_input_tokens` | `prompt_tokens_details.cached_tokens` |
+| cache write (and its 1-hour part) | `cache_creation_input_tokens` (`cache_creation.ephemeral_1h_input_tokens`) | 0 |
+| output, thinking included | `output_tokens` | `completion_tokens` |
+| reasoning | none | `completion_tokens_details.reasoning_tokens` |
+
+The cost is estimated when the row is written, from the price of the model that answered (`ai.usage.estimate_cost_usd_micros`); a served id outside the catalog is priced as the model asked for. A model with no price in the catalog (the OpenAI rows) gets no cost; its tokens are still counted.
+
+The cover image call (OpenAI Images, `cover_image.generate_cover_image_with_openai`) doesn't go through `call_llm`. It leaves no `llm_usage` row and isn't held to the daily budget, although the worker starts it on its own after a Professional Smart Recap ([jobs.md](jobs.md#cover-images)). Logging it is on the [roadmap](roadmap.md#5-models).
+
+**Daily budget.** `ORG_DAILY_LLM_BUDGET_USD` stops one organization's automatic text jobs for the rest of the UTC day once its estimated spend reaches it. It applies only to the job kinds marked `automatic` in `ai/jobs.py` (`ai.jobs.automatic_kinds`), and none is yet, so today it limits nothing. A job a user starts, every classic output included, is never held to it. `call_llm` checks it in the worker before each send, the truncation retry included (`ai.usage.check_org_budget`):
+
+- An automatic job on a session with no organization never runs: there is nobody to charge, and the spend is never summed over every org (`db.llm_spend_since` refuses a blank scope).
+- Unset means no limit. A value that isn't a dollar amount stops automatic jobs until it is fixed.
+- With a budget set, the model must have a price in the catalog: an unpriced one (every OpenAI model today) would add nothing to the spend, so an automatic job doesn't call it.
+- Otherwise the org's estimated spend since midnight UTC must be under the budget. The spend sums every row of the org, user-started jobs included; rows without a cost count 0. If the spend can't be read, the job doesn't run.
 
 ## Timeouts and retries
 

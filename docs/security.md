@@ -69,6 +69,17 @@ The cached session payload still holds each person's full Livestorm record, minu
 - A v1 page gets names only through `roster.display_people`, which fails closed: only a session whose profile is "public" lists anyone.
 - The v1 record route (`GET /api/sessions/{id}/record`) sends counts, measures and session-level facts only: no name, email, company, person or message id, or message text (`record/assemble.py`, `record/measures.py`). The only Livestorm id in it is the session's own. `tests/test_record_route.py` scans its response for them.
 
+## Model usage rows
+
+Every answered text-model call (`llm_client.call_llm`) leaves one `llm_usage` row and one `llm_usage …` log line ([data-model.md](data-model.md#llm_usage)). Both hold ids (organization, session, the arq job id), the model, token counts, the estimated cost, the time taken, the stop reason and the provider's request id. Never a prompt, an output, a name, an email or a key:
+
+- The row is built from the call's ids and the provider's `usage` object, never from the request or the answer (`ai.usage.build_usage_row`). `usage_raw` keeps numbers and short enum-like tags only (`ai.usage.sanitize_usage`), so free text the provider might add is dropped.
+- `job_id` is the deterministic arq id, never a connection id.
+- When the insert fails, the log names the exception's class and SQL state, never its message.
+- `tests/test_llm_usage.py` and `tests/test_data_integrity.py` run calls with the key `sk-test-SECRET` and check it never reaches a row, a log line (the ERROR line of a failed insert included) or the error a cut-off answer raises.
+
+Usage rows stay when their session is deleted: they hold no content, and they keep past spend counted for the daily budget.
+
 ## Web hardening
 
 - Cookies are `HttpOnly`, `SameSite=Lax`, and `Secure` everywhere except plain-HTTP local development (on Render, TLS ends at the proxy, so `RENDER` alone turns it on).

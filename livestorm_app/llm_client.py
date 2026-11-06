@@ -10,6 +10,11 @@ the provider; that lives in livestorm_app/ai/cover_image.py.
 
 Switching providers needs the matching API key on the worker; no code
 changes. See docs/providers.md.
+
+Each provider adapter (`_anthropic_send`, `_openai_send`) returns one
+`LLMResult`: the text, why the model stopped, the model that answered, the
+request id and the token usage. `call_llm` records every answered call in
+`llm_usage` (`ai.usage.record_call`) and returns the text.
 """
 
 from __future__ import annotations
@@ -19,11 +24,20 @@ import os
 import random
 import re
 import time
-from typing import Any, Dict, List, Tuple
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, List, Literal, Optional
 
 import requests
 
 from livestorm_app.ai.models import catalog_model
+from livestorm_app.ai.usage import (
+    CallContext,
+    LLMUsage,
+    anthropic_usage,
+    check_org_budget,
+    openai_usage,
+    record_call,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -71,13 +85,43 @@ def get_llm_model(kind: str) -> str:
     return resolve_model(kind).model_id
 
 
-class LLMOutputTruncated(RuntimeError):
+# Why the model stopped, the same for both providers: "complete" (it finished),
+# "max_tokens" (cut off at the token limit), "refusal" (it declined), "other"
+# (any other stop; its text is used as before).
+Stop = Literal["complete", "max_tokens", "refusal", "other"]
+
+
+@dataclass(frozen=True)
+class LLMResult:
+    """One answered model call (HTTP 200)."""
+
+    text: str  # the answer's text, stripped (Anthropic: the text blocks only)
+    stop: Stop
+    stop_raw: str  # the provider's own value: stop_reason or finish_reason
+    refusal_category: Optional[str]  # Anthropic's stop_details.category; often None
+    model_served: str  # the model that answered, as the provider reports it
+    request_id: Optional[str]
+    usage: LLMUsage
+    duration_ms: int  # transport retries included
+
+    @property
+    def truncated(self) -> bool:
+        return self.stop == "max_tokens"
+
+
+class LLMError(RuntimeError):
+    """A model call ended without an answer StormIQ can save."""
+
+
+class LLMOutputTruncated(LLMError):
     """The model stopped at its token limit, so the output is incomplete."""
 
 
 # Ceiling for the automatic retry after truncation. Stays within the output
 # limits of every configured model (gpt-4o-mini caps at ~16k tokens).
 TRUNCATION_RETRY_MAX_TOKENS = 16000
+
+Sender = Callable[[str, str, List[Dict[str, str]], float, int], LLMResult]
 
 
 def call_llm(
@@ -86,6 +130,9 @@ def call_llm(
     messages: List[Dict[str, str]],
     temperature: float = 0.2,
     max_tokens: int = 2500,
+    *,
+    ctx: Optional[CallContext] = None,
+    purpose: str = "main",
 ) -> str:
     """Call the active LLM provider and return the generated text.
 
@@ -95,21 +142,46 @@ def call_llm(
     If the model stops at `max_tokens`, the call is retried once with a
     larger budget; if the answer is still cut off, LLMOutputTruncated is
     raised so a partial result is never saved as if it were complete.
+
+    `ctx` says which job and session the call is for. Every answered call,
+    the retry included, gets one `llm_usage` row (`purpose` names the call:
+    "main", "truncation_retry"…). Before each send, the retry included, an
+    automatic job is checked against its org's daily budget
+    (`ai.usage.check_org_budget`); a job a user started never is.
     """
-    call = _call_anthropic if get_provider() == "anthropic" else _call_openai
-    text, truncated = call(api_key, model, messages, temperature, max_tokens)
-    if not truncated:
-        return text
+    provider = "anthropic" if get_provider() == "anthropic" else "openai"
+    send: Sender = _anthropic_send if provider == "anthropic" else _openai_send
+
+    def attempt(budget: int, call_purpose: str) -> LLMResult:
+        if ctx is not None:
+            check_org_budget(ctx.job_kind, ctx.organization_id, model)
+        result = send(api_key, model, messages, temperature, budget)
+        record_call(ctx, result, purpose=call_purpose, provider=provider, model_requested=model, max_tokens=budget)
+        return result
+
+    result = attempt(max_tokens, purpose)
+    if not result.truncated:
+        return result.text
     larger_budget = min(max_tokens * 2, TRUNCATION_RETRY_MAX_TOKENS)
     if larger_budget > max_tokens:
         logger.warning("LLM output hit max_tokens=%d; retrying once with %d", max_tokens, larger_budget)
-        text, truncated = call(api_key, model, messages, temperature, larger_budget)
-        if not truncated:
-            return text
+        result = attempt(larger_budget, "truncation_retry")
+        if not result.truncated:
+            return result.text
     raise LLMOutputTruncated(
         f"The AI answer was cut off at its length limit ({max(larger_budget, max_tokens)} tokens), "
         "so it was not saved. Please try again."
     )
+
+
+def _header(resp: Any, name: str) -> Optional[str]:
+    headers = getattr(resp, "headers", None)
+    value = headers.get(name) if headers is not None else None
+    return str(value) if value else None
+
+
+def _elapsed_ms(started: float) -> int:
+    return int(round((time.monotonic() - started) * 1000))
 
 
 # ── Anthropic ─────────────────────────────────────────────────────────────────
@@ -155,14 +227,22 @@ def claude_version_accepts_temperature(model: str) -> bool:
     return version <= _LAST_CLAUDE_VERSION_WITH_TEMPERATURE
 
 
-def _call_anthropic(
+_ANTHROPIC_STOPS: Dict[str, Stop] = {
+    "end_turn": "complete",
+    "stop_sequence": "complete",
+    "max_tokens": "max_tokens",
+    "refusal": "refusal",
+}
+
+
+def _anthropic_send(
     api_key: str,
     model: str,
     messages: List[Dict[str, str]],
     temperature: float,
     max_tokens: int,
-) -> Tuple[str, bool]:
-    """Return (text, truncated). Truncated means stop_reason == "max_tokens"."""
+) -> LLMResult:
+    """One Messages API call. Text comes from the text blocks only."""
     from livestorm_app.config import ANTHROPIC_API_VERSION, ANTHROPIC_MESSAGES_URL
 
     system_parts = [m["content"] for m in messages if m["role"] == "system"]
@@ -184,27 +264,45 @@ def _call_anthropic(
         "content-type": "application/json",
     }
 
+    started = time.monotonic()
     resp = _post_with_retry(ANTHROPIC_MESSAGES_URL, headers, payload, provider="anthropic")
     body = resp.json()
-    truncated = body.get("stop_reason") == "max_tokens"
+    stop_raw = str(body.get("stop_reason") or "")
+    stop_details = body.get("stop_details") if isinstance(body.get("stop_details"), dict) else {}
     text = "".join(
         str(block.get("text") or "")
         for block in body.get("content", [])
         if isinstance(block, dict) and block.get("type") == "text"
     )
-    return text.strip(), truncated
+    return LLMResult(
+        text=text.strip(),
+        stop=_ANTHROPIC_STOPS.get(stop_raw, "other"),
+        stop_raw=stop_raw,
+        refusal_category=str(stop_details.get("category") or "") or None,
+        model_served=str(body.get("model") or ""),
+        request_id=_header(resp, "request-id"),
+        usage=anthropic_usage(body.get("usage")),
+        duration_ms=_elapsed_ms(started),
+    )
 
 
 # ── OpenAI ────────────────────────────────────────────────────────────────────
 
-def _call_openai(
+_OPENAI_STOPS: Dict[str, Stop] = {
+    "stop": "complete",
+    "length": "max_tokens",
+    "content_filter": "refusal",
+}
+
+
+def _openai_send(
     api_key: str,
     model: str,
     messages: List[Dict[str, str]],
     temperature: float,
     max_tokens: int,
-) -> Tuple[str, bool]:
-    """Return (text, truncated). Truncated means finish_reason == "length"."""
+) -> LLMResult:
+    """One Chat Completions call. A `message.refusal` is a refusal whatever the finish reason."""
     from livestorm_app.config import OPENAI_CHAT_COMPLETIONS_URL
 
     token_param = "max_completion_tokens" if str(model or "").startswith("gpt-5") else "max_tokens"
@@ -219,13 +317,24 @@ def _call_openai(
         "Content-Type": "application/json",
     }
 
+    started = time.monotonic()
     resp = _post_with_retry(OPENAI_CHAT_COMPLETIONS_URL, headers, payload, provider="openai")
     body = resp.json()
     choices = body.get("choices") or []
-    if not choices:
-        return "", False
-    content = choices[0].get("message", {}).get("content") or ""
-    return str(content).strip(), choices[0].get("finish_reason") == "length"
+    choice = choices[0] if choices and isinstance(choices[0], dict) else {}
+    message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
+    stop_raw = str(choice.get("finish_reason") or "")
+    stop: Stop = "refusal" if message.get("refusal") else _OPENAI_STOPS.get(stop_raw, "other")
+    return LLMResult(
+        text=str(message.get("content") or "").strip(),
+        stop=stop,
+        stop_raw=stop_raw,
+        refusal_category=None,
+        model_served=str(body.get("model") or ""),
+        request_id=_header(resp, "x-request-id"),
+        usage=openai_usage(body.get("usage")),
+        duration_ms=_elapsed_ms(started),
+    )
 
 
 # ── Shared retry helper ────────────────────────────────────────────────────────

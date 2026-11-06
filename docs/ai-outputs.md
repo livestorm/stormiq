@@ -60,7 +60,7 @@ Stored as `content_repurpose_bundle: {English: {summary, blog, email, social_med
 ## Saving rules
 
 - **Only complete output is saved.** Empty output (`api_logic._require_generated_text`), output cut off at the token limit, a content-repurposing bundle missing any of its four sections, or content repurposing on an empty transcript fails the job with a clear error and saves nothing. No runner substitutes placeholder text.
-- **Truncation.** `llm_client.call_llm` checks why the model stopped (`stop_reason == "max_tokens"` on Anthropic, `finish_reason == "length"` on OpenAI). A truncated answer is retried once with double the token budget, capped at `TRUNCATION_RETRY_MAX_TOKENS` (16,000). If it's still cut off, `LLMOutputTruncated` is raised and nothing is saved.
+- **Truncation.** `llm_client.call_llm` checks why the model stopped (`stop_reason == "max_tokens"` on Anthropic, `finish_reason == "length"` on OpenAI). A truncated answer is retried once with double the token budget, capped at `TRUNCATION_RETRY_MAX_TOKENS` (16,000). If it's still cut off, `LLMOutputTruncated` is raised and nothing is saved. Each attempt is recorded in `llm_usage`, the cut-off ones included ([providers.md](providers.md#usage-and-the-daily-budget)).
 - **One entry at a time.** Each job writes only its own language or tone (`db.merge_cached_bundle_entry`), see [data-model.md](data-model.md#caching-rules).
 
 ## Exports

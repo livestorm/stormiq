@@ -65,11 +65,13 @@ Comparative (2 sessions) and cumulative (up to 10) analysis. Depends on the card
 - Replace the four OpenAI text models before OpenAI shuts them down on 2027-01-14 ([providers.md](providers.md#choosing-the-provider-and-models)).
 - Offer the Claude models that think by default (Claude 5 and later) for the classic outputs once each has a larger token budget and sends its effort. The catalog already offers the 5.5 models for the v1 jobs ([providers.md](providers.md#the-model-catalog)).
 - Admin: one model per job, read from the server (`llm_model.<provider>.<kind>` is saved and used, but Admin doesn't show it yet).
+- Admin: usage and cost per day, job and model, read from `llm_usage` (every text-model call is logged there; nothing shows it yet).
+- Set `ORG_DAILY_LLM_BUDGET_USD` before the first automatic text job ships, and fill the OpenAI prices first if that job may run on OpenAI: with a budget set, an automatic job never calls an unpriced model ([providers.md](providers.md#usage-and-the-daily-budget)).
+- Log the cover image call in `llm_usage` and hold it to the daily budget. The worker already starts it on its own after a Professional Smart Recap, through its own OpenAI Images request ([jobs.md](jobs.md#cover-images)).
 
 ## Maybe later
 
 - API-key rotation with failover.
-- Usage and cost observability per account.
 - A webhook that analyses a session automatically when it ends.
 - White-label PDF export.
 

@@ -56,11 +56,15 @@ Four flows, each a queue-backed job:
 
 The runner picks its model by job kind (`llm_client.get_llm_model`): `overall_analysis`, `deep_analysis`, `smart_recap`, `content_repurposing`, or `translation` for a French version ([providers.md](providers.md#which-model-a-job-uses)).
 
+**Usage.** The runner also builds a `CallContext` from the cached row: the job kind, the session, its org and the arq job id (`api_logic._llm_call_context`). Every text-model call the job makes (`llm_client.call_llm`), a truncation retry or a content-bundle retry included, records one `llm_usage` row and one log line ([data-model.md](data-model.md#llm_usage)). If that row can't be saved, the job logs it at ERROR and still saves its output ([data-model.md](data-model.md#caching-rules)).
+
+**Daily budget.** A text job that runs without a user asking will be held to its org's daily budget (`ORG_DAILY_LLM_BUDGET_USD`), checked in the worker before each send, the truncation retry included. No text job runs automatically yet, and the four flows above are started by users, so the budget never applies to them ([providers.md](providers.md#usage-and-the-daily-budget)). The cover image job below does run on its own, but it is outside both usage logging and the budget.
+
 Smart Recap is on demand only: nothing generates it automatically.
 
 ## Cover images
 
-`run_cover_image_job` renders a landscape cover (1536×1024 by default) from the session's Professional Smart Recap (prompt: `prompts/cover_image_prompt.txt`) and stores the PNG in `session_cache.cover_image_bytes`. It runs in exactly two cases: after a Professional Smart Recap completes (the worker chains it, unless the session already has a cover), and from `scripts/backfill_cover_images.py`. Reading a session never starts one. The arq id is `cover_image:{session_id}`, so a cover that is queued, running, or failed within the last hour is not started again. Failures are logged and swallowed, so a broken image generator never fails the recap.
+`run_cover_image_job` renders a landscape cover (1536×1024 by default) from the session's Professional Smart Recap (prompt: `prompts/cover_image_prompt.txt`) and stores the PNG in `session_cache.cover_image_bytes`. It runs in exactly two cases: after a Professional Smart Recap completes (the worker chains it, unless the session already has a cover), and from `scripts/backfill_cover_images.py`. Reading a session never starts one. The arq id is `cover_image:{session_id}`, so a cover that is queued, running, or failed within the last hour is not started again. Failures are logged and swallowed, so a broken image generator never fails the recap. Its paid OpenAI Images call goes through `cover_image.generate_cover_image_with_openai`, not `llm_client.call_llm`, so it leaves no `llm_usage` row and isn't held to the daily budget ([roadmap](roadmap.md#5-models)).
 
 ## Timeouts and failures
 
