@@ -32,7 +32,7 @@ Admins come from the `admin_users` table plus the `ADMIN_EMAILS` env var. `ADMIN
 
 ## Fail-closed rules
 
-- `db.fetch_cached_session`, `db.fetch_session_fields` and `db.fetch_cover_image` require an explicit `organization_id` scope. A blank scope matches no rows. `ALL_ORGS` is a named sentinel that only admin, local-dev and worker code pass.
+- `db.fetch_cached_session`, `db.fetch_session_fields`, `db.fetch_cover_image`, `db.fetch_roster_status` and `db.list_session_people` require an explicit `organization_id` scope. A blank scope matches no rows and never queries. `ALL_ORGS` is a named sentinel that only admin, local-dev and worker code pass.
 - A session outside the caller's scope looks exactly like a missing one: 404, or 204 on `/cached`.
 - Writes (`speaker-labels`) and AI-job POSTs first check that the row is in the caller's scope.
 - Fetch routes stamp `organization_id` on a row only after the caller's own Livestorm credentials prove access to the session (Livestorm returns 404 otherwise). The stamp is first-writer-wins, so stamping without that proof would let an outsider claim a session before its owner fetches it.
@@ -58,9 +58,20 @@ StormIQ never stores a registrant's personal join link; it doesn't need it.
 
 StormIQ doesn't store the chat's people twice. The chat call asks for `include=people` only to get each message's people id; `fetch_chat_messages` drops the `included` people records. The session payload held every chat author in the one real session checked; an author missing from it reads unresolved and is never stored from the chat. The chat payload keeps the ids, not the people.
 
+## Stored people
+
+StormIQ has tables for a session's people, read from Livestorm's paginated people list ([data-model.md](data-model.md#stored-people)). Nothing writes them yet; the people sync job will.
+
+- **What a person row holds** (`session_people`, one row per person, built by `payloads.parse_person`): the Livestorm people id and a `P-` ref; the role, guest-speaker and organizer flags; first and last name; the **email domain, never the address**; company and job title; text and select registration answers; when and how they registered; the referrer's host; UTMs; time zone and IP country; attendance and replay; Livestorm's own counters.
+- **What it never holds.** The email address, a registrant's join link (`password_key`, `connection_link`) and the full referrer URL have no column. `db.replace_session_roster` refuses a row with any key `parse_person` doesn't give, and an email domain with an "@" (so does a `CHECK` in Postgres). `parse_person` leaves out phone, street address, city, social profiles, browser, OS, screen size, IP city, avatar, the highlight flag, and email, URL and consent answers. The people fetcher strips join links before returning (`client.fetch_session_people`).
+- **Deleted with the session.** Deleting a cached session deletes its roster, people and sync rows (`ON DELETE CASCADE`).
+- **Scoped through the session.** The per-session people tables have no org column. Every read joins `session_cache` and filters on its org; a blank scope never queries. No route returns them yet.
+- **Workspace field labels** (`org_people_attributes`): slugs, labels, types and select options. No personal data, and never the `user_id` of whoever made a field.
+- **The connection id of a sync.** A people sync runs in the worker with the requesting user's Livestorm connection, as transcription does. That connection id is also the user's session cookie, so it waits in the sync's `livestorm_sync_jobs` row, never in job arguments, and only while the row is `pending`: `db.claim_livestorm_sync` hands it over once and clears it in the same statement, and `db.update_livestorm_sync` clears it when it moves a row out of `pending`. A row that is never claimed (a failed enqueue, a lost job) keeps it until it is closed that way. Nothing creates these rows yet; the people sync job comes with the sweeper that closes such rows. A scheduled row never holds one. No read returns it (`fetch_roster_status` lists the sync's own columns only), and these functions log an error's class and SQL state, never its message.
+
 ## What v1 code reads about people
 
-The cached session payload still holds each person's full Livestorm record, minus the join links, until StormIQ stores its own people rows in place of `include=people`. The v1 roster limits what v1 code reads from it. It is built in memory and is not stored (`payloads.parse_person`, `record/roster.py`):
+The cached session payload still holds each person's full Livestorm record, minus the join links, until StormIQ reads its stored people rows ([above](#stored-people)) in place of `include=people`. The v1 roster limits what v1 code reads from it. It is built in memory and is not stored (`payloads.parse_person`, `record/roster.py`):
 
 - It reads the email domain, never the email address, and the referrer's host, never the full URL (its query string can hold personal values).
 - It leaves out phone, street address, city, social profiles, browser, OS, screen size, IP city, avatar, highlight flag and join links.

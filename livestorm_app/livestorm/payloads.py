@@ -1,4 +1,4 @@
-"""Parse Livestorm API (JSON:API) payloads: records, pagination, the event and session pickers, the join-link strip, and one person's facts."""
+"""Parse Livestorm API (JSON:API) payloads: records, pagination and record counts, the event and session pickers, the join-link strip, one person's facts, and the workspace's people attributes."""
 
 from __future__ import annotations
 
@@ -309,6 +309,76 @@ def parse_person(record: Any) -> Optional[Dict[str, Any]]:
     }
 
 
+# ── The workspace's people attributes ─────────────────────────────────────
+#
+# `GET /people_attributes` lists the registration fields defined in the
+# workspace: their slug, label, type and select options. They hold no
+# personal data. StormIQ keeps the keys below and drops the rest (the id,
+# placeholder, description, timestamps and the `user_id` of whoever made the
+# field).
+
+PEOPLE_ATTRIBUTE_KEYS = ("slug", "name", "type", "builtin", "options")
+PEOPLE_ATTRIBUTE_OPTION_KEYS = ("value", "label", "position")
+
+
+def _attribute_options(value: Any) -> List[Dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    options = []
+    for option in value:
+        if not isinstance(option, dict):
+            continue
+        option_value = _clean_text(option.get("value"))
+        label = _clean_text(option.get("label"))
+        if option_value is None and label is None:
+            continue
+        options.append({"value": option_value, "label": label, "position": _whole(option.get("position"))})
+    return options
+
+
+def parse_people_attributes(payload: Any) -> List[Dict[str, Any]]:
+    """The workspace's people attributes as `[{slug, name, type, builtin, options}]`.
+
+    Takes a `/people_attributes` payload (its `data` list) or a list of its
+    records. Each option is `{value, label, position}`. A record without a
+    slug is skipped, and so is a repeated slug (the first copy wins). Never
+    returns the record's id, placeholder, description, timestamps or
+    `user_id`. Pure.
+    """
+    records = extract_records(payload)
+    attributes: List[Dict[str, Any]] = []
+    seen = set()
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        fields = record.get("attributes")
+        fields = fields if isinstance(fields, dict) else {}
+        slug = _clean_text(fields.get("slug"))
+        if slug is None or slug in seen:
+            continue
+        seen.add(slug)
+        attributes.append(
+            {
+                "slug": slug,
+                "name": _clean_text(fields.get("name")),
+                "type": (_clean_text(fields.get("type")) or "").lower() or None,
+                "builtin": _flag_or_none(fields.get("builtin")) is True,
+                "options": _attribute_options(fields.get("options")),
+            }
+        )
+    return attributes
+
+
+def extract_records(payload: Any) -> List[Any]:
+    """The records of a list payload: its `data` list, or the payload itself
+    when it is a list. [] otherwise."""
+    if isinstance(payload, dict) and isinstance(payload.get("data"), list):
+        return payload["data"]
+    if isinstance(payload, list):
+        return payload
+    return []
+
+
 def extract_messages(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     if isinstance(payload, dict) and isinstance(payload.get("data"), list):
         return payload["data"]
@@ -494,6 +564,13 @@ def _extract_next_page(payload: Dict[str, Any]) -> Optional[int]:
         if raw.isdigit():
             return int(raw)
     return None
+
+
+def extract_record_count(payload: Any) -> Optional[int]:
+    """`meta.record_count` of a paginated payload: how many records the list
+    holds in all, across its pages. None when it is missing, negative or not
+    a whole number."""
+    return _non_negative_count(_extract_pagination(payload).get("record_count"))
 
 
 def _states_last_page(payload: Dict[str, Any]) -> bool:

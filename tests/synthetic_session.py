@@ -188,6 +188,17 @@ def people() -> List[Dict[str, Any]]:
     ]
 
 
+def person_rows(session_id: str = SESSION_ID, records: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
+    """The people (or `records`) as stored `session_people` rows: each record
+    parsed by `parse_person`, with its `P-` ref for `session_id`."""
+    from livestorm_app.livestorm.payloads import parse_person
+    from livestorm_app.record.roster import assign_person_refs
+
+    parsed = [parse_person(record) for record in (people() if records is None else records)]
+    refs = assign_person_refs(session_id, [row["person_id"] for row in parsed])
+    return [{**row, "person_ref": refs[row["person_id"]]} for row in parsed]
+
+
 def session_payload(included: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     included = people() if included is None else included
     attended = [p for p in included if p["attributes"]["registrant_detail"]["attended"]]

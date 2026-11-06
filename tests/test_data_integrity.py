@@ -1,7 +1,9 @@
 """Data integrity: results are saved atomically, completely, or not at all.
 
 Real-Postgres tests use the `test_database` fixture (skipped without
-TEST_DATABASE_URL). Everything else runs on fakes.
+TEST_DATABASE_URL). Everything else runs on fakes. The stored people are
+here too: a roster is replaced whole or not at all, deleted with its
+session, and never holds an email address or a join link.
 """
 
 from __future__ import annotations
@@ -12,12 +14,15 @@ import hashlib
 import importlib.util
 import json
 import logging
+import re
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
+import psycopg
 import pytest
 import requests
+import synthetic_session as synthetic
 from pydantic import BaseModel
 
 from livestorm_app import api_logic, db, llm_client, worker
@@ -683,3 +688,362 @@ def test_the_join_link_backfill_refuses_a_remote_database(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", "")
     with pytest.raises(SystemExit):
         script._require_database(allow_remote=True)
+
+
+# ── Stored people: replaced whole, deleted with the session (real Postgres) ─
+#
+# Synthetic people only (tests/synthetic_session.py): their records hold an
+# email address each and two hold a join link, which must never be stored.
+
+PEOPLE_TABLES = ("session_rosters", "session_people", "livestorm_sync_jobs")
+
+
+def _replace_roster(session_id: str, people=None, **header) -> dict:
+    rows = synthetic.person_rows(session_id) if people is None else people
+    options = {
+        "source": "paginated", "complete": True, "record_count": len(rows), "reason": "initial", "refresh_due_at": None,
+        **header,
+    }
+    return db.replace_session_roster(session_id, rows, **options)
+
+
+def _rows_of(table: str, session_id: str) -> int:
+    with db.get_db_connection() as conn:
+        return conn.execute(f"SELECT COUNT(*) AS n FROM {table} WHERE session_id = %s", (session_id,)).fetchone()["n"]
+
+
+def _sync_row(sync_id: str) -> dict:
+    with db.get_db_connection() as conn:
+        return dict(conn.execute("SELECT * FROM livestorm_sync_jobs WHERE sync_id = %s", (sync_id,)).fetchone())
+
+
+def test_a_person_row_is_what_parse_person_gives_plus_its_ref():
+    assert set(db._PERSON_COLUMNS) == {*livestorm_payloads.PERSON_KEYS, "person_ref"}
+    assert len(db._PERSON_COLUMNS) == len(livestorm_payloads.PERSON_KEYS) + 1
+    assert db._PEOPLE_ATTRIBUTE_KEYS == livestorm_payloads.PEOPLE_ATTRIBUTE_KEYS
+
+
+def test_a_roster_is_replaced_whole_and_its_version_goes_up(test_database):
+    db.upsert_cached_session("key-a", "sess-a", organization_id="org-a")
+    assert _replace_roster("sess-a") == {"roster_version": 1, "people_count": 10}
+
+    fewer = synthetic.person_rows("sess-a")[3:6]
+    assert _replace_roster("sess-a", fewer, reason="manual") == {"roster_version": 2, "people_count": 3}
+    assert [row["person_id"] for row in db.list_session_people("sess-a", ALL_ORGS)] == sorted(row["person_id"] for row in fewer)
+    header = db.fetch_roster_status("sess-a", ALL_ORGS)["roster"]
+    assert (header["reason"], header["people_count"], header["record_count"], header["refreshed_at"]) == ("manual", 3, 3, None)
+
+    _replace_roster("sess-a", fewer, reason="refresh_t7")
+    refreshed_at = db.fetch_roster_status("sess-a", ALL_ORGS)["roster"]["refreshed_at"]
+    assert refreshed_at is not None
+    _replace_roster("sess-a", fewer, complete=False, record_count=4, reason="manual")
+    header = db.fetch_roster_status("sess-a", ALL_ORGS)["roster"]
+    assert (header["roster_version"], header["complete"], header["refreshed_at"]) == (4, False, refreshed_at)
+
+
+def test_a_stored_person_reads_back_as_parse_person_gave_it(test_database):
+    db.upsert_cached_session("key-a", "sess-a", organization_id="org-a")
+    rows = synthetic.person_rows("sess-a")
+    # parse_person passes an ISO time through as sent; it reads back as unix seconds.
+    rows[1] = {**rows[1], "registered_at": "2023-11-14T22:13:20+00:00", "replay_watched_at": "2023-11-14T22:13:20.5"}
+    _replace_roster("sess-a", rows, fields=[{"slug": "team_size", "name": "Team size"}], fields_source="people_attributes")
+    stored = {row["person_id"]: row for row in db.list_session_people("sess-a", ALL_ORGS)}
+    expected = {row["person_id"]: row for row in rows}
+    expected[rows[1]["person_id"]] = {**rows[1], "registered_at": 1700000000.0, "replay_watched_at": 1700000000.5}
+    assert stored == expected
+    times = [row[column] for row in stored.values() for column in db._PERSON_TIME_COLUMNS if row[column] is not None]
+    assert times and all(type(value) is float for value in times), "every time reads back as a float"
+    assert db.fetch_roster_status("sess-a", ALL_ORGS)["roster"]["fields"] == [{"slug": "team_size", "name": "Team size"}]
+
+
+def test_every_roster_replace_sets_refresh_due_at(test_database):
+    import inspect
+
+    parameter = inspect.signature(db.replace_session_roster).parameters["refresh_due_at"]
+    assert parameter.default is inspect.Parameter.empty, "no default: a replace that leaves it out must not clear it silently"
+
+    db.upsert_cached_session("key-a", "sess-a", organization_id="org-a")
+    due = datetime(2030, 1, 8, tzinfo=timezone.utc)
+    _replace_roster("sess-a", refresh_due_at=due)
+    _replace_roster("sess-a", reason="manual", refresh_due_at=due)
+    assert db.fetch_roster_status("sess-a", ALL_ORGS)["roster"]["refresh_due_at"] == due
+    _replace_roster("sess-a", reason="refresh_t7", refresh_due_at=None)
+    assert db.fetch_roster_status("sess-a", ALL_ORGS)["roster"]["refresh_due_at"] is None, "None clears it"
+
+
+def test_a_nul_character_never_blocks_a_roster(test_database):
+    db.upsert_cached_session("key-a", "sess-a", organization_id="org-a")
+    row = {**synthetic.person_rows("sess-a")[3], "job_title": "Lead\x00", "answers": {"team_size": "11\x00-50"}}
+    _replace_roster("sess-a", [row])
+    stored = db.list_session_people("sess-a", ALL_ORGS)[0]
+    assert (stored["job_title"], stored["answers"]) == ("Lead", {"team_size": "11-50"})
+
+
+def test_a_failed_replace_keeps_the_previous_roster_and_version(test_database, caplog):
+    db.upsert_cached_session("key-a", "sess-a", organization_id="org-a")
+    _replace_roster("sess-a")
+    people_before = db.list_session_people("sess-a", ALL_ORGS)
+    status_before = db.fetch_roster_status("sess-a", ALL_ORGS)
+
+    broken = synthetic.person_rows("sess-a")[:4]
+    # Out of range for an INTEGER column: Postgres refuses the third row,
+    # after the old rows were deleted and two new ones inserted.
+    broken[2] = {**broken[2], "attendance_duration_s": 10**12}
+    with caplog.at_level(logging.ERROR), pytest.raises(RuntimeError, match="previous roster is kept"):
+        _replace_roster("sess-a", broken, reason="manual")
+
+    assert "sqlstate=22003" in caplog.text, "the failure came from the insert itself"
+    assert db.list_session_people("sess-a", ALL_ORGS) == people_before
+    assert db.fetch_roster_status("sess-a", ALL_ORGS) == status_before
+
+
+def test_people_of_a_session_that_is_not_cached_are_refused(test_database):
+    with pytest.raises(RuntimeError):
+        _replace_roster("sess-missing")
+    with pytest.raises(RuntimeError):
+        db.create_livestorm_sync("sess-missing", reason="initial")
+    assert all(_rows_of(table, "sess-missing") == 0 for table in PEOPLE_TABLES)
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"email": "nora.vale@example.test"},
+        {"email_domain": "nora.vale@example.test"},
+        {"password_key": "synthetic-password-key"},
+        {"connection_link": "https://app.livestorm.test/p/x/live?key=synthetic-password-key"},
+        {"referrer": "https://www.linkedin.example/feed/?trk=synthetic"},
+    ],
+    ids=["email", "address-as-domain", "password-key", "connection-link", "full-referrer"],
+)
+def test_no_email_address_or_join_link_can_be_stored(monkeypatch, extra):
+    def no_write():
+        raise AssertionError("a refused row must not reach the database")
+
+    monkeypatch.setattr(db, "database_enabled", lambda: True)
+    monkeypatch.setattr(db, "get_db_connection", no_write)
+    row = {**synthetic.person_rows("sess-a")[0], **extra}
+    with pytest.raises(ValueError) as refused:
+        db.replace_session_roster(
+            "sess-a", [row], source="paginated", complete=None, record_count=None, reason="initial", refresh_due_at=None,
+        )
+    assert "example.test" not in str(refused.value) and "synthetic-password-key" not in str(refused.value)
+
+
+def _refuse_writes(monkeypatch) -> None:
+    def no_write():
+        raise AssertionError("a refused write must not reach the database")
+
+    monkeypatch.setattr(db, "database_enabled", lambda: True)
+    monkeypatch.setattr(db, "get_db_connection", no_write)
+
+
+@pytest.mark.parametrize("record_count", [9, 11], ids=["count-below-the-people", "count-above-the-people"])
+def test_a_roster_is_never_complete_without_a_matching_count(monkeypatch, record_count):
+    _refuse_writes(monkeypatch)
+    rows = synthetic.person_rows("sess-a")
+    assert len(rows) == 10
+    with pytest.raises(ValueError, match="record_count"):
+        _replace_roster("sess-a", rows, complete=True, record_count=record_count)
+    with pytest.raises(ValueError, match="record_count"):
+        _replace_roster("sess-a", rows, complete=True, record_count=None)
+
+
+@pytest.mark.parametrize("shared", ["person_id", "person_ref"])
+def test_a_roster_never_holds_one_person_id_or_ref_twice(monkeypatch, shared):
+    _refuse_writes(monkeypatch)
+    rows = synthetic.person_rows("sess-a")[:3]
+    rows[2] = {**rows[2], shared: rows[0][shared]}
+    with pytest.raises(ValueError, match="unique"):
+        _replace_roster("sess-a", rows, complete=None, record_count=None)
+
+
+def test_people_attributes_never_take_a_creator_id_or_any_other_key(monkeypatch):
+    _refuse_writes(monkeypatch)
+    for extra in ({"user_id": "u-synthetic-creator"}, {"placeholder": "Type here"}):
+        with pytest.raises(ValueError) as refused:
+            db.upsert_org_people_attributes("org-a", [{"slug": "goal", **extra}], status="ok")
+        assert "u-synthetic-creator" not in str(refused.value) and "Type here" not in str(refused.value)
+    with pytest.raises(ValueError):
+        db.upsert_org_people_attributes("org-a", [], status="refused")
+
+
+def test_only_an_ok_fetch_replaces_the_stored_people_attributes(test_database):
+    goal = {"slug": "goal", "name": "Your goal", "type": "text", "builtin": False, "options": []}
+    plan = {"slug": "plan", "name": "Plan", "type": "unique_select", "builtin": False, "options": []}
+    db.upsert_org_people_attributes("org-a", [goal], status="ok")
+    first = db.get_org_people_attributes("org-a")
+
+    for status in ("forbidden", "error"):
+        db.upsert_org_people_attributes("org-a", [plan], status=status)
+        kept = db.get_org_people_attributes("org-a")
+        assert kept["attributes"] == [goal], f"a {status} fetch keeps the last good labels"
+        assert kept["status"] == status and kept["fetched_at"] > first["fetched_at"]
+
+    db.upsert_org_people_attributes("org-a", [plan], status="ok")
+    assert db.get_org_people_attributes("org-a")["attributes"] == [plan]
+    db.upsert_org_people_attributes("org-a", [], status="ok")
+    assert db.get_org_people_attributes("org-a")["attributes"] == [], "an ok fetch with no fields replaces them too"
+
+
+def test_a_stored_roster_holds_the_email_domain_only_and_no_join_link(test_database):
+    records = synthetic.people()
+    assert _has_join_link(records) and "@example.test" in json.dumps(records), "the fixture must hold both"
+    db.upsert_cached_session("key-a", "sess-a", organization_id="org-a")
+    _replace_roster("sess-a", synthetic.person_rows("sess-a", records))
+
+    with db.get_db_connection() as conn:
+        stored = [dict(row) for row in conn.execute("SELECT * FROM session_people").fetchall()]
+    text = json.dumps(stored, default=str)
+    assert "@" not in text and not _has_join_link(text) and "synthetic-password-key" not in text
+    assert {row["email_domain"] for row in stored} == {"example.test"}
+    assert not {"email", "referrer", "password_key", "connection_link"} & set(stored[0])
+
+    with pytest.raises(psycopg.errors.CheckViolation), db.get_db_connection() as conn:
+        conn.execute("UPDATE session_people SET email_domain = 'nora.vale@example.test'")
+
+
+def test_deleting_a_session_deletes_its_people_roster_and_syncs(test_database):
+    for session_id in ("sess-a", "sess-b"):
+        db.upsert_cached_session("key-a", session_id, organization_id="org-a")
+        _replace_roster(session_id)
+        db.create_livestorm_sync(session_id, reason="initial", connection_id=f"conn-{session_id}")
+    db.upsert_org_people_attributes("org-a", [], status="forbidden")
+
+    assert db.admin_delete_session("sess-a") is True
+
+    assert {table: _rows_of(table, "sess-a") for table in PEOPLE_TABLES} == dict.fromkeys(PEOPLE_TABLES, 0)
+    assert {table: _rows_of(table, "sess-b") for table in PEOPLE_TABLES} == {
+        "session_rosters": 1, "session_people": 10, "livestorm_sync_jobs": 1,
+    }
+    assert db.get_org_people_attributes("org-a")["status"] == "forbidden", "workspace field labels aren't per session"
+
+
+def test_the_people_tables_reference_the_session_through_its_unique_index(test_database):
+    with db.get_db_connection() as conn:
+        keys = conn.execute(
+            """
+            SELECT conrelid::regclass::text AS tbl, confdeltype, conindid::regclass::text AS idx
+            FROM pg_constraint
+            WHERE contype = 'f' AND confrelid = 'session_cache'::regclass
+            ORDER BY 1
+            """
+        ).fetchall()
+    assert [(key["tbl"], key["confdeltype"], key["idx"]) for key in keys] == [
+        (table, "c", "idx_session_cache_session_id_unique")
+        for table in ("livestorm_sync_jobs", "session_people", "session_rosters")
+    ]
+
+
+def test_the_people_indexes_are_as_documented(test_database):
+    with db.get_db_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT indexname, indexdef FROM pg_indexes
+            WHERE schemaname = current_schema()
+              AND tablename IN ('session_rosters', 'session_people', 'org_people_attributes', 'livestorm_sync_jobs')
+            """
+        ).fetchall()
+    found = {row["indexname"]: re.sub(r" ON \S+\.", " ON ", row["indexdef"]) for row in rows}
+    assert {name: definition for name, definition in found.items() if not name.endswith("_pkey")} == {
+        "idx_session_people_ref": "CREATE UNIQUE INDEX idx_session_people_ref ON session_people USING btree (session_id, person_ref)",
+        "idx_livestorm_sync_one_active": (
+            "CREATE UNIQUE INDEX idx_livestorm_sync_one_active ON livestorm_sync_jobs USING btree (session_id, kind) "
+            "WHERE (status = ANY (ARRAY['pending'::text, 'running'::text]))"
+        ),
+        "idx_livestorm_sync_one_scheduled": (
+            "CREATE UNIQUE INDEX idx_livestorm_sync_one_scheduled ON livestorm_sync_jobs USING btree (session_id, kind, reason) "
+            "WHERE (status = 'scheduled'::text)"
+        ),
+        "idx_livestorm_sync_due": "CREATE INDEX idx_livestorm_sync_due ON livestorm_sync_jobs USING btree (status, due_at)",
+        "idx_livestorm_sync_session": (
+            "CREATE INDEX idx_livestorm_sync_session ON livestorm_sync_jobs USING btree (session_id, created_at DESC)"
+        ),
+    }
+
+
+def test_the_database_refuses_one_person_ref_twice_in_a_session(test_database):
+    db.upsert_cached_session("key-a", "sess-a", organization_id="org-a")
+    db.upsert_cached_session("key-a", "sess-b", organization_id="org-a")
+    _replace_roster("sess-a")
+    ref = synthetic.person_rows("sess-a")[0]["person_ref"]
+    insert = "INSERT INTO session_people (session_id, person_id, person_ref) VALUES (%s, %s, %s)"
+    with pytest.raises(psycopg.errors.UniqueViolation), db.get_db_connection() as conn:
+        conn.execute(insert, ("sess-a", "p-synthetic-new", ref))
+    with db.get_db_connection() as conn:
+        conn.execute(insert, ("sess-b", "p-synthetic-new", ref))
+        conn.commit()
+    assert _rows_of("session_people", "sess-b") == 1, "the same ref in another session is fine"
+
+
+def test_ensuring_the_schema_again_keeps_every_people_row(test_database):
+    db.upsert_cached_session("key-a", "sess-a", organization_id="org-a")
+    _replace_roster("sess-a")
+    db.create_livestorm_sync("sess-a", reason="initial")
+    db.upsert_org_people_attributes("org-a", [{"slug": "goal"}], status="ok")
+
+    db.ensure_database_schema()
+    db.ensure_database_schema()
+
+    assert {table: _rows_of(table, "sess-a") for table in PEOPLE_TABLES} == {
+        "session_rosters": 1, "session_people": 10, "livestorm_sync_jobs": 1,
+    }
+    assert db.fetch_roster_status("sess-a", ALL_ORGS)["roster"]["roster_version"] == 1
+    assert db.get_org_people_attributes("org-a")["attributes"] == [{"slug": "goal"}]
+
+
+def test_a_sync_hands_its_connection_id_over_once(test_database):
+    db.upsert_cached_session("key-a", "sess-a", organization_id="org-a")
+    created = db.create_livestorm_sync("sess-a", reason="initial", connection_id="conn-secret")
+    assert created["created"] is True and created["status"] == "pending"
+    assert "conn-secret" not in repr(created)
+
+    raced = db.create_livestorm_sync("sess-a", reason="manual", connection_id="conn-other")
+    assert raced == {"sync_id": created["sync_id"], "status": "pending", "created": False}
+    assert _sync_row(created["sync_id"])["connection_id"] == "conn-secret", "a lost race changes nothing"
+    assert "conn-secret" not in repr(db.fetch_roster_status("sess-a", ALL_ORGS))
+
+    claim = db.claim_livestorm_sync(created["sync_id"])
+    assert claim == {"session_id": "sess-a", "kind": "people", "reason": "initial", "connection_id": "conn-secret", "credential_user_id": ""}
+    row = _sync_row(created["sync_id"])
+    assert (row["status"], row["connection_id"]) == ("running", None)
+    assert db.claim_livestorm_sync(created["sync_id"]) is None, "a second claim gets nothing"
+    assert db.claim_livestorm_sync("no-such-sync") is None
+
+    assert db.update_livestorm_sync(created["sync_id"], status="completed", pages_fetched=1, record_count=10, people_written=10)
+    sync = db.fetch_roster_status("sess-a", ALL_ORGS)["sync"]
+    assert (sync["status"], sync["pages_fetched"], sync["record_count"], sync["people_written"]) == ("completed", 1, 10, 10)
+    assert db.create_livestorm_sync("sess-a", reason="manual")["created"] is True, "a finished sync doesn't block the next"
+
+
+def test_a_sync_that_leaves_pending_drops_its_connection_id(test_database):
+    db.upsert_cached_session("key-a", "sess-a", organization_id="org-a")
+    created = db.create_livestorm_sync("sess-a", reason="initial", connection_id="conn-secret")
+    long_error = "Livestorm returned HTTP 503. " * 100
+
+    assert db.update_livestorm_sync(created["sync_id"], status="error", error=long_error) is True
+
+    row = _sync_row(created["sync_id"])
+    assert (row["status"], row["connection_id"]) == ("error", None)
+    assert len(row["error"]) == db.SYNC_ERROR_MAX_CHARS
+    assert db.update_livestorm_sync("no-such-sync", status="error") is False
+    with pytest.raises(ValueError):
+        db.update_livestorm_sync(created["sync_id"], status="exploded")
+
+
+def test_a_scheduled_sync_holds_no_connection_id_and_is_not_the_latest_status(test_database):
+    db.upsert_cached_session("key-a", "sess-a", organization_id="org-a")
+    due = datetime(2030, 1, 8, tzinfo=timezone.utc)
+    with pytest.raises(ValueError):
+        db.create_livestorm_sync("sess-a", reason="refresh_t7", status="scheduled", connection_id="conn-secret", due_at=due)
+
+    scheduled = db.create_livestorm_sync("sess-a", reason="refresh_t7", status="scheduled", due_at=due)
+    assert db.create_livestorm_sync("sess-a", reason="refresh_t7", status="scheduled", due_at=due) == {
+        "sync_id": scheduled["sync_id"], "status": "scheduled", "created": False,
+    }
+    assert _sync_row(scheduled["sync_id"])["due_at"] == due
+    assert db.fetch_roster_status("sess-a", ALL_ORGS)["sync"] is None, "a scheduled sync isn't a status yet"
+
+    pending = db.create_livestorm_sync("sess-a", reason="initial", connection_id="conn-secret")
+    assert pending["created"] is True, "a scheduled sync doesn't block one that runs now"
+    assert db.fetch_roster_status("sess-a", ALL_ORGS)["sync"]["sync_id"] == pending["sync_id"]

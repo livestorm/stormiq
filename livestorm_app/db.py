@@ -1,14 +1,16 @@
 import atexit
 import hashlib
 import json
+import math
 import os
 import logging
+import re
 import threading
 import time
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterator, List, Optional, Sequence, Union
+from typing import Any, Dict, Iterator, List, Mapping, Optional, Sequence, Union
 
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
@@ -444,7 +446,152 @@ def ensure_database_schema() -> None:
                 ON llm_usage (organization_id, created_at DESC)
                 """
             )
+            _ensure_people_schema(cursor)
         connection.commit()
+
+
+def _ensure_people_schema(cursor: Any) -> None:
+    """The people tables: the workspace's field labels, each session's roster
+    header and person rows, and the Livestorm sync jobs.
+
+    The per-session tables reference `session_cache (session_id)` through the
+    non-partial unique index `idx_session_cache_session_id_unique`, so they
+    must be created after it. `ON DELETE CASCADE`: deleting a cached session
+    (`admin_delete_session`) deletes its roster, people and sync rows. They
+    carry no `organization_id`: every read joins `session_cache` and filters
+    on its org (`fetch_roster_status`, `list_session_people`).
+    """
+    # One row per org: the registration fields defined in the workspace
+    # (`payloads.parse_people_attributes`). No personal data.
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS org_people_attributes (
+            organization_id TEXT PRIMARY KEY,
+            attributes      JSONB NOT NULL DEFAULT '[]'::jsonb,
+            status          TEXT NOT NULL,
+            fetched_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS session_rosters (
+            session_id     TEXT PRIMARY KEY REFERENCES session_cache (session_id) ON DELETE CASCADE,
+            roster_version INTEGER NOT NULL,
+            source         TEXT NOT NULL,
+            complete       BOOLEAN,
+            record_count   INTEGER,
+            people_count   INTEGER NOT NULL,
+            fields         JSONB NOT NULL DEFAULT '[]'::jsonb,
+            fields_source  TEXT NOT NULL,
+            reason         TEXT NOT NULL,
+            synced_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            refresh_due_at TIMESTAMPTZ,
+            refreshed_at   TIMESTAMPTZ
+        )
+        """
+    )
+    # One row per person, in the `payloads.parse_person` shape: the email
+    # domain, never the address (the CHECK refuses an "@"); the referrer's
+    # host, never the URL; no join link, phone, address, device or avatar.
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS session_people (
+            session_id            TEXT NOT NULL REFERENCES session_cache (session_id) ON DELETE CASCADE,
+            person_id             TEXT NOT NULL,
+            person_ref            TEXT NOT NULL,
+            livestorm_role        TEXT,
+            is_guest_speaker      BOOLEAN NOT NULL DEFAULT FALSE,
+            session_role          TEXT,
+            first_name            TEXT,
+            last_name             TEXT,
+            email_domain          TEXT CHECK (email_domain IS NULL OR position('@' IN email_domain) = 0),
+            company               TEXT,
+            job_title             TEXT,
+            answers               JSONB NOT NULL DEFAULT '{}'::jsonb,
+            registered_at         TIMESTAMPTZ,
+            registration_type     TEXT,
+            referrer_domain       TEXT,
+            utm_source            TEXT,
+            utm_medium            TEXT,
+            utm_campaign          TEXT,
+            utm_term              TEXT,
+            utm_content           TEXT,
+            timezone              TEXT,
+            country_code          TEXT,
+            country_name          TEXT,
+            attended              BOOLEAN,
+            attendance_duration_s INTEGER,
+            attendance_rate       DOUBLE PRECISION,
+            has_viewed_replay     BOOLEAN,
+            replay_watched_at     TIMESTAMPTZ,
+            ls_messages_count     INTEGER,
+            ls_questions_count    INTEGER,
+            ls_votes_count        INTEGER,
+            ls_up_votes_count     INTEGER,
+            ls_updated_at         TIMESTAMPTZ,
+            PRIMARY KEY (session_id, person_id)
+        )
+        """
+    )
+    cursor.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_session_people_ref
+        ON session_people (session_id, person_ref)
+        """
+    )
+    # Worker jobs that call Livestorm with a user's credentials (the people
+    # sync). `connection_id` is also a session cookie value. Only two
+    # statements clear it: the claim (`claim_livestorm_sync`) and any update
+    # that moves the row out of 'pending' (`update_livestorm_sync`). So a
+    # row that is never claimed (a failed enqueue, a lost job) must be closed
+    # through `update_livestorm_sync`, as the people sync job's sweeper will.
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS livestorm_sync_jobs (
+            sync_id            TEXT PRIMARY KEY,
+            session_id         TEXT NOT NULL REFERENCES session_cache (session_id) ON DELETE CASCADE,
+            kind               TEXT NOT NULL,
+            reason             TEXT NOT NULL,
+            status             TEXT NOT NULL,
+            due_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            connection_id      TEXT,
+            credential_user_id TEXT,
+            pages_fetched      INTEGER,
+            record_count       INTEGER,
+            people_written     INTEGER,
+            error              TEXT,
+            created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
+    cursor.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_livestorm_sync_one_active
+        ON livestorm_sync_jobs (session_id, kind)
+        WHERE status IN ('pending', 'running')
+        """
+    )
+    cursor.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_livestorm_sync_one_scheduled
+        ON livestorm_sync_jobs (session_id, kind, reason)
+        WHERE status = 'scheduled'
+        """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_livestorm_sync_due
+        ON livestorm_sync_jobs (status, due_at)
+        """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_livestorm_sync_session
+        ON livestorm_sync_jobs (session_id, created_at DESC)
+        """
+    )
 
 
 def fetch_cached_session(
@@ -1339,6 +1486,563 @@ def admin_list_users() -> List[Dict[str, Any]]:
         return []
 
 
+# ── People: rosters, person rows, field labels and sync jobs ─────────────
+#
+# A session's people, as Livestorm listed them, are stored whole: one roster
+# header (`session_rosters`) and one row per person (`session_people`),
+# replaced together in one transaction. The per-session tables have no org
+# column; every read joins `session_cache` and filters on its org, so a blank
+# scope matches nothing and never queries. Nothing calls these yet: the
+# people sync job will (docs/data-model.md).
+
+ROSTER_SOURCES = ("paginated", "session_include")
+ROSTER_FIELDS_SOURCES = ("people_attributes", "event_fields", "none")
+ROSTER_REASONS = ("initial", "refresh_t7", "manual", "backfill")
+PEOPLE_ATTRIBUTES_STATUSES = ("ok", "forbidden", "error")
+SYNC_KINDS = ("people",)
+SYNC_REASONS = ("initial", "refresh_t7", "manual")
+SYNC_STATUSES = ("scheduled", "pending", "running", "completed", "error", "waiting_for_user", "deferred")
+
+# A person row: `livestorm.payloads.parse_person`'s keys (PERSON_KEYS) plus
+# its `P-` ref (`record.roster.assign_person_refs`). There is no column for
+# an email address or a join link, and a row with any other key is refused.
+_PERSON_COLUMNS = (
+    "person_id", "person_ref", "livestorm_role", "is_guest_speaker", "session_role",
+    "first_name", "last_name", "email_domain", "company", "job_title", "answers",
+    "registered_at", "registration_type", "referrer_domain",
+    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+    "timezone", "country_code", "country_name",
+    "attended", "attendance_duration_s", "attendance_rate", "has_viewed_replay", "replay_watched_at",
+    "ls_messages_count", "ls_questions_count", "ls_votes_count", "ls_up_votes_count", "ls_updated_at",
+)
+# Sent as unix seconds or ISO strings, stored as TIMESTAMPTZ, read back as unix seconds.
+_PERSON_TIME_COLUMNS = ("registered_at", "replay_watched_at", "ls_updated_at")
+_PERSON_REF = re.compile(r"^P-[0-9a-f]{8,64}$")
+# `livestorm.payloads.PEOPLE_ATTRIBUTE_KEYS`: no `user_id`, no free text.
+_PEOPLE_ATTRIBUTE_KEYS = ("slug", "name", "type", "builtin", "options")
+
+_ROSTER_HEADER_COLUMNS = (
+    "roster_version", "source", "complete", "record_count", "people_count", "fields",
+    "fields_source", "reason", "synced_at", "refresh_due_at", "refreshed_at",
+)
+# What a sync row may say about itself. Never its connection id or credential user.
+_SYNC_STATUS_COLUMNS = (
+    "sync_id", "kind", "reason", "status", "due_at", "pages_fetched", "record_count",
+    "people_written", "error", "created_at", "updated_at",
+)
+SYNC_ERROR_MAX_CHARS = 1000
+
+
+def _error_label(exc: BaseException) -> str:
+    """An exception's class and SQL state, never its message (which can echo values)."""
+    sqlstate = getattr(exc, "sqlstate", None)
+    return type(exc).__name__ + (f" sqlstate={sqlstate}" if sqlstate else "")
+
+
+def _person_time(value: Any) -> Optional[datetime]:
+    """A person's time as sent (unix seconds, or an ISO string) as a UTC
+    datetime. None when missing, zero (the API's "not set") or unreadable."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, (int, float)):
+        seconds = float(value)
+    elif isinstance(value, str):
+        text = value.strip()
+        try:
+            seconds = float(text)
+        except ValueError:
+            try:
+                moment = datetime.fromisoformat(text)
+            except ValueError:
+                return None
+            return moment if moment.tzinfo is not None else moment.replace(tzinfo=timezone.utc)
+    else:
+        return None
+    if not math.isfinite(seconds) or seconds <= 0:
+        return None
+    try:
+        return datetime.fromtimestamp(seconds, tz=timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def _without_nul(value: Any) -> Any:
+    """`value` with NUL characters removed from every string in it: Postgres
+    refuses them in TEXT and JSONB, and one odd answer must not block a roster."""
+    if isinstance(value, str):
+        return value.replace("\x00", "")
+    if isinstance(value, Mapping):
+        return {_without_nul(key): _without_nul(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_without_nul(item) for item in value]
+    return value
+
+
+def _person_values(session_id: str, people: Sequence[Any]) -> List[List[Any]]:
+    """Each person row as INSERT values, after checking it. Raises ValueError
+    (naming keys, never values) on a row that isn't a person row."""
+    rows: List[List[Any]] = []
+    ids: set = set()
+    refs: set = set()
+    for person in people:
+        if not isinstance(person, Mapping):
+            raise ValueError("Each person row must be a mapping.")
+        unknown = sorted(set(person) - set(_PERSON_COLUMNS))
+        if unknown:
+            raise ValueError(f"Person rows take parse_person's keys and person_ref only, not {unknown}.")
+        person_id = str(person.get("person_id") or "").strip()
+        ref = str(person.get("person_ref") or "").strip()
+        if not person_id or not _PERSON_REF.match(ref):
+            raise ValueError("Each person row needs a person_id and a P- person_ref.")
+        if person_id in ids or ref in refs:
+            raise ValueError("Person ids and refs must be unique within a roster.")
+        ids.add(person_id)
+        refs.add(ref)
+        domain = person.get("email_domain")
+        if domain is not None and (not isinstance(domain, str) or "@" in domain):
+            raise ValueError("email_domain holds a domain, never an email address.")
+        answers = person.get("answers")
+        if answers is not None and not isinstance(answers, Mapping):
+            raise ValueError("answers must be an object.")
+        values: List[Any] = [session_id]
+        for column in _PERSON_COLUMNS:
+            value = person.get(column)
+            if column == "person_id":
+                value = person_id
+            elif column == "person_ref":
+                value = ref
+            elif column == "answers":
+                value = json.dumps(_without_nul(dict(answers or {})), ensure_ascii=False)
+            elif column == "is_guest_speaker":
+                value = value is True
+            elif column in _PERSON_TIME_COLUMNS:
+                value = _person_time(value)
+            values.append(_without_nul(value))
+        rows.append(values)
+    return rows
+
+
+def replace_session_roster(
+    session_id: str,
+    people: Sequence[Mapping[str, Any]],
+    *,
+    source: str,
+    complete: Optional[bool],
+    record_count: Optional[int],
+    reason: str,
+    fields: Sequence[Mapping[str, Any]] = (),
+    fields_source: str = "none",
+    refresh_due_at: Optional[datetime],
+) -> Dict[str, int]:
+    """Replace a session's whole roster: its header and every person row.
+
+    `people` are `livestorm.payloads.parse_person` rows, each with its
+    `person_ref`. One transaction: upsert the header with `roster_version + 1`
+    (1 for a first roster), delete the session's person rows, insert the new
+    ones. Any failure rolls it all back, so readers see the previous roster
+    and version, never a mix. `refreshed_at` is set when `reason` is
+    'refresh_t7' and kept otherwise. `refresh_due_at` has no default: every
+    replace sets it, and None clears it, so a caller that keeps a due
+    refresh passes the stored value (`fetch_roster_status`).
+
+    Checks before writing (ValueError): the enums, a person row's keys (no
+    email address, join link or any key `parse_person` doesn't give), unique
+    ids and refs, and `complete=True` only when `record_count` equals the
+    number of people. Raises RuntimeError when the database write fails or
+    the session isn't cached. Returns `{roster_version, people_count}`.
+    """
+    session_id_value = str(session_id or "").strip()
+    if not session_id_value:
+        raise ValueError("replace_session_roster requires a session_id.")
+    if source not in ROSTER_SOURCES or fields_source not in ROSTER_FIELDS_SOURCES or reason not in ROSTER_REASONS:
+        raise ValueError("Unknown roster source, fields source or reason.")
+    if record_count is not None and (isinstance(record_count, bool) or not isinstance(record_count, int) or record_count < 0):
+        raise ValueError("record_count must be a non-negative integer or None.")
+    if complete not in (True, False, None):
+        raise ValueError("complete must be True, False or None.")
+    if complete is True and record_count != len(people):
+        raise ValueError("A roster is complete only when its people match Livestorm's record_count.")
+    if not all(isinstance(field, Mapping) for field in fields):
+        raise ValueError("Each field definition must be a mapping.")
+    rows = _person_values(session_id_value, people)
+    if not database_enabled():
+        raise RuntimeError("Database is not configured.")
+
+    columns = ("session_id", *_PERSON_COLUMNS)
+    placeholders = ", ".join("%s::jsonb" if column == "answers" else "%s" for column in columns)
+    try:
+        with get_db_connection() as connection:
+            with connection.transaction():
+                header = connection.execute(
+                    """
+                    INSERT INTO session_rosters (
+                        session_id, roster_version, source, complete, record_count, people_count,
+                        fields, fields_source, reason, synced_at, refresh_due_at, refreshed_at
+                    )
+                    VALUES (%s, 1, %s, %s, %s, %s, %s::jsonb, %s, %s, NOW(), %s, CASE WHEN %s THEN NOW() END)
+                    ON CONFLICT (session_id) DO UPDATE SET
+                        roster_version = session_rosters.roster_version + 1,
+                        source = EXCLUDED.source,
+                        complete = EXCLUDED.complete,
+                        record_count = EXCLUDED.record_count,
+                        people_count = EXCLUDED.people_count,
+                        fields = EXCLUDED.fields,
+                        fields_source = EXCLUDED.fields_source,
+                        reason = EXCLUDED.reason,
+                        synced_at = EXCLUDED.synced_at,
+                        refresh_due_at = EXCLUDED.refresh_due_at,
+                        refreshed_at = COALESCE(EXCLUDED.refreshed_at, session_rosters.refreshed_at)
+                    RETURNING roster_version
+                    """,
+                    (
+                        session_id_value,
+                        source,
+                        complete,
+                        record_count,
+                        len(rows),
+                        json.dumps([dict(field) for field in fields], ensure_ascii=False),
+                        fields_source,
+                        reason,
+                        refresh_due_at,
+                        reason == "refresh_t7",
+                    ),
+                ).fetchone()
+                connection.execute("DELETE FROM session_people WHERE session_id = %s", (session_id_value,))
+                if rows:
+                    with connection.cursor() as cursor:
+                        cursor.executemany(
+                            f"INSERT INTO session_people ({', '.join(columns)}) VALUES ({placeholders})",
+                            rows,
+                        )
+    except Exception as exc:
+        logger.error("Failed to replace the roster for session_id=%s (%s)", session_id_value, _error_label(exc))
+        raise RuntimeError("Could not save the session's people; the previous roster is kept.") from exc
+    return {"roster_version": int(header["roster_version"]), "people_count": len(rows)}
+
+
+def fetch_roster_status(session_id: str, organization_id: OrgScope) -> Optional[Dict[str, Any]]:
+    """A session's roster header and its latest people sync, scoped by org.
+
+    Returns `{session_id, roster, sync}`: `roster` is the header (no person)
+    or None before the first roster; `sync` is the latest people sync that
+    isn't merely scheduled, or None. Never a connection id or a credential
+    user id. One query, joined to `session_cache` on its org: None when the
+    session isn't cached or isn't in the scope. A blank scope matches nothing
+    and never queries. Raises when the database can't be read.
+    """
+    session_id_value = str(session_id or "").strip()
+    if not database_enabled() or not session_id_value:
+        return None
+    try:
+        org_filter = _org_filter(organization_id)
+    except ScopeMatchesNothing:
+        return None
+    where_clause = "c.session_id = %s" + (" AND c.organization_id = %s" if org_filter is not None else "")
+    params: List[Any] = ["people", session_id_value] + ([org_filter] if org_filter is not None else [])
+    roster_columns = ", ".join(f"r.{column} AS r_{column}" for column in _ROSTER_HEADER_COLUMNS)
+    sync_columns = ", ".join(f"s.{column} AS s_{column}" for column in _SYNC_STATUS_COLUMNS)
+    with get_db_connection() as connection:
+        row = connection.execute(
+            f"""
+            SELECT c.session_id, r.session_id IS NOT NULL AS has_roster, {roster_columns}, {sync_columns}
+            FROM session_cache c
+            LEFT JOIN session_rosters r ON r.session_id = c.session_id
+            LEFT JOIN LATERAL (
+                SELECT {", ".join(_SYNC_STATUS_COLUMNS)}
+                FROM livestorm_sync_jobs j
+                WHERE j.session_id = c.session_id AND j.kind = %s AND j.status <> 'scheduled'
+                ORDER BY j.created_at DESC, j.sync_id DESC
+                LIMIT 1
+            ) s ON TRUE
+            WHERE {where_clause}
+            LIMIT 1
+            """,
+            params,
+        ).fetchone()
+    if not row:
+        return None
+    roster = {column: row[f"r_{column}"] for column in _ROSTER_HEADER_COLUMNS} if row["has_roster"] else None
+    sync = {column: row[f"s_{column}"] for column in _SYNC_STATUS_COLUMNS} if row["s_sync_id"] else None
+    return {"session_id": row["session_id"], "roster": roster, "sync": sync}
+
+
+def list_session_people(session_id: str, organization_id: OrgScope) -> List[Dict[str, Any]]:
+    """A session's stored person rows, scoped by org, ordered by person id.
+
+    Each row has `parse_person`'s keys plus `person_ref`; its times are unix
+    seconds as floats, whether `parse_person` gave them as numbers or ISO
+    strings (`record.roster` reads both). [] when the session has no rows,
+    isn't cached or isn't in the scope. A blank scope matches nothing and
+    never queries. Raises when the database can't be read: a failed read must
+    never look like an empty roster.
+    """
+    session_id_value = str(session_id or "").strip()
+    if not database_enabled() or not session_id_value:
+        return []
+    try:
+        org_filter = _org_filter(organization_id)
+    except ScopeMatchesNothing:
+        return []
+    columns = ", ".join(
+        f"EXTRACT(EPOCH FROM p.{column})::float8 AS {column}" if column in _PERSON_TIME_COLUMNS else f"p.{column}"
+        for column in _PERSON_COLUMNS
+    )
+    where_clause = "p.session_id = %s" + (" AND c.organization_id = %s" if org_filter is not None else "")
+    params = (session_id_value,) + ((org_filter,) if org_filter is not None else ())
+    with get_db_connection() as connection:
+        rows = connection.execute(
+            f"""
+            SELECT {columns}
+            FROM session_people p
+            JOIN session_cache c ON c.session_id = p.session_id
+            WHERE {where_clause}
+            ORDER BY p.person_id
+            """,
+            params,
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_org_people_attributes(organization_id: OrgScope) -> Optional[Dict[str, Any]]:
+    """One org's cached people attributes: `{organization_id, attributes,
+    status, fetched_at}`, or None when there are none.
+
+    One org only: a blank scope returns None without querying, and
+    `ALL_ORGS` raises ValueError. Raises when the database can't be read.
+    """
+    try:
+        org_filter = _org_filter(organization_id)
+    except ScopeMatchesNothing:
+        return None
+    if org_filter is None:
+        raise ValueError("get_org_people_attributes reads one organization, never ALL_ORGS.")
+    if not database_enabled():
+        return None
+    with get_db_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT organization_id, attributes, status, fetched_at
+            FROM org_people_attributes
+            WHERE organization_id = %s
+            """,
+            (org_filter,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def upsert_org_people_attributes(organization_id: str, attributes: Sequence[Mapping[str, Any]], *, status: str) -> None:
+    """Save one org's people attributes (`livestorm.payloads.parse_people_attributes`).
+
+    `status` is 'ok', 'forbidden' (the token can't read them) or 'error'.
+    Only an 'ok' save replaces the stored attributes; the others keep the
+    last good ones and record the status and time. Each attribute takes the
+    parsed keys only (never `user_id`). Raises on failure.
+    """
+    org_value = organization_id.strip() if isinstance(organization_id, str) else ""
+    if not org_value:
+        raise ValueError("upsert_org_people_attributes requires an organization_id.")
+    if status not in PEOPLE_ATTRIBUTES_STATUSES:
+        raise ValueError(f"Unknown people attributes status; expected one of {PEOPLE_ATTRIBUTES_STATUSES}.")
+    for attribute in attributes:
+        if not isinstance(attribute, Mapping):
+            raise ValueError("Each people attribute must be a mapping.")
+        unknown = sorted(set(attribute) - set(_PEOPLE_ATTRIBUTE_KEYS))
+        if unknown:
+            raise ValueError(f"People attributes take {_PEOPLE_ATTRIBUTE_KEYS} only, not {unknown}.")
+    if not database_enabled():
+        raise RuntimeError("Database is not configured.")
+    try:
+        with get_db_connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO org_people_attributes (organization_id, attributes, status, fetched_at)
+                VALUES (%s, %s::jsonb, %s, NOW())
+                ON CONFLICT (organization_id) DO UPDATE SET
+                    attributes = CASE WHEN EXCLUDED.status = 'ok'
+                                      THEN EXCLUDED.attributes
+                                      ELSE org_people_attributes.attributes END,
+                    status = EXCLUDED.status,
+                    fetched_at = EXCLUDED.fetched_at
+                """,
+                (org_value, json.dumps([dict(attribute) for attribute in attributes], ensure_ascii=False), status),
+            )
+            connection.commit()
+    except Exception as exc:
+        logger.error("Failed to save people attributes for organization_id=%s (%s)", org_value, _error_label(exc))
+        raise RuntimeError("Could not save the workspace's people attributes.") from exc
+
+
+def create_livestorm_sync(
+    session_id: str,
+    *,
+    reason: str,
+    kind: str = "people",
+    connection_id: str = "",
+    status: str = "pending",
+    due_at: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """Create a Livestorm sync row, unless the session already has one in flight.
+
+    `status` 'pending' (a sync to enqueue now) or 'scheduled' (one for a
+    later `due_at`). A session holds at most one pending or running sync per
+    kind, and one scheduled sync per kind and reason (partial unique
+    indexes), so a lost race attaches: `created` is False and the existing
+    row's id comes back. Returns `{sync_id, status, created}`.
+
+    `connection_id` is the OAuth connection the worker will use ("" means
+    `LS_API_KEY`, local dev). It is also a session cookie value: it stays on
+    the row only until `claim_livestorm_sync`, is never returned, and a
+    scheduled row can't hold one. Raises when the session isn't cached or the
+    write fails.
+    """
+    session_id_value = str(session_id or "").strip()
+    connection_value = str(connection_id or "").strip() or None
+    if not session_id_value:
+        raise ValueError("create_livestorm_sync requires a session_id.")
+    if kind not in SYNC_KINDS or reason not in SYNC_REASONS or status not in ("pending", "scheduled"):
+        raise ValueError("Unknown sync kind, reason or starting status.")
+    if status == "scheduled" and connection_value:
+        raise ValueError("A scheduled sync never holds a connection id.")
+    if not database_enabled():
+        raise RuntimeError("Database is not configured.")
+    if status == "pending":
+        conflict = "ON CONFLICT (session_id, kind) WHERE status IN ('pending', 'running') DO NOTHING"
+        existing = "status IN ('pending', 'running')"
+        existing_params: tuple = (session_id_value, kind)
+    else:
+        conflict = "ON CONFLICT (session_id, kind, reason) WHERE status = 'scheduled' DO NOTHING"
+        existing = "status = 'scheduled' AND reason = %s"
+        existing_params = (session_id_value, kind, reason)
+    try:
+        with get_db_connection() as connection:
+            for _attempt in range(2):
+                row = connection.execute(
+                    f"""
+                    INSERT INTO livestorm_sync_jobs (sync_id, session_id, kind, reason, status, due_at, connection_id)
+                    VALUES (%s, %s, %s, %s, %s, COALESCE(%s, NOW()), %s)
+                    {conflict}
+                    RETURNING sync_id, status
+                    """,
+                    (uuid.uuid4().hex, session_id_value, kind, reason, status, due_at, connection_value),
+                ).fetchone()
+                if row:
+                    connection.commit()
+                    return {"sync_id": row["sync_id"], "status": row["status"], "created": True}
+                row = connection.execute(
+                    f"""
+                    SELECT sync_id, status FROM livestorm_sync_jobs
+                    WHERE session_id = %s AND kind = %s AND {existing}
+                    LIMIT 1
+                    """,
+                    existing_params,
+                ).fetchone()
+                if row:
+                    connection.commit()
+                    return {"sync_id": row["sync_id"], "status": row["status"], "created": False}
+                # The row in flight finished between the two statements; try again.
+            connection.commit()
+    except Exception as exc:
+        logger.error("Failed to create a %s sync for session_id=%s (%s)", kind, session_id_value, _error_label(exc))
+        raise RuntimeError("Could not start reading the session's people. Please try again.") from exc
+    raise RuntimeError("Could not start reading the session's people. Please try again.")
+
+
+def claim_livestorm_sync(sync_id: str) -> Optional[Dict[str, Any]]:
+    """Move a sync from 'pending' to 'running' for the worker that will run it.
+
+    Returns `{session_id, kind, reason, connection_id, credential_user_id}`,
+    with the stored connection id ("" for `LS_API_KEY`), which the same
+    statement clears from the row: it is handed over once. None when the
+    sync is no longer pending (claimed, swept or closed); the worker must
+    then make no Livestorm call. Raises on database errors.
+    """
+    sync_id_value = str(sync_id or "").strip()
+    if not sync_id_value:
+        return None
+    if not database_enabled():
+        raise RuntimeError("Database is not configured.")
+    try:
+        with get_db_connection() as connection:
+            row = connection.execute(
+                """
+                UPDATE livestorm_sync_jobs AS job
+                SET status = 'running', connection_id = NULL, updated_at = NOW()
+                FROM (
+                    SELECT sync_id, connection_id FROM livestorm_sync_jobs
+                    WHERE sync_id = %s AND status = 'pending'
+                    FOR UPDATE
+                ) AS claimed
+                WHERE job.sync_id = claimed.sync_id
+                RETURNING job.session_id, job.kind, job.reason, claimed.connection_id, job.credential_user_id
+                """,
+                (sync_id_value,),
+            ).fetchone()
+            connection.commit()
+    except Exception as exc:
+        logger.error("Failed to claim sync_id=%s (%s)", sync_id_value, _error_label(exc))
+        raise RuntimeError("Could not claim the people sync.") from exc
+    if not row:
+        return None
+    return {
+        "session_id": row["session_id"],
+        "kind": row["kind"],
+        "reason": row["reason"],
+        "connection_id": str(row["connection_id"] or ""),
+        "credential_user_id": str(row["credential_user_id"] or ""),
+    }
+
+
+def update_livestorm_sync(
+    sync_id: str,
+    *,
+    status: str,
+    error: Optional[str] = None,
+    pages_fetched: Optional[int] = None,
+    record_count: Optional[int] = None,
+    people_written: Optional[int] = None,
+) -> bool:
+    """Set a sync's status, its error (None clears it) and any counts given.
+
+    A row that leaves 'pending' drops its connection id in the same
+    statement, so a finished, failed or deferred sync never keeps one. The
+    error is cut to `SYNC_ERROR_MAX_CHARS`; it must never hold a key, token or
+    upstream body. Returns False when there is no such sync. Raises on
+    database errors.
+    """
+    sync_id_value = str(sync_id or "").strip()
+    if not sync_id_value:
+        raise ValueError("update_livestorm_sync requires a sync_id.")
+    if status not in SYNC_STATUSES:
+        raise ValueError(f"Unknown sync status; expected one of {SYNC_STATUSES}.")
+    if not database_enabled():
+        raise RuntimeError("Database is not configured.")
+    error_value = str(error)[:SYNC_ERROR_MAX_CHARS] if error is not None else None
+    try:
+        with get_db_connection() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE livestorm_sync_jobs
+                SET status = %s,
+                    error = %s,
+                    pages_fetched = COALESCE(%s, pages_fetched),
+                    record_count = COALESCE(%s, record_count),
+                    people_written = COALESCE(%s, people_written),
+                    connection_id = CASE WHEN %s = 'pending' THEN connection_id END,
+                    updated_at = NOW()
+                WHERE sync_id = %s
+                """,
+                (status, error_value, pages_fetched, record_count, people_written, status, sync_id_value),
+            )
+            updated = cursor.rowcount
+            connection.commit()
+    except Exception as exc:
+        logger.error("Failed to update sync_id=%s (%s)", sync_id_value, _error_label(exc))
+        raise RuntimeError("Could not update the people sync.") from exc
+    return bool(updated)
+
+
 # ── Model usage (ai/usage.py) ──────────────────────────────────────────────
 
 _LLM_USAGE_COLUMNS = (
@@ -1512,6 +2216,8 @@ def admin_list_sessions(limit: int = 500) -> List[Dict[str, Any]]:
 
 
 def admin_delete_session(session_id: str) -> bool:
+    """Delete a cached session. Its roster, people and sync rows go with it
+    (`ON DELETE CASCADE`); its `llm_usage` rows stay."""
     if not database_enabled() or not str(session_id or "").strip():
         return False
     try:
