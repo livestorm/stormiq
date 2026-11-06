@@ -10,6 +10,7 @@ What has shipped, newest first. What's next is in [roadmap.md](roadmap.md).
 
 ## November 2026: v1 foundation
 
+- **A failed job keeps only its message.** The worker now stores only a failed job's message in Redis (`queue.job_result_serializer`), the one part of it the poll reads and returns as `error`. Users see the same error text as before.
 - **Registrant join links are never stored.** StormIQ doesn't need a registrant's personal join link, so the Livestorm fetchers drop `password_key` and `connection_link` before saving the session, chat and questions payloads. `scripts/strip_registrant_join_links.py` removes them from rows saved earlier, without bumping `updated_at` (`db.rewrite_base_payloads`). Nothing users see changes.
 - **Livestorm page size 50.** Chat, questions and event-session calls asked for 100 items per page; the API documents 50 as the maximum. The pagers now ask for 50 and stop when `meta.next_page` is null, even after a full page.
 - **Session clock.** `livestorm_app/record/` puts chat messages, questions and written answers on one time base: seconds since `started_at`, binned by minute, with the waiting room and anything after the end kept apart. Each item gets a stable evidence id (`C0001`, `Q001`, `A001`). No page uses it yet. Rules in [product.md §13](product.md#session-clock-v1-report).

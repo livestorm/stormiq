@@ -10,6 +10,7 @@ import asyncio
 import copy
 import inspect
 import json
+import pickle
 import subprocess
 import threading
 import time
@@ -46,8 +47,9 @@ async def _good_job(ctx):
     return "ok"
 
 
-def _run_worker_once(*functions) -> None:
-    """Process everything queued, then stop (arq burst mode)."""
+def _run_worker_once(*functions, **settings) -> None:
+    """Process everything queued, then stop (arq burst mode). `settings`
+    are extra Worker options, such as the worker's `job_serializer`."""
     from arq.worker import Worker, func
 
     async def _run():
@@ -58,6 +60,7 @@ def _run_worker_once(*functions) -> None:
             handle_signals=False,
             max_tries=1,
             poll_delay=0.01,
+            **settings,
         )
         try:
             await w.main()
@@ -95,6 +98,92 @@ def test_failed_job_can_be_retried_by_the_user(test_redis):
     assert retry["enqueued"] is True and retry["jobStatus"] == "pending"
     _run_worker_once(_good_job)
     assert queue.read_job_status_sync(job_id) == {"jobStatus": "completed"}
+
+
+# ── What a failed job leaves in Redis ──────────────────────────────────────
+
+FAKE_SECRETS = (b"sk-test-SECRET", b"fake-oauth-token", b"fake-upstream-body", b"fake-prompt")
+
+
+def _failed_request():
+    return requests.Request(
+        "POST",
+        "https://provider.example.test/v1/messages",
+        headers={"x-api-key": "sk-test-SECRET", "Authorization": "Bearer fake-oauth-token"},
+        json={"prompt": "fake-prompt"},
+    ).prepare()
+
+
+def _http_failure():
+    """A real requests error, as `raise_for_status` raises it: it holds the
+    prepared request and the response."""
+    request = _failed_request()
+    response = requests.Response()
+    response.status_code = 503
+    response.reason = "Service Unavailable"
+    response.url = request.url
+    response.request = request
+    response._content = b'{"error": "fake-upstream-body"}'
+    return requests.HTTPError(
+        "503 Server Error: Service Unavailable for url: https://provider.example.test/v1/messages",
+        request=request,
+        response=response,
+    )
+
+
+def _connection_failure():
+    return requests.ConnectionError("Connection reset by peer", request=_failed_request())
+
+
+@pytest.mark.parametrize("make_error", [_http_failure, _connection_failure], ids=["http", "connection"])
+def test_a_failed_job_is_stored_as_its_message_only(make_error):
+    from arq.jobs import deserialize_result, serialize_result
+
+    error = make_error()
+    result_args = ("run_overall_analysis_job", ("s1", "English"), {}, 1, 0, False, error, 0, 0, "ref", "arq:queue", "job-1")
+    assert any(secret in serialize_result(*result_args) for secret in FAKE_SECRETS), (
+        "the fixture must hold what arq's default pickle would store"
+    )
+    stored = serialize_result(*result_args, serializer=queue.job_result_serializer)
+    assert [secret for secret in FAKE_SECRETS if secret in stored] == []
+    # The web process reads it with arq's default pickle.loads.
+    read = deserialize_result(stored)
+    assert type(read.result) is queue.JobFailed and str(read.result) == str(error)
+    assert read.success is False and read.args == ("s1", "English")
+
+
+def test_a_stored_error_keeps_the_text_the_poll_showed():
+    assert str(queue.storable_job_error(TimeoutError())) == "TimeoutError", "no message: the class name, as before"
+    assert str(queue.storable_job_error(llm_client.LLMRefused("bio"))) == llm_client.REFUSED_MESSAGE
+    assert str(queue.storable_job_error(RuntimeError("model overloaded"))) == "model overloaded"
+
+
+def test_job_arguments_and_successful_results_are_pickled_as_before():
+    job = {"t": 1, "f": "run_overall_analysis_job", "a": ("s1", "English"), "k": {}, "et": 0}
+    done = {**job, "s": True, "r": {"status": "ok"}, "st": 0, "ft": 1, "q": "arq:queue", "id": "job-1"}
+    for data in (job, done):
+        assert queue.job_result_serializer(data) == pickle.dumps(data)
+
+
+def test_the_worker_stores_results_through_the_message_only_serializer():
+    from arq.worker import get_kwargs
+
+    assert get_kwargs(worker.WorkerSettings)["job_serializer"] is queue.job_result_serializer
+
+
+async def _failing_http_job(ctx):
+    raise _http_failure()
+
+
+def test_a_failed_jobs_redis_result_holds_its_message_and_the_poll_shows_it(test_redis):
+    from arq.constants import result_key_prefix
+
+    job_id = "overall_analysis:s1:English"
+    queue.enqueue_unique_job_sync("test_job", job_id)
+    _run_worker_once(_failing_http_job, job_serializer=worker.WorkerSettings.job_serializer)
+    stored = test_redis.get(result_key_prefix + job_id)
+    assert stored and [secret for secret in FAKE_SECRETS if secret in stored] == []
+    assert queue.read_job_status_sync(job_id) == {"jobStatus": "error", "error": str(_http_failure())}
 
 
 # ── AI job start ───────────────────────────────────────────────────────────
