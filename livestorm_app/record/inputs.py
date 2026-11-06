@@ -10,8 +10,10 @@ answers they wrote (`roster.escalate_roles`), except on an internal session.
 
 The roster comes from stored person rows when the caller has them
 (`roster_rows`), and from the session payload's `include=people` list
-otherwise. This is the only place that chooses, so a new people source
-changes nothing downstream.
+otherwise (`_roster`). This is the only place that chooses, so a new people
+source changes nothing downstream. The transcription job's speaker cap reads
+its count of people on stage here too (`count_people_on_stage`), from the
+same source.
 
 Pure: no database, network or web framework. The caller does the scoped read.
 """
@@ -23,7 +25,14 @@ from typing import Any, Mapping, Optional
 
 from livestorm_app.record.authors import AuthorIndex, resolve_authors
 from livestorm_app.record.clock import ClockBase, clock_base
-from livestorm_app.record.roster import Roster, RosterRows, escalate_roles, roster_from_rows, roster_from_session_payload
+from livestorm_app.record.roster import (
+    Roster,
+    RosterRows,
+    escalate_roles,
+    people_on_stage,
+    roster_from_rows,
+    roster_from_session_payload,
+)
 
 
 @dataclass(frozen=True)
@@ -55,6 +64,46 @@ def _session_id(cached: Mapping[str, Any], session_payload: Mapping[str, Any]) -
     return payload_id.strip() if isinstance(payload_id, str) else ""
 
 
+def _roster(
+    cached: Mapping[str, Any],
+    session_payload: Mapping[str, Any],
+    session_id: str,
+    roster_rows: Optional[RosterRows],
+) -> Roster:
+    """The session's roster from its one people source: the stored person
+    rows when given (`roster_rows`), the session payload's `include=people`
+    list otherwise."""
+    if roster_rows is not None:
+        data = session_payload.get("data")
+        attributes = data.get("attributes") if isinstance(data, Mapping) else None
+        return roster_from_rows(
+            roster_rows,
+            session_id=session_id,
+            session_attributes=attributes if isinstance(attributes, Mapping) else {},
+        )
+    return roster_from_session_payload(
+        session_payload, event_payload=_mapping(cached.get("event_payload")), session_id=session_id
+    )
+
+
+def count_people_on_stage(cached: Any, *, roster_rows: Optional[RosterRows] = None) -> Optional[int]:
+    """How many people of a cached session are on stage (`roster.people_on_stage`),
+    from the same people source as the record (`_roster`). The speaker cap of
+    a new transcript is built from it (docs/product.md §13, "Speaker cap").
+
+    `cached` holds at least the `session_payload`. None when unknown: no
+    people, or nobody marked as an organizer or a guest speaker (an internal
+    meeting can mark nobody). A cap built from 0 would be the floor, too low
+    for a meeting where many people talk, so 0 reads as unknown.
+    """
+    if not isinstance(cached, Mapping):
+        return None
+    session_payload = _mapping(cached.get("session_payload")) or {}
+    roster = _roster(cached, session_payload, _session_id(cached, session_payload), roster_rows)
+    count = people_on_stage(roster)
+    return count if count > 0 else None
+
+
 def load_record_inputs(cached: Mapping[str, Any], *, roster_rows: Optional[RosterRows] = None) -> RecordInputs:
     """The record's inputs from a cached session row.
 
@@ -68,14 +117,7 @@ def load_record_inputs(cached: Mapping[str, Any], *, roster_rows: Optional[Roste
     session_payload = _mapping(cached.get("session_payload")) or {}
     event_payload = _mapping(cached.get("event_payload"))
     session_id = _session_id(cached, session_payload)
-    data = session_payload.get("data")
-    attributes = data.get("attributes") if isinstance(data, Mapping) else None
-    attributes = attributes if isinstance(attributes, Mapping) else {}
-
-    if roster_rows is not None:
-        roster = roster_from_rows(roster_rows, session_id=session_id, session_attributes=attributes)
-    else:
-        roster = roster_from_session_payload(session_payload, event_payload=event_payload, session_id=session_id)
+    roster = _roster(cached, session_payload, session_id, roster_rows)
     chat_payload = _mapping(cached.get("chat_payload"))
     questions_payload = _mapping(cached.get("questions_payload"))
     authors = resolve_authors(chat_payload, questions_payload, roster)

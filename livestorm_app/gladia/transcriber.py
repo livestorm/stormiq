@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import http.client
 import json
 import mimetypes
@@ -14,7 +15,7 @@ import urllib.request
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 try:
     import imageio_ffmpeg
@@ -43,17 +44,48 @@ HTTP_TIMEOUT_SECONDS = 60
 GLADIA_POLL_MAX_CONSECUTIVE_ERRORS = 5
 # GETs to Livestorm (recording list) are retried this many times in total.
 LIVESTORM_GET_MAX_ATTEMPTS = 3
+# ffprobe or `ffmpeg -i` reading the recording's header. Local work, but a
+# stuck probe must not hold a transcription slot.
+MEDIA_PROBE_TIMEOUT_SECONDS = 60
+
+# The speaker cap of a new transcript (docs/product.md §13, "Speaker cap"):
+# the people on stage plus a margin, never under the floor nor over the
+# ceiling. The ceiling is also the cap when nobody is known to be on stage.
+MAX_SPEAKERS_MARGIN = 2
+MAX_SPEAKERS_FLOOR = 3
+MAX_SPEAKERS_CEILING = 20
+
+# What a Gladia job carries to be found again (`custom_metadata`): ids, counts
+# and labels only, never a key, token, connection id or URL.
+GLADIA_METADATA_KEYS = (
+    "stormiq_session_id",
+    "recording_id",
+    "file_size",
+    "env",
+    "chunk",
+    "chunks",
+    "offset_s",
+    "config",
+)
+GLADIA_METADATA_MAX_CHARS = 2000
+# `config` is this many hex characters of the request's SHA-256.
+CONFIG_FINGERPRINT_CHARS = 12
+# The `stormiq` provenance block of a stored transcript. 2: the block exists.
+PIPELINE_VERSION = 2
 
 
 class TransientHTTPError(RuntimeError):
     """A failure worth retrying: timeout, dropped connection, HTTP 429 or 5xx."""
+
+
 DEFAULT_GLADIA_OPTIONS: dict[str, Any] = {
     "diarization": True,
     "diarization_config": {
         # Gladia recommendation for meeting/webinar recorders: supply a speaker
         # range so the model adapts instead of having to auto-detect from scratch.
+        # The worker narrows the range to the people on stage (`speaker_options`).
         "min_speakers": 1,
-        "max_speakers": 20,
+        "max_speakers": MAX_SPEAKERS_CEILING,
     },
     "named_entity_recognition": True,
     "sentences": True,
@@ -183,6 +215,94 @@ def _probe_media_duration_seconds(media_path: Path) -> float | None:
     except subprocess.CalledProcessError:
         return None
     return _parse_ffmpeg_duration(completed.stderr or "")
+
+
+def _media_seconds(value: Any) -> float | None:
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return None
+    return round(seconds, 3) if seconds >= 0 and seconds != float("inf") else None
+
+
+def _media_text(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text[:64] if text else None
+
+
+def _ffprobe_media_info(media_path: Path) -> dict[str, Any] | None:
+    ffprobe_path = _ffprobe_executable()
+    if not ffprobe_path:
+        return None
+    command = [
+        ffprobe_path,
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration:format_tags=creation_time",
+        "-of",
+        "json",
+        str(media_path),
+    ]
+    try:
+        completed = subprocess.run(
+            command, check=True, capture_output=True, text=True, timeout=MEDIA_PROBE_TIMEOUT_SECONDS
+        )
+        payload = json.loads(completed.stdout or "{}")
+    except (subprocess.SubprocessError, OSError, ValueError):
+        return None
+    media_format = payload.get("format") if isinstance(payload, dict) else None
+    if not isinstance(media_format, dict):
+        return None
+    tags = media_format.get("tags")
+    tags = tags if isinstance(tags, dict) else {}
+    return {
+        "duration_s": _media_seconds(media_format.get("duration")),
+        "creation_time": _media_text(tags.get("creation_time")),
+    }
+
+
+def _ffmpeg_media_info(media_path: Path) -> dict[str, Any] | None:
+    """The same facts from the header `ffmpeg -i` prints. It names no output,
+    so ffmpeg reads the header, exits with an error and decodes nothing."""
+    try:
+        completed = subprocess.run(
+            [_ffmpeg_executable(), "-hide_banner", "-i", str(media_path)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=MEDIA_PROBE_TIMEOUT_SECONDS,
+        )
+    except (subprocess.SubprocessError, OSError, RuntimeError):
+        return None
+    stderr = completed.stderr or ""
+    # The container's own tags come before its first `Duration:` line; the
+    # streams' tags come after it.
+    container_header = stderr.split("Duration:", 1)[0]
+    creation_time = re.search(r"^\s*creation_time\s*:\s*(\S+)", container_header, re.MULTILINE)
+    return {
+        "duration_s": _media_seconds(_parse_ffmpeg_duration(stderr)),
+        "creation_time": _media_text(creation_time.group(1)) if creation_time else None,
+    }
+
+
+def _probe_media_info(video_path: Path) -> dict[str, Any] | None:
+    """The recording file's own duration and `creation_time` tag, read from its
+    container before the audio is extracted: `{duration_s, creation_time}`.
+
+    ffprobe when it is installed, otherwise the header `ffmpeg -i` prints (the
+    Docker images ship only imageio-ffmpeg's ffmpeg). `creation_time` is kept
+    as written: whether it marks the recording's start is not confirmed, so
+    nothing reads it yet. None when neither fact was found. Never raises: this
+    is provenance, not a reason to fail a paid transcription.
+    """
+    try:
+        info = _ffprobe_media_info(video_path) or _ffmpeg_media_info(video_path)
+    except Exception:  # noqa: BLE001 - provenance must never fail the job
+        return None
+    if not info or all(value is None for value in info.values()):
+        return None
+    return info
 
 
 def _format_ffmpeg_segment_timestamp(total_seconds: int) -> str:
@@ -325,7 +445,72 @@ def _deep_merge(base: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]
     return merged
 
 
-def _build_gladia_request(audio_url: str, gladia_options: dict[str, Any] | None = None) -> dict[str, Any]:
+def max_speakers_for(people_on_stage: int | None) -> int:
+    """Gladia's `max_speakers` for a recording with `people_on_stage` people on
+    stage: that count plus `MAX_SPEAKERS_MARGIN`, between `MAX_SPEAKERS_FLOOR`
+    and `MAX_SPEAKERS_CEILING`. Unknown (None, or not a positive count) keeps
+    the ceiling, as before the cap existed (docs/product.md §13). With a
+    margin of 2 the floor never binds (1 + 2 = 3); it matters only if the
+    margin drops."""
+    if isinstance(people_on_stage, bool) or not isinstance(people_on_stage, int) or people_on_stage <= 0:
+        return MAX_SPEAKERS_CEILING
+    return min(MAX_SPEAKERS_CEILING, max(MAX_SPEAKERS_FLOOR, people_on_stage + MAX_SPEAKERS_MARGIN))
+
+
+def speaker_options(people_on_stage: int | None) -> dict[str, Any]:
+    """The Gladia options that set the speaker range for `people_on_stage`."""
+    return {"diarization_config": {"min_speakers": 1, "max_speakers": max_speakers_for(people_on_stage)}}
+
+
+def environment_tag() -> str:
+    """Where this process runs: `render` (Render sets `RENDER` on every
+    service) or `local`. A label for job metadata, never a secret."""
+    return "render" if str(os.environ.get("RENDER") or "").strip() else "local"
+
+
+def gladia_config_fingerprint(gladia_request: Mapping[str, Any]) -> str:
+    """The first `CONFIG_FINGERPRINT_CHARS` hex characters of the SHA-256 of a
+    Gladia request without its `audio_url` and `custom_metadata`: the same
+    settings always give the same fingerprint, whatever the file."""
+    settings = {key: value for key, value in gladia_request.items() if key not in ("audio_url", "custom_metadata")}
+    canonical = json.dumps(settings, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:CONFIG_FINGERPRINT_CHARS]
+
+
+def _custom_metadata(metadata: Mapping[str, Any], config: str) -> dict[str, Any]:
+    """The `custom_metadata` a Gladia job carries: the keys of
+    `GLADIA_METADATA_KEYS` only, as strings or numbers, plus the request's
+    `config` fingerprint. A None value is left out. Raises ValueError, before
+    anything is sent, on any other key or value, or when the metadata runs
+    over `GLADIA_METADATA_MAX_CHARS` as JSON."""
+    allowed = set(GLADIA_METADATA_KEYS) - {"config"}
+    unknown = sorted(str(key) for key in metadata if key not in allowed)
+    if unknown:
+        raise ValueError(f"Gladia job metadata takes no {unknown}.")
+    custom = {key: metadata[key] for key in GLADIA_METADATA_KEYS if key in allowed and metadata.get(key) is not None}
+    custom["config"] = config
+    for key, value in custom.items():
+        if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+            raise ValueError(f"Gladia job metadata {key} must be a string or a number.")
+    if len(json.dumps(custom, separators=(",", ":"), ensure_ascii=True)) > GLADIA_METADATA_MAX_CHARS:
+        raise ValueError(f"Gladia job metadata is longer than {GLADIA_METADATA_MAX_CHARS} characters.")
+    return custom
+
+
+def _build_gladia_request(
+    audio_url: str,
+    gladia_options: dict[str, Any] | None = None,
+    *,
+    metadata: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """The request that starts a Gladia job for `audio_url`.
+
+    `DEFAULT_GLADIA_OPTIONS` deep-merged with `gladia_options`, with
+    diarization, named entities and sentences forced on. With `metadata`, the
+    job also carries `custom_metadata` (`_custom_metadata`), whose `config` is
+    the fingerprint of these settings (`gladia_config_fingerprint`). Only
+    StormIQ's own metadata is sent: any in `gladia_options` is dropped.
+    """
     request_payload: dict[str, Any] = _deep_merge({}, DEFAULT_GLADIA_OPTIONS)
     if gladia_options:
         request_payload = _deep_merge(request_payload, gladia_options)
@@ -334,6 +519,10 @@ def _build_gladia_request(audio_url: str, gladia_options: dict[str, Any] | None 
     request_payload["sentences"] = True
     request_payload.pop("audio_to_llm", None)
     request_payload.pop("audio_to_llm_config", None)
+    request_payload.pop("audio_url", None)
+    request_payload.pop("custom_metadata", None)
+    if metadata is not None:
+        request_payload["custom_metadata"] = _custom_metadata(metadata, gladia_config_fingerprint(request_payload))
     request_payload["audio_url"] = audio_url
     return request_payload
 
@@ -343,6 +532,7 @@ def _transcribe_audio_file(
     *,
     api_key: str,
     gladia_options: dict[str, Any] | None = None,
+    metadata: Mapping[str, Any] | None = None,
     on_progress: Callable[[dict[str, Any]], None] | None = None,
     chunk_index: int = 1,
     chunk_total: int = 1,
@@ -361,7 +551,7 @@ def _transcribe_audio_file(
         raise RuntimeError("Gladia upload succeeded but no audio_url was returned.")
 
     # Built once: the request we record is exactly the one we send.
-    gladia_request = _build_gladia_request(audio_url, gladia_options)
+    gladia_request = _build_gladia_request(audio_url, gladia_options, metadata=metadata)
     started_job = _start_gladia_transcription(gladia_request, api_key)
     job_id = started_job.get("id")
     if not isinstance(job_id, str) or not job_id.strip():
@@ -967,6 +1157,7 @@ def _normalize_transcription(
     recording: dict[str, Any] | None = None,
     upload_payload: dict[str, Any] | None = None,
     gladia_request: dict[str, Any] | None = None,
+    provenance: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     text, segments, words = _extract_text_segments(gladia_payload)
     normalized = dict(gladia_payload)
@@ -1001,7 +1192,74 @@ def _normalize_transcription(
         normalized["upload"] = upload_payload
     if gladia_request is not None:
         normalized["request_payload"] = gladia_request
+    if provenance is not None:
+        normalized["stormiq"] = provenance
     return normalized
+
+
+def _provenance(chunk_results: list[dict[str, Any]], media: dict[str, Any] | None) -> dict[str, Any]:
+    """The `stormiq` block of a stored transcript: how it was made.
+
+    - `pipeline_version`: `PIPELINE_VERSION`;
+    - `config`: the fingerprint of the settings sent (`gladia_config_fingerprint`),
+      the same for every chunk;
+    - `max_speakers`: the speaker cap sent;
+    - `people_on_stage`: None here; the worker sets the count it built the
+      cap from (`worker.run_transcription`);
+    - `gladia_jobs`: per chunk, its number, its Gladia job id and the
+      `custom_metadata` sent with it;
+    - `media`: the recording file's duration and `creation_time` (`_probe_media_info`).
+    """
+    first_request = chunk_results[0].get("gladia_request") if chunk_results else None
+    first_request = first_request if isinstance(first_request, dict) else {}
+    diarization = first_request.get("diarization_config")
+    max_speakers = diarization.get("max_speakers") if isinstance(diarization, dict) else None
+    jobs = []
+    for index, chunk_result in enumerate(chunk_results, start=1):
+        started_job = chunk_result.get("started_job")
+        request = chunk_result.get("gladia_request")
+        custom_metadata = request.get("custom_metadata") if isinstance(request, dict) else None
+        jobs.append(
+            {
+                "chunk": index,
+                "id": started_job.get("id") if isinstance(started_job, dict) else None,
+                "custom_metadata": dict(custom_metadata) if isinstance(custom_metadata, dict) else None,
+            }
+        )
+    return {
+        "pipeline_version": PIPELINE_VERSION,
+        "config": gladia_config_fingerprint(first_request),
+        "max_speakers": max_speakers,
+        "people_on_stage": None,
+        "gladia_jobs": jobs,
+        "media": media,
+    }
+
+
+def _file_size(value: Any) -> int | None:
+    """A recording's `file_size` as Livestorm sends it, as a whole number of bytes."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, float) and value.is_integer() and value >= 0:
+        return int(value)
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
+
+
+def _recording_metadata(session_id: str, recording: dict[str, Any]) -> dict[str, Any]:
+    """The ids that tie a Gladia job to one recording of one session. Never
+    the recording's URL: it is signed."""
+    attributes = recording.get("attributes")
+    attributes = attributes if isinstance(attributes, dict) else {}
+    recording_id = recording.get("id")
+    return {
+        "stormiq_session_id": str(session_id),
+        "recording_id": str(recording_id) if recording_id is not None else None,
+        "file_size": _file_size(attributes.get("file_size")),
+    }
 
 
 def _fetch_livestorm_recordings(session_id: str, livestorm_api_key: str | None = None) -> dict[str, Any]:
@@ -1060,7 +1318,16 @@ def transcribe_video(
     gladia_options: dict[str, Any] | None = None,
     gladia_api_key: str | None = None,
     on_progress: Callable[[dict[str, Any]], None] | None = None,
+    job_metadata: Mapping[str, Any] | None = None,
 ) -> Path:
+    """Transcribe a local video with Gladia and write the normalized JSON.
+
+    `job_metadata` names the session and recording (`_recording_metadata`).
+    Each chunk's Gladia job carries it, with this process's `env` tag, the
+    chunk's number, the chunk count and the chunk's offset
+    (`_custom_metadata`). The result records how it was made in `stormiq`
+    (`_provenance`).
+    """
     source_video = Path(input_path).expanduser().resolve()
     if not source_video.exists():
         raise FileNotFoundError(f"Input file not found: {source_video}")
@@ -1081,9 +1348,11 @@ def transcribe_video(
         temp_audio = temp_dir_path / f"{source_video.stem}.wav"
         if on_progress:
             on_progress({"step": "extracting", "message": "Extracting audio track…"})
+        media = _probe_media_info(source_video)
         _extract_audio(source_video, temp_audio)
         chunk_specs = _split_audio_file(temp_audio, temp_dir_path / "audio-chunks")
         chunk_total = len(chunk_specs)
+        base_metadata = {**(job_metadata or {}), "env": environment_tag(), "chunks": chunk_total}
 
         chunk_results: list[dict[str, Any]] = []
         for chunk_index, (chunk_path, offset_seconds) in enumerate(chunk_specs, start=1):
@@ -1091,6 +1360,7 @@ def transcribe_video(
                 chunk_path,
                 api_key=api_key,
                 gladia_options=gladia_options,
+                metadata={**base_metadata, "chunk": chunk_index, "offset_s": round(float(offset_seconds), 3)},
                 on_progress=on_progress,
                 chunk_index=chunk_index,
                 chunk_total=chunk_total,
@@ -1116,6 +1386,7 @@ def transcribe_video(
             actual_model=actual_model,
             upload_payload=chunk_results[0]["upload_payload"],
             gladia_request=chunk_results[0]["gladia_request"],
+            provenance=_provenance(chunk_results, media),
         )
         normalized["job"] = chunk_results[0]["started_job"]
         output_file.write_text(json.dumps(normalized, indent=2, ensure_ascii=True) + "\n")
@@ -1167,6 +1438,7 @@ def transcribe_livestorm_session(
             gladia_options=gladia_options,
             gladia_api_key=gladia_api_key,
             on_progress=on_progress,
+            job_metadata=_recording_metadata(session_id, recording),
         )
 
         transcript_payload = json.loads(transcript_path.read_text())

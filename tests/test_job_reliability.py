@@ -7,6 +7,10 @@ Real Redis tests need TEST_REDIS_URL, real Postgres tests TEST_DATABASE_URL
 from __future__ import annotations
 
 import asyncio
+import copy
+import inspect
+import json
+import subprocess
 import threading
 import time
 import urllib.error
@@ -399,7 +403,12 @@ def transcription(monkeypatch):
     monkeypatch.setattr(worker, "update_transcript_job_progress", lambda job_id, progress: calls["progress"].append(progress))
     monkeypatch.setattr(worker, "publish_progress_sync", lambda *a, **k: None)
     monkeypatch.setattr(worker, "clear_progress_sync", lambda *a, **k: None)
-    monkeypatch.setattr(worker, "upsert_cached_session", lambda *a, **k: None)
+    calls["upserts"] = []
+    monkeypatch.setattr(worker, "upsert_cached_session", lambda *a, **k: calls["upserts"].append(k))
+    calls["field_reads"] = []
+    monkeypatch.setattr(
+        worker, "fetch_session_fields", lambda *a, **k: calls["field_reads"].append((a, k)) and None
+    )
     monkeypatch.setattr(
         "livestorm_app.auth.livestorm_auth_for_job",
         lambda connection_id: calls["auth"].append(connection_id) or "Bearer fresh-token",
@@ -408,7 +417,7 @@ def transcription(monkeypatch):
 
 
 def test_worker_resolves_livestorm_credentials_itself(transcription, monkeypatch):
-    def fake_transcribe(gladia_key, sid, livestorm_api_key, on_progress):
+    def fake_transcribe(gladia_key, sid, livestorm_api_key, gladia_options, on_progress):
         transcription["transcribe"].append((gladia_key, livestorm_api_key))
         return {}
 
@@ -439,7 +448,7 @@ def test_missing_gladia_key_fails_the_job_clearly(transcription, monkeypatch):
 def test_timed_out_transcription_is_marked_error_and_its_thread_stops(transcription, monkeypatch):
     thread_outcome: list = []
 
-    def slow_transcribe(gladia_key, sid, livestorm_api_key, on_progress):
+    def slow_transcribe(gladia_key, sid, livestorm_api_key, gladia_options, on_progress):
         time.sleep(0.3)  # still running when the job times out
         try:
             on_progress({"step": "transcribing", "message": "still going"})
@@ -483,6 +492,63 @@ def test_transcriptions_wait_for_a_free_slot(transcription, monkeypatch):
     asyncio.run(run_two())
     assert active["max"] == 1
     assert any(p.get("step") == "waiting" for p in transcription["progress"]), "a waiting job must keep its heartbeat"
+
+
+def _capture_transcribe(monkeypatch, sent: list, payload=None):
+    def fake_transcribe(gladia_key, sid, *, livestorm_api_key, gladia_options=None, on_progress=None):
+        sent.append({"sid": sid, "gladia_options": gladia_options})
+        return copy.deepcopy(payload) if payload is not None else {"stormiq": {"people_on_stage": None, "max_speakers": 20}}
+
+    monkeypatch.setattr("livestorm_app.transcript_client.fetch_session_transcript", fake_transcribe)
+
+
+def test_the_speaker_cap_comes_from_the_cached_people_and_the_job_args_stay_ids(transcription, monkeypatch):
+    from synthetic_session import session_payload as synthetic_session_payload
+
+    reads: list = []
+    monkeypatch.setattr(
+        worker,
+        "fetch_session_fields",
+        lambda session_id, fields, *, organization_id: reads.append((session_id, fields, organization_id))
+        or {"session_payload": synthetic_session_payload()},
+    )
+    sent: list = []
+    _capture_transcribe(monkeypatch, sent)
+
+    assert asyncio.run(worker.run_transcription({}, "job-1", "s1"))["status"] == "completed"
+
+    assert reads == [("s1", ["session_payload"], ALL_ORGS)], "one light read of the cached people"
+    # The synthetic webinar has an organizer and a guest speaker: 2 + 2.
+    assert sent == [{"sid": "s1", "gladia_options": {"diarization_config": {"min_speakers": 1, "max_speakers": 4}}}]
+    assert transcription["upserts"][0]["transcript_payload"]["stormiq"]["people_on_stage"] == 2
+    assert list(inspect.signature(worker.run_transcription).parameters) == ["ctx", "job_id", "session_id"]
+    sent_text = json.dumps(sent)
+    assert "conn-for-job-1" not in sent_text and "Bearer" not in sent_text and "gladia-key" not in sent_text
+
+
+def _raise(*args, **kwargs):
+    raise RuntimeError("boom")
+
+
+@pytest.mark.parametrize("failure", ["no cached row", "read fails", "roster fails", "nobody on stage"])
+def test_an_unknown_stage_keeps_the_default_speaker_cap(transcription, monkeypatch, failure):
+    if failure == "read fails":
+        monkeypatch.setattr(worker, "fetch_session_fields", _raise)
+    elif failure == "roster fails":
+        monkeypatch.setattr(worker, "fetch_session_fields", lambda *a, **k: {"session_payload": {"included": []}})
+        monkeypatch.setattr("livestorm_app.record.inputs.count_people_on_stage", _raise)
+    elif failure == "nobody on stage":
+        everyone_team = [
+            {"id": f"tm-{n}", "type": "people", "attributes": {"role": "team_member", "registrant_detail": {"attended": True}}}
+            for n in range(4)
+        ]
+        monkeypatch.setattr(worker, "fetch_session_fields", lambda *a, **k: {"session_payload": {"included": everyone_team}})
+    sent: list = []
+    _capture_transcribe(monkeypatch, sent)
+
+    assert asyncio.run(worker.run_transcription({}, "job-1", "s1"))["status"] == "completed"
+    assert sent[0]["gladia_options"] == {"diarization_config": {"min_speakers": 1, "max_speakers": 20}}
+    assert transcription["upserts"][0]["transcript_payload"]["stormiq"]["people_on_stage"] is None
 
 
 def test_ai_job_releases_the_worker_slot_immediately(monkeypatch):
@@ -702,9 +768,9 @@ def test_gladia_request_is_built_once_and_sent_as_recorded(monkeypatch, tmp_path
     posted: list = []
     real_build = transcriber._build_gladia_request
 
-    def counting_build(audio_url, gladia_options=None):
+    def counting_build(audio_url, gladia_options=None, *, metadata=None):
         built.append(audio_url)
-        return real_build(audio_url, gladia_options)
+        return real_build(audio_url, gladia_options, metadata=metadata)
 
     def fake_json_request(*, method, url, api_key, payload=None):
         posted.append((method, payload))
@@ -715,11 +781,325 @@ def test_gladia_request_is_built_once_and_sent_as_recorded(monkeypatch, tmp_path
     monkeypatch.setattr(transcriber, "_json_request", fake_json_request)
     monkeypatch.setattr(transcriber, "_poll_gladia_transcription", lambda job_id, api_key, **kwargs: {"status": "done"})
 
-    chunk = transcriber._transcribe_audio_file(audio, api_key="k", gladia_options={"diarization_config": {"max_speakers": 5}})
+    chunk = transcriber._transcribe_audio_file(
+        audio,
+        api_key="k",
+        gladia_options={"diarization_config": {"max_speakers": 5}},
+        metadata={"stormiq_session_id": "s1", "chunk": 1, "chunks": 1, "offset_s": 0.0},
+    )
 
     assert built == ["https://gladia.example/a"]
     assert posted == [("POST", chunk["gladia_request"])]
     assert chunk["gladia_request"]["diarization_config"]["max_speakers"] == 5
+    assert chunk["gladia_request"]["custom_metadata"]["stormiq_session_id"] == "s1"
+
+
+# The real probe, kept before `gladia_transport` replaces it.
+REAL_PROBE_MEDIA_INFO = transcriber._probe_media_info
+
+# A synthetic recording: its URL is signed, so it must never leave the worker.
+SIGNED_RECORDING_URL = "https://cdn.example.test/recordings/r.mp4?signature=signed-url-token"
+GLADIA_SECRET = "gladia-secret-key"
+LIVESTORM_SECRET = "Bearer livestorm-secret-token"
+
+
+def _done_chunk(job_id: str) -> dict:
+    return {
+        "id": job_id,
+        "status": "done",
+        "file": {"audio_duration": 60.0},
+        "result": {
+            "metadata": {"audio_duration": 60.0, "billing_time": 60.0},
+            "transcription": {
+                "languages": ["en"],
+                "full_transcript": "hello there",
+                "utterances": [{"start": 1.0, "end": 2.0, "speaker": 0, "text": "hello there", "words": []}],
+            },
+        },
+    }
+
+
+@pytest.fixture
+def gladia_transport(monkeypatch, tmp_path):
+    """The whole transcriber with a patched transport: a two-chunk recording,
+    and every Gladia POST recorded. Nothing leaves the process."""
+    posted: list = []
+    recording = {
+        "id": "rec-1",
+        "type": "recordings",
+        "attributes": {
+            "file_type": "video",
+            "mime_type": "mp4",
+            "file_size": 123456789,
+            "file_name": "r.mp4",
+            "url": SIGNED_RECORDING_URL,
+            "event_id": "e1",
+            "session_id": "s1",
+        },
+    }
+
+    def fake_json_request(*, method, url, api_key, payload=None):
+        assert method == "POST" and api_key == GLADIA_SECRET
+        posted.append(copy.deepcopy(payload))
+        return {"id": f"gladia-job-{len(posted)}"}
+
+    monkeypatch.setattr(transcriber, "_fetch_livestorm_recordings", lambda session_id, livestorm_api_key=None: {"data": [recording]})
+    monkeypatch.setattr(transcriber, "_download_recording", lambda rec, destination: destination.write_bytes(b"mp4"))
+    monkeypatch.setattr(
+        transcriber, "_probe_media_info", lambda path: {"duration_s": 8160.0, "creation_time": "2026-10-01T09:00:00.000000Z"}
+    )
+    monkeypatch.setattr(transcriber, "_extract_audio", lambda video, audio: audio.write_bytes(b"RIFF"))
+    monkeypatch.setattr(transcriber, "_split_audio_file", lambda audio, chunk_dir: [(audio, 0.0), (audio, 8100.0)])
+    monkeypatch.setattr(transcriber, "_upload_audio_file", lambda path, key: {"audio_url": f"https://gladia.example/{len(posted) + 1}"})
+    monkeypatch.setattr(transcriber, "_json_request", fake_json_request)
+    monkeypatch.setattr(transcriber, "_poll_gladia_transcription", lambda job_id, api_key, **kwargs: _done_chunk(job_id))
+    monkeypatch.setenv("RENDER", "true")
+
+    def run(gladia_options=None):
+        return transcriber.transcribe_livestorm_session_data(
+            "s1",
+            output_path=tmp_path / "s1.transcript.json",
+            gladia_options=gladia_options,
+            gladia_api_key=GLADIA_SECRET,
+            livestorm_api_key=LIVESTORM_SECRET,
+        )
+
+    return run, posted
+
+
+def test_each_gladia_job_carries_ids_only_and_the_transcript_records_what_was_sent(gladia_transport):
+    run, posted = gladia_transport
+    transcript = run(transcriber.speaker_options(2))
+
+    assert len(posted) == 2, "one POST per chunk, never retried"
+    config = transcriber.gladia_config_fingerprint(posted[0])
+    assert len(config) == 12 and int(config, 16) >= 0
+    for chunk, (request, offset) in enumerate(zip(posted, (0.0, 8100.0), strict=True), start=1):
+        assert request["custom_metadata"] == {
+            "stormiq_session_id": "s1",
+            "recording_id": "rec-1",
+            "file_size": 123456789,
+            "env": "render",
+            "chunk": chunk,
+            "chunks": 2,
+            "offset_s": offset,
+            "config": config,
+        }
+        assert request["diarization_config"]["max_speakers"] == 4
+        metadata_text = json.dumps(request["custom_metadata"])
+        assert len(metadata_text) <= transcriber.GLADIA_METADATA_MAX_CHARS
+        for secret in (GLADIA_SECRET, "livestorm-secret-token", "signed-url-token", "Bearer", "https://"):
+            assert secret not in metadata_text
+
+    assert transcript["stormiq"] == {
+        "pipeline_version": 2,
+        "config": config,
+        "max_speakers": 4,
+        "people_on_stage": None,  # the worker sets it
+        "gladia_jobs": [
+            {"chunk": 1, "id": "gladia-job-1", "custom_metadata": posted[0]["custom_metadata"]},
+            {"chunk": 2, "id": "gladia-job-2", "custom_metadata": posted[1]["custom_metadata"]},
+        ],
+        "media": {"duration_s": 8160.0, "creation_time": "2026-10-01T09:00:00.000000Z"},
+    }
+    assert transcript["request_payload"] == posted[0], "the stored request is the one sent"
+    stored_text = json.dumps(transcript["stormiq"])
+    for secret in (GLADIA_SECRET, "livestorm-secret-token", "signed-url-token"):
+        assert secret not in stored_text
+
+
+def test_without_options_the_cap_and_the_metadata_still_go_out(gladia_transport, monkeypatch):
+    run, posted = gladia_transport
+    monkeypatch.setenv("RENDER", "")
+    transcript = run()
+    assert [request["custom_metadata"]["env"] for request in posted] == ["local", "local"]
+    assert transcript["stormiq"]["max_speakers"] == 20
+
+
+def test_the_speaker_cap_reaches_every_gladia_request_through_the_whole_chain(transcription, gladia_transport, monkeypatch):
+    """worker.run_transcription -> transcript_client.fetch_session_transcript ->
+    the transcriber, with only the transport patched: every link must pass
+    the options on, or the cap silently goes back to 20."""
+    from synthetic_session import session_payload as synthetic_session_payload
+
+    _run, posted = gladia_transport
+    monkeypatch.setenv("GLADIA_KEY", GLADIA_SECRET)
+    monkeypatch.setattr(worker, "fetch_session_fields", lambda *a, **k: {"session_payload": synthetic_session_payload()})
+
+    assert asyncio.run(worker.run_transcription({}, "job-1", "s1"))["status"] == "completed"
+
+    assert len(posted) == 2
+    assert [request["diarization_config"]["max_speakers"] for request in posted] == [4, 4]
+    stored = transcription["upserts"][0]["transcript_payload"]
+    assert (stored["stormiq"]["people_on_stage"], stored["stormiq"]["max_speakers"]) == (2, 4)
+    assert "output_path" not in stored
+
+
+def test_the_transcript_client_passes_the_options_on(gladia_transport):
+    from livestorm_app import transcript_client
+
+    _run, posted = gladia_transport
+    transcript = transcript_client.fetch_session_transcript(
+        GLADIA_SECRET, "s1", livestorm_api_key=LIVESTORM_SECRET, gladia_options=transcriber.speaker_options(2)
+    )
+    assert [request["diarization_config"]["max_speakers"] for request in posted] == [4, 4]
+    assert transcript["stormiq"]["max_speakers"] == 4
+
+
+def test_the_config_fingerprint_follows_the_settings_not_the_file():
+    def request(url, options=None, chunk=1):
+        return transcriber._build_gladia_request(
+            url, options, metadata={"stormiq_session_id": "s1", "chunk": chunk, "chunks": 2, "offset_s": 0.0}
+        )
+
+    first, second = request("https://gladia.example/1"), request("https://gladia.example/2", chunk=2)
+    assert first["custom_metadata"]["config"] == second["custom_metadata"]["config"]
+    assert first["custom_metadata"]["config"] == transcriber.gladia_config_fingerprint(second)
+    capped = request("https://gladia.example/1", transcriber.speaker_options(3))
+    assert capped["custom_metadata"]["config"] != first["custom_metadata"]["config"]
+    reordered = dict(reversed(list(first.items())))
+    assert transcriber.gladia_config_fingerprint(reordered) == first["custom_metadata"]["config"]
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"api_key": "k"},
+        {"connection_id": "c"},
+        {"recording_url": SIGNED_RECORDING_URL},
+        {"stormiq_session_id": {"nested": "x"}},
+        {"chunk": True},
+        {"stormiq_session_id": "x" * 2001},
+        {"config": "set by the builder"},
+    ],
+)
+def test_gladia_metadata_refuses_anything_but_ids_before_sending(metadata):
+    with pytest.raises(ValueError):
+        transcriber._build_gladia_request("https://gladia.example/a", metadata=metadata)
+
+
+def test_gladia_metadata_drops_unknown_values_and_any_from_the_options():
+    request = transcriber._build_gladia_request(
+        "https://gladia.example/a",
+        {"custom_metadata": {"anything": "else"}},
+        metadata={"stormiq_session_id": "s1", "recording_id": None, "file_size": None},
+    )
+    assert request["custom_metadata"] == {"stormiq_session_id": "s1", "config": transcriber.gladia_config_fingerprint(request)}
+    assert "custom_metadata" not in transcriber._build_gladia_request("https://gladia.example/a", {"custom_metadata": {"a": 1}})
+
+
+@pytest.mark.parametrize(("raw", "size"), [(42, 42), (42.0, 42), ("42", 42), (" 42 ", 42), (None, None), (-1, None), (True, None), ("big", None)])
+def test_the_recording_file_size_is_a_whole_number_of_bytes(raw, size):
+    assert transcriber._file_size(raw) == size
+
+
+FFMPEG_HEADER = """Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'r.mp4':
+  Metadata:
+    major_brand     : isom
+    creation_time   : 2026-10-01T09:00:00.000000Z
+  Duration: 01:30:00.50, start: 0.000000, bitrate: 900 kb/s
+  Stream #0:0[0x1](und): Audio: aac
+    Metadata:
+      creation_time   : 2026-10-01T09:05:00.000000Z
+At least one output file must be specified
+"""
+
+
+def test_the_media_probe_reads_the_container_with_a_timeout(monkeypatch, tmp_path):
+    calls: list = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command[0], kwargs.get("timeout")))
+        return subprocess.CompletedProcess(command, 1, stdout="", stderr=FFMPEG_HEADER)
+
+    monkeypatch.setattr(transcriber, "_ffprobe_executable", lambda: None)
+    monkeypatch.setattr(transcriber, "_ffmpeg_executable", lambda: "ffmpeg")
+    monkeypatch.setattr(transcriber.subprocess, "run", fake_run)
+    info = transcriber._probe_media_info(tmp_path / "r.mp4")
+    assert info == {"duration_s": 5400.5, "creation_time": "2026-10-01T09:00:00.000000Z"}, "the container's tag, not a stream's"
+    assert calls == [("ffmpeg", transcriber.MEDIA_PROBE_TIMEOUT_SECONDS)]
+
+
+def test_the_media_probe_never_takes_a_streams_creation_time(monkeypatch, tmp_path):
+    stream_tag_only = """Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'r.mp4':
+  Metadata:
+    major_brand     : isom
+  Duration: 00:01:00.00, start: 0.000000, bitrate: 900 kb/s
+  Stream #0:0[0x1](und): Audio: aac
+    Metadata:
+      creation_time   : 2026-10-01T09:05:00.000000Z
+At least one output file must be specified
+"""
+    monkeypatch.setattr(transcriber, "_ffprobe_executable", lambda: None)
+    monkeypatch.setattr(transcriber, "_ffmpeg_executable", lambda: "ffmpeg")
+    monkeypatch.setattr(
+        transcriber.subprocess,
+        "run",
+        lambda command, **kwargs: subprocess.CompletedProcess(command, 1, stdout="", stderr=stream_tag_only),
+    )
+    assert transcriber._probe_media_info(tmp_path / "r.mp4") == {"duration_s": 60.0, "creation_time": None}
+
+
+def test_the_media_probe_prefers_ffprobe(monkeypatch, tmp_path):
+    calls: list = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command[0], kwargs.get("timeout")))
+        stdout = json.dumps({"format": {"duration": "61.250000", "tags": {"creation_time": "2026-10-01T09:00:00Z"}}})
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(transcriber, "_ffprobe_executable", lambda: "ffprobe")
+    monkeypatch.setattr(transcriber.subprocess, "run", fake_run)
+    assert transcriber._probe_media_info(tmp_path / "r.mp4") == {"duration_s": 61.25, "creation_time": "2026-10-01T09:00:00Z"}
+    assert calls == [("ffprobe", transcriber.MEDIA_PROBE_TIMEOUT_SECONDS)]
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        subprocess.TimeoutExpired("ffmpeg", 60),
+        OSError("no such file"),
+        RuntimeError("no ffmpeg"),
+        subprocess.CompletedProcess(["ffmpeg"], 1, stdout="", stderr="r.mp4: Invalid data found"),
+    ],
+)
+def test_a_failed_media_probe_never_fails_the_transcription(monkeypatch, tmp_path, outcome):
+    def fake_run(command, **kwargs):
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(transcriber, "_ffprobe_executable", lambda: None)
+    monkeypatch.setattr(transcriber, "_ffmpeg_executable", lambda: "ffmpeg")
+    monkeypatch.setattr(transcriber.subprocess, "run", fake_run)
+    assert transcriber._probe_media_info(tmp_path / "r.mp4") is None
+
+
+def test_an_unexpected_probe_error_is_caught_by_the_probe(monkeypatch, tmp_path):
+    def broken_parse(stderr):
+        raise ValueError("an unexpected header")
+
+    monkeypatch.setattr(transcriber, "_ffprobe_executable", lambda: None)
+    monkeypatch.setattr(transcriber, "_ffmpeg_executable", lambda: "ffmpeg")
+    monkeypatch.setattr(
+        transcriber.subprocess,
+        "run",
+        lambda command, **kwargs: subprocess.CompletedProcess(command, 1, stdout="", stderr=FFMPEG_HEADER),
+    )
+    monkeypatch.setattr(transcriber, "_parse_ffmpeg_duration", broken_parse)
+    assert transcriber._probe_media_info(tmp_path / "r.mp4") is None
+
+
+def test_a_probe_that_raises_still_gives_a_transcript(gladia_transport, monkeypatch):
+    def no_ffmpeg():
+        raise RuntimeError("FFmpeg is required but not available.")
+
+    run, posted = gladia_transport
+    monkeypatch.setattr(transcriber, "_probe_media_info", REAL_PROBE_MEDIA_INFO)
+    monkeypatch.setattr(transcriber, "_ffmpeg_executable", no_ffmpeg)
+    transcript = run(transcriber.speaker_options(2))
+    assert len(posted) == 2
+    assert transcript["stormiq"]["media"] is None
 
 
 def test_gladia_polling_gives_up_after_repeated_errors(monkeypatch):

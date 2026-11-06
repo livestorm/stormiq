@@ -127,6 +127,8 @@ Six top-level cards, from the session payload (Chat Messages: from the cached ch
 
 The transcript view requires a completed transcription job. If still running, a progress message is shown.
 
+**Speakers.** A new transcript looks for only a few more speakers than the people on stage (the organizers and guest speakers), so it shows fewer speakers that don't exist ([§13](#transcript-level)). When nobody is marked on stage, as on an internal meeting where nobody is marked as an organizer, the limit stays at 20. Transcripts saved before the speaker cap (November 2026) keep their speakers.
+
 **Recordings longer than 135 minutes** are transcribed in parts of up to 135 minutes, then joined into one transcript. Each part numbers its speakers on its own, so one person gets one speaker number per part. The speaker labels on the Transcript tab can give those numbers the same name, but charts and tables still list each number on its own. Long transcripts saved before the merge fix (November 2026) were joined without word timings, so their pauses come from segments, and their sentences and named entities stop after the first part. Their speaker numbers also restart in each part, so one number can cover different people, and its airtime share mixes them. They are not rewritten.
 
 ### Tab: Transcript
@@ -427,6 +429,7 @@ Every PDF is headed by the StormIQ mark and ends each page with the "not an offi
 | Words per minute (segment) | `(word_count / duration_seconds) × 60` |
 | Global WPM | `(total_words / total_speaking_seconds) × 60` |
 | Speaker share % | `speaker_speaking_seconds / total_speaking_seconds × 100` |
+| Speaker cap (new transcripts) | Gladia looks for 1 to `max_speakers` speakers, where `max_speakers = min(20, max(3, people_on_stage + 2))`. People on stage are the session's people that Livestorm marks as an organizer (`session_role` is `organizer`) or a guest speaker (`is_guest_speaker`), each once, attended or not, from the same people as the v1 roster (today, the people cached with the session). When there are none, or no people list, the count is unknown and `max_speakers` is 20: a count of 0 would give the floor, too low for a meeting where many people talk. Set once, when the transcript is made; the count is kept in the transcript's `stormiq.people_on_stage` (`record/inputs.count_people_on_stage`, `gladia/transcriber.max_speakers_for`) |
 | Filler per 1000 words | `(filler_count / total_words) × 1000` |
 
 ### Pause classification

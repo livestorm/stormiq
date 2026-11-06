@@ -24,7 +24,7 @@ import pytest
 from livestorm_app.analytics.session_overview import session_is_internal
 from livestorm_app.livestorm.payloads import PERSON_KEYS, email_domain, is_answer_field, parse_person, referrer_domain
 from livestorm_app.record import roster as roster_module
-from livestorm_app.record.inputs import RecordInputs, load_record_inputs
+from livestorm_app.record.inputs import RecordInputs, count_people_on_stage, load_record_inputs
 from livestorm_app.record.roster import (
     AUDIENCE,
     CHANNEL_RULE_VERSION,
@@ -38,6 +38,7 @@ from livestorm_app.record.roster import (
     display_people,
     is_organizer,
     lead_time_bucket,
+    people_on_stage,
     person_ref,
     prompt_view,
     resolve_field_definitions,
@@ -408,6 +409,68 @@ def test_an_organizer_keeps_the_role_livestorm_gives():
     assert people["is_organizer"].tolist() == [True, True]
     assert people["session_role"].tolist() == ["organizer", "organizer"]  # kept as sent
     assert roster.meta.organizers == 2
+
+
+# ── People on stage (the speaker cap of a new transcript) ──────────────────
+
+
+def on_stage(payload):
+    """The count the worker reads: a cached row with the session payload."""
+    return count_people_on_stage({"session_payload": payload})
+
+
+def test_people_on_stage_are_organizers_and_guest_speakers():
+    assert on_stage(public_session()) == 2
+    assert people_on_stage(roster_from_session_payload(public_session())) == 2
+
+
+def test_the_synthetic_webinar_has_two_people_on_stage():
+    from synthetic_session import session_payload as synthetic_session_payload
+
+    assert on_stage(synthetic_session_payload()) == 2
+
+
+def test_someone_on_stage_twice_counts_once_and_attendance_plays_no_part():
+    payload = session_payload(
+        [
+            person("host", role="team_member", session_role="organizer", guest=True),
+            person("absent-host", role="team_member", session_role=" Organizer ", attended=False),
+            person("guest", guest="true", attended=None),
+            person("cohost", role="team_member"),  # a team member, not marked on stage
+            person("aud", first="Bram"),
+            person("host", role="team_member", session_role="organizer"),  # a repeat
+        ]
+    )
+    assert on_stage(payload) == 3
+    assert people_on_stage(roster_from_session_payload(payload)) == 3
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        None,
+        {},
+        "not a payload",
+        {"data": {"id": "s1", "attributes": {}}},
+        session_payload([]),
+        session_payload([{"id": "x", "type": "messages", "attributes": {}}]),
+    ],
+)
+def test_without_people_the_count_is_unknown(payload):
+    assert on_stage(payload) is None
+
+
+@pytest.mark.parametrize("cached", [None, "not a row", [], {}])
+def test_without_a_cached_row_the_count_is_unknown(cached):
+    assert count_people_on_stage(cached) is None
+
+
+def test_nobody_marked_on_stage_is_unknown_not_zero():
+    """An internal meeting can mark nobody as an organizer or guest speaker.
+    None keeps Gladia's default cap, where 0 would give the floor of 3 to a
+    room where many people talk (docs/product.md §13, "Speaker cap")."""
+    assert on_stage(internal_session()) is None
+    assert people_on_stage(roster_from_session_payload(internal_session())) == 0
 
 
 # ── Channels ────────────────────────────────────────────────────────────────
@@ -837,6 +900,25 @@ def test_the_loader_prefers_stored_rows():
     )
 
 
+def test_people_on_stage_come_from_the_same_source_as_the_record():
+    """Stored rows win over the include list for the speaker cap too, so the
+    record and the cap never read different people."""
+    stored = RosterRows(
+        people=[
+            parse_person(person("host", role="team_member", session_role="organizer")),
+            parse_person(person("cohost", role="team_member", session_role="organizer")),
+            parse_person(person("guest", guest=True)),
+            parse_person(person("aud-9")),
+        ],
+        complete=True,
+        record_count=4,
+    )
+    assert count_people_on_stage(cached_row()) == 2  # the include list
+    assert count_people_on_stage(cached_row(), roster_rows=stored) == 3
+    assert people_on_stage(load_record_inputs(cached_row(), roster_rows=stored).roster) == 3
+    assert count_people_on_stage(cached_row(), roster_rows=RosterRows(people=[])) is None
+
+
 def stored_roster(people, **header):
     return roster_from_rows(RosterRows(people=people, **header), session_id="s1").meta
 
@@ -894,10 +976,15 @@ def test_the_roster_meta_is_json_safe():
 
 RECORD_PACKAGE = ("livestorm_app", "record")
 
-# The one way in from outside `record/`: the v1 record route's loader
-# imports the package inside its own body, so it loads only when that route
-# runs, never at startup or on a classic read.
-RECORD_ENTRY_POINTS = {("livestorm_app", "api_logic"): {"get_session_record"}}
+# The ways in from outside `record/`, each importing the package inside its
+# own body, so it loads only when that code runs, never at startup or on a
+# classic read: the v1 record route's loader, and the transcription job's
+# options, which count the people on stage and fall back to the default
+# speaker cap if anything in `record/` fails.
+RECORD_ENTRY_POINTS = {
+    ("livestorm_app", "api_logic"): {"get_session_record"},
+    ("livestorm_app", "worker"): {"_transcription_options"},
+}
 
 
 def _names_record(node, package):

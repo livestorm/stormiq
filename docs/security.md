@@ -44,6 +44,7 @@ Admins come from the `admin_users` table plus the `ADMIN_EMAILS` env var. `ADMIN
 The backend uses these secrets and never sends them to the browser: `CLAUDE_API_KEY`, `OPENAI_API_KEY`, `GLADIA_KEY`, the OAuth client credentials, `SESSION_SECRET`, the Postgres URL and `LS_API_KEY`.
 
 - Job arguments never carry secrets or connection ids. arq stores arguments in Redis and logs them, and a connection id is also the user's session cookie. The worker reads API keys from its own environment and the user's Livestorm connection from the job's `transcript_jobs` row (see [jobs.md](jobs.md)).
+- The metadata sent with each Gladia job holds ids, counts and labels only: the session and recording ids, the file size, an environment tag (`render` or `local`), the chunk numbers and offset, and a fingerprint of the settings. `transcriber._custom_metadata` takes an allow-listed set of keys and raises on anything else, so a key, token, connection id or the recording's signed URL can't reach it ([providers.md](providers.md#gladia-configuration)). The stored transcript keeps a copy of it.
 - `session_cache.account_key_hash` is the SHA-256 of the first writer's Livestorm credential, set on insert and never updated. It is informational; `organization_id` is the access boundary. Rows written before November 2026 may hold the hash of an LLM provider key instead; that can't be repaired and doesn't affect access.
 - Error responses are `{resource, message, details: {resource, status_code?}}`. Upstream URLs and response bodies are logged server-side only.
 

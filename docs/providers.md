@@ -106,6 +106,19 @@ The chat call asks for `include=people`, so each message carries its author's pe
 - sentence segmentation on;
 - subtitles on, in SRT and VTT.
 
+**Speaker cap.** For a new transcript, the worker narrows the speaker range to the people on stage (`worker._transcription_options`). It counts them with `record/inputs.count_people_on_stage`, which reads the same people as the v1 roster, and sets `max_speakers` from that count with `transcriber.max_speakers_for`. When the count is unknown, the cap stays at the default 20. The rule is in [product.md §13](product.md#transcript-level). Transcripts saved earlier are not touched.
+
+**Job metadata.** Each chunk's Gladia job carries `custom_metadata` (`transcriber._custom_metadata`), so a later change can find a job it started: re-attaching after a timeout, which isn't built yet ([roadmap](roadmap.md#known-limitations)). The keys:
+
+- `stormiq_session_id`, `recording_id` and `file_size` (the Livestorm recording's id and size in bytes, as listed);
+- `env`: `render` on Render, `local` anywhere else (`transcriber.environment_tag`);
+- `chunk`, `chunks` and `offset_s` (the chunk's start in the recording);
+- `config`: the first 12 hex characters of the SHA-256 of the request without `audio_url` and `custom_metadata` (`transcriber.gladia_config_fingerprint`). The same settings always give the same `config`.
+
+Only these keys are sent, as strings or numbers, at most 2,000 characters of JSON. Anything else raises before the POST. The metadata never holds a key, token, connection id or URL ([security.md](security.md#secrets)).
+
+**Provenance.** Before extracting the audio, the transcriber reads the recording file's duration and `creation_time` tag from its container (`_probe_media_info`): ffprobe when installed, otherwise the header `ffmpeg -i` prints, with a 60 s timeout. A failed probe leaves `media` null; it never fails the job. The stored transcript records how it was made in `stormiq` ([data-model.md](data-model.md#session_cache)).
+
 Gladia's standard plan accepts up to 135 minutes of audio per request, so longer recordings are split into 135-minute chunks (`_split_audio_file`), each transcribed as its own Gladia job. Each chunk's request is built once (`_build_gladia_request`), and that same request is sent. The first chunk's request is stored as `request_payload`, and every chunk's Gladia job id is kept in `result.stormiq_chunks`.
 
 `_merge_chunk_results` combines the chunks into one transcript on the recording's clock. Each chunk's result starts at 0 s and numbers its speakers from 0, so the merge:
