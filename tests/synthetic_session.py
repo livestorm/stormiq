@@ -4,8 +4,9 @@ Every name, email, company, id and message below is made up. The row is
 what `db.fetch_cached_session` returns for a 30-minute session that started
 95 seconds late: a team host (organizer) and co-host, a guest speaker,
 seven audience members with UTMs, a referrer and a registration type, chat
-in the waiting room, live and after the end, questions answered in writing,
-orally or not at all, a short transcript and a few AI outputs.
+in the waiting room, live and after the end (each message linked to its
+author's people record), questions answered in writing, orally or not at
+all, a short transcript and a few AI outputs.
 
 Two committed files come from it:
 
@@ -225,7 +226,9 @@ def event_payload() -> Dict[str, Any]:
 
 
 # (offset from started_at in seconds, author id, flag, text). Flag is "team",
-# "guest" or None (audience).
+# "guest" or None (audience). The author id is the message's `author_id`
+# attribute, a Livestorm id that is not a people id; `CHAT_PEOPLE` gives each
+# author's people link, as a chat fetched with `include=people` carries it.
 CHAT = (
     (-300, "u-aud-1", None, "Hello everyone"),
     (-120, "u-aud-2", None, "Excited for this one"),
@@ -247,7 +250,16 @@ CHAT = (
 )
 
 
-def chat_payload() -> Dict[str, Any]:
+CHAT_PEOPLE = {
+    "u-aud-1": "p-aud-1", "u-aud-2": "p-aud-2", "u-aud-3": "p-aud-3", "u-aud-4": "p-aud-4",
+    "u-team-1": "p-host", "u-team-2": "p-cohost", "u-guest-1": "p-guest",
+}
+
+
+def chat_payload(*, people_links: bool = True) -> Dict[str, Any]:
+    """The chat as the chat fetcher stores it: each message links to its
+    author's people record. `people_links=False` gives a chat cached before
+    StormIQ asked for the links."""
     data = []
     for index, (offset, author, flag, text) in enumerate(CHAT, start=1):
         markup = f"<p>{text}</p>"
@@ -270,6 +282,8 @@ def chat_payload() -> Dict[str, Any]:
                 },
             }
         )
+        if people_links:
+            data[-1]["relationships"] = {"people": {"data": {"type": "people", "id": CHAT_PEOPLE[author]}}}
     return {"data": data, "pages_fetched": 1, "requested_page_size": 50}
 
 

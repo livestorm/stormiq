@@ -66,7 +66,7 @@ The cached session payload still holds each person's full Livestorm record, minu
 - Registration answers are text and select fields only. Never the identity fields (email, names, avatar), Livestorm's built-in contact fields (phone, address, city, Twitter, LinkedIn, Facebook, website), or email, URL and consent fields. The built-in `country` field is kept.
 - A v1 prompt gets people only through `roster.prompt_view`: a `P-` ref, a role and a job title. Never a name, email domain, company or Livestorm id.
 - A v1 page gets names only through `roster.display_people`, which fails closed: only a session whose profile is "public" lists anyone.
-- The v1 record route (`GET /api/sessions/{id}/record`) sends counts and session-level facts only: no name, email, company, person or message id, or message text (`record/assemble.py`). The only Livestorm id in it is the session's own. `tests/test_record_route.py` scans its response for them.
+- The v1 record route (`GET /api/sessions/{id}/record`) sends counts, measures and session-level facts only: no name, email, company, person or message id, or message text (`record/assemble.py`, `record/measures.py`). The only Livestorm id in it is the session's own. `tests/test_record_route.py` scans its response for them.
 
 ## Web hardening
 

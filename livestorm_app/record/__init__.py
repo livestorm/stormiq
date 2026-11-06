@@ -9,8 +9,10 @@
   by people id, with honest coverage (an author never resolves by guess).
 - `inputs.py`: the single loader of a session's record inputs (payloads,
   clock, roster, authors).
+- `measures.py`: the measures registry: every number the Report shows, with
+  its numerator, denominator, state, coverage and exclusions.
 - `assemble.py`: the record as `GET /api/sessions/{id}/record` serves it
-  (the clock, the roster header, the Pulse).
+  (the clock, the roster header, the Pulse, the measures).
 
 No database, network or web framework here. The classic app does not
 import this package: only `api_logic.get_session_record`, the v1 record

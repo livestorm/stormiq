@@ -25,7 +25,7 @@ Every route is a FastAPI handler in [`livestorm_app/routes/`](../livestorm_app/r
 | `/api/sessions/{id}/cover.png` | GET | caller | Cover image (`Cache-Control: private, max-age=86400`) |
 | `/api/sessions/{id}` | GET | caller | Cached workspace (404 if not cached) |
 | `/api/sessions/{id}/cached` | GET | caller | Same, but 204 instead of 404 when missing |
-| `/api/sessions/{id}/record` | GET | caller | v1 Report only: the session clock, the roster header and the Pulse ([below](#the-v1-record)). 404 if not cached |
+| `/api/sessions/{id}/record` | GET | caller | v1 Report only: the session clock, the roster header, the Pulse and the measures ([below](#the-v1-record)). 404 if not cached |
 | `/api/sessions/{id}/fetch` | POST | caller | Session, chat and questions, then start the transcript job ([jobs.md](jobs.md#fetching-a-session)) |
 | `/api/sessions/{id}/fetch-base` | POST | caller | Session, chat and questions only |
 | `/api/sessions/{id}/fetch-transcript` | POST | caller | Start (or attach to) the transcript job |
@@ -56,7 +56,7 @@ Every route is a FastAPI handler in [`livestorm_app/routes/`](../livestorm_app/r
 `GET /api/sessions/{id}/record` serves the v1 Report (behind `?ui=v1`). The classic app doesn't call it, and the classic workspace doesn't carry it. It is built by `livestorm_app/record/assemble.py` (`api_logic.get_session_record`); rules and formulas are in [product.md §13](product.md#session-clock-v1-report). Apart from the session's own id, it never carries a Livestorm id: no name, email, company, person or message id, or message text. `frontend/tests/fixtures/record-v1.json` is its response for a synthetic session.
 
 ```
-{sessionId, updatedAt, meta: {clock}, record: {version, roster, pulse}}
+{sessionId, updatedAt, meta: {clock}, record: {version, roster, pulse, metricsVersion, measuresSource, measures}}
 ```
 
 | Field | What it holds |
@@ -66,14 +66,17 @@ Every route is a FastAPI handler in [`livestorm_app/routes/`](../livestorm_app/r
 | `meta.clock.lateStartS` | The late start in seconds ([product.md §13](product.md#session-clock-v1-report)), or null |
 | `meta.clock.timezone` | The session's time zone, as Livestorm sends it |
 | `meta.clock.alignment` | null until the recording is aligned with the session clock |
-| `record.version` | `RECORD_VERSION` in `record/assemble.py` (1) |
+| `record.version` | `RECORD_VERSION` in `record/assemble.py` (2) |
 | `record.roster` | The roster's header, no person: `source` (`session_include` for now), `complete` (true, false or null), `coverage` (`complete` or `partial`), `peopleCount`, `recordCount`, `syncedAt`, and `internal`, the classic internal-session rule applied to the roster's people ([product.md §13](product.md#roster-v1-report)). The roster counts a person once and skips people without an id, so on such a list it can differ from the workspace's `meta.internalSession` |
 | `record.pulse.lanes` | The lanes in display order: `audienceChat`, `teamChat`, `questions`, `answers` |
 | `record.pulse.minutes` | One row per live minute, from 0, zero-filled: `{minute, audienceChat, teamChat, questions, answers}` |
 | `record.pulse.edges` | `before` (the waiting room) and `after` (after the end): `{counts: {lane: n}, firstT}` and `{counts, lastT}`, in seconds on the session clock |
 | `record.pulse.unplaced` | Items with no session time (no clock, or a time that can't be read) |
+| `record.metricsVersion` | `METRICS_VERSION` in `record/measures.py` (1): the version of the whole set of measures |
+| `record.measuresSource` | `live`: computed from the cached payloads when the record block is built, and cached with it per process. Nothing is stored yet |
+| `record.measures` | One entry per measure of the registry, by id, in registry order (`m.roster_coverage`, `m.audience_registrants`, `m.team_count`, `m.audience_attendees`, `m.show_up_rate`, `m.time_in_room`, `m.wrote_rate`, `m.questions_qa`, `m.time_to_answer`, `m.author_resolution`, `m.livestorm_counts`). Each is `{id, version, value, num, den, state, coverage, excluded, livestorm, rows}`. `state` is `ok`, `partial`, `approximation`, `insufficient`, `unresolved` or `unavailable`; `value` is null in the last three, whenever there is nothing to divide, and on `m.livestorm_counts`, which has rows only; `num` is null when `unresolved`. `excluded` is `{team, guestSpeakers, total, internal}` on an audience-only measure (null when it is `unavailable`) and null on the others; `total` is the n of "excludes your team (n)". Each measure's formula, gates and states: [product.md §13](product.md#measures-v1-report). The page renders these fields and computes nothing |
 
-On an internal session nobody is relabelled: its chat stays team chat, and `record.roster.internal` is true.
+On an internal session nobody is relabelled: its chat stays team chat, and `record.roster.internal` is true. Its audience-only measures count everyone, with `excluded.internal` true.
 
 ## Adding a route
 

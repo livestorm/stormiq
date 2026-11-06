@@ -84,8 +84,9 @@ def get_cached_session_workspace(session_id: SessionId, caller: Caller = Depends
 
 @router.get("/api/sessions/{session_id}/record")
 def read_session_record(session_id: SessionId, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
-    """The v1 Report's data for one session: the clock, the roster header and
-    the Pulse (`api_logic.get_session_record`). The classic app doesn't call it."""
+    """The v1 Report's data for one session: the clock, the roster header, the
+    Pulse and the measures (`api_logic.get_session_record`). The classic app
+    doesn't call it."""
     try:
         return get_session_record(session_id, organization_id=caller.read_scope)
     except SessionNotFoundError as exc:

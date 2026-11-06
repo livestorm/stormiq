@@ -388,7 +388,13 @@ def record_reads(monkeypatch):
 
         monkeypatch.setattr(module, name, wrapper)
 
-    for module, name in ((inputs, "clock_base"), (inputs, "roster_from_session_payload"), (assemble, "audience_events"), (assemble, "minute_bins")):
+    for module, name in (
+        (inputs, "clock_base"),
+        (inputs, "roster_from_session_payload"),
+        (assemble, "audience_events"),
+        (assemble, "minute_bins"),
+        (assemble, "compute_measures"),
+    ):
         counted(module, name)
     monkeypatch.setattr(api_logic, "fetch_session_fields", read)
     monkeypatch.setattr(api_logic, "_record_cache", api_logic.OrderedDict())
@@ -401,10 +407,10 @@ def _read_record(state):
     return api_logic.get_session_record(SESSION_ID, organization_id="org-a")
 
 
-ONCE = {"clock_base": 1, "roster_from_session_payload": 1, "audience_events": 1, "minute_bins": 1}
+ONCE = {"clock_base": 1, "roster_from_session_payload": 1, "audience_events": 1, "minute_bins": 1, "compute_measures": 1}
 
 
-def test_a_record_read_builds_the_clock_roster_and_bins_once(record_reads):
+def test_a_record_read_builds_the_clock_roster_bins_and_measures_once(record_reads):
     _read_record(record_reads)
     assert record_reads["builds"] == ONCE
     # The scope check, then the base payloads: never the transcript or the outputs.
@@ -441,6 +447,15 @@ def test_a_changed_roster_version_misses_the_record_cache(record_reads, monkeypa
     monkeypatch.setattr(api_logic, "_record_input_versions", lambda session_id, *, organization_id: (2, "fingerprint"))
     _read_record(record_reads)
     assert record_reads["builds"] == {name: 3 for name in ONCE}
+
+
+def test_a_new_metrics_version_misses_the_record_cache(record_reads, monkeypatch):
+    from livestorm_app.record import measures
+
+    _read_record(record_reads)
+    monkeypatch.setattr(measures, "METRICS_VERSION", measures.METRICS_VERSION + 1)
+    _read_record(record_reads)
+    assert record_reads["builds"] == {name: 2 for name in ONCE}
 
 
 def test_a_record_without_a_row_version_is_not_cached(record_reads):

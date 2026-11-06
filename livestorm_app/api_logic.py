@@ -414,10 +414,11 @@ def get_cached_workspace(session_id: str, *, organization_id: OrgScope) -> Optio
 # can't break a classic read.
 #
 # The computed block is cached per process, keyed by everything it reads:
-# the row's `updated_at` (every write to the row bumps it), the record's
-# version, and what will change without a new row version
-# (`_record_input_versions`). Live state that changes without any of these
-# (none yet) must be read outside the cache, on every request.
+# the row's `updated_at` (every write to the row bumps it), the record's and
+# the measures' versions (`RECORD_VERSION`, `METRICS_VERSION`), and what will
+# change without a new row version (`_record_input_versions`). Live state
+# that changes without any of these (none yet) must be read outside the
+# cache, on every request.
 
 RECORD_FIELDS = ("session_payload", "event_payload", "chat_payload", "questions_payload", "updated_at")
 RECORD_CACHE_SIZE = 32
@@ -433,10 +434,12 @@ def _record_input_versions(session_id: str, *, organization_id: OrgScope) -> Tup
     return None, None
 
 
-def _record_cache_key(session_id: str, updated_at: Any, record_version: int, input_versions: Tuple[Any, ...]) -> Optional[Tuple[Any, ...]]:
+def _record_cache_key(
+    session_id: str, updated_at: Any, code_versions: Tuple[int, ...], input_versions: Tuple[Any, ...]
+) -> Optional[Tuple[Any, ...]]:
     if updated_at is None:
         return None
-    return (str(session_id), updated_at, record_version, *input_versions)
+    return (str(session_id), updated_at, *code_versions, *input_versions)
 
 
 def _cached_record_block(key: Optional[Tuple[Any, ...]]) -> Optional[Dict[str, Any]]:
@@ -468,8 +471,8 @@ def get_session_record(session_id: str, *, organization_id: OrgScope) -> Dict[st
     caller's scope raises `SessionNotFoundError` (404) before anything else
     is read. A cache hit then costs that one small read. A miss reads the
     base payloads (never the transcript or the AI outputs) and builds the
-    block with `record.assemble.assemble_record`. The block is shared
-    between requests: never modify it.
+    block, measures included, with `record.assemble.assemble_record`. The
+    block is shared between requests: never modify it.
     """
     stamp = fetch_session_fields(session_id, ["updated_at"], organization_id=organization_id)
     if not isinstance(stamp, dict):
@@ -480,16 +483,18 @@ def get_session_record(session_id: str, *, organization_id: OrgScope) -> Dict[st
     # outside `record/` imports it (tests/test_roster.py).
     from livestorm_app.record.assemble import RECORD_VERSION, assemble_record
     from livestorm_app.record.inputs import load_record_inputs
+    from livestorm_app.record.measures import METRICS_VERSION
 
+    code_versions = (RECORD_VERSION, METRICS_VERSION)
     input_versions = _record_input_versions(session_id, organization_id=organization_id)
-    block = _cached_record_block(_record_cache_key(session_id, stamp.get("updated_at"), RECORD_VERSION, input_versions))
+    block = _cached_record_block(_record_cache_key(session_id, stamp.get("updated_at"), code_versions, input_versions))
     if block is None:
         row = fetch_session_fields(session_id, list(RECORD_FIELDS), organization_id=organization_id)
         if not isinstance(row, dict):
             raise SessionNotFoundError()
         stamp = row
         block = _sanitize_json_value(assemble_record(load_record_inputs({**row, "session_id": session_id})))
-        _store_record_block(_record_cache_key(session_id, row.get("updated_at"), RECORD_VERSION, input_versions), block)
+        _store_record_block(_record_cache_key(session_id, row.get("updated_at"), code_versions, input_versions), block)
     return {"sessionId": session_id, "updatedAt": stamp.get("updated_at"), **block}
 
 
