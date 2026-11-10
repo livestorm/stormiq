@@ -140,7 +140,8 @@ def test_the_owner_gets_the_clock_the_roster_header_and_the_pulse(client):
     body = response.json()
     assert list(body) == ["sessionId", "updatedAt", "meta", "record"]
     assert body["sessionId"] == SESSION_ID and body["updatedAt"] == "2026-10-02T08:30:00Z"
-    assert list(body["meta"]) == ["clock"]
+    assert list(body["meta"]) == ["clock", "session"]
+    assert body["meta"]["session"] == {"title": synthetic.event_payload()["data"]["attributes"]["title"]}
     clock = dict(body["meta"]["clock"])
     assert clock.pop("alignment")["status"] == "verified"
     assert clock == {
@@ -152,7 +153,7 @@ def test_the_owner_gets_the_clock_the_roster_header_and_the_pulse(client):
     }
     record = body["record"]
     assert list(record) == ["version", "roster", "pulse", "transcriptHealth", "chatLabels", "metricsVersion", "measuresSource", "measures"]
-    assert record["version"] == assemble.RECORD_VERSION == 7
+    assert record["version"] == assemble.RECORD_VERSION == 8
     assert record["roster"] == {
         "source": "session_include",
         "complete": None,

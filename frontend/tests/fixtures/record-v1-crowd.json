@@ -39,10 +39,13 @@
           "no_transcript"
         ]
       }
+    },
+    "session": {
+      "title": "Synthetic Product Webinar"
     }
   },
   "record": {
-    "version": 7,
+    "version": 8,
     "roster": {
       "source": "session_include",
       "complete": null,
