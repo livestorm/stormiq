@@ -8,8 +8,8 @@ A full visual and UX overhaul that uses Livestorm's design language (colours, Ob
 
 1. ~~Prototype two directions for the key screens; choose one.~~ Done: the Winter direction, light and dark, in Sora.
 2. ~~Design tokens and the first base components~~ (cards, stat cards, collapsibles, status words, chips, buttons, tip bar) and ~~the app shell with the StormIQ mark~~: shipped ([changelog](changelog.md)); since November 2026 they are the only design. Still to come: accessible tabs, paginated tables, empty states, loading skeletons, toasts.
-3. Each screen, rebuilt on the v1 components, splitting the oversized views and `styles.css` along the way. ~~Done~~ (November 2026): every page (home, Sessions, Add session, the session's Report, Transcript and Follow-up, Admin, the beta notice). Next: the Follow-up design's new parts (the question desk, "Before you share", FAQ and chapters, the open questions CSV).
-4. ~~Turn v1 on for everyone and remove the switch~~ (November 2026); next: remove the classic styles (`styles.css`), now that no page uses them.
+3. Each screen, rebuilt on the v1 components, splitting the oversized views along the way. ~~Done~~ (November 2026): every page (home, Sessions, Add session, the session's Report, Transcript and Follow-up, Admin, the beta notice). Next: the Follow-up design's new parts (the question desk, "Before you share", FAQ and chapters, the open questions CSV).
+4. ~~Turn v1 on for everyone and remove the switch, then the classic styles~~ (November 2026).
 5. Rewrite [product.md](product.md) for the new navigation (it still describes the older Events-based flow).
 
 The v1 design uses Sora (open licence) instead of Object Sans, which is licensed and isn't in the repo, and Lucide icons instead of Livestorm's proprietary icon font ([brand.md](brand.md#the-v1-design)).
