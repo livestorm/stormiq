@@ -5,7 +5,7 @@ import { PUBLIC_PATHS, showsLanding } from "../src/design/landing";
 
 describe("showsLanding", () => {
   it("shows the landing page to a visitor who isn't signed in, on any page", () => {
-    for (const path of ["/sessions", "/search", "/sessions/abc/report", "/admin"]) {
+    for (const path of ["/sessions", "/sessions/add", "/sessions/abc/report", "/admin"]) {
       expect(showsLanding({ authReady: true, authed: false, path })).toBe(true);
     }
   });

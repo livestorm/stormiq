@@ -55,7 +55,7 @@ function clearFilters() {
   <div class="s-page">
     <header class="s-head">
       <h1 class="s-title">Sessions</h1>
-      <UiButton variant="primary" icon="plus" to="/search">Add session</UiButton>
+      <UiButton variant="primary" icon="plus" to="/sessions/add">Add session</UiButton>
     </header>
 
     <p v-if="loading" class="s-status" role="status">Loading your sessions…</p>
@@ -63,7 +63,7 @@ function clearFilters() {
     <Card v-else-if="!sessions.length" class="s-empty" padding="hero">
       <h2 class="s-empty-title">No sessions yet</h2>
       <p class="s-empty-text">Add a finished Livestorm session to see its report here. Your teammates' sessions show up too.</p>
-      <UiButton variant="secondary" icon="plus" to="/search">Add your first session</UiButton>
+      <UiButton variant="secondary" icon="plus" to="/sessions/add">Add your first session</UiButton>
     </Card>
 
     <template v-else>

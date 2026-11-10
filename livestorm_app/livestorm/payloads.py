@@ -423,9 +423,9 @@ def _format_unix_label(value: Any) -> str:
         return "n/a"
 
 
-def build_event_session_options(payload: Dict[str, Any]) -> List[Dict[str, str]]:
+def build_event_session_options(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     session_items = extract_sessions(payload)
-    options: List[Dict[str, str]] = []
+    options: List[Dict[str, Any]] = []
     sortable: List[Dict[str, Any]] = []
     for item in session_items:
         if not isinstance(item, dict):
@@ -435,7 +435,7 @@ def build_event_session_options(payload: Dict[str, Any]) -> List[Dict[str, str]]
             continue
         attrs = item.get("attributes")
         attrs = attrs if isinstance(attrs, dict) else {}
-        started_at = attrs.get("started_at") or attrs.get("estimated_started_at") or 0
+        started_at = _unix_seconds(attrs.get("started_at") or attrs.get("estimated_started_at")) or 0
         sortable.append({"id": session_id, "attributes": attrs, "started_at": started_at})
 
     sortable.sort(key=lambda row: row.get("started_at") or 0, reverse=True)
@@ -443,10 +443,36 @@ def build_event_session_options(payload: Dict[str, Any]) -> List[Dict[str, str]]
         attrs = row["attributes"]
         name = str(attrs.get("name") or "").strip()
         attendees = attrs.get("attendees_count", "n/a")
-        started_label = _format_unix_label(attrs.get("started_at") or attrs.get("estimated_started_at"))
+        started = attrs.get("started_at") or attrs.get("estimated_started_at")
+        started_label = _format_unix_label(started)
         title = name if name else "Untitled session"
-        options.append({"id": row["id"], "label": f"{started_label} - {title} ({attendees} attendees)"})
+        options.append(
+            {
+                "id": row["id"],
+                "label": f"{started_label} - {title} ({attendees} attendees)",
+                # The same facts, unformatted, for the Add session page: the
+                # session's own name ("" when it has none), its start in unix
+                # seconds (null when unknown) and Livestorm's attendee count.
+                "name": name,
+                "startedAt": _unix_seconds(started),
+                "attendees": _non_negative_count(attrs.get("attendees_count")),
+            }
+        )
     return options
+
+
+def _unix_seconds(value: Any) -> Optional[int]:
+    """`value` as whole unix seconds when it is a positive number (or a string
+    of digits), else None."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return int(value) if value > 0 else None
+    if isinstance(value, str):
+        text = value.strip()
+        if text.isascii() and text.isdigit() and int(text) > 0:
+            return int(text)
+    return None
 
 
 def _non_negative_count(value: Any) -> Optional[int]:

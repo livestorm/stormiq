@@ -4,7 +4,7 @@ A companion application for Livestorm that turns a finished session into a struc
 
 This document describes what the app does, the data it produces, and the formulas behind each metric and chart.
 
-> The navigation and routes described here (the Events list, `/session-overview`…) predate the current Search and Single Analysis pages ([architecture.md](architecture.md#pages)) and will be rewritten with the redesign. The views, charts and formulas are current. Everyone uses the new design ([brand.md](brand.md#one-design)): the home page, Sessions and each session's Report are rebuilt; the other pages keep their older look inside the new shell until they are rebuilt.
+> The navigation and routes described here (the Events list, `/session-overview`…) predate the current Search and Single Analysis pages ([architecture.md](architecture.md#pages)) and will be rewritten with the redesign. The views, charts and formulas are current. Everyone uses the new design ([brand.md](brand.md#one-design)): the home page, Sessions, Add session and each session's Report are rebuilt; the other pages keep their older look inside the new shell until they are rebuilt.
 
 ---
 
@@ -92,6 +92,12 @@ Clicking an event expands it and shows a "Fetch sessions" action. Sessions are l
 **Route:** `/sessions` (`views/SessionsView.vue`).
 
 Every session the organization has fetched, as one index. At the top: "Sessions" and "Add session". Three counts over all of them: sessions, sessions with a transcript, and events. Then a search (by title, event or the teammate who added it), an event filter (when there is more than one event), a sort (session date, newest or oldest first, recently added, title) and how many sessions show. One row per session: the date, the title (the event's title, as on the Report, with the session's own name and its length under it), attendees "of" registrants, the transcript (Ready or Not yet) and who added it. The whole row opens the session's Report. On a phone each row is a short block: the title, then the date, attendees and transcript. Attendees and registrants are Livestorm's counts, the team included; the page says so, as each Report counts the audience alone. Wording and order: `src/sessions/list.js`.
+
+### Add session (v1)
+
+**Route:** `/sessions/add` (`views/AddSessionView.vue`; `/search` redirects there).
+
+How a session gets into StormIQ. "Your events" lists the organization's Livestorm events, most recently updated first, 20 at a time with "Load more events": each with its status (Ended, On demand, Live, Upcoming…) and how many sessions it has. A search by title and a status filter ask Livestorm again. Opening an event lists its finished sessions, newest first: the date, the session's own name ("Untitled session" when it has none) and Livestorm's attendee count. A session the organization already has says "Added" and opens; any other has "Add". Adding fetches the session from Livestorm (its details, chat, questions and people), starts its transcript, and opens its Report as soon as the session is saved; the transcript goes on in the background. If the fetch fails, the row says why and offers "Try again". "Have a link or an ID?" takes a session's or an event's Livestorm link or ID: a link holding one ID is read for it, a link holding two is refused rather than guessed. Wording: `src/sessions/add.js`.
 
 ---
 
