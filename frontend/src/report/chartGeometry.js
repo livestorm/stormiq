@@ -48,6 +48,32 @@ export function ridgePaths(values, { width = 1000, height = 100, top = 6 } = {})
   return { line, area };
 }
 
+/** A count axis from 0 to at least `max`: integer ticks on a round step (1, 2,
+ * 5, 10, 20, 50…), at most `maxTicks` of them. Returns `{ top, ticks }`,
+ * `top` the axis's end. An axis with nothing on it still runs 0 to 1. */
+export function countTicks(max, { maxTicks = 4 } = {}) {
+  const value = typeof max === "number" && Number.isFinite(max) && max > 0 ? Math.ceil(max) : 1;
+  let step = 1;
+  for (let scale = 1; ; scale *= 10) {
+    const found = [1, 2, 5].map((base) => base * scale).find((candidate) => Math.ceil(value / candidate) + 1 <= maxTicks);
+    if (found) {
+      step = found;
+      break;
+    }
+  }
+  const top = Math.ceil(value / step) * step;
+  const ticks = [];
+  for (let tick = 0; tick <= top; tick += step) ticks.push(tick);
+  return { top, ticks };
+}
+
+/** A bar's height in percent of an axis that ends at `top`; 0 for a missing
+ * or negative value. */
+export function barPercent(value, top) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0 || !(top > 0)) return 0;
+  return Math.min((value / top) * 100, 100);
+}
+
 /** The busiest minute of one lane, for a chart's spoken description:
  * `{ minute, count }`, the earliest on a tie, or null when every minute is 0. */
 export function busiestMinute(minutes, lane) {
