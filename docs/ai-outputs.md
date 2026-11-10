@@ -52,7 +52,7 @@ Stored as `content_repurpose_bundle: {English: {summary, blog, email, social_med
 
 ## Chat labels (v1)
 
-One label per chat message, for the v1 Report: its class (content, question, tech, logistics, social, laughter, off-topic), what a question is about (content or logistics), and its language as an ISO 639 code ([prompt](../prompts/chat_labels.txt)). Nothing starts it yet: it will run in the analysis the user starts, never on its own.
+One label per chat message, for the v1 Report: its class (content, question, tech, logistics, social, laughter, off-topic), what a question is about (content or logistics), and its language as an ISO 639 code ([prompt](../prompts/chat_labels.txt)). It runs in the session analysis the user starts (`POST /api/sessions/{id}/session-analysis`), never on its own, and is skipped when the stored labels already describe the session's chat ([jobs.md](jobs.md#the-session-analysis-v1)).
 
 - **Made by** `ai/chat_labelling.label_chat`, on Haiku 5.5 (`ai.jobs`, kind `chat_labels`), in batches of 150 messages. Every batch sends the same instructions first, cached across the run's batches, and the same schema (`ChatLabelBatch`), since a different schema would miss the cache ([providers.md](providers.md#request-layouts-and-caching)).
 - **What the model sees:** each message's `C` id, whether the team wrote it, and its text on one line, cut at 600 characters. Never an author, a name, an email or a people id.

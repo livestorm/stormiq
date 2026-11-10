@@ -1726,6 +1726,86 @@ def _get_ai_job_data(
 # kept thin to make the per-flow contract obvious from routes/ai.py.
 
 
+# ── The session analysis (v1) ─────────────────────────────────────────────
+#
+# One run per session, started by the user, never on its own: it labels the
+# chat (`ai/chat_labelling.label_chat`) and stores the labels
+# (`db.replace_chat_labels`). Later steps of the v1 analysis join the same run.
+
+SESSION_ANALYSIS_KIND = "session_analysis"
+SESSION_ANALYSIS_FUNCTION = "run_session_analysis_job"
+
+
+def session_analysis_job_id(session_id: str) -> str:
+    return ai_job_id(SESSION_ANALYSIS_KIND, session_id, "")
+
+
+def start_session_analysis(session_id: str, *, organization_id: OrgScope) -> Dict[str, Any]:
+    """Queue the session's analysis, or join the run already in flight.
+
+    `organization_id` is the caller's read scope: only a session the caller
+    can read is analysed. The job gets the session id only. Returns
+    `{jobId, jobStatus, enqueued}`. Raises SessionNotFoundError, or
+    RuntimeError when the queue is down.
+    """
+    session_id = str(session_id or "").strip()
+    if not isinstance(fetch_session_fields(session_id, ("has_transcript",), organization_id=organization_id), dict):
+        raise SessionNotFoundError()
+    job = enqueue_unique_job_sync(SESSION_ANALYSIS_FUNCTION, session_analysis_job_id(session_id), session_id)
+    if not job:
+        raise RuntimeError("The analysis queue is unavailable. Please try again in a moment.")
+    return job
+
+
+def get_session_analysis_job(session_id: str, job_id: str, *, organization_id: OrgScope) -> Dict[str, Any]:
+    """The analysis run's status: `{jobId, jobStatus, error?}`. A session has
+    one run id, derived from the session; the `job_id` a client sends is
+    ignored, so naming another session's job reads nothing of it (as the
+    other job polls do)."""
+    session_id = str(session_id or "").strip()
+    if not isinstance(fetch_session_fields(session_id, ("has_transcript",), organization_id=organization_id), dict):
+        raise SessionNotFoundError()
+    own = session_analysis_job_id(session_id)
+    return {"jobId": own, **read_job_status_sync(own)}
+
+
+def run_session_analysis(api_key: str, session_id: str) -> Dict[str, Any]:
+    """The worker side of the analysis: label the chat and store the labels.
+
+    Skips the model when the stored labels already describe this chat
+    (same `chat_hash` and `LABEL_VERSION`). A failed step raises and stores
+    nothing; the earlier labels are kept. Returns `{chatLabels: "labelled" |
+    "up_to_date", messages}`.
+    """
+    # The record package is imported here, inside the worker's runner, so
+    # loading api_logic never loads it (tests/test_roster.py).
+    from livestorm_app.ai.chat_labelling import label_chat
+    from livestorm_app.db import fetch_chat_labels, replace_chat_labels
+    from livestorm_app.record.chat_labels import LABEL_VERSION, chat_hash
+    from livestorm_app.record.inputs import load_record_inputs
+
+    cached = _require_cached_payloads(session_id, organization_id=ALL_ORGS)
+    events = load_record_inputs(cached).events
+    chat = events[events["kind"] == "chat"] if not events.empty else events
+    messages = [
+        {"eid": row["eid"], "livestorm_id": row["livestorm_id"] or None, "text": row["text"], "is_team": bool(row["is_team"])}
+        for row in chat.to_dict("records")
+    ]
+    current_hash = chat_hash(messages)
+    stored = fetch_chat_labels(session_id, ALL_ORGS)
+    if stored and stored.get("chat_hash") == current_hash and stored.get("label_version") == LABEL_VERSION:
+        return {"chatLabels": "up_to_date", "messages": len(messages)}
+    ctx = CallContext(
+        job_kind="chat_labels",
+        session_id=str(session_id or "").strip(),
+        organization_id=str(cached.get("organization_id") or "").strip(),
+        job_id=session_analysis_job_id(session_id),
+    )
+    result = label_chat(messages, api_key=api_key, ctx=ctx)
+    replace_chat_labels(session_id, result.labels, chat_hash=result.chat_hash, model=result.model)
+    return {"chatLabels": "labelled", "messages": len(messages)}
+
+
 def start_overall_analysis(session_id: str, output_language: str, *, organization_id: OrgScope) -> Dict[str, Any]:
     return _start_ai_job("overall_analysis", session_id, language=output_language, organization_id=organization_id)
 

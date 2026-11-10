@@ -470,6 +470,23 @@ async def _run_ai_job(
         clear_progress_sync(kind, session_id)
 
 
+async def run_session_analysis_job(ctx: Dict[str, Any], session_id: str) -> Dict[str, Any]:
+    """The v1 session analysis the user starts: the chat labels, for now
+    (`api_logic.run_session_analysis`). Gets the session id only; the model
+    key comes from the worker's environment."""
+    from livestorm_app.api_logic import run_session_analysis
+
+    api_key = _read_llm_key_or_raise()
+    logger.info("[session_analysis] session_id=%s start", session_id)
+    try:
+        result = await asyncio.to_thread(run_session_analysis, api_key, session_id)
+    except Exception as exc:
+        logger.error("[session_analysis] session_id=%s failed (%s)", session_id, type(exc).__name__)
+        raise
+    logger.info("[session_analysis] session_id=%s done (%s)", session_id, result.get("chatLabels"))
+    return result
+
+
 async def run_overall_analysis_job(
     ctx: Dict[str, Any],
     session_id: str,
@@ -882,6 +899,7 @@ class WorkerSettings:
     functions = [
         ping,
         func(run_transcription, timeout=TRANSCRIPTION_JOB_TIMEOUT_SECONDS),
+        func(run_session_analysis_job, timeout=LLM_JOB_TIMEOUT_SECONDS),
         func(run_overall_analysis_job, timeout=LLM_JOB_TIMEOUT_SECONDS),
         func(run_deep_analysis_job, timeout=LLM_JOB_TIMEOUT_SECONDS),
         func(run_smart_recap_job, timeout=LLM_JOB_TIMEOUT_SECONDS),

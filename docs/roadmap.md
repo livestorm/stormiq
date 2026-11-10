@@ -83,5 +83,5 @@ Comparative (2 sessions) and cumulative (up to 10) analysis. Depends on the card
 - A worker killed mid-job (OOM) blocks regenerating that output for about 2 hours ([jobs.md](jobs.md#timeouts-and-failures)).
 - Sessions cached before org scoping stay invisible to their org until someone refetches them.
 - A transcription that times out or is interrupted leaves its Gladia job running, and a retry starts a new one, which Gladia bills again. Each Gladia job carries ids (`custom_metadata`) so a later change can find it and re-attach instead ([providers.md](providers.md#gladia-configuration)). Not built yet.
-- Chats cached before StormIQ asked for `include=people` have no people links, so their authors stay unresolved in the v1 Report ([product.md §13](product.md#authors-v1-report)). No page fetches a cached chat again. To do: a worker job that fetches a cached session's base payloads again, so old chats get their links ([jobs.md](jobs.md)).
+- Chats cached before StormIQ asked for `include=people` have no people links, so their authors stay unresolved in the v1 Report ([product.md §13](product.md#authors-v1-report)). Not planned: the sessions cached before v1 will be deleted when v1 ships, and every session is fetched again from scratch.
 - Only the latest version of each output is kept.
