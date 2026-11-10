@@ -5,6 +5,7 @@ import Card from "../components/ui/Card.vue";
 import CardHeader from "../components/ui/CardHeader.vue";
 import Chip from "../components/ui/Chip.vue";
 import Icon from "../components/ui/Icon.vue";
+import AudienceSection from "../components/report/AudienceSection.vue";
 import PulseChart from "../components/report/PulseChart.vue";
 import VitalsRow from "../components/report/VitalsRow.vue";
 import { inShort } from "../report/vitals";
@@ -146,13 +147,7 @@ const tabs = computed(() => [
         <PulseChart :pulse="record.pulse" :alignment="clock.alignment || null" />
       </Card>
 
-      <Card>
-        <CardHeader icon="list" title="More sections come next" :level="2" />
-        <p class="r-text">
-          The audience and the chat's topics will appear here. Until then, the Transcript and Follow-up tabs open the current
-          views.
-        </p>
-      </Card>
+      <AudienceSection :measures="record.measures || {}" />
     </template>
   </div>
 </template>

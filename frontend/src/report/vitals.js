@@ -6,7 +6,7 @@
 // time in minutes from the measure's own seconds. A hidden value stays
 // hidden, and the card says why in words. Pure functions.
 
-const HIDDEN = new Set(["insufficient", "unresolved", "unavailable"]);
+export const HIDDEN = new Set(["insufficient", "unresolved", "unavailable"]);
 
 export function formatPercent(value) {
   if (typeof value !== "number" || !Number.isFinite(value)) return "";
@@ -27,7 +27,7 @@ export function formatSeconds(seconds) {
   return `${hours} h ${String(minutes % 60).padStart(2, "0")} min`;
 }
 
-function plural(count, one, many) {
+export function plural(count, one, many) {
   return `${count} ${count === 1 ? one : many}`;
 }
 
@@ -57,14 +57,14 @@ export function hiddenReason(measure) {
   }
 }
 
-function excludedNote(measure) {
+export function excludedNote(measure) {
   const excluded = measure?.excluded;
   if (!excluded) return "";
   if (excluded.internal) return "Internal session: everyone counts.";
   return excluded.total > 0 ? `Excludes your team: ${excluded.total}.` : "";
 }
 
-function partialNote(measure) {
+export function partialNote(measure) {
   if (measure?.state === "partial") return "Estimated: the people list or the chat isn't complete yet.";
   if (measure?.state === "approximation") return "Estimated by method.";
   return "";
