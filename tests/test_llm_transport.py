@@ -864,9 +864,13 @@ def test_the_smoke_plan_follows_the_catalog():
     assert understanding[0].stream and understanding[0].params["max_tokens"] == 48_000
     assert understanding[0].params["messages"][-1] == {"role": "system", "content": script.PROMPT}, "the dossier layout"
     dossier = [probe for probe in probes if probe.cache]
-    assert [probe.name for probe in dossier] == ["dossier-write", "dossier-repeat", "dossier-with-schema"]
+    assert [probe.name for probe in dossier] == [
+        "dossier-write", "dossier-repeat", "dossier-with-schema", "dossier-schema-repeat",
+    ]
     assert dossier[0].params == dossier[1].params, "the repeat is the same request, so it reads the cache"
-    assert [probe.expect_cache_read for probe in dossier] == [False, True, False]
+    assert dossier[2].params == dossier[3].params, "the schema repeat reads the entry the schema call wrote"
+    assert "output_config" in dossier[2].params and dossier[2].params != dossier[0].params
+    assert [probe.expect_cache_read for probe in dossier] == [False, True, False, True]
     text = dossier[0].params["messages"][0]["content"][0]["text"]
     assert len(text) // 4 > 2 * models.catalog_model("claude-haiku-5-5").min_cache_tokens
     legacy = {probe.model: probe for probe in probes if probe.name.startswith("temperature=") and probe.provider == "anthropic"}
@@ -947,8 +951,10 @@ def test_the_smoke_script_counts_a_repeat_that_reads_no_cache():
     lines = out.getvalue().splitlines()
     assert code == 1
     assert "anthropic claude-haiku-5-5 dossier-repeat accepted stop=end_turn cache_read=0 (expected > 0)" in lines
-    assert "anthropic claude-haiku-5-5 dossier-write accepted stop=end_turn cache_read=0" in lines, "only the repeat must read the cache"
-    assert lines[-1].endswith("not_accepted=0 cache_misses=1")
+    assert "anthropic claude-haiku-5-5 dossier-schema-repeat accepted stop=end_turn cache_read=0 (expected > 0)" in lines
+    assert "anthropic claude-haiku-5-5 dossier-write accepted stop=end_turn cache_read=0" in lines, "only the repeats must read the cache"
+    assert "anthropic claude-haiku-5-5 dossier-with-schema accepted stop=end_turn cache_read=0" in lines
+    assert lines[-1].endswith("not_accepted=0 cache_misses=2")
 
 
 def _no_cache(message):

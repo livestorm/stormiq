@@ -23,12 +23,14 @@ What it calls, one small request per line of output:
   job will send: its layout, its budget (`ai.jobs.budget`, so it streams when
   the budget says so), its effort, adaptive thinking and, on the models that
   accept it, the server-side fallback. No call sends `temperature`.
-- **Three dossier calls** on `--dossier-model` (default `claude-haiku-5-5`):
-  the understanding job's request over a synthetic record of about 3,000
-  tokens, as a run of three passes sends it (the dossier marked
+- **Four dossier calls** on `--dossier-model` (default `claude-haiku-5-5`):
+  the understanding job's request over a synthetic record of about 5,000
+  tokens, as a run of four passes sends it (the dossier marked
   `cache_control`), then the same request again (its `cache_read_tokens` must
   be above 0: a 0 counts as a cache miss), then the same with a JSON schema
-  added (does a schema change the cached prefix?).
+  added (a schema changes the cached prefix, so this one reads nothing and
+  writes a new entry), then that schema call again (it must read the entry
+  the schema call wrote).
 - **With `--legacy`**, the classic outputs' Claude models with their
   `temperature`, on the API version the SDK sends (2023-06-01).
 - **OpenAI, every catalog row**: plain (with the row's token parameter),
@@ -53,7 +55,7 @@ read the lines), 2 without the flag, 0 otherwise.
 
 Cost: about 60 calls (35 to Anthropic, 25 to OpenAI, 3 more with `--legacy`)
 with prompts of a few dozen tokens and one-word answers (the 5.5 models may
-think first), plus the three dossier calls of about 3,000 tokens on Haiku 5.5.
+think first), plus the four dossier calls of about 5,000 tokens on Haiku 5.5.
 Well under one dollar in total.
 """
 
@@ -202,7 +204,7 @@ def legacy_probes(caps: models.ModelCaps) -> List[Probe]:
 
 
 def synthetic_dossier(lines: int = 120) -> str:
-    """Made-up session lines, about 3,000 tokens: over every 5.5 model's shortest cacheable prefix."""
+    """Made-up session lines, about 5,000 tokens: over every 5.5 model's shortest cacheable prefix."""
     return "\n".join(
         f"Line {index:03d}: in minute {index % 60}, the synthetic session covered topic {index % 17} "
         f"and the audience asked {index % 5} questions about part {index % 11}."
@@ -211,21 +213,24 @@ def synthetic_dossier(lines: int = 120) -> str:
 
 
 def dossier_probes(caps: models.ModelCaps) -> List[Probe]:
-    """Write the cache, read it with the same request, then with a schema
-    added. Each is the understanding job's request over one dossier, as the
-    app sends a run of three passes."""
+    """Write the cache and read it with the same request; then add a schema,
+    which changes the cached prefix, and read that entry with the same schema
+    call. Each is the understanding job's request over one dossier, as the app
+    sends a run of four passes."""
     spec = jobs.job_spec("understanding")
     dossier = make_dossier(synthetic_dossier(), record_version="smoke")
+    schema = JsonFormat("SmokeAnswer", SMOKE_SCHEMA)
 
     def probe(name: str, number: int, json_format: Optional[JsonFormat] = None, **flags: bool) -> Probe:
-        request = _job_request(spec, context=dossier, shared_calls=3, call_number=number)
+        request = _job_request(spec, context=dossier, shared_calls=4, call_number=number)
         params, beta = _job_call(request, caps, SMALL_BUDGET, json_format)
         return Probe("anthropic", caps.id, name, params, beta=beta, cache=True, **flags)
 
     return [
         probe("dossier-write", 1),
         probe("dossier-repeat", 2, expect_cache_read=True),
-        probe("dossier-with-schema", 3, JsonFormat("SmokeAnswer", SMOKE_SCHEMA)),
+        probe("dossier-with-schema", 3, schema),
+        probe("dossier-schema-repeat", 4, schema, expect_cache_read=True),
     ]
 
 
@@ -361,7 +366,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument(CONFIRM_FLAG, dest="confirmed", action="store_true", help="required: these calls are billed")
     parser.add_argument("--legacy", action="store_true", help="also check the classic outputs' Claude models")
     parser.add_argument("--model", action="append", default=[], help="only this model id (repeatable)")
-    parser.add_argument("--dossier-model", default="claude-haiku-5-5", help="the model for the three dossier calls")
+    parser.add_argument("--dossier-model", default="claude-haiku-5-5", help="the model for the four dossier calls")
     return parser.parse_args(list(argv))
 
 
