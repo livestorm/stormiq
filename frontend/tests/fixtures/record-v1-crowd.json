@@ -45,7 +45,7 @@
     }
   },
   "record": {
-    "version": 8,
+    "version": 9,
     "roster": {
       "source": "session_include",
       "complete": null,
@@ -353,7 +353,8 @@
         },
         "excluded": null,
         "livestorm": null,
-        "rows": null
+        "rows": null,
+        "gate": null
       },
       "m.audience_registrants": {
         "id": "m.audience_registrants",
@@ -374,7 +375,8 @@
           "internal": false
         },
         "livestorm": null,
-        "rows": null
+        "rows": null,
+        "gate": null
       },
       "m.team_count": {
         "id": "m.team_count",
@@ -401,7 +403,8 @@
             "people": 1,
             "attendees": 1
           }
-        ]
+        ],
+        "gate": null
       },
       "m.audience_attendees": {
         "id": "m.audience_attendees",
@@ -423,7 +426,8 @@
           "internal": false
         },
         "livestorm": null,
-        "rows": null
+        "rows": null,
+        "gate": null
       },
       "m.show_up_rate": {
         "id": "m.show_up_rate",
@@ -449,7 +453,8 @@
           "registrantsCount": 123,
           "value": 0.7561
         },
-        "rows": null
+        "rows": null,
+        "gate": null
       },
       "m.time_in_room": {
         "id": "m.time_in_room",
@@ -473,7 +478,8 @@
           "internal": false
         },
         "livestorm": null,
-        "rows": null
+        "rows": null,
+        "gate": null
       },
       "m.wrote_rate": {
         "id": "m.wrote_rate",
@@ -497,7 +503,8 @@
           "internal": false
         },
         "livestorm": null,
-        "rows": null
+        "rows": null,
+        "gate": null
       },
       "m.questions_qa": {
         "id": "m.questions_qa",
@@ -528,7 +535,8 @@
             "key": "open",
             "questions": 1
           }
-        ]
+        ],
+        "gate": null
       },
       "m.time_to_answer": {
         "id": "m.time_to_answer",
@@ -543,7 +551,12 @@
         },
         "excluded": null,
         "livestorm": null,
-        "rows": null
+        "rows": null,
+        "gate": {
+          "field": "den",
+          "minimum": 3,
+          "actual": 1
+        }
       },
       "m.author_resolution": {
         "id": "m.author_resolution",
@@ -590,7 +603,8 @@
             "resolvedShare": 1.0,
             "state": "resolved"
           }
-        ]
+        ],
+        "gate": null
       },
       "m.livestorm_counts": {
         "id": "m.livestorm_counts",
@@ -637,7 +651,8 @@
             "value": 0,
             "source": "people"
           }
-        ]
+        ],
+        "gate": null
       },
       "m.chat_concentration": {
         "id": "m.chat_concentration",
@@ -674,7 +689,8 @@
             "messages": 18,
             "share": 0.4615
           }
-        ]
+        ],
+        "gate": null
       },
       "m.room_map": {
         "id": "m.room_map",
@@ -729,7 +745,8 @@
             "people": 52,
             "share": 0.5778
           }
-        ]
+        ],
+        "gate": null
       },
       "m.channel_quality": {
         "id": "m.channel_quality",
@@ -813,7 +830,8 @@
             "medianAttendanceS": 972.0,
             "state": "ok"
           }
-        ]
+        ],
+        "gate": null
       },
       "m.segment_quality": {
         "id": "m.segment_quality",
@@ -932,7 +950,8 @@
             "medianAttendanceS": null,
             "state": "insufficient"
           }
-        ]
+        ],
+        "gate": null
       },
       "m.lead_time_show_up": {
         "id": "m.lead_time_show_up",
@@ -1012,7 +1031,8 @@
             "showUpRate": null,
             "state": "insufficient"
           }
-        ]
+        ],
+        "gate": null
       },
       "m.replay_caught_up": {
         "id": "m.replay_caught_up",
@@ -1050,7 +1070,8 @@
             "viewedReplay": 12,
             "share": 0.1333
           }
-        ]
+        ],
+        "gate": null
       },
       "m.transcript_health": {
         "id": "m.transcript_health",
@@ -1066,7 +1087,8 @@
         },
         "excluded": null,
         "livestorm": null,
-        "rows": null
+        "rows": null,
+        "gate": null
       },
       "m.clock_alignment": {
         "id": "m.clock_alignment",
@@ -1082,7 +1104,8 @@
         },
         "excluded": null,
         "livestorm": null,
-        "rows": null
+        "rows": null,
+        "gate": null
       },
       "m.questions_total": {
         "id": "m.questions_total",
@@ -1098,7 +1121,8 @@
         },
         "excluded": null,
         "livestorm": null,
-        "rows": null
+        "rows": null,
+        "gate": null
       },
       "m.chat_themes": {
         "id": "m.chat_themes",
@@ -1114,7 +1138,8 @@
         },
         "excluded": null,
         "livestorm": null,
-        "rows": null
+        "rows": null,
+        "gate": null
       }
     }
   }

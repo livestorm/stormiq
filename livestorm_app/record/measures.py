@@ -24,7 +24,9 @@ A measure's state is the first that applies (`STATES`):
   cached before StormIQ fetched people links is one). The value, the
   numerator and the denominator are hidden;
 - `insufficient`, or a gate's own `below`: a gate isn't met. The value is
-  hidden;
+  hidden, and `gate` says which: `{field, minimum, actual}`, the first gate
+  that failed and what the measure had (None in every other state), so a
+  page can say why without knowing the thresholds;
 - `approximation`: the method itself is approximate (time in the room);
 - `partial`: computed over incomplete inputs: the roster is partial, an
   attendance is unknown, or an author didn't resolve;
@@ -144,7 +146,7 @@ OTHER = "(other)"  # the row that small channels or values fold into
 SELECT_FIELD_TYPES = ("unique_select", "multiple_select")
 
 # The JSON form's keys, in order (`MeasureValue.to_json`).
-JSON_KEYS = ("id", "version", "value", "num", "den", "state", "coverage", "excluded", "livestorm", "rows")
+JSON_KEYS = ("id", "version", "value", "num", "den", "state", "coverage", "excluded", "livestorm", "rows", "gate")
 FLOAT_PLACES = 4
 
 
@@ -172,7 +174,10 @@ class MeasureValue:
     - `excluded`: for an audience-only measure, `{team, guestSpeakers,
       total, internal}`; None for the others and when unavailable;
     - `livestorm`: Livestorm's own figure, when it has one;
-    - `rows`: a breakdown, each row keyed by `key`.
+    - `rows`: a breakdown, each row keyed by `key`;
+    - `gate`: when a gate hid the value, `{field, minimum, actual}` (the
+      first that failed; `actual` None when the measure had no such
+      quantity); None otherwise.
     """
 
     id: str
@@ -185,6 +190,7 @@ class MeasureValue:
     excluded: Optional[Mapping[str, Any]]
     livestorm: Optional[Mapping[str, Any]]
     rows: Optional[List[Mapping[str, Any]]]
+    gate: Optional[Mapping[str, Any]] = None
 
     def to_json(self) -> Dict[str, Any]:
         """Plain JSON: floats rounded to `FLOAT_PLACES`, no NaN, times as ISO
@@ -1314,8 +1320,12 @@ def registry_pin(registry: Mapping[str, MeasureDef] = REGISTRY) -> str:
 # ── Computing and checking ──────────────────────────────────────────────────
 
 
+def _gate_quantity(gate: Gate, draft: _Draft) -> Any:
+    return draft.den if gate.field == "den" else draft.quantities.get(gate.field)
+
+
 def _passes(gate: Gate, draft: _Draft) -> bool:
-    quantity = draft.den if gate.field == "den" else draft.quantities.get(gate.field)
+    quantity = _gate_quantity(gate, draft)
     return quantity is not None and quantity >= gate.minimum
 
 
@@ -1342,12 +1352,14 @@ def _finish(definition: MeasureDef, draft: _Draft) -> MeasureValue:
     when the state calls for it, and the numerator and denominator hidden
     when unresolved (a count of the resolved part would read as complete).
     Rows lose the fields the state hides (`_rows`)."""
+    gate = None
     if UNRESOLVED in draft.flags:
         state = UNRESOLVED
     else:
         failed = next((gate for gate in definition.gates if not _passes(gate, draft)), None)
         if failed is not None:
             state = failed.below
+            gate = {"field": failed.field, "minimum": failed.minimum, "actual": _gate_quantity(failed, draft)}
         elif APPROXIMATION in draft.flags:
             state = APPROXIMATION
         elif PARTIAL in draft.flags:
@@ -1365,6 +1377,7 @@ def _finish(definition: MeasureDef, draft: _Draft) -> MeasureValue:
         excluded=draft.excluded,
         livestorm=draft.livestorm,
         rows=_rows(draft, state),
+        gate=gate,
     )
 
 
@@ -1400,6 +1413,20 @@ def _is_count(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
+def _check_gate(measure_id: str, state: str, gate: Any) -> None:
+    """A gate only on a measure a gate hid, naming one of its own gates."""
+    if gate is None:
+        return
+    gates = {(item.field, item.minimum, item.below) for item in REGISTRY[measure_id].gates}
+    if not isinstance(gate, Mapping) or set(gate) != {"field", "minimum", "actual"}:
+        raise ValueError(f"{measure_id}: gate must be {{field, minimum, actual}}")
+    if (gate["field"], gate["minimum"], state) not in gates:
+        raise ValueError(f"{measure_id}: gate is not one of its gates in state {state!r}")
+    actual = gate["actual"]
+    if actual is not None and (isinstance(actual, bool) or not isinstance(actual, (int, float)) or not math.isfinite(actual)):
+        raise ValueError(f"{measure_id}: gate actual must be a number or None")
+
+
 def validate_measures(measures: Mapping[str, Any]) -> None:
     """Raise ValueError unless `measures` is a complete set in its JSON form
     (`MeasureValue.to_json`): every registry id and no other, each with the
@@ -1424,6 +1451,7 @@ def validate_measures(measures: Mapping[str, Any]) -> None:
             raise ValueError(f"{measure_id}: a {state} measure has no value")
         if state == UNRESOLVED and (item["num"] is not None or item["den"] is not None):
             raise ValueError(f"{measure_id}: an unresolved measure has no numerator or denominator")
+        _check_gate(measure_id, state, item["gate"])
         if value is not None and (
             isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0
         ):

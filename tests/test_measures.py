@@ -526,11 +526,27 @@ def _broken(change):
         lambda m: m["m.team_count"]["rows"][1].update(key="team"),
         lambda m: m["m.show_up_rate"]["coverage"].update(when=datetime.now(timezone.utc)),
         lambda m: m["m.show_up_rate"]["livestorm"].update(value=math.inf),
+        lambda m: m["m.show_up_rate"].pop("gate"),
+        # A gate only on a measure a gate hid, and only one of its own.
+        lambda m: m["m.show_up_rate"].update(gate={"field": "den", "minimum": 1, "actual": 0}),
+        lambda m: m["m.show_up_rate"].update(state=INSUFFICIENT, value=None, gate={"field": "den", "minimum": 5, "actual": 0}),
+        lambda m: m["m.show_up_rate"].update(state=INSUFFICIENT, value=None, gate={"field": "den", "minimum": 1}),
+        lambda m: m["m.show_up_rate"].update(state=INSUFFICIENT, value=None, gate={"field": "den", "minimum": 1, "actual": "0"}),
+        lambda m: m["m.show_up_rate"].update(state=INSUFFICIENT, value=None, gate=[]),
     ],
 )
 def test_validate_measures_refuses_a_broken_set(change):
     with pytest.raises(ValueError):
         validate_measures(_broken(change))
+
+
+def test_a_measure_a_gate_hid_says_which_gate_and_what_it_had():
+    found = compute(row(webinar(audience=2), chat("a-01")))
+    wrote = found["m.wrote_rate"]
+    assert wrote["state"] == INSUFFICIENT
+    assert wrote["gate"] == {"field": "den", "minimum": 10, "actual": wrote["den"]}
+    assert all(item["gate"] is None for item in found.values() if item["state"] != INSUFFICIENT)
+    assert all(item["gate"] is not None for item in found.values() if item["state"] == INSUFFICIENT)
 
 
 def test_validate_measures_refuses_what_is_not_a_set():
