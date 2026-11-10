@@ -176,6 +176,7 @@ def test_a_blank_scope_never_queries_the_people_tables(monkeypatch):
         assert db.fetch_session_roster("sess-a", blank) is None
         assert db.get_org_people_attributes(blank) is None
         assert db.fetch_chat_labels("sess-a", blank) is None
+        assert db.fetch_chat_labels_stamp("sess-a", blank) is None
 
 
 def test_chat_labels_are_scoped_by_org(test_database):
@@ -189,6 +190,10 @@ def test_chat_labels_are_scoped_by_org(test_database):
     assert db.fetch_chat_labels("sess-b", "org-b") is None, "no labels yet"
     assert db.fetch_chat_labels("sess-legacy", "org-a") is None, "a row without an org is not any org's"
     assert db.fetch_chat_labels("sess-legacy", ALL_ORGS)["message_count"] == 1
+    stamp = db.fetch_chat_labels_stamp("sess-a", "org-a")
+    assert set(stamp) == {"label_version", "chat_hash", "created_at"} and stamp["chat_hash"] == "c" * 64
+    assert db.fetch_chat_labels_stamp("sess-a", "org-b") is None
+    assert db.fetch_chat_labels_stamp("sess-legacy", "org-a") is None
 
 
 def test_people_attributes_are_per_org(test_database):
