@@ -1,32 +1,160 @@
 <script setup>
 import { computed, onMounted, ref } from "vue";
+import { RouterLink } from "vue-router";
+import Card from "../components/ui/Card.vue";
+import CardHeader from "../components/ui/CardHeader.vue";
+import Chip from "../components/ui/Chip.vue";
+import Icon from "../components/ui/Icon.vue";
+import UiButton from "../components/ui/UiButton.vue";
 import { api } from "../api";
 import { useWorkspace } from "../store/workspace";
 
+// Admin: the people with access and who is an admin, every organization's
+// sessions, and the AI models. Only admins reach it: every route behind it
+// answers 403 to anyone else (`auth.require_admin`), and the top bar shows it
+// only to admins.
+
 const { state } = useWorkspace();
 
+const TABS = [
+  { value: "users", label: "People" },
+  { value: "sessions", label: "Sessions" },
+  { value: "models", label: "Models" },
+];
 const activeTab = ref("users");
+
+function formatDate(value) {
+  if (!value) return "—";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? String(value)
+    : date.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+
+function matches(needle, values) {
+  const query = needle.trim().toLowerCase();
+  return !query || values.some((value) => String(value || "").toLowerCase().includes(query));
+}
+
+// ── People ────────────────────────────────────────────────────────────────
 const users = ref([]);
-const sessions = ref([]);
 const loadingUsers = ref(false);
-const loadingSessions = ref(false);
-const error = ref("");
+const usersError = ref("");
+const userSearch = ref("");
 const promoteEmail = ref("");
 const promoteUserId = ref("");
 const promoting = ref(false);
-const promoteError = ref("");
-const promoteSuccess = ref("");
-const deletingSessionId = ref(null);
-const deleteConfirmId = ref(null);
-const sessionSearch = ref("");
-const userSearch = ref("");
+const promoteMessage = ref({ text: "", ok: false });
+const revokeConfirm = ref("");
 
-// ── Models tab ────────────────────────────────────────────────────────────────
+async function loadUsers() {
+  loadingUsers.value = true;
+  usersError.value = "";
+  try {
+    const data = await api.adminGetUsers();
+    users.value = data?.users || [];
+  } catch (error) {
+    usersError.value = error?.message || "The people could not be loaded.";
+  } finally {
+    loadingUsers.value = false;
+  }
+}
+
+async function promoteUser() {
+  const email = promoteEmail.value.trim();
+  if (!email) return;
+  promoting.value = true;
+  promoteMessage.value = { text: "", ok: false };
+  try {
+    await api.adminPromoteUser(email, promoteUserId.value.trim());
+    promoteMessage.value = { text: `${email} is now an admin.`, ok: true };
+    promoteEmail.value = "";
+    promoteUserId.value = "";
+    await loadUsers();
+  } catch (error) {
+    promoteMessage.value = { text: error?.message || "They could not be made an admin.", ok: false };
+  } finally {
+    promoting.value = false;
+  }
+}
+
+async function revoke(email) {
+  if (revokeConfirm.value !== email) {
+    revokeConfirm.value = email;
+    return;
+  }
+  revokeConfirm.value = "";
+  try {
+    await api.adminDemoteUser(email);
+    await loadUsers();
+  } catch (error) {
+    usersError.value = error?.message || "Admin could not be removed.";
+  }
+}
+
+function prefill(user) {
+  promoteEmail.value = user.email || "";
+  promoteUserId.value = user.user_id || "";
+  promoteMessage.value = { text: "", ok: false };
+  document.getElementById("adm-email")?.focus();
+}
+
+const myEmail = computed(() => state.auth?.connectedUser?.email || "");
+const shownUsers = computed(() =>
+  users.value.filter((user) =>
+    matches(userSearch.value, [user.email, user.organization_id, user.user_id, user.profile?.full_name]),
+  ),
+);
+
+// ── Sessions ──────────────────────────────────────────────────────────────
+const sessions = ref([]);
+const loadingSessions = ref(false);
+const sessionsError = ref("");
+const sessionSearch = ref("");
+const deleteConfirm = ref("");
+const deleting = ref("");
+
+async function loadSessions() {
+  loadingSessions.value = true;
+  sessionsError.value = "";
+  try {
+    const data = await api.adminGetSessions();
+    sessions.value = data?.sessions || [];
+  } catch (error) {
+    sessionsError.value = error?.message || "The sessions could not be loaded.";
+  } finally {
+    loadingSessions.value = false;
+  }
+}
+
+async function deleteSession(sessionId) {
+  if (deleteConfirm.value !== sessionId) {
+    deleteConfirm.value = sessionId;
+    return;
+  }
+  deleteConfirm.value = "";
+  deleting.value = sessionId;
+  try {
+    await api.adminDeleteSession(sessionId);
+    sessions.value = sessions.value.filter((session) => session.session_id !== sessionId);
+  } catch (error) {
+    sessionsError.value = error?.message || "The session could not be deleted.";
+  } finally {
+    deleting.value = "";
+  }
+}
+
+const shownSessions = computed(() =>
+  sessions.value.filter((session) =>
+    matches(sessionSearch.value, [session.session_id, session.event_title, session.created_by_email, session.organization_id]),
+  ),
+);
+
+// ── Models ────────────────────────────────────────────────────────────────
 const settings = ref({});
 const loadingSettings = ref(false);
 const savingKey = ref(null);
-const settingsError = ref("");
-const settingsSuccess = ref("");
+const settingsMessage = ref({ text: "", ok: false });
 
 // The server refuses a model id outside its catalog (livestorm_app/ai/models.py,
 // checked by ai.jobs.check_model_setting), so every id here must be a
@@ -51,27 +179,27 @@ const OPENAI_TEXT_MODELS = [
 
 // gpt-image-1 was shut down on 2026-10-23. A saved gpt-image-1 setting is
 // sent as gpt-image-2 (cover_image.resolve_image_model), so show that.
-const IMAGE_MODELS = [
-  { value: "gpt-image-2", label: "gpt-image-2 (recommended)" },
-];
+const IMAGE_MODELS = [{ value: "gpt-image-2", label: "gpt-image-2 (recommended)" }];
 const activeImageModel = computed(() => {
   const saved = settings.value.image_model;
-  return IMAGE_MODELS.some((m) => m.value === saved) ? saved : "gpt-image-2";
+  return IMAGE_MODELS.some((model) => model.value === saved) ? saved : "gpt-image-2";
 });
 
+const PROVIDERS = [
+  { value: "anthropic", label: "Anthropic", hint: "Claude models" },
+  { value: "openai", label: "OpenAI", hint: "GPT models" },
+];
 const activeProvider = computed(() => settings.value.llm_provider || "anthropic");
-const textModels = computed(() =>
-  activeProvider.value === "openai" ? OPENAI_TEXT_MODELS : ANTHROPIC_TEXT_MODELS
-);
+const textModels = computed(() => (activeProvider.value === "openai" ? OPENAI_TEXT_MODELS : ANTHROPIC_TEXT_MODELS));
 
 async function loadSettings() {
   loadingSettings.value = true;
-  settingsError.value = "";
+  settingsMessage.value = { text: "", ok: false };
   try {
     const data = await api.adminGetSettings();
     settings.value = data?.settings || {};
-  } catch (e) {
-    settingsError.value = e.message || "Failed to load settings.";
+  } catch (error) {
+    settingsMessage.value = { text: error?.message || "The settings could not be loaded.", ok: false };
   } finally {
     loadingSettings.value = false;
   }
@@ -79,149 +207,33 @@ async function loadSettings() {
 
 async function saveSetting(key, value) {
   savingKey.value = key;
-  settingsError.value = "";
-  settingsSuccess.value = "";
+  settingsMessage.value = { text: "", ok: false };
   try {
     await api.adminUpdateSetting(key, value);
     settings.value = { ...settings.value, [key]: value };
-    settingsSuccess.value = "Saved.";
-    setTimeout(() => { settingsSuccess.value = ""; }, 2500);
-  } catch (e) {
-    settingsError.value = e.message || "Failed to save setting.";
+    settingsMessage.value = { text: "Saved.", ok: true };
+  } catch (error) {
+    settingsMessage.value = { text: error?.message || "The setting could not be saved.", ok: false };
   } finally {
     savingKey.value = null;
   }
 }
 
 async function handleProviderChange(newProvider) {
+  if (newProvider === activeProvider.value) return;
   await saveSetting("llm_provider", newProvider);
-  // Reset model selections to sensible defaults for the new provider
+  // Reset the models to sensible defaults for the new provider.
   const defaultModel = newProvider === "openai" ? "gpt-4o-mini" : "claude-haiku-4-5-20251001";
   const recapModel = newProvider === "openai" ? "gpt-4o" : "claude-sonnet-4-6";
   await saveSetting("llm_default_model", defaultModel);
   await saveSetting("llm_smart_recap_model", recapModel);
 }
 
-function getModelLabel(value, list) {
-  return list.find((m) => m.value === value)?.label || value || "—";
-}
-
-async function loadUsers() {
-  loadingUsers.value = true;
-  error.value = "";
-  try {
-    const data = await api.adminGetUsers();
-    users.value = data?.users || [];
-  } catch (e) {
-    error.value = e.message || "Failed to load users.";
-  } finally {
-    loadingUsers.value = false;
-  }
-}
-
-async function loadSessions() {
-  loadingSessions.value = true;
-  error.value = "";
-  try {
-    const data = await api.adminGetSessions();
-    sessions.value = data?.sessions || [];
-  } catch (e) {
-    error.value = e.message || "Failed to load sessions.";
-  } finally {
-    loadingSessions.value = false;
-  }
-}
-
-async function promoteUser() {
-  const email = promoteEmail.value.trim();
-  if (!email) return;
-  promoting.value = true;
-  promoteError.value = "";
-  promoteSuccess.value = "";
-  try {
-    await api.adminPromoteUser(email, promoteUserId.value.trim());
-    promoteSuccess.value = `${email} promoted to admin.`;
-    promoteEmail.value = "";
-    promoteUserId.value = "";
-    await loadUsers();
-  } catch (e) {
-    promoteError.value = e.message || "Failed to promote user.";
-  } finally {
-    promoting.value = false;
-  }
-}
-
-async function demoteUser(email) {
-  if (!confirm(`Remove admin from ${email}?`)) return;
-  try {
-    await api.adminDemoteUser(email);
-    await loadUsers();
-  } catch (e) {
-    error.value = e.message || "Failed to demote user.";
-  }
-}
-
-async function deleteSession(sessionId) {
-  if (deleteConfirmId.value !== sessionId) {
-    deleteConfirmId.value = sessionId;
-    return;
-  }
-  deletingSessionId.value = sessionId;
-  deleteConfirmId.value = null;
-  try {
-    await api.adminDeleteSession(sessionId);
-  } catch (_e) {
-    // Ignore — row may already be gone
-  } finally {
-    sessions.value = sessions.value.filter((s) => s.session_id !== sessionId);
-    deletingSessionId.value = null;
-  }
-}
-
-function cancelDeleteConfirm(sessionId) {
-  if (deleteConfirmId.value === sessionId) deleteConfirmId.value = null;
-}
-
-const filteredSessions = computed(() => {
-  const q = sessionSearch.value.trim().toLowerCase();
-  if (!q) return sessions.value;
-  return sessions.value.filter(
-    (s) =>
-      (s.session_id || "").toLowerCase().includes(q) ||
-      (s.event_title || "").toLowerCase().includes(q) ||
-      (s.created_by_email || "").toLowerCase().includes(q) ||
-      (s.organization_id || "").toLowerCase().includes(q)
-  );
-});
-
-const filteredUsers = computed(() => {
-  const q = userSearch.value.trim().toLowerCase();
-  if (!q) return users.value;
-  return users.value.filter(
-    (u) =>
-      (u.email || "").toLowerCase().includes(q) ||
-      (u.organization_id || "").toLowerCase().includes(q) ||
-      (u.user_id || "").toLowerCase().includes(q) ||
-      (u.profile?.full_name || "").toLowerCase().includes(q)
-  );
-});
-
 function switchTab(tab) {
   activeTab.value = tab;
-  error.value = "";
-  settingsError.value = "";
-  if (tab === "users" && users.value.length === 0) loadUsers();
-  if (tab === "sessions" && sessions.value.length === 0) loadSessions();
-  if (tab === "models" && Object.keys(settings.value).length === 0) loadSettings();
-}
-
-function formatDate(ts) {
-  if (!ts) return "—";
-  try {
-    return new Date(ts).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
-  } catch {
-    return ts;
-  }
+  if (tab === "users" && !users.value.length) loadUsers();
+  if (tab === "sessions" && !sessions.value.length) loadSessions();
+  if (tab === "models" && !Object.keys(settings.value).length) loadSettings();
 }
 
 onMounted(() => {
@@ -231,732 +243,623 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="admin-view">
-    <div class="admin-header">
-      <h2 class="admin-title">Admin Panel</h2>
-      <p class="admin-subtitle">Manage users and sessions across your StormIQ workspace.</p>
+  <div class="adm-page">
+    <header class="adm-head">
+      <h1 class="adm-title">Admin</h1>
+      <p class="adm-lead">People, sessions and AI models, across every organization. Only admins see this page.</p>
+    </header>
+
+    <div class="adm-tabs" role="group" aria-label="Admin sections">
+      <button
+        v-for="tab in TABS"
+        :key="tab.value"
+        type="button"
+        class="adm-tab siq-fx"
+        :class="{ 'is-current': activeTab === tab.value }"
+        :aria-pressed="activeTab === tab.value ? 'true' : 'false'"
+        @click="switchTab(tab.value)"
+      >
+        {{ tab.label }}
+      </button>
     </div>
 
-    <div v-if="!state.auth?.isAdmin" class="admin-denied">
-      <p>You do not have admin access.</p>
-    </div>
+    <!-- ── People ── -->
+    <template v-if="activeTab === 'users'">
+      <Card>
+        <CardHeader icon="shield" title="Make someone an admin" subtitle="They see this page and every organization's sessions." :level="2" />
+        <form class="adm-form" @submit.prevent="promoteUser">
+          <label class="adm-field">
+            <span class="adm-label">Email</span>
+            <input id="adm-email" v-model="promoteEmail" type="email" class="adm-input" autocomplete="off" required />
+          </label>
+          <label class="adm-field">
+            <span class="adm-label">Livestorm user ID <span class="adm-muted">(optional)</span></span>
+            <input v-model="promoteUserId" type="text" class="adm-input" autocomplete="off" spellcheck="false" />
+          </label>
+          <UiButton type="submit" variant="primary" icon="plus" :disabled="promoting || !promoteEmail.trim()">
+            {{ promoting ? "Saving…" : "Make admin" }}
+          </UiButton>
+        </form>
+        <p v-if="promoteMessage.text" class="adm-message" :role="promoteMessage.ok ? 'status' : 'alert'">
+          <Icon :name="promoteMessage.ok ? 'check' : 'info'" :size="16" />{{ promoteMessage.text }}
+        </p>
+      </Card>
 
-    <template v-else>
-      <div class="admin-tabs">
-        <button
-          class="admin-tab"
-          :class="{ active: activeTab === 'users' }"
-          @click="switchTab('users')"
-        >
-          Users
-        </button>
-        <button
-          class="admin-tab"
-          :class="{ active: activeTab === 'sessions' }"
-          @click="switchTab('sessions')"
-        >
-          Sessions
-        </button>
-        <button
-          class="admin-tab"
-          :class="{ active: activeTab === 'models' }"
-          @click="switchTab('models')"
-        >
-          Models
-        </button>
-      </div>
-
-      <p v-if="error" class="admin-error">{{ error }}</p>
-
-      <!-- ── Users tab ── -->
-      <div v-if="activeTab === 'users'" class="admin-section">
-        <div class="admin-promote-form">
-          <h3 class="admin-section-title">Promote to Admin</h3>
-          <div class="promote-fields">
-            <input
-              v-model="promoteEmail"
-              type="email"
-              placeholder="Email address"
-              class="admin-input"
-              @keyup.enter="promoteUser"
-            />
-            <input
-              v-model="promoteUserId"
-              type="text"
-              placeholder="Livestorm User ID (optional)"
-              class="admin-input"
-            />
-            <button class="admin-btn primary" :disabled="promoting || !promoteEmail.trim()" @click="promoteUser">
-              {{ promoting ? "Promoting…" : "Promote" }}
-            </button>
-          </div>
-          <p v-if="promoteError" class="admin-error">{{ promoteError }}</p>
-          <p v-if="promoteSuccess" class="admin-success">{{ promoteSuccess }}</p>
+      <Card padding="flush">
+        <div class="adm-bar" role="search">
+          <label class="adm-field adm-search">
+            <span class="siq-sr-only">Search people</span>
+            <Icon name="search" :size="16" class="adm-field-icon" />
+            <input v-model="userSearch" type="search" class="adm-input" placeholder="Search by email, name, organization or ID" />
+          </label>
+          <p class="adm-muted" role="status">{{ shownUsers.length }} {{ shownUsers.length === 1 ? "person" : "people" }}</p>
         </div>
-
-        <div class="admin-toolbar">
-          <input
-            v-model="userSearch"
-            type="search"
-            placeholder="Search users…"
-            class="admin-search"
-          />
-          <span class="admin-count">{{ filteredUsers.length }} user{{ filteredUsers.length !== 1 ? "s" : "" }}</span>
-        </div>
-
-        <div v-if="loadingUsers" class="admin-loading">Loading users…</div>
-        <div v-else-if="filteredUsers.length === 0" class="admin-empty">No users found.</div>
-        <div v-else class="admin-table-wrap">
-          <table class="admin-table">
+        <p v-if="usersError" class="adm-message adm-pad" role="alert"><Icon name="info" :size="16" />{{ usersError }}</p>
+        <p v-if="loadingUsers && !users.length" class="adm-muted adm-pad" role="status">Loading the people…</p>
+        <div v-else-if="shownUsers.length" class="adm-table-wrap">
+          <table class="adm-table">
+            <caption class="siq-sr-only">People with access to StormIQ</caption>
             <thead>
               <tr>
-                <th>Email</th>
-                <th>Org ID</th>
-                <th>User ID</th>
-                <th>Sessions</th>
-                <th>Last seen</th>
-                <th>Admin</th>
-                <th></th>
+                <th scope="col">Email</th>
+                <th scope="col">Organization</th>
+                <th scope="col" class="adm-num">Sessions</th>
+                <th scope="col">Last seen</th>
+                <th scope="col">Role</th>
+                <th scope="col"><span class="siq-sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="user in filteredUsers" :key="user.email">
-                <td class="cell-email">{{ user.email || "—" }}</td>
-                <td class="cell-id">{{ user.organization_id || "—" }}</td>
-                <td class="cell-id">{{ user.user_id || "—" }}</td>
-                <td class="cell-num">{{ user.session_count ?? "—" }}</td>
-                <td class="cell-date">{{ formatDate(user.updated_at) }}</td>
+              <tr v-for="user in shownUsers" :key="user.email || user.user_id">
+                <th scope="row" class="adm-strong">
+                  {{ user.email || "—" }}
+                  <span v-if="user.user_id" class="adm-id">{{ user.user_id }}</span>
+                </th>
+                <td class="adm-id-cell">{{ user.organization_id || "—" }}</td>
+                <td class="adm-num">{{ user.session_count ?? "—" }}</td>
+                <td class="adm-date">{{ formatDate(user.updated_at) }}</td>
                 <td>
-                  <span v-if="user.is_admin" class="badge badge-admin">Admin</span>
-                  <span v-else class="badge badge-user">User</span>
+                  <Chip v-if="user.is_admin" tone="accent" icon="shield">Admin</Chip>
+                  <span v-else class="adm-muted">Member</span>
                 </td>
-                <td>
-                  <button
-                    v-if="user.is_admin && user.email !== state.auth?.connectedUser?.email"
-                    class="admin-btn danger small"
-                    @click="demoteUser(user.email)"
-                  >
-                    Revoke
-                  </button>
-                  <button
-                    v-else-if="!user.is_admin"
-                    class="admin-btn secondary small"
-                    @click="promoteEmail = user.email; promoteUserId = user.user_id || ''"
-                  >
-                    Promote
-                  </button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- ── Sessions tab ── -->
-      <div v-if="activeTab === 'sessions'" class="admin-section">
-        <div class="admin-toolbar">
-          <input
-            v-model="sessionSearch"
-            type="search"
-            placeholder="Search sessions…"
-            class="admin-search"
-          />
-          <button class="admin-btn secondary" @click="loadSessions">Refresh</button>
-          <span class="admin-count">{{ filteredSessions.length }} session{{ filteredSessions.length !== 1 ? "s" : "" }}</span>
-        </div>
-
-        <div v-if="loadingSessions" class="admin-loading">Loading sessions…</div>
-        <div v-else-if="filteredSessions.length === 0 && sessions.length === 0" class="admin-empty">
-          No sessions cached yet.
-          <button class="admin-btn secondary" style="margin-left: 12px" @click="loadSessions">Load</button>
-        </div>
-        <div v-else-if="filteredSessions.length === 0" class="admin-empty">No sessions match your search.</div>
-        <div v-else class="admin-table-wrap">
-          <table class="admin-table">
-            <thead>
-              <tr>
-                <th>Session ID</th>
-                <th>Event title</th>
-                <th>Org ID</th>
-                <th>Created by</th>
-                <th>Updated</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="session in filteredSessions"
-                :key="session.session_id"
-                :class="{ 'row-deleting': deletingSessionId === session.session_id }"
-              >
-                <td class="cell-id">
-                  <a
-                    :href="`/sessions/${encodeURIComponent(session.session_id)}/report`"
-                    class="session-link"
-                    target="_blank"
-                    rel="noopener"
-                  >{{ session.session_id }}</a>
-                </td>
-                <td>{{ session.event_title || "—" }}</td>
-                <td class="cell-id">{{ session.organization_id || "—" }}</td>
-                <td class="cell-email">{{ session.created_by_email || "—" }}</td>
-                <td class="cell-date">{{ formatDate(session.updated_at) }}</td>
-                <td>
-                  <div class="delete-cell">
-                    <button
-                      v-if="deleteConfirmId !== session.session_id"
-                      class="admin-btn danger small"
-                      :disabled="deletingSessionId === session.session_id"
-                      @click="deleteSession(session.session_id)"
+                <td class="adm-actions">
+                  <template v-if="user.is_admin && user.email !== myEmail">
+                    <UiButton
+                      variant="ghost"
+                      small
+                      :aria-label="revokeConfirm === user.email ? `Confirm: remove admin from ${user.email}` : `Remove admin from ${user.email}`"
+                      @click="revoke(user.email)"
                     >
-                      {{ deletingSessionId === session.session_id ? "Deleting…" : "Delete" }}
-                    </button>
-                    <template v-else>
-                      <button class="admin-btn danger small" @click="deleteSession(session.session_id)">Confirm</button>
-                      <button class="admin-btn secondary small" @click="cancelDeleteConfirm(session.session_id)">Cancel</button>
-                    </template>
-                  </div>
+                      {{ revokeConfirm === user.email ? "Confirm" : "Remove admin" }}
+                    </UiButton>
+                    <UiButton v-if="revokeConfirm === user.email" variant="ghost" small @click="revokeConfirm = ''">Cancel</UiButton>
+                  </template>
+                  <span v-else-if="user.is_admin" class="adm-muted">You</span>
+                  <UiButton v-else variant="ghost" small :aria-label="`Make ${user.email} an admin`" @click="prefill(user)">
+                    Make admin
+                  </UiButton>
                 </td>
               </tr>
             </tbody>
           </table>
         </div>
+        <p v-else class="adm-muted adm-pad">Nobody matches.</p>
+      </Card>
+    </template>
+
+    <!-- ── Sessions ── -->
+    <Card v-else-if="activeTab === 'sessions'" padding="flush">
+      <div class="adm-bar" role="search">
+        <label class="adm-field adm-search">
+          <span class="siq-sr-only">Search sessions</span>
+          <Icon name="search" :size="16" class="adm-field-icon" />
+          <input v-model="sessionSearch" type="search" class="adm-input" placeholder="Search by title, ID, organization or who added it" />
+        </label>
+        <p class="adm-muted" role="status">{{ shownSessions.length }} {{ shownSessions.length === 1 ? "session" : "sessions" }}</p>
       </div>
-      <!-- ── Models tab ── -->
-      <div v-if="activeTab === 'models'" class="admin-section">
-        <div v-if="loadingSettings" class="admin-loading">Loading settings…</div>
-        <template v-else>
-          <p v-if="settingsError" class="admin-error">{{ settingsError }}</p>
-          <p v-if="settingsSuccess" class="admin-success">{{ settingsSuccess }}</p>
+      <p v-if="sessionsError" class="adm-message adm-pad" role="alert"><Icon name="info" :size="16" />{{ sessionsError }}</p>
+      <p v-if="loadingSessions && !sessions.length" class="adm-muted adm-pad" role="status">Loading the sessions…</p>
+      <div v-else-if="shownSessions.length" class="adm-table-wrap">
+        <table class="adm-table">
+          <caption class="siq-sr-only">Every organization's sessions</caption>
+          <thead>
+            <tr>
+              <th scope="col">Session</th>
+              <th scope="col">Organization</th>
+              <th scope="col">Added by</th>
+              <th scope="col">Updated</th>
+              <th scope="col"><span class="siq-sr-only">Actions</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="session in shownSessions" :key="session.session_id">
+              <th scope="row" class="adm-strong">
+                <RouterLink class="adm-link siq-fx" :to="`/sessions/${encodeURIComponent(session.session_id)}/report`">
+                  {{ session.event_title || "Untitled session" }}
+                </RouterLink>
+                <span class="adm-id">{{ session.session_id }}</span>
+              </th>
+              <td class="adm-id-cell">{{ session.organization_id || "—" }}</td>
+              <td>{{ session.created_by_email || "—" }}</td>
+              <td class="adm-date">{{ formatDate(session.updated_at) }}</td>
+              <td class="adm-actions">
+                <UiButton
+                  variant="ghost"
+                  small
+                  :icon="deleteConfirm === session.session_id ? '' : 'x'"
+                  :disabled="deleting === session.session_id"
+                  :aria-label="
+                    deleteConfirm === session.session_id
+                      ? `Confirm: delete ${session.event_title || session.session_id} for good`
+                      : `Delete ${session.event_title || session.session_id}`
+                  "
+                  @click="deleteSession(session.session_id)"
+                >
+                  {{ deleting === session.session_id ? "Deleting…" : deleteConfirm === session.session_id ? "Delete for good" : "Delete" }}
+                </UiButton>
+                <UiButton v-if="deleteConfirm === session.session_id" variant="ghost" small @click="deleteConfirm = ''">Cancel</UiButton>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p v-else class="adm-muted adm-pad">No session matches.</p>
+      <p class="adm-muted adm-pad adm-note">Deleting removes the session's saved data, transcript and outputs from StormIQ; it doesn't touch Livestorm.</p>
+    </Card>
 
-          <!-- Provider -->
-          <div class="model-card">
-            <div class="model-card-header">
-              <div class="model-card-title">LLM Provider</div>
-              <div class="model-card-desc">Which AI company to use for analysis, deep analysis, smart recap, and content repurposing.</div>
-            </div>
-            <div class="model-options">
+    <!-- ── Models ── -->
+    <template v-else>
+      <p v-if="loadingSettings" class="adm-muted" role="status">Loading the settings…</p>
+      <template v-else>
+        <p v-if="settingsMessage.text" class="adm-message" :role="settingsMessage.ok ? 'status' : 'alert'">
+          <Icon :name="settingsMessage.ok ? 'check' : 'info'" :size="16" />{{ settingsMessage.text }}
+        </p>
+        <div class="adm-models">
+          <Card>
+            <CardHeader
+              icon="zap"
+              title="Provider"
+              subtitle="Who writes the analyses, recaps and repurposed content."
+              :level="2"
+            />
+            <div class="adm-segmented" role="group" aria-label="Provider">
               <button
-                class="model-option"
-                :class="{ selected: activeProvider === 'anthropic' }"
+                v-for="provider in PROVIDERS"
+                :key="provider.value"
+                type="button"
+                class="adm-seg siq-fx"
+                :class="{ 'is-on': activeProvider === provider.value }"
+                :aria-pressed="activeProvider === provider.value ? 'true' : 'false'"
                 :disabled="savingKey !== null"
-                @click="handleProviderChange('anthropic')"
+                @click="handleProviderChange(provider.value)"
               >
-                <span class="model-option-name">Anthropic</span>
-                <span class="model-option-hint">Claude models</span>
-              </button>
-              <button
-                class="model-option"
-                :class="{ selected: activeProvider === 'openai' }"
-                :disabled="savingKey !== null"
-                @click="handleProviderChange('openai')"
-              >
-                <span class="model-option-name">OpenAI</span>
-                <span class="model-option-hint">GPT models</span>
+                {{ provider.label }} <span class="adm-hint">{{ provider.hint }}</span>
               </button>
             </div>
-            <p class="model-card-current">
-              Active: <strong>{{ activeProvider === "openai" ? "OpenAI" : "Anthropic" }}</strong>
-              <span v-if="savingKey === 'llm_provider'" class="saving-indicator"> — saving…</span>
-            </p>
-          </div>
+            <p class="adm-muted adm-after">Switching resets both models below to that provider's defaults.</p>
+          </Card>
 
-          <!-- Default model -->
-          <div class="model-card">
-            <div class="model-card-header">
-              <div class="model-card-title">Default Model</div>
-              <div class="model-card-desc">Used for Overall Analysis, Deep Analysis, Content Repurposing, and translation.</div>
-            </div>
-            <div class="model-select-row">
+          <Card>
+            <CardHeader icon="file-text" title="Default model" subtitle="Analyses, repurposed content and translations." :level="2" />
+            <label class="adm-field adm-select-field">
+              <span class="siq-sr-only">Default model</span>
               <select
-                class="model-select"
+                class="adm-input adm-select"
                 :value="settings.llm_default_model || ''"
                 :disabled="savingKey !== null"
                 @change="saveSetting('llm_default_model', $event.target.value)"
               >
-                <option value="" disabled>Select a model…</option>
-                <option
-                  v-for="m in textModels"
-                  :key="m.value"
-                  :value="m.value"
-                >{{ m.label }}</option>
+                <option value="" disabled>Choose a model</option>
+                <option v-for="model in textModels" :key="model.value" :value="model.value">{{ model.label }}</option>
               </select>
-              <span v-if="savingKey === 'llm_default_model'" class="saving-indicator">saving…</span>
-            </div>
-            <p class="model-card-current">
-              Active: <strong>{{ getModelLabel(settings.llm_default_model, textModels) }}</strong>
-            </p>
-          </div>
+              <Icon name="chevron-down" :size="16" class="adm-select-icon" />
+            </label>
+          </Card>
 
-          <!-- Smart Recap model -->
-          <div class="model-card">
-            <div class="model-card-header">
-              <div class="model-card-title">Smart Recap Model</div>
-              <div class="model-card-desc">Used for Smart Recap only — intentionally a stronger model for better narrative output.</div>
-            </div>
-            <div class="model-select-row">
+          <Card>
+            <CardHeader icon="star" title="Smart Recap model" subtitle="The Smart Recap only: a stronger model for the narrative." :level="2" />
+            <label class="adm-field adm-select-field">
+              <span class="siq-sr-only">Smart Recap model</span>
               <select
-                class="model-select"
+                class="adm-input adm-select"
                 :value="settings.llm_smart_recap_model || ''"
                 :disabled="savingKey !== null"
                 @change="saveSetting('llm_smart_recap_model', $event.target.value)"
               >
-                <option value="" disabled>Select a model…</option>
-                <option
-                  v-for="m in textModels"
-                  :key="m.value"
-                  :value="m.value"
-                >{{ m.label }}</option>
+                <option value="" disabled>Choose a model</option>
+                <option v-for="model in textModels" :key="model.value" :value="model.value">{{ model.label }}</option>
               </select>
-              <span v-if="savingKey === 'llm_smart_recap_model'" class="saving-indicator">saving…</span>
-            </div>
-            <p class="model-card-current">
-              Active: <strong>{{ getModelLabel(settings.llm_smart_recap_model, textModels) }}</strong>
-            </p>
-          </div>
+              <Icon name="chevron-down" :size="16" class="adm-select-icon" />
+            </label>
+          </Card>
 
-          <!-- Image model -->
-          <div class="model-card">
-            <div class="model-card-header">
-              <div class="model-card-title">Cover Image Model</div>
-              <div class="model-card-desc">OpenAI Images API model used to generate session cover images. Always uses OpenAI regardless of LLM provider.</div>
-            </div>
-            <div class="model-options">
-              <button
-                v-for="m in IMAGE_MODELS"
-                :key="m.value"
-                class="model-option"
-                :class="{ selected: activeImageModel === m.value }"
-                :disabled="savingKey !== null"
-                @click="saveSetting('image_model', m.value)"
-              >
-                <span class="model-option-name">{{ m.label }}</span>
-              </button>
-            </div>
-            <p class="model-card-current">
-              Active: <strong>{{ activeImageModel }}</strong>
-              <span v-if="savingKey === 'image_model'" class="saving-indicator"> — saving…</span>
-            </p>
-          </div>
-        </template>
-      </div>
-
+          <Card>
+            <CardHeader icon="presentation" title="Cover image model" subtitle="OpenAI Images, whatever the provider above." :level="2" />
+            <p class="adm-text adm-after">{{ IMAGE_MODELS.find((model) => model.value === activeImageModel)?.label || activeImageModel }}</p>
+            <UiButton
+              v-if="settings.image_model && settings.image_model !== activeImageModel"
+              variant="secondary"
+              small
+              :disabled="savingKey !== null"
+              @click="saveSetting('image_model', activeImageModel)"
+            >
+              Save {{ activeImageModel }}
+            </UiButton>
+          </Card>
+        </div>
+      </template>
     </template>
   </div>
 </template>
 
 <style scoped>
-/* ── Dark-theme palette ───────────────────────────────────────────────────── */
-/* All colors are explicit dark-mode values — the main layout uses
-   data-colors-semantic="dark" so CSS fallback light values would be wrong. */
-
-.admin-view {
-  padding: 32px 40px;
-  max-width: 1200px;
-  margin: 0 auto;
-}
-
-.admin-header {
-  margin-bottom: 28px;
-}
-
-.admin-title {
-  font-size: 22px;
-  font-weight: 700;
-  margin: 0 0 4px;
-  color: rgba(255, 255, 255, 0.92);
-}
-
-.admin-subtitle {
-  font-size: 14px;
-  color: rgba(255, 255, 255, 0.5);
-  margin: 0;
-}
-
-.admin-denied {
-  padding: 40px;
-  text-align: center;
-  color: rgba(255, 255, 255, 0.5);
-}
-
-/* ── Tabs ── */
-.admin-tabs {
-  display: flex;
-  gap: 4px;
-  margin-bottom: 24px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.admin-tab {
-  padding: 10px 20px;
-  font-size: 14px;
-  font-weight: 500;
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  cursor: pointer;
-  color: rgba(255, 255, 255, 0.5);
-  transition: color 120ms, border-color 120ms;
-  margin-bottom: -1px;
-}
-
-.admin-tab:hover { color: rgba(255, 255, 255, 0.85); }
-
-.admin-tab.active {
-  color: #5b8af7;
-  border-bottom-color: #5b8af7;
-}
-
-/* ── Sections ── */
-.admin-section {
+.adm-page {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: var(--siq-space-6);
 }
 
-.admin-section-title {
-  font-size: 15px;
-  font-weight: 600;
-  margin: 0 0 12px;
-  color: rgba(255, 255, 255, 0.85);
-}
-
-/* ── Promote form ── */
-.admin-promote-form {
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 10px;
-  padding: 20px;
-}
-
-.promote-fields {
+.adm-head {
   display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  align-items: center;
+  flex-direction: column;
+  gap: var(--siq-space-2);
 }
 
-.admin-input {
-  flex: 1;
-  min-width: 200px;
-  padding: 8px 12px;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 6px;
-  font-size: 14px;
-  outline: none;
-  background: rgba(255, 255, 255, 0.07);
-  color: rgba(255, 255, 255, 0.9);
+.adm-title {
+  margin: 0;
+  font-size: var(--siq-text-display);
+  line-height: var(--siq-text-display-lh);
+  font-weight: var(--siq-weight-regular);
+  letter-spacing: -0.015em;
+  color: var(--siq-ink);
 }
 
-.admin-input::placeholder { color: rgba(255, 255, 255, 0.3); }
-
-.admin-input:focus {
-  border-color: #5b8af7;
-  box-shadow: 0 0 0 2px rgba(91, 138, 247, 0.2);
+.adm-lead,
+.adm-text {
+  margin: 0;
+  font-size: var(--siq-text-ui);
+  line-height: var(--siq-text-ui-lh);
+  color: var(--siq-ink-2);
 }
 
-/* ── Toolbar ── */
-.admin-toolbar {
+.adm-muted {
+  margin: 0;
+  font-size: var(--siq-text-small);
+  line-height: var(--siq-text-small-lh);
+  font-weight: var(--siq-weight-regular);
+  color: var(--siq-muted);
+}
+
+.adm-pad {
+  padding: var(--siq-space-4) var(--siq-space-6);
+}
+
+.adm-note {
+  box-shadow: inset 0 1px 0 var(--siq-hairline);
+}
+
+.adm-after {
+  margin-top: var(--siq-space-3);
+}
+
+.adm-message {
   display: flex;
   align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
+  gap: var(--siq-space-2);
+  margin: var(--siq-space-3) 0 0;
+  font-size: var(--siq-text-small);
+  line-height: var(--siq-text-small-lh);
+  color: var(--siq-ink-2);
 }
 
-.admin-search {
-  flex: 1;
-  min-width: 180px;
-  max-width: 360px;
-  padding: 8px 12px;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 6px;
-  font-size: 14px;
-  outline: none;
-  background: rgba(255, 255, 255, 0.07);
-  color: rgba(255, 255, 255, 0.9);
-}
-
-.admin-search::placeholder { color: rgba(255, 255, 255, 0.3); }
-
-.admin-search:focus {
-  border-color: #5b8af7;
-  box-shadow: 0 0 0 2px rgba(91, 138, 247, 0.2);
-}
-
-.admin-count {
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.4);
-  margin-left: auto;
-}
-
-/* ── Table ── */
-.admin-table-wrap {
+/* ── The section switch ── */
+.adm-tabs {
+  display: flex;
+  gap: var(--siq-space-2);
+  box-shadow: inset 0 -1px 0 var(--siq-hairline);
   overflow-x: auto;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 10px;
 }
 
-.admin-table {
+.adm-tab {
+  min-height: var(--siq-target);
+  margin: 0;
+  padding: 0 var(--siq-space-3);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--siq-ink-2);
+  font: inherit;
+  font-size: var(--siq-text-nav);
+  line-height: var(--siq-text-nav-lh);
+  font-weight: var(--siq-weight-medium);
+  cursor: pointer;
+  transition-property: color, box-shadow;
+  transition-duration: var(--siq-duration);
+  transition-timing-function: var(--siq-ease);
+}
+
+.adm-tab:hover {
+  color: var(--siq-ink);
+}
+
+.adm-tab.is-current {
+  color: var(--siq-ink);
+  box-shadow: inset 0 -2px 0 var(--siq-accent);
+}
+
+.adm-tab.siq-fx:focus-visible {
+  outline-offset: -3px;
+}
+
+/* ── Forms ── */
+.adm-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--siq-space-3);
+  margin-top: var(--siq-space-4);
+}
+
+.adm-field {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--siq-space-1);
+  flex: 1 1 16rem;
+}
+
+.adm-label {
+  font-size: var(--siq-text-small);
+  line-height: var(--siq-text-small-lh);
+  font-weight: var(--siq-weight-medium);
+  color: var(--siq-ink-2);
+}
+
+/* v1 controls set their own font, colours, border and height: the classic
+   element styles still load under v1. */
+.adm-input {
+  width: 100%;
+  height: var(--siq-target);
+  margin: 0;
+  padding: 0 var(--siq-space-3);
+  border: 1px solid var(--siq-border);
+  border-radius: var(--siq-radius-control);
+  background: var(--siq-input);
+  color: var(--siq-ink);
+  font: inherit;
+  font-size: var(--siq-text-ui);
+  line-height: var(--siq-text-ui-lh);
+  box-shadow: none;
+  transition-property: border-color;
+  transition-duration: var(--siq-duration);
+  transition-timing-function: var(--siq-ease);
+}
+
+.adm-input:hover {
+  border-color: var(--siq-border-hover);
+}
+
+.adm-input:focus-visible {
+  outline: 2px solid var(--siq-focus);
+  outline-offset: 1px;
+}
+
+.adm-input::placeholder {
+  color: var(--siq-muted);
+}
+
+.adm-search {
+  flex-direction: row;
+  align-items: center;
+}
+
+.adm-search .adm-input {
+  padding-left: 36px;
+}
+
+.adm-field-icon,
+.adm-select-icon {
+  position: absolute;
+  color: var(--siq-muted);
+  pointer-events: none;
+}
+
+.adm-field-icon {
+  left: var(--siq-space-3);
+}
+
+.adm-select-field {
+  flex-direction: row;
+  align-items: center;
+  margin-top: var(--siq-space-4);
+}
+
+.adm-select {
+  appearance: none;
+  padding-right: 36px;
+  cursor: pointer;
+}
+
+.adm-select-icon {
+  right: var(--siq-space-3);
+}
+
+.adm-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--siq-space-3);
+  padding: var(--siq-space-4) var(--siq-space-6);
+  box-shadow: inset 0 -1px 0 var(--siq-hairline);
+}
+
+/* ── Tables ── */
+.adm-table-wrap {
+  overflow-x: auto;
+}
+
+.adm-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: var(--siq-text-ui);
+  line-height: var(--siq-text-ui-lh);
+  color: var(--siq-ink);
 }
 
-.admin-table th {
+.adm-table th,
+.adm-table td {
+  padding: var(--siq-space-3) var(--siq-space-4);
   text-align: left;
-  padding: 10px 14px;
-  background: rgba(255, 255, 255, 0.04);
-  color: rgba(255, 255, 255, 0.45);
-  font-weight: 600;
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  white-space: nowrap;
-}
-
-.admin-table td {
-  padding: 10px 14px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   vertical-align: middle;
-  color: rgba(255, 255, 255, 0.82);
+  box-shadow: inset 0 -1px 0 var(--siq-hairline-row);
 }
 
-.admin-table tr:last-child td { border-bottom: none; }
+.adm-table th:first-child,
+.adm-table td:first-child {
+  padding-left: var(--siq-space-6);
+}
 
-.admin-table tr:hover td { background: rgba(255, 255, 255, 0.03); }
+.adm-table th:last-child,
+.adm-table td:last-child {
+  padding-right: var(--siq-space-6);
+}
 
-.admin-table tr.row-deleting td { opacity: 0.35; }
+.adm-table thead th {
+  font-size: var(--siq-text-small);
+  line-height: var(--siq-text-small-lh);
+  font-weight: var(--siq-weight-medium);
+  color: var(--siq-muted);
+  box-shadow: inset 0 -1px 0 var(--siq-hairline-head);
+}
 
-.cell-id {
-  font-family: monospace;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.45);
-  max-width: 180px;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.adm-table tbody tr:last-child th,
+.adm-table tbody tr:last-child td {
+  box-shadow: none;
+}
+
+.adm-strong {
+  font-weight: var(--siq-weight-medium);
+  min-width: 14rem;
+}
+
+.adm-id {
+  display: block;
+  font-size: var(--siq-text-small);
+  line-height: var(--siq-text-small-lh);
+  font-weight: var(--siq-weight-regular);
+  color: var(--siq-muted);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.adm-id-cell {
+  font-size: var(--siq-text-small);
+  color: var(--siq-ink-2);
+  overflow-wrap: anywhere;
+  max-width: 14rem;
+}
+
+.adm-table .adm-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.adm-date {
   white-space: nowrap;
+  color: var(--siq-ink-2);
 }
 
-.cell-email {
-  max-width: 200px;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.adm-table .adm-actions {
   white-space: nowrap;
+  text-align: right;
 }
 
-.cell-date {
-  white-space: nowrap;
-  color: rgba(255, 255, 255, 0.45);
-}
-
-.cell-num { text-align: right; }
-
-.session-link {
-  color: #5b8af7;
+.adm-link {
+  color: var(--siq-ink);
   text-decoration: none;
+  border-radius: var(--siq-radius-inline);
 }
 
-.session-link:hover { text-decoration: underline; }
-
-/* ── Content badges ── */
-.content-flags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
+.adm-link:hover {
+  color: var(--siq-accent);
 }
 
-.badge {
-  display: inline-block;
-  padding: 2px 7px;
-  border-radius: 20px;
-  font-size: 11px;
-  font-weight: 600;
-  white-space: nowrap;
+/* ── Models ── */
+.adm-models {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--siq-space-4);
 }
 
-.badge-admin {
-  background: rgba(91, 138, 247, 0.2);
-  color: #7da4f9;
-}
-
-.badge-user {
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.5);
-}
-
-.badge-content {
-  background: rgba(34, 197, 94, 0.18);
-  color: #4ade80;
-}
-
-.badge-empty {
-  background: rgba(255, 255, 255, 0.06);
-  color: rgba(255, 255, 255, 0.35);
-}
-
-/* ── Action buttons ── */
-.delete-cell {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-}
-
-.admin-btn {
+.adm-segmented {
   display: inline-flex;
-  align-items: center;
-  padding: 8px 16px;
-  border-radius: 6px;
-  font-size: 14px;
-  font-weight: 500;
-  border: none;
-  cursor: pointer;
-  transition: background 120ms;
-  white-space: nowrap;
+  margin-top: var(--siq-space-4);
+  padding: 2px;
+  border: 1px solid var(--siq-border);
+  border-radius: var(--siq-radius-control);
+  background: var(--siq-input);
 }
 
-.admin-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-
-.admin-btn.primary { background: #0b42c3; color: #fff; }
-.admin-btn.primary:hover:not(:disabled) { background: #0936a8; }
-
-.admin-btn.secondary {
-  background: rgba(255, 255, 255, 0.09);
-  color: rgba(255, 255, 255, 0.82);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-}
-.admin-btn.secondary:hover:not(:disabled) { background: rgba(255, 255, 255, 0.14); }
-
-.admin-btn.danger { background: #ef4444; color: #fff; }
-.admin-btn.danger:hover:not(:disabled) { background: #dc2626; }
-
-.admin-btn.small { padding: 5px 10px; font-size: 12px; }
-
-/* ── States ── */
-.admin-loading,
-.admin-empty {
-  padding: 40px;
-  text-align: center;
-  color: rgba(255, 255, 255, 0.4);
-  font-size: 14px;
-}
-
-.admin-error { color: #f87171; font-size: 13px; margin: 0; }
-.admin-success { color: #4ade80; font-size: 13px; margin: 0; }
-
-/* ── Models tab ── */
-.model-card {
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 10px;
-  padding: 20px 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.model-card-header {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.model-card-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.9);
-}
-
-.model-card-desc {
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.5);
-}
-
-.model-card-current {
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.45);
+.adm-seg {
+  min-height: calc(var(--siq-target) - 6px);
   margin: 0;
-}
-
-.model-card-current strong { color: rgba(255, 255, 255, 0.75); }
-
-.model-options {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.model-option {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  padding: 12px 16px;
-  border-radius: 8px;
-  border: 2px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.04);
-  cursor: pointer;
-  transition: border-color 120ms, background 120ms;
-  min-width: 140px;
-  text-align: left;
-}
-
-.model-option:hover:not(:disabled) {
-  border-color: #5b8af7;
-  background: rgba(91, 138, 247, 0.08);
-}
-
-.model-option.selected {
-  border-color: #5b8af7;
-  background: rgba(91, 138, 247, 0.14);
-}
-
-.model-option:disabled { opacity: 0.4; cursor: not-allowed; }
-
-.model-option-name {
-  font-size: 14px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.88);
-}
-
-.model-option-hint {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.45);
-}
-
-.model-select-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.model-select {
-  padding: 8px 12px;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 6px;
-  font-size: 14px;
-  background: rgba(255, 255, 255, 0.07);
-  color: rgba(255, 255, 255, 0.88);
-  outline: none;
-  min-width: 280px;
+  padding: 0 var(--siq-space-4);
+  border: 0;
+  border-radius: calc(var(--siq-radius-control) - 2px);
+  background: transparent;
+  color: var(--siq-ink-2);
+  font: inherit;
+  font-size: var(--siq-text-ui);
+  line-height: var(--siq-text-ui-lh);
+  font-weight: var(--siq-weight-medium);
   cursor: pointer;
 }
 
-.model-select option {
-  background: #1e2235;
-  color: rgba(255, 255, 255, 0.88);
+.adm-seg.is-on {
+  background: var(--siq-selected-bg);
+  color: var(--siq-selected-ink);
 }
 
-.model-select:focus {
-  border-color: #5b8af7;
-  box-shadow: 0 0 0 2px rgba(91, 138, 247, 0.2);
+.adm-seg:disabled {
+  cursor: progress;
 }
 
-.model-select:disabled { opacity: 0.4; cursor: not-allowed; }
+.adm-hint {
+  font-size: var(--siq-text-small);
+  font-weight: var(--siq-weight-regular);
+  color: var(--siq-muted);
+}
 
-.saving-indicator {
-  font-size: 12px;
-  color: #5b8af7;
-  font-style: italic;
+@media (max-width: 720px) {
+  .adm-title {
+    font-size: var(--siq-text-headline);
+    line-height: var(--siq-text-headline-lh);
+  }
+  .adm-models {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .adm-bar,
+  .adm-pad {
+    padding-left: var(--siq-space-4);
+    padding-right: var(--siq-space-4);
+  }
+}
+
+@media (forced-colors: active) {
+  .adm-tab.is-current,
+  .adm-seg.is-on {
+    outline: 2px solid CanvasText;
+  }
+  .adm-table th,
+  .adm-table td {
+    border-bottom: 1px solid CanvasText;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .adm-tab,
+  .adm-input {
+    transition: none;
+  }
 }
 </style>

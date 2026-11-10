@@ -13,7 +13,7 @@ Two designs live in the app while the redesign ships screen by screen:
 
 ### One design
 
-StormIQ has one design, this one, for everyone: there is no switch and no classic layout. The app shows the top bar; the one page not rebuilt yet (Admin) appears unchanged inside a dark frame until it is rebuilt. `/design` shows every token and component in the current theme, with fictional sample content; it is not indexed.
+StormIQ has one design, this one, for everyone: there is no switch and no classic layout. Every page is built on it, inside the top bar and the footer. `/design` shows every token and component in the current theme, with fictional sample content; it is not indexed.
 
 ### Typeface: Sora
 
@@ -133,7 +133,7 @@ The wordmark is "Storm" + "IQ" (IQ in `mark-iq`), Sora 600 at 18/24; it opens th
 ## Livestorm brand reference (the older pages)
 
 > Source: https://brand.livestorm.co
-> The pages not rebuilt yet (`frontend/src/styles.css`, shown in the dark frame) follow this reference. Do not invent colors, fonts, or styles there; use only what is defined here. The v1 design above takes its values from the same palette.
+> The classic styles (`frontend/src/styles.css`, no longer used by any page and to be removed) followed this reference. Do not invent colors, fonts, or styles there; use only what is defined here. The v1 design above takes its values from the same palette.
 
 ---
 

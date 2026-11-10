@@ -7,9 +7,8 @@ import { CALLBACK_PATH, afterCallback } from "./auth/callback";
 import { showsLanding } from "./design/landing";
 import { useWorkspace } from "./store/workspace";
 
-// Every session page is a v1 page that loads its own data (the Report,
-// Transcript and Follow-up views); old URLs are redirects in router.js. The
-// shell keeps the dark frame for the one page not rebuilt yet (Admin).
+// Every page is a v1 page that loads its own data; old URLs are redirects in
+// router.js. The shell is the top bar, the page and the footer.
 
 const {
   state,
@@ -69,11 +68,6 @@ const v1Account = computed(() => {
   const detail = user.organizationName && user.organizationName !== name ? user.organizationName : "";
   return { name, detail };
 });
-
-// Pages built for the v1 design (route meta `v1Native`) fill the page; every
-// other view keeps its classic dark styling inside a framed area until it is
-// rebuilt.
-const isV1NativeRoute = computed(() => Boolean(route.meta?.v1Native));
 
 onMounted(async () => {
   try {
@@ -158,13 +152,7 @@ async function handleLogoutClick() {
 
       <p v-if="!authReady" class="siq-sr-only" role="status">Loading StormIQ…</p>
       <LandingView v-else-if="showLanding" :can-connect="isOAuthMode" @connect="handleConnectClick" />
-      <RouterView v-else-if="isV1NativeRoute" />
-      <template v-else>
-        <!-- Not rebuilt yet: the older view, in its own dark frame. -->
-        <div class="siq-classic-frame" data-colors-semantic="dark">
-          <RouterView />
-        </div>
-      </template>
+      <RouterView v-else />
     </main>
 
     <footer class="siq-footer">
@@ -227,17 +215,6 @@ async function handleLogoutClick() {
   line-height: var(--siq-text-ui-lh);
 }
 
-/* Classic views keep their dark styling until each is rebuilt. */
-.siq-classic-frame {
-  color-scheme: dark;
-  padding: var(--siq-space-6);
-  border-radius: var(--siq-radius-card);
-  background: var(--color-surface-neutral-100);
-  color: var(--color-text-neutral-base);
-  font-family: "Object Sans", Inter, system-ui, sans-serif;
-  min-width: 0;
-}
-
 .siq-footer {
   box-shadow: inset 0 1px 0 var(--siq-hairline);
 }
@@ -266,10 +243,6 @@ async function handleLogoutClick() {
 @media (max-width: 720px) {
   .siq-main {
     padding: var(--siq-space-6) var(--siq-space-4) var(--siq-space-8);
-  }
-
-  .siq-classic-frame {
-    padding: var(--siq-space-4);
   }
 
   .siq-footer p {
