@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -21,6 +22,7 @@ from livestorm_app.oauth_client import (
     get_frontend_app_url,
     oauth_enabled,
     persist_oauth_connection,
+    safe_return_path,
     seed_dev_connection,
     validate_handshake,
 )
@@ -65,6 +67,11 @@ def complete_livestorm_oauth(request: Request, code: str = Query(""), state: str
         token_payload = exchange_authorization_code(code.strip(), str(handshake.get("verifier") or "").strip())
         me_payload = fetch_me(str(token_payload.get("access_token") or "").strip())
         connection = persist_oauth_connection(token_payload, me_payload)
+        # Back to the page the user connected from (a shared session link
+        # opens that session); the SPA checks `next` again before going there.
+        next_path = safe_return_path(handshake.get("return_to"))
+        if next_path:
+            success_redirect = f"{success_redirect}&{urlencode({'next': next_path})}"
         response = RedirectResponse(success_redirect, status_code=302)
         response.set_cookie(
             LIVESTORM_OAUTH_COOKIE,

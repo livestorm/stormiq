@@ -9,7 +9,7 @@ Every route is a FastAPI handler in [`livestorm_app/routes/`](../livestorm_app/r
 | `/api/health` | GET | public | Render health check: `{"status": "ok"}` |
 | `/api/bootstrap` | GET | public | Initial frontend state: OAuth status, connected user, `isAdmin`, local-dev flag. Never returns an API key. |
 | `/api/auth/livestorm/start` | GET | public | Start the OAuth flow (sets the handshake cookie, 302 to Livestorm) |
-| `/api/auth/livestorm/callback` | GET | public | OAuth callback: check the handshake, exchange the code, fetch `/me`, set the session cookie |
+| `/api/auth/livestorm/callback` | GET | public | OAuth callback: check the handshake, exchange the code, fetch `/me`, set the session cookie, then redirect to `/auth/callback?auth=success` with `next`, the page the user connected from when it is a path on this site (`oauth_client.safe_return_path`), or `?auth=error` |
 | `/api/auth/logout` | POST | public | Delete the connection row and clear the session cookie |
 | `/api/dev/auto-login` | GET | local-dev only | Create a dev identity from `LS_API_KEY` (403 unless local-dev mode) |
 | `/api/admin/check` | GET | admin | Confirm admin status |
