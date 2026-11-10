@@ -4,7 +4,7 @@ import Collapsible from "../ui/Collapsible.vue";
 import Icon from "../ui/Icon.vue";
 import AudienceBlock from "./AudienceBlock.vue";
 import ChatMessageList from "./ChatMessageList.vue";
-import { chatThemes, roomSummary } from "../../report/room";
+import { chatThemes, roomSummary, themeRowName } from "../../report/room";
 
 // The Report's "The room" section: open by default. For now it holds the
 // chat themes: one row per theme with its messages, share and languages,
@@ -21,6 +21,10 @@ const emit = defineEmits(["load-chat"]);
 const summary = computed(() => roomSummary(props.measures));
 const themes = computed(() => chatThemes(props.measures["m.chat_themes"]));
 const opened = ref(new Set());
+
+// One name per row for screen readers (`themeRowName`); the visible cells
+// are hidden from them so the row isn't read as fragments.
+const rowName = themeRowName;
 
 function toggle(key) {
   const next = new Set(opened.value);
@@ -45,18 +49,18 @@ function toggle(key) {
             <button
               type="button"
               class="r-theme-row siq-fx"
+              :aria-label="rowName(row)"
               :aria-expanded="opened.has(row.key) ? 'true' : 'false'"
-              :aria-controls="`r-theme-${row.key}`"
+              :aria-controls="opened.has(row.key) ? `r-theme-${row.key}` : undefined"
               @click="toggle(row.key)"
             >
-              <span class="r-theme-label">{{ row.label }}</span>
-              <span class="r-theme-count"><span class="siq-sr-only">, </span>{{ row.messages }}<span class="siq-sr-only"> messages</span></span>
-              <span class="r-theme-share">
-                <span v-if="row.bar != null" class="r-theme-bar" aria-hidden="true"><span :style="{ width: `${row.bar}%` }" /></span>
-                <span v-if="row.share !== '—'"><span class="siq-sr-only">, </span>{{ row.share }}<span class="siq-sr-only"> of the chat</span></span>
-                <span v-else aria-hidden="true">—</span>
+              <span class="r-theme-label" aria-hidden="true">{{ row.label }}</span>
+              <span class="r-theme-count" aria-hidden="true">{{ row.messages }}</span>
+              <span class="r-theme-share" aria-hidden="true">
+                <span v-if="row.bar != null" class="r-theme-bar"><span :style="{ width: `${row.bar}%` }" /></span>
+                <span>{{ row.share }}</span>
               </span>
-              <span class="r-theme-lang"><span class="siq-sr-only">, </span>{{ row.languages }}</span>
+              <span class="r-theme-lang" aria-hidden="true">{{ row.languages }}</span>
               <Icon class="r-theme-chevron" :name="opened.has(row.key) ? 'chevron-up' : 'chevron-down'" :size="16" />
             </button>
             <div v-if="opened.has(row.key)" :id="`r-theme-${row.key}`">

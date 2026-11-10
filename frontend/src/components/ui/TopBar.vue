@@ -400,4 +400,13 @@ function onLogout() {
     display: none;
   }
 }
+
+/* On paper only the "StormIQ for Livestorm" lockup stays: the navigation
+   and the account menu do nothing there. */
+@media print {
+  .siq-topbar-nav,
+  .siq-topbar-end {
+    display: none;
+  }
+}
 </style>

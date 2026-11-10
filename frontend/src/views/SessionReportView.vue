@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
 import Card from "../components/ui/Card.vue";
 import CardHeader from "../components/ui/CardHeader.vue";
@@ -35,6 +35,29 @@ watch(
   { immediate: true },
 );
 onBeforeUnmount(() => report.close());
+
+// Printing: a closed card prints only its header, so every closed section
+// opens for the print and closes again after it (the cards and their "How
+// we know" panels). The print stylesheet below hides what only works on
+// screen.
+const page = ref(null);
+let openedForPrint = [];
+function openForPrint() {
+  openedForPrint = [...(page.value?.querySelectorAll("details:not([open])") || [])];
+  for (const details of openedForPrint) details.open = true;
+}
+function closeAfterPrint() {
+  for (const details of openedForPrint) details.open = false;
+  openedForPrint = [];
+}
+onMounted(() => {
+  window.addEventListener("beforeprint", openForPrint);
+  window.addEventListener("afterprint", closeAfterPrint);
+});
+onBeforeUnmount(() => {
+  window.removeEventListener("beforeprint", openForPrint);
+  window.removeEventListener("afterprint", closeAfterPrint);
+});
 
 const body = computed(() => state.record);
 const record = computed(() => body.value?.record || null);
@@ -72,7 +95,7 @@ const tabs = computed(() => [
 </script>
 
 <template>
-  <div class="r-page">
+  <div ref="page" class="r-page">
     <nav class="r-crumbs" aria-label="Breadcrumb">
       <RouterLink class="r-crumb siq-fx" to="/single-analysis">Sessions</RouterLink>
       <Icon name="chevron-right" :size="14" />
@@ -304,6 +327,66 @@ const tabs = computed(() => [
 @media (prefers-reduced-motion: reduce) {
   .r-tab {
     transition: none;
+  }
+}
+
+/* The printed Report: the computed page, on paper. Print is always light
+   (tokens.css). Controls that only work on screen go: the tabs, the
+   analysis action, every button (view as table, ⓘ, show all, a theme row's
+   chevron); the cards stay whole across pages where they fit. */
+@media print {
+  .r-page {
+    gap: var(--siq-space-4);
+  }
+
+  .r-tabs,
+  .r-analysis,
+  .r-page :deep(.siq-stat-head .siq-tile),
+  .r-page :deep(.siq-btn),
+  .r-page :deep(.siq-stat-info),
+  .r-page :deep(.siq-summary-chevron),
+  .r-page :deep(.siq-collapsible-link > .siq-summary > svg:last-child),
+  .r-page :deep(.r-theme-chevron) {
+    display: none !important;
+  }
+
+  .r-page :deep(.siq-card),
+  .r-page :deep(.siq-collapsible-card),
+  .r-page :deep(.siq-stat) {
+    box-shadow: inset 0 0 0 1px var(--siq-hairline);
+  }
+
+  .r-page :deep(.siq-stat),
+  .r-page :deep(.r-block),
+  .r-page :deep(.r-tile),
+  .r-page :deep(.r-answer),
+  .r-page :deep(.r-pulse),
+  .r-page :deep(tr) {
+    break-inside: avoid;
+  }
+
+  .r-page :deep(.siq-summary) {
+    break-after: avoid;
+  }
+
+  /* The vitals: five across on an A4 page, without their icon tiles, and
+     the sub-line wraps instead of being cut. */
+  .r-page :deep(.r-vitals) {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: var(--siq-space-3);
+  }
+
+  .r-page :deep(.siq-stat) {
+    padding: var(--siq-space-4);
+  }
+
+  .r-page :deep(.siq-stat-sub) {
+    white-space: normal;
+  }
+
+  /* A scrolling table prints whole. */
+  .r-page :deep(.r-table-wrap) {
+    overflow: visible;
   }
 }
 </style>

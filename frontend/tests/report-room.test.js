@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from "vitest";
 import small from "./fixtures/record-v1.json";
-import { chatThemes, labelStatus, languagesLabel, roomSummary } from "../src/report/room";
+import { chatThemes, labelStatus, languagesLabel, roomSummary, themeRowName } from "../src/report/room";
 import { qaAnswers, questionCount, questionsSummary } from "../src/report/questions";
 
 const theme = (key, messages, share, ids = [], languages = [{ language: "en", messages }]) => ({
@@ -75,6 +75,13 @@ describe("chatThemes", () => {
     expect(chatThemes(themes({ state: "insufficient", den: 0, rows }))).toMatchObject({
       rows: [], empty: "The audience wrote nothing in the chat.", notes: [], total: "",
     });
+  });
+
+  it("names each row in one sentence for screen readers", () => {
+    const [content] = chatThemes(themes()).rows;
+    expect(themeRowName(content)).toBe("Reactions to the content: 30 messages, 50% of the chat, English, French (2)");
+    const gated = chatThemes(themes({ state: "insufficient", den: 8, rows: [theme("social", 1, null, [], [])] })).rows[0];
+    expect(themeRowName(gated)).toBe("Greetings and thanks: 1 message");
   });
 
   it("names the languages, and a message without words isn't one", () => {
