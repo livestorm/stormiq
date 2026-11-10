@@ -314,6 +314,30 @@ def test_admin_reading_another_orgs_session_starts_no_people_sync(client, backen
     assert status.status_code == 200 and status.json()["status"] == "none"
 
 
+FETCH_ROUTES = ["/api/sessions/{session_id}/fetch-base", "/api/sessions/{session_id}/fetch"]
+
+
+@pytest.mark.parametrize("route", FETCH_ROUTES)
+def test_owner_fetching_a_session_starts_its_people_sync_with_ids_only(client, backend, route):
+    # The session has no stored roster yet: fetching it starts the first people sync.
+    response = _call(client, "POST", route, cookie="conn-a")
+    assert response.status_code == 200, response.text
+    assert response.json()["rosterSync"] == {"status": "pending", "started": True, "skipped": None}
+    # As for transcription: the connection id waits on the sync's row, never in the queue.
+    assert backend.sync_connections == ["conn-a"]
+    assert backend.enqueued == [("run_people_sync", "livestorm_sync:sync-new", "sync-new", SESSION_ID)]
+    assert "conn-a" not in response.text and "token-conn-a" not in response.text and "sync-new" not in response.text
+
+
+@pytest.mark.parametrize("route", FETCH_ROUTES)
+def test_admin_fetching_another_orgs_session_starts_no_people_sync(client, backend, route):
+    # conn-admin (org-b) reads org-a's cached session, and its token stays unused.
+    response = _call(client, "POST", route, cookie="conn-admin")
+    assert response.status_code == 200, response.text
+    assert response.json()["rosterSync"] == {"status": "none", "started": False, "skipped": "other_org"}
+    assert backend.enqueued == [] and backend.sync_connections == []
+
+
 def test_outsider_cannot_claim_an_uncached_session(client, backend):
     # The org stamp is first-writer-wins, so pre-stamping a session the
     # caller can't access in Livestorm would hijack it from its owner.

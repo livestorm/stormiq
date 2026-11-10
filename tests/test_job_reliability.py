@@ -470,10 +470,26 @@ def test_web_process_cannot_transcribe_inline():
 
 
 def test_full_fetch_returns_the_base_workspace_and_the_transcript_job(monkeypatch):
-    monkeypatch.setattr(api_logic, "fetch_session_base_data", lambda *a, **k: {"sessionId": "s1", "base": True})
+    roster_sync = {"status": "pending", "started": True, "skipped": None}
+    base_calls: list = []
+
+    def base(*args, **kwargs):
+        base_calls.append(kwargs)
+        return {"sessionId": "s1", "base": True, "rosterSync": roster_sync}
+
+    monkeypatch.setattr(api_logic, "fetch_session_base_data", base)
     monkeypatch.setattr(api_logic, "fetch_session_transcript_data", lambda *a, **k: {"jobId": "j1", "jobStatus": "pending"})
-    response = api_logic.fetch_all_session_data("key", "s1", job_connection_id="c", read_scope="org-a")
-    assert response == {"sessionId": "s1", "base": True, "transcriptJob": {"jobId": "j1", "jobStatus": "pending"}}
+    response = api_logic.fetch_all_session_data("key", "s1", job_connection_id="c", read_scope="org-a", local_dev=True)
+    assert response == {
+        "sessionId": "s1", "base": True, "rosterSync": roster_sync, "transcriptJob": {"jobId": "j1", "jobStatus": "pending"},
+    }
+    # The base fetch gets what the people sync needs: the caller's connection and the local-dev flag.
+    assert (base_calls[0]["job_connection_id"], base_calls[0]["local_dev"]) == ("c", True)
+
+    # With the transcript already cached, the full workspace still says what the people sync did.
+    monkeypatch.setattr(api_logic, "fetch_session_transcript_data", lambda *a, **k: {"sessionId": "s1", "full": True})
+    cached = api_logic.fetch_all_session_data("key", "s1", job_connection_id="c", read_scope="org-a")
+    assert cached == {"sessionId": "s1", "full": True, "rosterSync": roster_sync}
 
 
 # ── Worker ─────────────────────────────────────────────────────────────────
@@ -626,14 +642,42 @@ def test_the_speaker_cap_comes_from_the_cached_people_and_the_job_args_stay_ids(
     assert "conn-for-job-1" not in sent_text and "Bearer" not in sent_text and "gladia-key" not in sent_text
 
 
+def test_the_speaker_cap_reads_the_stored_roster_when_there_is_one(transcription, monkeypatch):
+    """Once a people sync saved a roster, the cap counts its people on stage,
+    from the same source as the v1 record."""
+    people = synthetic.person_rows("s1")
+    reads: list = []
+    monkeypatch.setattr(worker, "fetch_session_fields", lambda *a, **k: {"session_payload": {"included": []}})
+    monkeypatch.setattr(
+        worker, "fetch_session_roster",
+        lambda session_id, organization_id: reads.append((session_id, organization_id))
+        or {"roster": {"roster_version": 1, "source": "paginated", "complete": True, "record_count": len(people)}, "people": people},
+    )
+    sent: list = []
+    _capture_transcribe(monkeypatch, sent)
+
+    assert asyncio.run(worker.run_transcription({}, "job-1", "s1"))["status"] == "completed"
+
+    assert reads == [("s1", ALL_ORGS)]
+    # The payload lists nobody; the stored roster has an organizer and a guest speaker: 2 + 2.
+    assert sent[0]["gladia_options"] == {"diarization_config": {"min_speakers": 1, "max_speakers": 4}}
+    assert transcription["upserts"][0]["transcript_payload"]["stormiq"]["people_on_stage"] == 2
+
+
 def _raise(*args, **kwargs):
     raise RuntimeError("boom")
 
 
-@pytest.mark.parametrize("failure", ["no cached row", "read fails", "roster fails", "nobody on stage"])
+@pytest.mark.parametrize("failure", ["no cached row", "read fails", "stored roster fails", "roster fails", "nobody on stage"])
 def test_an_unknown_stage_keeps_the_default_speaker_cap(transcription, monkeypatch, failure):
     if failure == "read fails":
         monkeypatch.setattr(worker, "fetch_session_fields", _raise)
+    elif failure == "stored roster fails":
+        from synthetic_session import session_payload as synthetic_session_payload
+
+        # The payload's people would give a cap of 4; a roster that can't be read gives no count at all.
+        monkeypatch.setattr(worker, "fetch_session_fields", lambda *a, **k: {"session_payload": synthetic_session_payload()})
+        monkeypatch.setattr(worker, "fetch_session_roster", _raise)
     elif failure == "roster fails":
         monkeypatch.setattr(worker, "fetch_session_fields", lambda *a, **k: {"session_payload": {"included": []}})
         monkeypatch.setattr("livestorm_app.record.inputs.count_people_on_stage", _raise)
@@ -2083,6 +2127,164 @@ def test_web_process_cannot_paginate_people_inline(sync_start, monkeypatch):
     answer = routes_sessions.start_roster_sync("s1", caller=caller)
     assert answer["started"] is True
     assert sync_start.enqueued == [("run_people_sync", "livestorm_sync:sync-new", "sync-new", "s1")]
+
+
+# ── The automatic start, after a session's base fetch ───────────────────────
+
+
+def _sync_on_fetch(sync_start, monkeypatch, *, roster, sync=None, fresh=False, scope="org-a", **overrides):
+    """`start_sync_on_fetch` for session s1 of org-a, with its roster status faked."""
+    monkeypatch.setattr(
+        people_sync, "fetch_roster_status",
+        lambda sid, read_scope: {"session_id": sid, "roster": {"roster_version": 1} if roster else None, "sync": sync}
+        if read_scope in ("org-a", ALL_ORGS) else None,
+    )
+    arguments = {
+        "fresh": fresh, "read_scope": scope, "caller_org_id": "org-a", "session_org_id": "org-a", "job_connection_id": "conn-a",
+        **overrides,
+    }
+    return people_sync.start_sync_on_fetch("s1", **arguments)
+
+
+def test_a_session_without_a_roster_gets_its_first_sync_on_fetch(sync_start, monkeypatch):
+    sync_start.used = 5000  # over the daily cap: a session's first initial sync is exempt
+    result = _sync_on_fetch(sync_start, monkeypatch, roster=False)
+    assert result == {"status": "pending", "started": True, "skipped": None}, "no sync id, connection id or person"
+    assert sync_start.created == [("s1", "initial", "conn-a")], "the connection waits on the row"
+    assert sync_start.enqueued == [("run_people_sync", "livestorm_sync:sync-new", "sync-new", "s1")], "ids only in the queue"
+
+
+def test_a_cached_session_with_a_roster_starts_nothing_on_fetch(sync_start, monkeypatch):
+    assert _sync_on_fetch(sync_start, monkeypatch, roster=True) == {"status": "none", "started": False, "skipped": None}
+    done = _sync_on_fetch(sync_start, monkeypatch, roster=True, sync=_prior_sync("completed", 600))
+    assert done == {"status": "completed", "started": False, "skipped": None}
+    assert sync_start.created == [] and sync_start.enqueued == []
+
+
+def test_a_fresh_fetch_reads_the_people_again(sync_start, monkeypatch):
+    """The user refreshed the session: its people are read again too, as a
+    manual sync, so the cooldown and the daily cap apply."""
+    result = _sync_on_fetch(sync_start, monkeypatch, roster=True, sync=_prior_sync("completed", 600), fresh=True)
+    assert result == {"status": "pending", "started": True, "skipped": None}
+    assert sync_start.created == [("s1", "manual", "conn-a")]
+
+    sync_start.created.clear()
+    recent = _sync_on_fetch(sync_start, monkeypatch, roster=True, sync=_prior_sync("completed", 5), fresh=True)
+    assert recent == {"status": "completed", "started": False, "skipped": "cooldown"}
+    sync_start.used = 1000
+    capped = _sync_on_fetch(sync_start, monkeypatch, roster=True, sync=_prior_sync("completed", 600), fresh=True)
+    assert capped == {"status": "completed", "started": False, "skipped": "daily_cap"}, "the cap's numbers stay server-side"
+    assert sync_start.created == []
+
+
+@pytest.mark.parametrize(
+    ("sync", "overrides", "skipped"),
+    [
+        (_prior_sync("error", 30), {}, "error_backoff"),  # every start on fetch is an automatic one
+        (_prior_sync("running", 1), {}, None),  # joined, never duplicated
+        # An admin of org-b reads every org, but their token is never used on org-a's session.
+        (None, {"scope": ALL_ORGS, "caller_org_id": "org-b", "job_connection_id": "conn-admin"}, "other_org"),
+    ],
+    ids=["error-backoff", "active-sync", "admin-of-another-org"],
+)
+def test_the_guards_stand_in_front_of_the_start_on_fetch(sync_start, monkeypatch, sync, overrides, skipped):
+    result = _sync_on_fetch(sync_start, monkeypatch, roster=False, sync=sync, **overrides)
+    assert (result["started"], result["skipped"]) == (False, skipped)
+    assert sync_start.created == [] and sync_start.enqueued == []
+
+
+def test_a_start_on_fetch_outside_the_callers_scope_starts_nothing(sync_start, monkeypatch):
+    with pytest.raises(people_sync.RosterSessionNotFound):
+        _sync_on_fetch(sync_start, monkeypatch, roster=False, scope="org-b")
+    assert sync_start.created == [] and sync_start.enqueued == []
+
+
+def _base_fetch(monkeypatch, *, cached=True):
+    """`fetch_session_base_data` for a session of org-a, with Livestorm, the
+    cache and the classic serializer faked. Returns the fetch's keyword arguments."""
+    row = {"session_id": "s1", "organization_id": "org-a", "session_payload": {}, "chat_payload": {}, "questions_payload": {}}
+    monkeypatch.setattr(api_logic, "fetch_cached_session", lambda key, sid, *, organization_id: dict(row))
+    monkeypatch.setattr(api_logic, "fetch_session_details", lambda key, sid: {"data": {"id": sid}})
+    monkeypatch.setattr(api_logic, "fetch_chat_and_questions_bundle", lambda key, sid: {"chat_payload": {}, "questions_payload": {}})
+    monkeypatch.setattr(api_logic, "_fetch_event_payload_safe", lambda key, event_id: None)
+    monkeypatch.setattr(api_logic, "upsert_cached_session", lambda key, sid, **fields: None)
+    monkeypatch.setattr(api_logic, "_serialize_cached_session", lambda sid, cached_row: {"sessionId": sid, "classic": True})
+    return {"force_refresh": not cached, "job_connection_id": "conn-a", "read_scope": "org-a", "organization_id": "org-a"}
+
+
+@pytest.mark.parametrize("cached", [True, False], ids=["cache-hit", "fresh-fetch"])
+def test_a_base_fetch_starts_the_people_sync_and_says_so(sync_start, monkeypatch, cached):
+    monkeypatch.setattr(people_sync, "fetch_roster_status", lambda sid, scope: {"session_id": sid, "roster": None, "sync": None})
+    response = api_logic.fetch_session_base_data("Bearer t", "s1", **_base_fetch(monkeypatch, cached=cached))
+    assert response == {"sessionId": "s1", "classic": True, "rosterSync": {"status": "pending", "started": True, "skipped": None}}
+    assert sync_start.created == [("s1", "initial", "conn-a")]
+    assert sync_start.enqueued == [("run_people_sync", "livestorm_sync:sync-new", "sync-new", "s1")]
+    assert "conn-a" not in json.dumps(response) and "conn-a" not in json.dumps(sync_start.enqueued)
+
+
+@pytest.mark.parametrize("failure", ["database", "queue", "row"])
+def test_a_failed_start_never_fails_the_base_fetch(sync_start, monkeypatch, caplog, failure):
+    """The session's data is saved and returned whatever happens to the
+    people sync: Postgres or Redis failing here reads `unavailable`."""
+    def broken(*args, **kwargs):
+        raise RuntimeError("connection to postgresql://stormiq:pg-secret@db failed for conn-a")
+
+    monkeypatch.setattr(people_sync, "fetch_roster_status", lambda sid, scope: {"session_id": sid, "roster": None, "sync": None})
+    if failure == "database":
+        monkeypatch.setattr(people_sync, "fetch_roster_status", broken)
+    elif failure == "queue":
+        monkeypatch.setattr(people_sync, "enqueue_unique_job_sync", lambda *args: None)  # Redis unreachable
+    else:
+        monkeypatch.setattr(people_sync, "create_livestorm_sync", broken)
+
+    with caplog.at_level(logging.DEBUG):
+        response = api_logic.fetch_session_base_data("Bearer t", "s1", **_base_fetch(monkeypatch))
+    assert response == {"sessionId": "s1", "classic": True, "rosterSync": {"status": "unavailable", "started": False, "skipped": None}}
+    assert "session_id=s1" in caplog.text
+    assert "pg-secret" not in caplog.text and "conn-a" not in caplog.text, "the log names the error's class, never its message"
+    if failure == "queue":
+        # The row was created, then closed at once: its connection id never waits for the sweeper.
+        assert sync_start.updates and sync_start.updates[0][1]["status"] == "error"
+
+
+def test_the_fetch_routes_pass_the_callers_connection_and_local_dev_flag(monkeypatch):
+    calls: dict = {}
+    monkeypatch.setattr(routes_sessions, "fetch_session_base_data", lambda **kwargs: calls.setdefault("base", kwargs) and {})
+    monkeypatch.setattr(routes_sessions, "fetch_all_session_data", lambda **kwargs: calls.setdefault("all", kwargs) and {})
+    caller = auth.Caller(kind="user", org_id="org-a", connection={"connection_id": "conn-a", "access_token": "t"})
+    request = routes_models.FetchSessionRequest()
+    routes_sessions.fetch_session_base_workspace("s1", request, caller=caller)
+    routes_sessions.fetch_session_workspace("s1", request, caller=caller)
+    for name in ("base", "all"):
+        assert (calls[name]["job_connection_id"], calls[name]["local_dev"]) == ("conn-a", False), name
+        assert (calls[name]["read_scope"], calls[name]["organization_id"]) == ("org-a", "org-a")
+
+
+def test_the_records_sync_state_is_the_stored_one_without_ids():
+    now = datetime(2026, 3, 9, 12, 0, tzinfo=timezone.utc)
+    assert people_sync.roster_live_state(None, None, now=now) == {
+        "sync": {"status": "none", "active": False, "reason": None, "error": None, "updatedAt": None},
+        "refreshDue": False,
+    }
+    sync = {
+        "sync_id": "sync-1", "kind": "people", "reason": "manual", "status": "pending", "error": None,
+        "pages_fetched": 3, "updated_at": now - timedelta(minutes=2),
+    }
+    roster = {"roster_version": 2, "refresh_due_at": now - timedelta(seconds=1)}
+    state = people_sync.roster_live_state(roster, sync, now=now)
+    assert state == {
+        "sync": {"status": "pending", "active": True, "reason": "manual", "error": None, "updatedAt": "2026-03-09T11:58:00+00:00"},
+        "refreshDue": True,
+    }
+    assert "sync-1" not in json.dumps(state)
+    for status, active in (("running", True), ("completed", False), ("error", False), ("deferred", False)):
+        assert people_sync.roster_live_state(roster, {**sync, "status": status}, now=now)["sync"]["active"] is active
+    failed = people_sync.roster_live_state(roster, {**sync, "status": "error", "error": "Livestorm took too long."}, now=now)
+    assert failed["sync"]["error"] == "Livestorm took too long."
+    # Due exactly now is due; a refresh that is still ahead, or was never planned, is not.
+    assert people_sync.roster_live_state({"refresh_due_at": now}, None, now=now)["refreshDue"] is True
+    assert people_sync.roster_live_state({"refresh_due_at": now + timedelta(days=6)}, None, now=now)["refreshDue"] is False
+    assert people_sync.roster_live_state({"refresh_due_at": None}, None, now=now)["refreshDue"] is False
 
 
 def test_a_closed_sync_is_not_reopened_by_a_late_reconcile(test_database):

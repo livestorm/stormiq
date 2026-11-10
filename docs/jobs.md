@@ -8,8 +8,9 @@ The frontend calls `POST /api/sessions/{id}/fetch-base`, then `POST /api/session
 
 1. If `session_cache` already has the session and `force_refresh` is false, return it.
 2. Otherwise fetch the session, its event, chat and questions from the Livestorm API and upsert them into `session_cache`.
-3. Start the transcript job (below) and return `{jobId, jobStatus}` at once.
-4. The frontend polls `GET /api/sessions/{id}/transcript-job` every 6 s. Once the job completes, the poll returns the full workspace.
+3. Either way, start the session's people sync in the worker when it has no stored roster yet, or was just fetched again ([People sync](#people-sync)). The response's `rosterSync` says what happened, and a failure here never fails the fetch.
+4. Start the transcript job (below) and return `{jobId, jobStatus}` at once.
+5. The frontend polls `GET /api/sessions/{id}/transcript-job` every 6 s. Once the job completes, the poll returns the full workspace.
 
 ## Transcription
 
@@ -22,7 +23,7 @@ The frontend calls `POST /api/sessions/{id}/fetch-base`, then `POST /api/session
 The worker, in `worker.run_transcription(job_id, session_id)`:
 
 1. **Claims the row.** One UPDATE moves it from `pending` to `running` and reads and clears `connection_id`. A row that is no longer `pending` (swept, or closed as lost) is skipped, so no paid work starts.
-   Then it **sets the speaker cap** (`_transcription_options`): one light read of the cached session's people (`fetch_session_fields`, `session_payload`) gives the people on stage (`record/inputs.count_people_on_stage`), and Gladia's `max_speakers` follows ([providers.md](providers.md#gladia-configuration)). An unknown count, or any failure here, keeps the default cap of 20; it never fails the job. The job's arguments stay `(job_id, session_id)`.
+   Then it **sets the speaker cap** (`_transcription_options`): light reads of the session's people give the people on stage (`record/inputs.count_people_on_stage`), from the stored roster when a people sync saved one (`db.fetch_session_roster`) and from the cached `session_payload` otherwise, as the v1 record does, and Gladia's `max_speakers` follows ([providers.md](providers.md#gladia-configuration)). An unknown count, or any failure here, keeps the default cap of 20; it never fails the job. The job's arguments stay `(job_id, session_id)`.
 2. **Waits for a slot.** At most `MAX_CONCURRENT_TRANSCRIPTIONS` (2) run per worker, because download and ffmpeg are memory-heavy. While it waits, progress is refreshed every minute so the sweeper leaves the row alone.
 3. **Resolves credentials.** `GLADIA_KEY` comes from the worker's env; the Livestorm token from the claimed connection id, refreshed if close to expiry (`auth.livestorm_auth_for_job`).
 4. **Transcribes** in a thread (`asyncio.to_thread`): download the recording, upload it to Gladia, poll. Progress goes to `transcript_jobs.progress` and to Redis. While Gladia works, the transcriber reports progress on every status change and at least once a minute (`PROGRESS_HEARTBEAT_SECONDS`), which keeps `updated_at` fresh.
@@ -35,17 +36,24 @@ Each transcript poll also reconciles the row with arq (as in step 2), so a job t
 
 ## People sync
 
-The v1 roster's complete people list comes from Livestorm's paginated people endpoint: 50 people per page, so about 100 calls for 5,000 registrants ([providers.md](providers.md#livestorm-people)). It runs only in the worker, as the job `run_people_sync`, and is saved whole as the session's roster ([data-model.md](data-model.md#stored-people)). The v1 record still reads the people cached with the session (`include=people`); it will switch to the stored roster in a later change.
+The v1 roster's complete people list comes from Livestorm's paginated people endpoint: 50 people per page, so about 100 calls for 5,000 registrants ([providers.md](providers.md#livestorm-people)). It runs only in the worker, as the job `run_people_sync`, and is saved whole as the session's roster ([data-model.md](data-model.md#stored-people)). The v1 record reads the stored roster once a sync saved one, and the people cached with the session (`include=people`) until then ([architecture.md](architecture.md#reading-the-v1-record)).
 
-**Starting one.** `POST /api/sessions/{id}/roster-sync` runs `people_sync.request_people_sync`. It checks the caller's scope first (`fetch_session_fields`, which also gives the session's stamped org; 404 outside it), then `people_sync.start_people_sync` applies these guards in order. A guard that stops the sync starts nothing and answers with the latest status and why (`skipped`):
+**Starting one.** Two things start a sync, and both go through `people_sync.start_people_sync` and its guards:
+
+- **A fetch, automatically.** `POST /api/sessions/{id}/fetch-base` and `/fetch` end with `people_sync.start_sync_on_fetch` (called by `api_logic.fetch_session_base_data`), once the caller's own Livestorm credentials returned the session or the cache answered within their scope. It starts the session's first sync when it has no stored roster yet (`reason` `initial`), and reads the people again after a fresh fetch of a session that has one (`reason` `manual`: the user refreshed the session). A cache hit on a session with a roster starts nothing. These starts are *automatic*: the error backoff below applies to them. The response's `rosterSync` says what happened ([api.md](api.md#fetching-a-session)).
+  The start is best-effort. The session's data is already saved when it runs, so a database or Redis failure there never fails the fetch: it is logged with the session id and the error's class only, and `rosterSync.status` reads `unavailable`.
+  The classic app opens a cached session with `GET /api/sessions/{id}/cached`, which starts nothing, so in practice a session gets its first sync when it is first fetched; sessions cached before this get theirs from the v1 Report (`POST /roster-sync`) or their next fetch.
+- **`POST /api/sessions/{id}/roster-sync`, explicitly** (`people_sync.request_people_sync`): a retry after an error, or a refresh. It checks the caller's scope first (`fetch_session_fields`, which also gives the session's stamped org; 404 outside it).
+
+`start_people_sync` applies these guards in order. A guard that stops the sync starts nothing and answers with the latest status and why (`skipped`):
 
 1. **Same org only.** The session's stamped org must equal the caller's org (`other_org` otherwise): an admin reading another org's session never spends their own token on it. The one exception is local dev with the operator's `LS_API_KEY`.
 2. **One sync at a time per session.** An active sync (`pending` or `running`) is first checked against arq, as transcriptions are: a job arq reports failed, or has no trace of 2 minutes after the row's last update, is closed as `error`. A sync still active is joined, not duplicated.
 3. **Cooldown.** A sync that completed less than `PEOPLE_SYNC_COOLDOWN_MINUTES` (15) ago starts nothing (`cooldown`).
-4. **Error backoff.** An automatic start doesn't retry within an hour of a failed sync (`error_backoff`); an explicit `POST /roster-sync` does. Nothing starts a sync automatically yet: starting one after a fresh fetch comes next.
+4. **Error backoff.** An automatic start (a fetch) doesn't retry within an hour of a failed sync (`error_backoff`); an explicit `POST /roster-sync` does. A sync the worker refused before any Livestorm call (the cap reached, or another sync of the org already waiting, steps 2 and 3 below) is a failed sync here too: its row is `error`, so a fetch leaves it alone for the hour and `POST /roster-sync` retries it at once. That is deliberate: the hour protects the org's Livestorm quota from repeated opens, and no new status is needed for it.
 5. **Daily cap.** `LIVESTORM_SYNC_DAILY_CALLS_PER_ORG` (default 1,000) caps the Livestorm calls an org's syncs recorded in a rolling 24 hours (`db.livestorm_sync_calls_since`, which sums each sync's calls as recorded when it ends). Every sync counts except a session's first `initial` sync, which is never capped. At or over the cap, `POST /roster-sync` answers 429 ([api.md](api.md#the-people-sync)). Syncs still running count for nothing here, so syncs queued together all pass this check; the worker checks the cap again before any call (its step 3 below).
 
-Then it inserts a `livestorm_sync_jobs` row with the caller's connection id (`reason` `initial` while the session has no roster, `manual` after; a request that loses the insert race joins the winner's row) and enqueues `run_people_sync(sync_id, session_id)` with the arq id `livestorm_sync:{sync_id}` (`queue.livestorm_sync_job_id`). If the enqueue fails, the row is marked `error` at once, which clears its connection id, and the request answers 503.
+Then it inserts a `livestorm_sync_jobs` row with the caller's connection id (`reason` `initial` while the session has no roster, `manual` after; a request that loses the insert race joins the winner's row) and enqueues `run_people_sync(sync_id, session_id)` with the arq id `livestorm_sync:{sync_id}` (`queue.livestorm_sync_job_id`). If the enqueue fails, the row is marked `error` at once, which clears its connection id; `POST /roster-sync` then answers 503, and a fetch answers as usual with `rosterSync.status` `unavailable`.
 
 The worker, in `worker.run_people_sync(sync_id, session_id)`:
 

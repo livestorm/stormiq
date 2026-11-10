@@ -42,7 +42,7 @@
     }
   },
   "record": {
-    "version": 5,
+    "version": 6,
     "roster": {
       "source": "session_include",
       "complete": null,
@@ -50,7 +50,15 @@
       "peopleCount": 123,
       "recordCount": null,
       "syncedAt": null,
-      "internal": false
+      "internal": false,
+      "sync": {
+        "status": "none",
+        "active": false,
+        "reason": null,
+        "error": null,
+        "updatedAt": null
+      },
+      "refreshDue": false
     },
     "pulse": {
       "lanes": [

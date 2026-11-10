@@ -501,6 +501,31 @@ class RosterRows:
     synced_at: Any = None
 
 
+def stored_roster_rows(stored: Mapping[str, Any]) -> RosterRows:
+    """A stored roster as `RosterRows`.
+
+    `stored` is what `db.fetch_session_roster` returns: `{roster, people}`,
+    the header and the person rows of one roster version. The header's
+    `synced_at` is kept as an ISO string, so everything built from it stays
+    plain JSON. A header value of the wrong type is read as unknown.
+    """
+    header = stored.get("roster")
+    header = header if isinstance(header, Mapping) else {}
+    people = stored.get("people")
+    fields = header.get("fields")
+    complete = header.get("complete")
+    synced_at = header.get("synced_at")
+    return RosterRows(
+        people=[person for person in (people if isinstance(people, (list, tuple)) else []) if isinstance(person, Mapping)],
+        source=_text(header.get("source")) or PAGINATED,
+        complete=complete if isinstance(complete, bool) else None,
+        record_count=_count(header.get("record_count")),
+        fields=[field for field in (fields if isinstance(fields, (list, tuple)) else []) if isinstance(field, Mapping)],
+        fields_source=_text(header.get("fields_source")) or NO_FIELDS,
+        synced_at=synced_at.isoformat() if isinstance(synced_at, datetime) else (_text(synced_at) or None),
+    )
+
+
 def _unique_people(people: Iterable[Any]) -> List[Mapping[str, Any]]:
     """Person rows with an id, without repeats (the first copy wins)."""
     seen = set()

@@ -146,6 +146,24 @@ def test_stored_people_are_scoped_by_org(test_database):
     assert db.list_session_people("sess-missing", ALL_ORGS) == []
 
 
+def test_a_stored_roster_is_read_whole_in_scope(test_database):
+    _seed_people()
+    stored = db.fetch_session_roster("sess-a", "org-a")
+    assert set(stored) == {"roster", "people"}
+    assert stored["roster"] == db.fetch_roster_status("sess-a", "org-a")["roster"]
+    assert stored["people"] == db.list_session_people("sess-a", "org-a") and len(stored["people"]) == 10
+    assert "conn-of-org-a" not in repr(stored), "the roster never carries a sync's connection id"
+
+    assert db.fetch_session_roster("sess-a", "org-b") is None
+    assert db.fetch_session_roster("sess-b", "org-a") is None
+    assert db.fetch_session_roster("sess-legacy", "org-a") is None, "a row without an org is not any org's"
+    assert len(db.fetch_session_roster("sess-legacy", ALL_ORGS)["people"]) == 2
+    assert db.fetch_session_roster("sess-missing", ALL_ORGS) is None
+
+    db.upsert_cached_session("key-a", "sess-new", organization_id="org-a")
+    assert db.fetch_session_roster("sess-new", "org-a") is None, "a cached session without a roster has none"
+
+
 def test_a_blank_scope_never_queries_the_people_tables(monkeypatch):
     def no_query():
         raise AssertionError("a blank scope must not reach the database")
@@ -155,6 +173,7 @@ def test_a_blank_scope_never_queries_the_people_tables(monkeypatch):
     for blank in ("", "   ", None):
         assert db.fetch_roster_status("sess-a", blank) is None
         assert db.list_session_people("sess-a", blank) == []
+        assert db.fetch_session_roster("sess-a", blank) is None
         assert db.get_org_people_attributes(blank) is None
 
 

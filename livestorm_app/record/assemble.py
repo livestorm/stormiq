@@ -5,7 +5,10 @@ computed part of the response:
 
 - `meta.clock`: the session clock (`record/clock.py`) and where the
   recording sits on it (`alignment`, `record/alignment.py`);
-- `record.roster`: the roster's header, counts only;
+- `record.roster`: the roster's header, counts only. The caller adds the
+  people sync's live state to it on every request
+  (`people_sync.roster_live_state`: `sync` and `refreshDue`), outside the
+  cached block;
 - `record.pulse`: chat, questions and written answers per session minute,
   plus the before and after edges (`clock.minute_bins`), and speech
   (speaking seconds and words) when the alignment allows findings in
@@ -18,8 +21,9 @@ computed part of the response:
 
 The caller (`api_logic.get_session_record`) does the scoped read, caches
 this block and adds `sessionId` and `updatedAt`. Bump `RECORD_VERSION`
-whenever the block's shape or rules change: it is part of that cache's key
-and of the response (`record.version`).
+whenever the block's shape or rules change, or what the caller adds to
+`record`: it is part of that cache's key and of the response
+(`record.version`).
 
 Only counts and session-level facts leave here: no name, email, company,
 person or message id, or message or transcript text (the caller adds the
@@ -42,7 +46,7 @@ from livestorm_app.record.inputs import RecordInputs
 from livestorm_app.record.measures import METRICS_VERSION, compute_measures, validate_measures
 from livestorm_app.record.roster import Roster
 
-RECORD_VERSION = 5
+RECORD_VERSION = 6
 
 # Where the measures come from: computed from the cached payloads when the
 # block is built (the caller caches the block per process; nothing is

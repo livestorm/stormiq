@@ -486,12 +486,82 @@ def test_a_new_row_version_misses_the_record_cache(record_reads):
 
 def test_a_changed_roster_version_misses_the_record_cache(record_reads, monkeypatch):
     _read_record(record_reads)
-    monkeypatch.setattr(api_logic, "_record_input_versions", lambda session_id, *, organization_id: (2, None))
+    monkeypatch.setattr(api_logic, "_record_input_versions", lambda roster: (2, None))
     _read_record(record_reads)
     assert record_reads["builds"] == {name: 2 for name in ONCE}
-    monkeypatch.setattr(api_logic, "_record_input_versions", lambda session_id, *, organization_id: (2, "fingerprint"))
+    monkeypatch.setattr(api_logic, "_record_input_versions", lambda roster: (2, "fingerprint"))
     _read_record(record_reads)
     assert record_reads["builds"] == {name: 3 for name in ONCE}
+
+
+def test_the_record_cache_is_keyed_by_the_stored_rosters_version():
+    assert api_logic._record_input_versions(None) == (None, None), "no stored roster: the people come from the row"
+    assert api_logic._record_input_versions({"roster_version": 4, "people_count": 12}) == (4, None)
+
+
+def test_a_record_hit_reads_the_roster_header_and_never_the_people(record_reads, monkeypatch):
+    """Every request reads the roster's header and the latest sync (one small
+    query); the person rows are read only when the block is built."""
+    from synthetic_session import person_rows
+
+    reads = {"status": 0, "people": 0}
+    header = {"roster_version": 1, "source": "paginated", "complete": True, "record_count": 10, "fields": [], "fields_source": "none"}
+
+    def read_status(session_id, organization_id):
+        reads["status"] += 1
+        return {"session_id": session_id, "roster": header, "sync": None}
+
+    def read_roster(session_id, organization_id):
+        reads["people"] += 1
+        return {"roster": header, "people": person_rows()}
+
+    monkeypatch.setattr(api_logic, "fetch_roster_status", read_status)
+    monkeypatch.setattr(api_logic, "fetch_session_roster", read_roster)
+    first = _read_record(record_reads)
+    assert first["record"]["roster"]["source"] == "paginated"
+    assert reads == {"status": 1, "people": 1}
+    # The stored rows replace the payload's people: that roster is never built.
+    assert record_reads["builds"] == {name: 1 for name in ONCE if name != "roster_from_session_payload"}
+    record_reads["reads"].clear()
+    assert _read_record(record_reads) == first
+    assert reads == {"status": 2, "people": 1}
+    assert record_reads["reads"] == [("updated_at",)]
+
+
+def test_the_record_reads_a_stored_roster_from_postgres_in_scope(test_database, monkeypatch):
+    from synthetic_session import ORGANIZATION_ID, SESSION_ID, cached_row, person_rows
+
+    monkeypatch.setattr(api_logic, "_record_cache", api_logic.OrderedDict())
+    row = cached_row()
+    db.upsert_cached_session(
+        "k", SESSION_ID, organization_id=ORGANIZATION_ID,
+        **{field: row[field] for field in ("session_payload", "event_payload", "chat_payload", "questions_payload")},
+    )
+    assert api_logic.get_session_record(SESSION_ID, organization_id=ORGANIZATION_ID)["record"]["roster"]["source"] == "session_include"
+
+    people = person_rows()[:7]
+    db.replace_session_roster(
+        SESSION_ID, people, source="paginated", complete=True, record_count=7, reason="initial",
+        refresh_due_at=datetime.now(timezone.utc) - timedelta(hours=1),
+    )
+    sync_id = db.create_livestorm_sync(SESSION_ID, reason="initial", connection_id="conn-secret")["sync_id"]
+    found = api_logic.get_session_record(SESSION_ID, organization_id=ORGANIZATION_ID)
+    roster = found["record"]["roster"]
+    assert (roster["source"], roster["coverage"], roster["peopleCount"], roster["recordCount"]) == ("paginated", "complete", 7, 7)
+    assert roster["syncedAt"] and roster["refreshDue"] is True
+    assert (roster["sync"]["status"], roster["sync"]["active"], roster["sync"]["reason"]) == ("pending", True, "initial")
+    text = json.dumps(found, default=str)
+    assert "conn-secret" not in text and sync_id not in text
+
+    # A new roster is a new version: the next read is rebuilt from it.
+    db.replace_session_roster(
+        SESSION_ID, person_rows(), source="paginated", complete=True, record_count=10, reason="manual", refresh_due_at=None,
+    )
+    again = api_logic.get_session_record(SESSION_ID, organization_id=ORGANIZATION_ID)["record"]["roster"]
+    assert (again["peopleCount"], again["refreshDue"]) == (10, False)
+    for outsider in ("org-b", ""):
+        with pytest.raises(api_logic.SessionNotFoundError):
+            api_logic.get_session_record(SESSION_ID, organization_id=outsider)
 
 
 def test_a_new_metrics_version_misses_the_record_cache(record_reads, monkeypatch):

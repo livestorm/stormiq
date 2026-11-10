@@ -6,7 +6,7 @@ import math
 import threading
 from collections import OrderedDict
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 import pandas as pd
 import requests
@@ -18,13 +18,16 @@ from livestorm_app.db import (
     OrgScope,
     create_transcript_job,
     fetch_cached_session,
+    fetch_roster_status,
     fetch_session_fields,
+    fetch_session_roster,
     get_transcript_job_for_session,
     list_workspace_sessions,
     merge_cached_bundle_entry,
     update_transcript_job_status,
     upsert_cached_session,
 )
+from livestorm_app.people_sync import roster_live_state, start_sync_on_fetch
 from livestorm_app.progress import read_progress
 from livestorm_app.queue import (
     AI_JOB_KINDS,
@@ -418,10 +421,16 @@ def get_cached_workspace(session_id: str, *, organization_id: OrgScope) -> Optio
 # the row's `updated_at` (every write to the row bumps it, the transcript's
 # and the speaker labels' included), the record's, the measures', the
 # transcript health's and the alignment probe's versions (`RECORD_VERSION`,
-# `METRICS_VERSION`, `HEALTH_VERSION`, `ALIGNMENT_VERSION`), and what will
-# change without a new row version (`_record_input_versions`). Live state
-# that changes without any of these (none yet) must be read outside the
-# cache, on every request.
+# `METRICS_VERSION`, `HEALTH_VERSION`, `ALIGNMENT_VERSION`), and what
+# changes without a new row version (`_record_input_versions`): the stored
+# roster's version. Live state that changes without any of these (the
+# people sync's status, whether the roster is due a refresh) is read outside
+# the cache, on every request, and added to a copy of the block's roster
+# header (`people_sync.roster_live_state`).
+#
+# The people come from the session's stored roster when a people sync saved
+# one (`db.fetch_session_roster`, the header and the rows of one version),
+# and from the session payload's `include=people` list until then.
 #
 # The transcript is the largest column: it is read only on a miss, in the
 # same read as the base payloads (a session without one reads a NULL), and
@@ -436,12 +445,16 @@ _record_cache: "OrderedDict[Tuple[Any, ...], Dict[str, Any]]" = OrderedDict()
 _record_cache_lock = threading.Lock()
 
 
-def _record_input_versions(session_id: str, *, organization_id: OrgScope) -> Tuple[Any, Any]:
+def _record_input_versions(roster: Optional[Mapping[str, Any]]) -> Tuple[Any, Any]:
     """(roster version, metrics fingerprint): what the record reads that
-    changes without bumping `session_cache.updated_at`. Both None for now,
-    because the roster comes from the session payload and no measure is
-    stored. Stored rosters and stored measures add their version here."""
-    return None, None
+    changes without bumping `session_cache.updated_at`.
+
+    `roster` is the stored roster's header (`db.fetch_roster_status`), or
+    None while the people come from the session payload: its
+    `roster_version` grows with every people sync that saves a roster. The
+    fingerprint is None for now, because no measure is stored; stored
+    measures add theirs here."""
+    return (roster.get("roster_version") if roster else None), None
 
 
 def _record_cache_key(
@@ -479,11 +492,23 @@ def get_session_record(session_id: str, *, organization_id: OrgScope) -> Dict[st
 
     The scope check comes first: a row that is missing or outside the
     caller's scope raises `SessionNotFoundError` (404) before anything else
-    is read. A cache hit then costs that one small read. A miss reads the
-    base payloads, the transcript and its speaker labels (never the AI
-    outputs) and builds the block, transcript health and measures included,
-    with `record.assemble.assemble_record`. The block is shared between
-    requests: never modify it.
+    is read. Every request then reads the stored roster's header and the
+    latest people sync, with the same scope (`db.fetch_roster_status`, one
+    small query): the header's version is part of the cache key, and the
+    sync's state is added to the response's roster header, never cached
+    (`people_sync.roster_live_state`). A cache hit costs those two small
+    reads.
+
+    A miss reads the base payloads, the transcript and its speaker labels
+    (never the AI outputs), and the stored roster when there is one
+    (`db.fetch_session_roster`: its header and its rows, of one version),
+    and builds the block, transcript health and measures included, with
+    `record.assemble.assemble_record`. Without a stored roster the people
+    come from the session payload. A roster that can't be read raises: the
+    record is never built from a people list that only looks empty.
+
+    The block is shared between requests: never modify it. The response's
+    `record` and `record.roster` are copies.
     """
     stamp = fetch_session_fields(session_id, ["updated_at"], organization_id=organization_id)
     if not isinstance(stamp, dict):
@@ -496,19 +521,36 @@ def get_session_record(session_id: str, *, organization_id: OrgScope) -> Dict[st
     from livestorm_app.record.assemble import RECORD_VERSION, assemble_record
     from livestorm_app.record.inputs import load_record_inputs
     from livestorm_app.record.measures import METRICS_VERSION
+    from livestorm_app.record.roster import stored_roster_rows
     from livestorm_app.record.transcript_health import HEALTH_VERSION
 
+    roster_status = fetch_roster_status(session_id, organization_id) or {}
+    roster_header = roster_status.get("roster")
     code_versions = (RECORD_VERSION, METRICS_VERSION, HEALTH_VERSION, ALIGNMENT_VERSION)
-    input_versions = _record_input_versions(session_id, organization_id=organization_id)
-    block = _cached_record_block(_record_cache_key(session_id, stamp.get("updated_at"), code_versions, input_versions))
+    block = _cached_record_block(
+        _record_cache_key(session_id, stamp.get("updated_at"), code_versions, _record_input_versions(roster_header))
+    )
     if block is None:
         row = fetch_session_fields(session_id, list(RECORD_FIELDS), organization_id=organization_id)
         if not isinstance(row, dict):
             raise SessionNotFoundError()
         stamp = row
-        block = _sanitize_json_value(assemble_record(load_record_inputs({**row, "session_id": session_id})))
-        _store_record_block(_record_cache_key(session_id, row.get("updated_at"), code_versions, input_versions), block)
-    return {"sessionId": session_id, "updatedAt": stamp.get("updated_at"), **block}
+        # Read again with its rows: a sync may have replaced the roster
+        # since the header above, and the block is keyed by what it holds.
+        stored = fetch_session_roster(session_id, organization_id) if roster_header is not None else None
+        roster_header = stored["roster"] if stored is not None else None
+        inputs = load_record_inputs(
+            {**row, "session_id": session_id},
+            roster_rows=stored_roster_rows(stored) if stored is not None else None,
+        )
+        block = _sanitize_json_value(assemble_record(inputs))
+        _store_record_block(
+            _record_cache_key(session_id, row.get("updated_at"), code_versions, _record_input_versions(roster_header)),
+            block,
+        )
+    live = roster_live_state(roster_header, roster_status.get("sync"))
+    record = {**block["record"], "roster": {**block["record"]["roster"], **live}}
+    return {"sessionId": session_id, "updatedAt": stamp.get("updated_at"), "meta": block["meta"], "record": record}
 
 
 # ── Workspace sessions list ────────────────────────────────────────────────
@@ -771,6 +813,7 @@ def fetch_all_session_data(
     job_connection_id: str,
     read_scope: OrgScope,
     organization_id: str = "",
+    local_dev: bool = False,
     created_by_user_id: str = "",
     created_by_email: str = "",
     created_by_name: str = "",
@@ -780,7 +823,8 @@ def fetch_all_session_data(
     Returns the full workspace when the transcript is already cached;
     otherwise the base workspace plus `transcriptJob: {jobId, jobStatus}`
     to poll. Transcription always runs in the worker, never inside a web
-    request. Scope args as in `fetch_session_base_data`.
+    request. Either way the response carries the base fetch's `rosterSync`.
+    Scope args as in `fetch_session_base_data`.
     """
     identity = {
         "read_scope": read_scope,
@@ -789,13 +833,53 @@ def fetch_all_session_data(
         "created_by_email": created_by_email,
         "created_by_name": created_by_name,
     }
-    base = fetch_session_base_data(api_key, session_id, force_refresh, **identity)
+    base = fetch_session_base_data(
+        api_key, session_id, force_refresh, job_connection_id=job_connection_id, local_dev=local_dev, **identity,
+    )
     transcript = fetch_session_transcript_data(
         api_key, session_id, force_refresh, job_connection_id=job_connection_id, **identity,
     )
     if "sessionId" in transcript:
-        return transcript
+        return {**transcript, "rosterSync": base.get("rosterSync")}
     return {**base, "transcriptJob": transcript}
+
+
+ROSTER_SYNC_UNAVAILABLE = {"status": "unavailable", "started": False, "skipped": None}
+
+
+def _roster_sync_on_fetch(
+    session_id: str,
+    cached: Mapping[str, Any],
+    *,
+    fresh: bool,
+    read_scope: OrgScope,
+    caller_org_id: str,
+    job_connection_id: str,
+    local_dev: bool,
+) -> Dict[str, Any]:
+    """The response's `rosterSync`: start the session's people sync when it
+    needs one (`people_sync.start_sync_on_fetch`), and say what happened.
+
+    Best-effort: the session's base data is already saved and about to be
+    returned, so a database or Redis failure here never fails the fetch. It
+    is logged with the session id and the error's class only (a database
+    error's message can echo values) and reads `status: "unavailable"`.
+    `cached` is the row just read with the caller's scope; its stamped org
+    decides whether this caller may start a sync.
+    """
+    try:
+        return start_sync_on_fetch(
+            session_id,
+            fresh=fresh,
+            read_scope=read_scope,
+            caller_org_id=caller_org_id,
+            session_org_id=str(cached.get("organization_id") or ""),
+            job_connection_id=job_connection_id,
+            local_dev=local_dev,
+        )
+    except Exception as exc:
+        logger.warning("The people sync was not started for session_id=%s (%s)", session_id, type(exc).__name__)
+        return dict(ROSTER_SYNC_UNAVAILABLE)
 
 
 def fetch_session_base_data(
@@ -803,8 +887,10 @@ def fetch_session_base_data(
     session_id: str,
     force_refresh: bool = False,
     *,
+    job_connection_id: str,
     read_scope: OrgScope,
     organization_id: str = "",
+    local_dev: bool = False,
     created_by_user_id: str = "",
     created_by_email: str = "",
     created_by_name: str = "",
@@ -813,8 +899,22 @@ def fetch_session_base_data(
 
     `read_scope` governs cache lookups (what the caller may read).
     `organization_id` is the caller's own org, stamped on newly created rows.
+
+    The response is the classic workspace plus `rosterSync: {status, started,
+    skipped}`: the session's people sync, started here in the worker when
+    the session has no stored roster yet, or was just fetched again
+    (`_roster_sync_on_fetch`). `job_connection_id` is the caller's
+    `Caller.job_connection_id()`, kept on the sync's row until the worker
+    claims it, never in the job's arguments; `local_dev` is `Caller.local_dev`.
+    The classic app ignores `rosterSync`.
     """
     session_id = str(session_id or "").strip()
+    sync_args = {
+        "read_scope": read_scope,
+        "caller_org_id": organization_id,
+        "job_connection_id": job_connection_id,
+        "local_dev": local_dev,
+    }
     cached = (
         None if force_refresh
         else fetch_cached_session(api_key, session_id, organization_id=read_scope)
@@ -822,7 +922,8 @@ def fetch_session_base_data(
     if isinstance(cached, dict):
         has_base_payloads = all(isinstance(cached.get(key), dict) for key in ("session_payload", "chat_payload", "questions_payload"))
         if has_base_payloads:
-            return _serialize_cached_session(session_id, cached)
+            workspace = _serialize_cached_session(session_id, cached)
+            return {**workspace, "rosterSync": _roster_sync_on_fetch(session_id, cached, fresh=False, **sync_args)}
 
     session_payload = fetch_session_details(api_key, session_id)
     chat_bundle = fetch_chat_and_questions_bundle(api_key, session_id)
@@ -846,7 +947,8 @@ def fetch_session_base_data(
     cached = fetch_cached_session(api_key, session_id, organization_id=read_scope)
     if not isinstance(cached, dict):
         raise RuntimeError("Fetched session overview/chat data but failed to reload it from the cache.")
-    return _serialize_cached_session(session_id, cached)
+    workspace = _serialize_cached_session(session_id, cached)
+    return {**workspace, "rosterSync": _roster_sync_on_fetch(session_id, cached, fresh=True, **sync_args)}
 
 
 ACTIVE_TRANSCRIPT_JOB_STATUSES = ("pending", "running")
