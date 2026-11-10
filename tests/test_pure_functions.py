@@ -1070,3 +1070,25 @@ def test_the_speaker_cap_ceiling_is_the_default_request():
     assert transcriber.DEFAULT_GLADIA_OPTIONS["diarization_config"]["max_speakers"] == transcriber.MAX_SPEAKERS_CEILING == 20
     request = transcriber._build_gladia_request("https://gladia.example/a", transcriber.speaker_options(2))
     assert request["diarization_config"] == {"min_speakers": 1, "max_speakers": 4}
+
+
+def test_event_session_options_carry_the_raw_facts_next_to_the_label():
+    payload = {
+        "data": [
+            {"id": "s-old", "attributes": {"name": "", "started_at": 1_700_000_000, "attendees_count": 12}},
+            {"id": "s-new", "attributes": {"name": "Spring launch", "started_at": "1700090000", "attendees_count": -3}},
+            {"id": "s-none", "attributes": {"estimated_started_at": 0, "attendees_count": "7"}},
+        ]
+    }
+    options = livestorm_payloads.build_event_session_options(payload)
+    assert [option["id"] for option in options] == ["s-new", "s-old", "s-none"]
+    by_id = {option["id"]: option for option in options}
+    # The label is unchanged; the new fields say the same thing unformatted.
+    assert by_id["s-old"]["label"] == "2023-11-14 22:13 UTC - Untitled session (12 attendees)"
+    assert by_id["s-old"] | {"label": None} == {"id": "s-old", "label": None, "name": "", "startedAt": 1_700_000_000, "attendees": 12}
+    # A negative count is not a count; a start of 0 is unknown.
+    assert by_id["s-new"]["name"] == "Spring launch"
+    assert by_id["s-new"]["startedAt"] == 1_700_090_000
+    assert by_id["s-new"]["attendees"] is None
+    assert by_id["s-none"]["startedAt"] is None
+    assert by_id["s-none"]["attendees"] == 7

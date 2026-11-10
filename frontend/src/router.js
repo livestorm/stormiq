@@ -6,7 +6,7 @@ import { useWorkspace } from "./store/workspace";
 // The session list ships in the entry bundle; every other
 // view is a separate chunk loaded on first visit, so admin, transcript and
 // analysis code doesn't slow down the first page load.
-const SearchView = () => import("./views/SearchView.vue");
+const AddSessionView = () => import("./views/AddSessionView.vue");
 const CrossAnalysisView = () => import("./views/CrossAnalysisView.vue");
 const SessionOverviewView = () => import("./views/SessionOverviewView.vue");
 const TranscriptView = () => import("./views/TranscriptView.vue");
@@ -26,7 +26,7 @@ const HomeView = () => import("./views/HomeView.vue");
 //   /                                — home: the landing page signed out, Sessions signed in
 //   /sessions                        — every session the organization has fetched
 //   /sessions/:sessionId/{tab}       — one session's pages (it opens on its Report)
-//   /search                          — add a session
+//   /sessions/add                    — add a session (was /search)
 //   /cross-analysis                  — placeholder (cross-session analysis)
 //
 // A session's URL is a sharing contract: teammates in the same Livestorm org
@@ -60,7 +60,8 @@ const routes = [
   // The site's home: signed out, the shell shows the landing page here;
   // signed in, HomeView moves on to Sessions.
   { path: "/", component: HomeView, meta: { v1Native: true } },
-  { path: "/search", component: SearchView },
+  { path: "/sessions/add", component: AddSessionView, meta: { v1Native: true } },
+  { path: "/search", redirect: "/sessions/add" },
   { path: "/sessions", component: SessionsView, meta: { v1Native: true } },
   { path: "/cross-analysis", component: CrossAnalysisView },
 
@@ -83,7 +84,7 @@ const routes = [
   // The URL rename: every /single-analysis link, a session's pages included.
   { path: "/single-analysis", redirect: (to) => renamedSessionsPath(to.fullPath) },
   { path: "/single-analysis/:rest(.*)", redirect: (to) => renamedSessionsPath(to.fullPath) },
-  { path: "/events", redirect: "/search" },
+  { path: "/events", redirect: "/sessions/add" },
   { path: "/session-overview", redirect: redirectLegacyTab("session-overview") },
   { path: "/transcript", redirect: redirectLegacyTab("transcript") },
   { path: "/chat-questions", redirect: redirectLegacyTab("chat-questions") },

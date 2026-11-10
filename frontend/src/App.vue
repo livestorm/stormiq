@@ -49,8 +49,9 @@ const routeSessionId = computed(() => {
 });
 
 const isOnSessionDetail = computed(() => Boolean(routeSessionId.value));
+const ADD_SESSION_PATH = "/sessions/add";
 const isOnSessions = computed(
-  () => route.path === "/sessions" || route.path.startsWith("/sessions/"),
+  () => route.path === "/sessions" || (route.path.startsWith("/sessions/") && route.path !== ADD_SESSION_PATH),
 );
 // Hero only renders on the overview tab — keeps the Transcript /
 // Analysis / Recap tabs focused on their own content without a tall
@@ -115,7 +116,7 @@ const v1NavItems = computed(() => {
       current: route.path === "/sessions" ? "page" : isOnSessions.value ? "true" : undefined,
       disabled: !isAuthed.value,
     },
-    { to: "/search", label: "Add session", icon: "plus", active: route.path === "/search", disabled: !isAuthed.value },
+    { to: ADD_SESSION_PATH, label: "Add session", icon: "plus", active: route.path === ADD_SESSION_PATH, current: route.path === ADD_SESSION_PATH ? "page" : undefined, disabled: !isAuthed.value },
   ];
   if (state.auth?.isAdmin) items.push({ to: "/admin", label: "Admin", active: route.path === "/admin" });
   return items;

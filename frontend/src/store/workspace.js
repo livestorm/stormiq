@@ -646,7 +646,7 @@ async function loadSessionById(sessionId) {
   const id = String(sessionId || "").trim();
   if (!id) return null;
 
-  // Already on screen, or already loading (SearchView starts the load
+  // Already on screen, or already loading (Add session starts the load
   // before navigating, and App.vue's route watcher would start it again).
   if (scope.id === id && state.workspace?.sessionId === id) return state.workspace;
   if (scope.id === id && state.loading.sessionFetch) return null;
