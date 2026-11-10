@@ -3,7 +3,7 @@ import { onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { useWorkspace } from "../store/workspace";
 
-// `/` in the v1 design. Signed out, the shell shows the landing page here
+// `/`, the site's home. Signed out, the shell shows the landing page here
 // (`App.vue`, `design/landing.js`), so the site's address is its home page.
 // Signed in, this view is what renders, and it moves on to Sessions.
 const { state } = useWorkspace();

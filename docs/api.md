@@ -68,7 +68,7 @@ It says what the fetch did about the session's people sync ([jobs.md](jobs.md#pe
 
 ## The v1 record
 
-`GET /api/sessions/{id}/record` serves the v1 Report (behind `?ui=v1`). The classic app doesn't call it, and the classic workspace doesn't carry it. It is built by `livestorm_app/record/assemble.py` (`api_logic.get_session_record`); rules and formulas are in [product.md §13](product.md#session-clock-v1-report). Apart from the session's own id, it never carries a Livestorm id: no name, email, company, person or message id, message or transcript text, or speaker label. `frontend/tests/fixtures/record-v1.json` is its response for a synthetic session, and `record-v1-crowd.json` for a larger one whose grouped measures show their rows.
+`GET /api/sessions/{id}/record` serves the Report. The workspace route (`GET /api/sessions/{id}`), which the pages not rebuilt yet read, doesn't carry it. It is built by `livestorm_app/record/assemble.py` (`api_logic.get_session_record`); rules and formulas are in [product.md §13](product.md#session-clock-v1-report). Apart from the session's own id, it never carries a Livestorm id: no name, email, company, person or message id, message or transcript text, or speaker label. `frontend/tests/fixtures/record-v1.json` is its response for a synthetic session, and `record-v1-crowd.json` for a larger one whose grouped measures show their rows.
 
 ```
 {sessionId, updatedAt, meta: {clock}, record: {version, roster, pulse, transcriptHealth, metricsVersion, measuresSource, measures}}

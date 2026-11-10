@@ -5,19 +5,9 @@ import {
   createThemeController,
   readStoredTheme,
   resolveTheme,
+  safeStorage,
   writeStoredTheme,
 } from "../src/design/theme.js";
-import {
-  UI_STORAGE_KEY,
-  applyUiVersion,
-  currentUiVersion,
-  initUiVersion,
-  isV1,
-  parseUiParam,
-  readStoredUiVersion,
-  resolveUiVersion,
-  safeStorage,
-} from "../src/design/uiVersion.js";
 
 function memoryStorage(initial = {}) {
   const data = new Map(Object.entries(initial));
@@ -61,114 +51,19 @@ function fakeMatchMedia(matches) {
   return matchMedia;
 }
 
-describe("uiVersion", () => {
-  it("is classic by default", () => {
-    expect(resolveUiVersion()).toBe("classic");
-    expect(resolveUiVersion({ search: "", storage: memoryStorage() })).toBe("classic");
-    expect(readStoredUiVersion(null)).toBe("classic");
-  });
-
-  it("turns v1 on with ?ui=v1 and remembers it", () => {
+describe("safeStorage", () => {
+  it("returns localStorage, or null when it is missing or its getter throws", () => {
     const storage = memoryStorage();
-    expect(resolveUiVersion({ search: "?ui=v1", storage })).toBe("v1");
-    expect(storage.data.get(UI_STORAGE_KEY)).toBe("v1");
-    // Next page load, no query: still v1.
-    expect(resolveUiVersion({ search: "", storage })).toBe("v1");
-    expect(resolveUiVersion({ search: "?tab=chat", storage })).toBe("v1");
-  });
-
-  it("turns v1 off with ?ui=classic and forgets it", () => {
-    const storage = memoryStorage({ [UI_STORAGE_KEY]: "v1" });
-    expect(resolveUiVersion({ search: "?ui=classic", storage })).toBe("classic");
-    expect(storage.data.has(UI_STORAGE_KEY)).toBe(false);
-    expect(resolveUiVersion({ search: "", storage })).toBe("classic");
-  });
-
-  it("is off before initUiVersion runs", async () => {
-    vi.resetModules();
-    const fresh = await import("../src/design/uiVersion.js");
-    expect(fresh.currentUiVersion()).toBe("classic");
-    expect(fresh.isV1()).toBe(false);
-  });
-
-  it("parses only the two known values, case-insensitively", () => {
-    expect(parseUiParam("?ui=V1")).toBe("v1");
-    expect(parseUiParam("?ui=%20v1%20")).toBe("v1");
-    expect(parseUiParam("?ui=%20Classic")).toBe("classic");
-    expect(parseUiParam("?a=1&ui=classic")).toBe("classic");
-    expect(parseUiParam("?ui=v2")).toBeNull();
-    expect(parseUiParam("?ui=")).toBeNull();
-    expect(parseUiParam("")).toBeNull();
-    expect(parseUiParam(undefined)).toBeNull();
-  });
-
-  it("ignores unknown stored values", () => {
-    expect(readStoredUiVersion(memoryStorage({ [UI_STORAGE_KEY]: "v9" }))).toBe("classic");
-  });
-
-  it("still applies ?ui= for this page load when storage throws", () => {
-    const storage = throwingStorage();
-    expect(resolveUiVersion({ search: "?ui=v1", storage })).toBe("v1");
-    expect(resolveUiVersion({ search: "?ui=classic", storage })).toBe("classic");
-    expect(resolveUiVersion({ search: "", storage })).toBe("classic");
-  });
-
-  it("treats a localStorage getter that throws as no storage", () => {
-    const win = {};
-    Object.defineProperty(win, "localStorage", {
+    expect(safeStorage({ localStorage: storage })).toBe(storage);
+    expect(safeStorage({})).toBeNull();
+    const blocked = {};
+    Object.defineProperty(blocked, "localStorage", {
       get() {
         throw new Error("SecurityError");
       },
     });
-    expect(safeStorage(win)).toBeNull();
+    expect(safeStorage(blocked)).toBeNull();
     expect(safeStorage(undefined)).toBeNull();
-  });
-
-  it("marks the document and exposes the version for the page load", () => {
-    const root = fakeRoot();
-    const storage = memoryStorage();
-    const win = { location: { search: "?ui=v1" }, localStorage: storage, document: { documentElement: root } };
-    expect(initUiVersion(win)).toBe("v1");
-    expect(root.getAttribute("data-ui")).toBe("v1");
-    expect(currentUiVersion()).toBe("v1");
-    expect(isV1()).toBe(true);
-
-    win.location.search = "?ui=classic";
-    expect(initUiVersion(win)).toBe("classic");
-    expect(root.getAttribute("data-ui")).toBeNull();
-    expect(isV1()).toBe(false);
-  });
-
-  it("initUiVersion saves ?ui=v1 for later page loads and forgets it on ?ui=classic", () => {
-    const root = fakeRoot();
-    const storage = memoryStorage();
-    const win = { location: { search: "?ui=v1" }, localStorage: storage, document: { documentElement: root } };
-    initUiVersion(win);
-    expect(storage.data.get(UI_STORAGE_KEY)).toBe("v1");
-
-    // A later page load without the query keeps v1.
-    win.location.search = "";
-    expect(initUiVersion(win)).toBe("v1");
-    expect(root.getAttribute("data-ui")).toBe("v1");
-
-    win.location.search = "?ui=classic";
-    initUiVersion(win);
-    expect(storage.data.has(UI_STORAGE_KEY)).toBe(false);
-
-    win.location.search = "";
-    expect(initUiVersion(win)).toBe("classic");
-    expect(root.getAttribute("data-ui")).toBeNull();
-  });
-
-  it("initUiVersion with no query and nothing saved leaves the document classic", () => {
-    const root = fakeRoot();
-    const win = { location: { search: "" }, localStorage: memoryStorage(), document: { documentElement: root } };
-    expect(initUiVersion(win)).toBe("classic");
-    expect(root.getAttribute("data-ui")).toBeNull();
-  });
-
-  it("applyUiVersion tolerates a missing root", () => {
-    expect(() => applyUiVersion("v1", null)).not.toThrow();
   });
 });
 
@@ -324,7 +219,7 @@ describe("theme", () => {
   });
 });
 
-// The inline script in index.html repeats the switch and theme logic so the
+// The inline script in index.html repeats the theme logic so the
 // first paint is right. Run it against fake globals and check it agrees with
 // the modules main.js uses.
 describe("index.html pre-paint script", () => {
@@ -332,9 +227,9 @@ describe("index.html pre-paint script", () => {
   const match = html.match(/<script>([\s\S]*?)<\/script>/);
   const source = match ? match[1] : "";
 
-  function runInlineScript({ search = "", storage = null, storageThrows = false } = {}) {
+  function runInlineScript({ storage = null, storageThrows = false } = {}) {
     const root = fakeRoot();
-    const win = { location: { search } };
+    const win = {};
     Object.defineProperty(win, "localStorage", {
       get() {
         if (storageThrows) throw new Error("SecurityError");
@@ -345,40 +240,22 @@ describe("index.html pre-paint script", () => {
     return root;
   }
 
-  it("is present", () => {
-    expect(source).toContain("stormiq:ui");
+  it("marks every page for the design's CSS, with no switch left", () => {
+    expect(html).toMatch(/<html lang="en" data-ui="v1">/);
     expect(source).toContain("stormiq:theme");
+    expect(source).not.toContain("stormiq:ui");
   });
 
-  const cases = [
-    { name: "nothing saved, no query", search: "", saved: {} },
-    { name: "?ui=v1", search: "?ui=v1", saved: {} },
-    { name: "?ui=V1 (any case)", search: "?ui=V1", saved: {} },
-    { name: "?ui=%20v1%20 (spaces)", search: "?ui=%20v1%20", saved: {} },
-    { name: "?ui=Classic with v1 saved", search: "?ui=Classic", saved: { [UI_STORAGE_KEY]: "v1" } },
-    { name: "v1 saved, no query", search: "", saved: { [UI_STORAGE_KEY]: "v1" } },
-    { name: "unknown query, v1 saved", search: "?ui=v2", saved: { [UI_STORAGE_KEY]: "v1" } },
-    { name: "unknown saved value", search: "", saved: { [UI_STORAGE_KEY]: "v9" } },
-    { name: "dark saved", search: "", saved: { [THEME_STORAGE_KEY]: "dark" } },
-    { name: "light saved, v1 query", search: "?ui=v1", saved: { [THEME_STORAGE_KEY]: "light" } },
-    { name: "invalid theme saved", search: "", saved: { [THEME_STORAGE_KEY]: "neon" } },
-  ];
-
-  for (const testCase of cases) {
-    it(`agrees with uiVersion.js and theme.js: ${testCase.name}`, () => {
-      const root = runInlineScript({ search: testCase.search, storage: memoryStorage(testCase.saved) });
-      const expectedUi = resolveUiVersion({ search: testCase.search, storage: memoryStorage(testCase.saved) });
-      expect(root.getAttribute("data-ui")).toBe(expectedUi === "v1" ? "v1" : null);
-      expect(root.getAttribute("data-theme")).toBe(readStoredTheme(memoryStorage(testCase.saved)));
+  for (const saved of [{}, { [THEME_STORAGE_KEY]: "dark" }, { [THEME_STORAGE_KEY]: "light" }, { [THEME_STORAGE_KEY]: "neon" }]) {
+    it(`agrees with theme.js: ${JSON.stringify(saved)}`, () => {
+      const root = runInlineScript({ storage: memoryStorage(saved) });
+      expect(root.getAttribute("data-theme")).toBe(readStoredTheme(memoryStorage(saved)));
     });
   }
 
-  it("still applies ?ui=v1 when storage throws", () => {
-    const root = runInlineScript({ search: "?ui=v1", storageThrows: true });
-    expect(root.getAttribute("data-ui")).toBe("v1");
-    expect(root.getAttribute("data-theme")).toBeNull();
-    const throwing = runInlineScript({ search: "", storage: throwingStorage() });
-    expect(throwing.getAttribute("data-ui")).toBeNull();
+  it("follows the system when storage throws", () => {
+    expect(runInlineScript({ storageThrows: true }).getAttribute("data-theme")).toBeNull();
+    expect(runInlineScript({ storage: throwingStorage() }).getAttribute("data-theme")).toBeNull();
   });
 });
 

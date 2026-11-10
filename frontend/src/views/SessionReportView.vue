@@ -17,9 +17,8 @@ import UiButton from "../components/ui/UiButton.vue";
 import { analysisSummary, formatLength, formatSessionStart } from "../report/format";
 import { createSessionReport } from "../report/useSessionReport";
 
-// The v1 Report: the session page of the new design (v1 only, behind the
-// switch). This first part holds the session header, the analysis the user
-// starts, and the tabs; the Report's sections follow in their own PRs.
+// The Report: a session's page. It holds the session header, the analysis
+// the user starts, the tabs, and the Report's sections.
 // It renders what `GET /api/sessions/{id}/record` sends and computes nothing.
 
 const props = defineProps({

@@ -1,4 +1,4 @@
-// Light and dark mode for the v1 design.
+// Light and dark mode.
 //
 // By default the page follows the system (`prefers-color-scheme`). The theme
 // toggle saves an explicit choice, which wins over the system until it is
@@ -14,6 +14,16 @@
 // browser; src/design/useTheme.js wraps it for Vue.
 
 export const THEME_STORAGE_KEY = "stormiq:theme";
+
+/** The browser's localStorage, or null when it's missing or reading it throws. */
+export function safeStorage(win = globalThis.window) {
+  try {
+    return win?.localStorage ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export const THEME_LIGHT = "light";
 export const THEME_DARK = "dark";
 const DARK_QUERY = "(prefers-color-scheme: dark)";

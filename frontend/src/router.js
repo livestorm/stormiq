@@ -1,9 +1,8 @@
 import { createRouter, createWebHistory } from "vue-router";
-import SingleAnalysisListView from "./views/SingleAnalysisListView.vue";
-import { isV1 } from "./design/uiVersion";
+import SessionsView from "./views/SessionsView.vue";
 import { useWorkspace } from "./store/workspace";
 
-// The landing page (session list) ships in the entry bundle; every other
+// The session list ships in the entry bundle; every other
 // view is a separate chunk loaded on first visit, so admin, transcript and
 // analysis code doesn't slow down the first page load.
 const SearchView = () => import("./views/SearchView.vue");
@@ -19,10 +18,6 @@ const BetaNoticeView = () => import("./views/BetaNoticeView.vue");
 const AdminView = () => import("./views/AdminView.vue");
 const DesignGalleryView = () => import("./views/DesignGalleryView.vue");
 const SessionReportView = () => import("./views/SessionReportView.vue");
-// The session list: the v1 index with the switch on, the classic card grid
-// (in the entry bundle) otherwise.
-const SessionsView = () => import("./views/SessionsView.vue");
-const sessionListView = () => (isV1() ? SessionsView() : Promise.resolve(SingleAnalysisListView));
 const HomeView = () => import("./views/HomeView.vue");
 
 // Routing.
@@ -66,35 +61,19 @@ function redirectLegacyTab(tab) {
 
 const routes = [
   // ── Top level ───────────────────────────────────────────────────────────
-  // The site's home. v1: signed out, the shell shows the landing page here;
-  // signed in, HomeView moves on to Sessions. Classic: straight to Sessions.
-  {
-    path: "/",
-    component: HomeView,
-    meta: { v1Native: true },
-    beforeEnter: () => (isV1() ? true : { path: "/single-analysis" }),
-  },
+  // The site's home: signed out, the shell shows the landing page here;
+  // signed in, HomeView moves on to Sessions.
+  { path: "/", component: HomeView, meta: { v1Native: true } },
   { path: "/search", component: SearchView },
-  // `v1Native` only matters in the v1 shell, where this route is the v1 index.
-  { path: "/single-analysis", component: sessionListView, meta: { v1Native: true } },
+  { path: "/single-analysis", component: SessionsView, meta: { v1Native: true } },
   { path: "/cross-analysis", component: CrossAnalysisView },
 
   // ── Session detail (parameterised) ──────────────────────────────────────
   // The :sessionId is the URL contract for sharing. The store
   // synchronises state.workspace to whatever this segment carries.
-  // With the v1 switch on, a session opens on the v1 Report.
-  {
-    path: "/single-analysis/:sessionId",
-    redirect: (to) => ({ path: `/single-analysis/${to.params.sessionId}/${isV1() ? "report" : "session-overview"}` }),
-  },
-  // The v1 Report: v1 only; with the switch off it falls back to the overview.
-  {
-    path: "/single-analysis/:sessionId/report",
-    component: SessionReportView,
-    props: true,
-    meta: { v1Native: true },
-    beforeEnter: (to) => (isV1() ? true : { path: `/single-analysis/${to.params.sessionId}/session-overview` }),
-  },
+  // A session opens on its Report.
+  { path: "/single-analysis/:sessionId", redirect: (to) => ({ path: `/single-analysis/${to.params.sessionId}/report` }) },
+  { path: "/single-analysis/:sessionId/report", component: SessionReportView, props: true, meta: { v1Native: true } },
   { path: "/single-analysis/:sessionId/session-overview", component: SessionOverviewView, props: true },
   { path: "/single-analysis/:sessionId/transcript", component: TranscriptView, props: true },
   { path: "/single-analysis/:sessionId/chat-questions", component: ChatQuestionsView, props: true },
@@ -119,15 +98,9 @@ const routes = [
   { path: "/auth/callback", component: AuthCallbackView },
   { path: "/admin", component: AdminView },
 
-  // ── v1 design ───────────────────────────────────────────────────────────
-  // The component gallery, for reviewing the design foundation in light and
-  // dark. Only reachable with the v1 switch on (?ui=v1); fictional content.
-  {
-    path: "/design",
-    component: DesignGalleryView,
-    meta: { v1Native: true },
-    beforeEnter: () => (isV1() ? true : { path: "/" }),
-  },
+  // The component gallery, for reviewing the design system in light and
+  // dark; fictional content.
+  { path: "/design", component: DesignGalleryView, meta: { v1Native: true } },
 ];
 
 export default createRouter({

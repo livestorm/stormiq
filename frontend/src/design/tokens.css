@@ -3,7 +3,8 @@
  *
  * Everything here is either a `--siq-` custom property (unused by the classic
  * UI) or scoped to `:root[data-ui="v1"]`, so the classic stylesheet
- * (`src/styles.css`) behaves exactly as before when the v1 switch is off.
+ * (`src/styles.css`, the pages not rebuilt yet) is left alone. `index.html`
+ * always sets `data-ui="v1"`.
  *
  * Light is the default. Dark applies when the user chose it
  * (`data-theme="dark"`) or when the system prefers it and the user hasn't
@@ -254,7 +255,7 @@
   --siq-lockup-rule: rgba(255, 255, 255, 0.12);
 }
 
-/* ── v1 page basics (only when the v1 switch is on) ────────────────────── */
+/* ── Page basics ───────────────────────────────────────────────────────── */
 
 :root[data-ui="v1"] {
   color-scheme: light dark;

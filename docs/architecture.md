@@ -50,21 +50,21 @@ Browser ── Vue SPA ──/api──▶ web: FastAPI (app.py) ─────
 
 A Vue 3 single-page app built by Vite into `frontend/dist`, which FastAPI serves in production. In development, `npm run dev` proxies `/api` to uvicorn. Dependencies are only `vue` and `vue-router`; charts are hand-built components.
 
-Two designs live side by side while the redesign ships: the classic app (sidebar, `src/styles.css`) and the v1 design (top bar, light and dark, `src/design/` and `src/components/ui/`), chosen per browser with `?ui=v1` / `?ui=classic` and off by default ([brand.md](brand.md#the-v1-design-switch)).
+One design, for everyone ([brand.md](brand.md#one-design)): the top bar, light and dark (`src/design/` and `src/components/ui/`). The pages not rebuilt yet keep their older dark styling (`src/styles.css`) inside a framed area of the same shell until each is rebuilt.
 
 | Path | What it does |
 |---|---|
-| `index.html` | Entry page; an inline script applies the v1 switch and a saved theme before first paint |
-| `src/main.js` | Resolves the design switch (`initUiVersion`), loads the stylesheets, mounts the app |
-| `src/App.vue` | Shell: the classic sidebar or, with the v1 switch on, the v1 top bar; the 401 handler |
+| `index.html` | Entry page (`<html data-ui="v1">`, which the design tokens' CSS keys on); an inline script applies a saved theme before first paint |
+| `src/main.js` | Loads the stylesheets, mounts the app |
+| `src/App.vue` | Shell: the top bar, the landing page when signed out, the frame for pages not rebuilt yet; the 401 handler |
 | `src/router.js` | Routes; every view but the session list is lazy-loaded |
 | `src/store/workspace.js` | The single reactive store (no Pinia): state, loaders, job polling |
 | `src/api.js` | `fetch` wrappers for `/api/*` |
 | `src/views/` | One file per route |
 | `src/components/` | `DataTable`, markdown cards, `AiJobProgress`, `SessionHero`, `KeyMomentsTimeline`, and chart cards under `charts/` |
 | `src/utils/csv.js` | CSV export for every table |
-| `src/styles.css` | Global styles of the classic design |
-| `src/design/` | The v1 design system: `tokens.css` (every `--siq-*` token for light and dark, Sora), `uiVersion.js` (the switch), `theme.js` and `useTheme.js` (light/dark) |
+| `src/styles.css` | Styles of the pages not rebuilt yet (shown in the dark frame) |
+| `src/design/` | The design system: `tokens.css` (every `--siq-*` token for light and dark, Sora), `theme.js` and `useTheme.js` (light/dark), `landing.js` (when the signed-out landing page shows) |
 | `src/report/` | The v1 Report's data and words: `useSessionReport.js` (`createSessionReport`: loads `GET /record`, starts the session analysis and polls it, reads `GET /record/chat` once when a count first opens its messages, one per view, scoped and aborted like the store), `room.js`, `questions.js` and `method.js` (the wording of "The room", "The questions" and "Method and data quality") and `format.js` (the header's date and length, the analysis panel's wording) and `chartGeometry.js` (the session clock's labels and axis ticks, the ridge's path) |
 | `src/components/ui/` | v1 base components: `TopBar`, `ThemeToggle`, `Card`, `CardHeader`, `IconTile`, `StatCard`, `Collapsible`, `StatusWord`, `Chip`, `UiButton`, `TipBar`, `Icon` (vendored Lucide icons), `StormIqMark`, `ForLivestorm` (the "for Livestorm" lockup) |
 | `src/assets/livestorm/` | The official Livestorm logo, on-light and on-dark, as supplied by Livestorm's brand kit |
@@ -77,10 +77,10 @@ The rules for working in it are in [`frontend/CLAUDE.md`](../frontend/CLAUDE.md)
 
 | Route | View | Needs |
 |---|---|---|
-| `/` | v1: the home page. Signed out, the landing page (with the promo film); signed in, `HomeView` moves on to `/single-analysis`. Classic: redirects to `/single-analysis` | — |
+| `/` | The home page. Signed out, the landing page (with the promo film); signed in, `HomeView` moves on to `/single-analysis` | — |
 | `/search` | Find a session by session id, by event id, or by browsing the workspace's events | a connection |
-| any page, signed out (v1) | The landing page (`LandingView`, rendered by `App.vue` in place of the route when `design/landing.js`'s `showsLanding` says so): what StormIQ does, an example report, how it works, why it can be trusted, and "Connect with Livestorm". The top bar shows no navigation. Public pages (`/beta-info`, `/design`, `/auth/callback`) open as usual | the v1 switch, no connection |
-| `/single-analysis` | Classic: card grid of the org's cached sessions, with search, filters, sort and grid/list modes (`SingleAnalysisListView`). v1: the index table (`SessionsView`, worded by `src/sessions/list.js`): counts, search, event filter, sort, one row per session opening its Report. The router picks one by the switch (`sessionListView`) | a connection |
+| any page, signed out | The landing page (`LandingView`, rendered by `App.vue` in place of the route when `design/landing.js`'s `showsLanding` says so): what StormIQ does, an example report, how it works, why it can be trusted, and "Connect with Livestorm". The top bar shows no navigation. Public pages (`/beta-info`, `/design`, `/auth/callback`) open as usual | no connection |
+| `/single-analysis` | The Sessions page (`SessionsView`, worded by `src/sessions/list.js`): counts, search, event filter, sort, one row per session opening its Report | a connection |
 | `/single-analysis/:sessionId/session-overview` | Hero metrics, people, charts | a fetched session |
 | `/single-analysis/:sessionId/transcript` | Transcript diagnostics (8 tabs) | a transcript |
 | `/single-analysis/:sessionId/chat-questions` | Audience analytics (5 tabs) | a fetched session |
@@ -90,8 +90,8 @@ The rules for working in it are in [`frontend/CLAUDE.md`](../frontend/CLAUDE.md)
 | `/cross-analysis` | Placeholder for cross-session analysis ([roadmap](roadmap.md)) | — |
 | `/admin` | Users, admins, cached sessions, model settings | admin |
 | `/auth/callback`, `/beta-info` | OAuth landing, beta notice | — |
-| `/design` | The v1 component gallery: tokens, type, icons, every base component, with fictional sample content (noindex) | the v1 switch |
-| `/single-analysis/:sessionId/report` | The v1 Report (`SessionReportView`): the ridge (the audience chat per minute, `components/report/SessionRidge.vue`), the "In short" card and the five vitals with their "how we know" panels (`VitalsRow.vue`, worded by `src/report/vitals.js`), the Pulse (chat, questions and speech per minute on one time axis, with a table view: `PulseChart.vue`, `SessionTimeAxis.vue`), "The room" (open: the chat themes, each row opening its messages, `RoomSection.vue`, `ChatMessageList.vue`), "The questions" (how many, in the Q&A and in the chat, and how the Q&A was answered: `QuestionsSection.vue`), "The audience" (a collapsible card with the room map, how concentrated the chat was, and the channel, registration-answer and lead-time tables: `AudienceSection.vue`, `AudienceBlock.vue`, `AudienceTable.vue`, worded by `src/report/audience.js`), "Method and data quality" (what the numbers rest on, and every hidden number with its reason: `MethodSection.vue`, worded by `src/report/method.js`), the session header, the "Analyse session" action and its progress, and the Report · Transcript · Follow-up tabs (the last two open the classic views for now). With the switch on, `/single-analysis/:sessionId` opens it; with it off it redirects to the overview | the v1 switch, a fetched session |
+| `/design` | The v1 component gallery: tokens, type, icons, every base component, with fictional sample content (noindex) | — |
+| `/single-analysis/:sessionId/report` | The Report (`SessionReportView`): the ridge (the audience chat per minute, `components/report/SessionRidge.vue`), the "In short" card and the five vitals with their "how we know" panels (`VitalsRow.vue`, worded by `src/report/vitals.js`), the Pulse (chat, questions and speech per minute on one time axis, with a table view: `PulseChart.vue`, `SessionTimeAxis.vue`), "The room" (open: the chat themes, each row opening its messages, `RoomSection.vue`, `ChatMessageList.vue`), "The questions" (how many, in the Q&A and in the chat, and how the Q&A was answered: `QuestionsSection.vue`), "The audience" (a collapsible card with the room map, how concentrated the chat was, and the channel, registration-answer and lead-time tables: `AudienceSection.vue`, `AudienceBlock.vue`, `AudienceTable.vue`, worded by `src/report/audience.js`), "Method and data quality" (what the numbers rest on, and every hidden number with its reason: `MethodSection.vue`, worded by `src/report/method.js`), the session header, the "Analyse session" action and its progress, and the Report · Transcript · Follow-up tabs (the last two open the classic views for now). `/single-analysis/:sessionId` opens it | the v1 switch, a fetched session |
 
 `/single-analysis/:sessionId/...` is the sharing contract: a teammate in the same Livestorm org can open any such link and land on that tab with the cached workspace loaded. Older paths (`/events`, `/transcript`, …) redirect to their new equivalents.
 

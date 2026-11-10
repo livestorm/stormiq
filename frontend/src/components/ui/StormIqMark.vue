@@ -1,9 +1,9 @@
 <script setup>
 // The StormIQ mark: an "IQ" monogram in a circle, plus the "Storm" + "IQ"
 // wordmark. StormIQ's own identity, never the Livestorm logo (docs/brand.md).
-// The monogram fills the square spots (collapsed sidebar, compact top bar),
-// and the same geometry is public/favicon.svg. Wherever there is room (top
-// bar, classic sidebar, PDFs) the wordmark stands alone (`:mark="false"`),
+// The monogram fills the square spots (the compact top bar, /design), and
+// the same geometry is public/favicon.svg. Wherever there is room (the top
+// bar, PDFs) the wordmark stands alone (`:mark="false"`),
 // followed by the "for Livestorm" lockup (ForLivestorm.vue).
 // The wordmark's own "I" and "Q" (Sora 600) as outlines in the 28-unit box,
 // from `scripts/make_favicon.py`, the same path as public/favicon.svg.

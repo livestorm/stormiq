@@ -11,9 +11,9 @@ Two designs live in the app while the redesign ships screen by screen:
 
 ## The v1 design
 
-### The v1 design switch
+### One design
 
-The v1 design is off by default. `?ui=v1` on any URL turns it on and remembers it in that browser; `?ui=classic` turns it off (`frontend/src/design/uiVersion.js`; the choice is a `localStorage` convenience under `stormiq:ui`, and the switch still works for the page load when storage is blocked). With it on, the app shows the v1 top bar instead of the sidebar; screens not rebuilt yet appear unchanged inside a dark frame. `/design` shows every token and component in the current theme, with fictional sample content; it is reachable only with the switch on and is not indexed.
+StormIQ has one design, this one, for everyone: there is no switch and no classic layout. The app shows the top bar; the pages not rebuilt yet (Add session, the session's older tabs, Admin) appear unchanged inside a dark frame until each is rebuilt. `/design` shows every token and component in the current theme, with fictional sample content; it is not indexed.
 
 ### Typeface: Sora
 
@@ -130,10 +130,10 @@ The wordmark is "Storm" + "IQ" (IQ in `mark-iq`), Sora 600 at 18/24; it opens th
 
 ---
 
-## Livestorm brand reference (classic design)
+## Livestorm brand reference (the older pages)
 
 > Source: https://brand.livestorm.co
-> The classic design (`frontend/src/styles.css`) follows this reference. Do not invent colors, fonts, or styles there; use only what is defined here. The v1 design above takes its values from the same palette.
+> The pages not rebuilt yet (`frontend/src/styles.css`, shown in the dark frame) follow this reference. Do not invent colors, fonts, or styles there; use only what is defined here. The v1 design above takes its values from the same palette.
 
 ---
 
