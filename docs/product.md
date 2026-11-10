@@ -4,7 +4,7 @@ A companion application for Livestorm that turns a finished session into a struc
 
 This document describes what the app does, the data it produces, and the formulas behind each metric and chart.
 
-> The navigation and routes described here (the Events list, `/session-overview`…) predate the current Search and Single Analysis pages ([architecture.md](architecture.md#pages)) and will be rewritten with the redesign. The views, charts and formulas are current. The redesign can be previewed with `?ui=v1` ([brand.md](brand.md#the-v1-design-switch)): a top bar replaces the sidebar, with a light and dark mode; the views themselves are unchanged so far.
+> The navigation and routes described here (the Events list, `/session-overview`…) predate the current Search and Single Analysis pages ([architecture.md](architecture.md#pages)) and will be rewritten with the redesign. The views, charts and formulas are current. Everyone uses the new design ([brand.md](brand.md#one-design)): the home page, Sessions and each session's Report are rebuilt; the other pages keep their older look inside the new shell until they are rebuilt.
 
 ---
 
@@ -64,9 +64,9 @@ Two paths are supported:
 - **Livestorm OAuth** — the user is redirected to Livestorm, authorises the app, and is sent back with a server-side session cookie. The connected user's identity is shown in the sidebar (in the v1 design, on the top bar's account button).
 - **API key fallback** — only for local development: the operator must explicitly turn on local-development mode and configure an `LS_API_KEY`. It is never available in production.
 
-**The home page** is the site's address, `/`. In the v1 design, signed out, it is the landing page below; signed in, it opens Sessions. (The classic design sends `/` to Sessions.) Signing out returns to it.
+**The home page** is the site's address, `/`. Signed out, it is the landing page below; signed in, it opens Sessions. Signing out returns to it.
 
-**Signed out, in the v1 design**, every page but the beta notice, the design gallery and the OAuth return page shows the landing page instead (`views/LandingView.vue`): what StormIQ does, an example report with made-up numbers (labelled as such), a one-minute promo film ("See it in a minute": a made-up session; it shows some of what is still being built and says so; it loads only when played), what you get, how it works in three steps, why it can be trusted (your organization only, numbers you can check, AI only when you ask), and "Connect with Livestorm". The top bar keeps only the "StormIQ for Livestorm" lockup, the theme toggle and "Connect with Livestorm": no Sessions or Add session. The URL doesn't change, so connecting from a shared session link brings you back to that session. Nothing shows until the app knows whether you are signed in, so a signed-in user never sees the landing page flash. The classic design is unchanged.
+**Signed out**, every page but the beta notice, the design gallery and the OAuth return page shows the landing page instead (`views/LandingView.vue`): what StormIQ does, an example report with made-up numbers (labelled as such), a one-minute promo film ("See it in a minute": a made-up session; it shows some of what is still being built and says so; it loads only when played), what you get, how it works in three steps, why it can be trusted (your organization only, numbers you can check, AI only when you ask), and "Connect with Livestorm". The top bar keeps only the "StormIQ for Livestorm" lockup, the theme toggle and "Connect with Livestorm": no Sessions or Add session. The URL doesn't change, so connecting from a shared session link brings you back to that session. Nothing shows until the app knows whether you are signed in, so a signed-in user never sees the landing page flash.
 
 Access is scoped to the user's Livestorm organization: teammates in the same organization share cached sessions and analyses, while sessions from other organizations are not visible at all, not even through a shared link. Without a Livestorm connection, no session data is accessible.
 
@@ -89,7 +89,7 @@ Clicking an event expands it and shows a "Fetch sessions" action. Sessions are l
 
 ### The Sessions page (v1)
 
-**Route:** `/single-analysis`, with the v1 switch on (`views/SessionsView.vue`; the classic card grid otherwise).
+**Route:** `/single-analysis` (`views/SessionsView.vue`).
 
 Every session the organization has fetched, as one index. At the top: "Sessions" and "Add session". Three counts over all of them: sessions, sessions with a transcript, and events. Then a search (by title, event or the teammate who added it), an event filter (when there is more than one event), a sort (session date, newest or oldest first, recently added, title) and how many sessions show. One row per session: the date, the title (the event's title, as on the Report, with the session's own name and its length under it), attendees "of" registrants, the transcript (Ready or Not yet) and who added it. The whole row opens the session's Report. On a phone each row is a short block: the title, then the date, attendees and transcript. Attendees and registrants are Livestorm's counts, the team included; the page says so, as each Report counts the audience alone. Wording and order: `src/sessions/list.js`.
 
@@ -483,7 +483,7 @@ Buckets of 10% of session progress, labelled by their midpoint. Progress runs fr
 
 ### Session clock (v1 Report)
 
-v1 Report (behind `?ui=v1`, [brand.md](brand.md#the-v1-design-switch)). No page shows it yet; the record route sends it as `meta.clock` and the Pulse (`record.pulse`, [api.md](api.md#the-v1-record)). It puts every event of a session on one time base, where the stage mapping above stretches each source to 0–100% on its own. Code: `livestorm_app/record/clock.py` and `record/evidence.py`.
+The Report. No page shows it yet; the record route sends it as `meta.clock` and the Pulse (`record.pulse`, [api.md](api.md#the-v1-record)). It puts every event of a session on one time base, where the stage mapping above stretches each source to 0–100% on its own. Code: `livestorm_app/record/clock.py` and `record/evidence.py`.
 
 | Term | Rule |
 |---|---|
@@ -503,7 +503,7 @@ v1 Report (behind `?ui=v1`, [brand.md](brand.md#the-v1-design-switch)). No page 
 
 ### Roster (v1 Report)
 
-v1 Report (behind `?ui=v1`). No page shows it yet. One row per person in the session. The people come from one of two sources, and the record says which (`record.roster.source`): the session's complete people list, which StormIQ reads from Livestorm page by page after a session is fetched and stores (`paginated`), or, until that list is stored, the people Livestorm returned with the session (`include=people`, `session_include`). Code: `livestorm_app/record/roster.py`, and `parse_person` in `livestorm/payloads.py`.
+The Report. No page shows it yet. One row per person in the session. The people come from one of two sources, and the record says which (`record.roster.source`): the session's complete people list, which StormIQ reads from Livestorm page by page after a session is fetched and stores (`paginated`), or, until that list is stored, the people Livestorm returned with the session (`include=people`, `session_include`). Code: `livestorm_app/record/roster.py`, and `parse_person` in `livestorm/payloads.py`.
 
 | Term | Rule |
 |---|---|
@@ -522,7 +522,7 @@ v1 Report (behind `?ui=v1`). No page shows it yet. One row per person in the ses
 
 ### Authors (v1 Report)
 
-v1 Report (behind `?ui=v1`). No page shows it yet. Who wrote each chat message, question and written answer, as a person of the [roster](#roster-v1-report). Code: `livestorm_app/record/authors.py`.
+The Report. No page shows it yet. Who wrote each chat message, question and written answer, as a person of the [roster](#roster-v1-report). Code: `livestorm_app/record/authors.py`.
 
 | Term | Rule |
 |---|---|
@@ -537,7 +537,7 @@ v1 Report (behind `?ui=v1`). No page shows it yet. Who wrote each chat message, 
 
 ### Transcript health (v1 Report)
 
-v1 Report (behind `?ui=v1`). No page shows it yet; the record route sends it as `record.transcriptHealth` ([api.md](api.md#the-v1-record)). How far a session's transcript can be trusted, from the stored Gladia transcript, before pace or speaker shares are shown. Times are seconds into the recording (`r`): the transcript isn't aligned with the session clock here. Code: `livestorm_app/record/transcript.py` (the parser) and `record/transcript_health.py`. The thresholds are provisional guesses, to tune on real transcripts; changing one bumps the health version (1). Confidence isn't comparable across Gladia models, so the model (`request_params.model`) is kept with the values.
+The Report. No page shows it yet; the record route sends it as `record.transcriptHealth` ([api.md](api.md#the-v1-record)). How far a session's transcript can be trusted, from the stored Gladia transcript, before pace or speaker shares are shown. Times are seconds into the recording (`r`): the transcript isn't aligned with the session clock here. Code: `livestorm_app/record/transcript.py` (the parser) and `record/transcript_health.py`. The thresholds are provisional guesses, to tune on real transcripts; changing one bumps the health version (1). Confidence isn't comparable across Gladia models, so the model (`request_params.model`) is kept with the values.
 
 | Term | Rule |
 |---|---|
@@ -561,7 +561,7 @@ v1 Report (behind `?ui=v1`). No page shows it yet; the record route sends it as 
 
 ### Alignment probe (v1 Report)
 
-v1 Report (behind `?ui=v1`). No page shows it yet; the record route sends it as `meta.clock.alignment` ([api.md](api.md#the-v1-record)). Where the recording sits on the [session clock](#session-clock-v1-report): `t = r + offset`, where `r` is seconds into the recording. An offset of +30 means the recording started 30 seconds after `started_at`. Code: `livestorm_app/record/alignment.py` (`probe_alignment`, `alignment_allows`). Every threshold below is provisional, to tune on 5 to 10 sessions checked by ear against their replay (`scripts/probe_alignment_study.py`); changing one bumps the alignment version (1).
+The Report. No page shows it yet; the record route sends it as `meta.clock.alignment` ([api.md](api.md#the-v1-record)). Where the recording sits on the [session clock](#session-clock-v1-report): `t = r + offset`, where `r` is seconds into the recording. An offset of +30 means the recording started 30 seconds after `started_at`. Code: `livestorm_app/record/alignment.py` (`probe_alignment`, `alignment_allows`). Every threshold below is provisional, to tune on 5 to 10 sessions checked by ear against their replay (`scripts/probe_alignment_study.py`); changing one bumps the alignment version (1).
 
 | Term | Rule |
 |---|---|
@@ -587,7 +587,7 @@ v1 Report (behind `?ui=v1`). No page shows it yet; the record route sends it as 
 
 ### Measures (v1 Report)
 
-v1 Report (behind `?ui=v1`). No page shows them yet; the record route sends them as `record.measures` ([api.md](api.md#the-v1-record)). Every number the Report shows is a measure, computed by the server: the page renders its fields and computes nothing. Code: `livestorm_app/record/measures.py` (`REGISTRY`, `compute_measures`).
+The Report. No page shows them yet; the record route sends them as `record.measures` ([api.md](api.md#the-v1-record)). Every number the Report shows is a measure, computed by the server: the page renders its fields and computes nothing. Code: `livestorm_app/record/measures.py` (`REGISTRY`, `compute_measures`).
 
 | Term | Rule |
 |---|---|

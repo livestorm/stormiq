@@ -1,6 +1,5 @@
 import { readonly, ref } from "vue";
-import { createThemeController } from "./theme";
-import { safeStorage } from "./uiVersion";
+import { createThemeController, safeStorage } from "./theme";
 
 // One theme controller per page, shared by every component that asks for it.
 let controller = null;

@@ -6,7 +6,7 @@ import StatCard from "../components/ui/StatCard.vue";
 import UiButton from "../components/ui/UiButton.vue";
 import SessionRidge from "../components/report/SessionRidge.vue";
 
-// What a visitor who isn't signed in sees in the v1 design, on any page
+// What a visitor who isn't signed in sees, on any page
 // but the public ones (`App.vue`): what StormIQ does, an example of its
 // report, how it works, and one way in: "Connect with Livestorm". Nothing
 // here reads an account or a session; the example is made up and says so.

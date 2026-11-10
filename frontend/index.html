@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-ui="v1">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -8,20 +8,12 @@
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <title>StormIQ</title>
     <script>
-      // Before first paint: the v1 design switch and a saved theme choice, so
-      // the page doesn't flash the wrong layout or colours. Mirrors
-      // src/design/uiVersion.js and src/design/theme.js (same keys).
+      // Before first paint: a saved theme choice, so the page doesn't flash
+      // the wrong colours. Mirrors src/design/theme.js (same key).
       (function () {
         var root = document.documentElement;
         var storage = null;
-        var ui = null;
         try { storage = window.localStorage; } catch (e) { storage = null; }
-        try { ui = new URLSearchParams(window.location.search).get("ui"); } catch (e) { ui = null; }
-        ui = String(ui || "").trim().toLowerCase();
-        if (ui !== "v1" && ui !== "classic") {
-          try { ui = storage && storage.getItem("stormiq:ui"); } catch (e) { ui = null; }
-        }
-        if (ui === "v1") root.setAttribute("data-ui", "v1");
         try {
           var theme = storage && storage.getItem("stormiq:theme");
           if (theme === "light" || theme === "dark") root.setAttribute("data-theme", theme);

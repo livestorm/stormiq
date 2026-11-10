@@ -7,7 +7,7 @@ What's next, in order. What has shipped is in [changelog.md](changelog.md).
 A full visual and UX overhaul that uses Livestorm's design language (colours, Object Sans, icons, radii, shadows, motion, writing voice) while the app stays **StormIQ**: its own name and mark, and the "not an official Livestorm product" notice ([brand.md](brand.md)).
 
 1. ~~Prototype two directions for the key screens; choose one.~~ Done: the Winter direction, light and dark, in Sora.
-2. ~~Design tokens and the first base components~~ (cards, stat cards, collapsibles, status words, chips, buttons, tip bar) and ~~the app shell with the StormIQ mark~~: shipped behind the `?ui=v1` switch ([changelog](changelog.md)). Still to come: accessible tabs, paginated tables, empty states, loading skeletons, toasts.
+2. ~~Design tokens and the first base components~~ (cards, stat cards, collapsibles, status words, chips, buttons, tip bar) and ~~the app shell with the StormIQ mark~~: shipped ([changelog](changelog.md)); since November 2026 they are the only design. Still to come: accessible tabs, paginated tables, empty states, loading skeletons, toasts.
 3. Each screen, rebuilt on the v1 components (the library, then the session Report, Transcript and Follow-up), splitting the oversized views and `styles.css` along the way.
 4. Turn v1 on for everyone and remove the switch and the classic styles.
 5. Rewrite [product.md](product.md) for the new navigation (it still describes the older Events-based flow).

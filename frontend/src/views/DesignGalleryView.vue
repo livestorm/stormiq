@@ -15,7 +15,7 @@ import UiButton from "../components/ui/UiButton.vue";
 import { useTheme } from "../design/useTheme";
 
 // The v1 design foundation on one page: tokens, type, icons and every base
-// component, in the current theme. Reached at /design with the v1 switch on.
+// component, in the current theme. Reached at /design.
 // All sample content below is fictional.
 
 const { theme, choice, setChoice } = useTheme();

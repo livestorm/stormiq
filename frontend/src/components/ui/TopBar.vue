@@ -23,8 +23,6 @@ const props = defineProps({
   canConnect: { type: Boolean, default: false },
   // Local development with an API key: no account menu.
   localMode: { type: Boolean, default: false },
-  // Where "Use the classic design" points (the current path with ?ui=classic).
-  classicHref: { type: String, default: "/?ui=classic" },
 });
 
 const emit = defineEmits(["connect", "logout"]);
@@ -150,10 +148,6 @@ function onLogout() {
           </button>
           <div v-show="menuOpen" id="siq-account-menu" class="siq-account-menu">
             <p class="siq-account-menu-note">Connected with Livestorm</p>
-            <a :href="classicHref" class="siq-account-item siq-fx">
-              <Icon name="refresh-cw" :size="16" />
-              Use the classic design
-            </a>
             <button type="button" class="siq-account-item siq-fx" @click="onLogout">
               <Icon name="log-out" :size="16" />
               Disconnect
