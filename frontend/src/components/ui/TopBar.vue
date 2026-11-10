@@ -44,7 +44,7 @@ const initials = computed(() => {
 // The wordmark leads home: Sessions when signed in, the home page otherwise.
 const homeLink = computed(() =>
   props.account || props.localMode
-    ? { to: "/single-analysis", label: "StormIQ, go to Sessions" }
+    ? { to: "/sessions", label: "StormIQ, go to Sessions" }
     : { to: "/", label: "StormIQ, go to the home page" },
 );
 

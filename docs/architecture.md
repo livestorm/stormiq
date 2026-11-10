@@ -77,23 +77,23 @@ The rules for working in it are in [`frontend/CLAUDE.md`](../frontend/CLAUDE.md)
 
 | Route | View | Needs |
 |---|---|---|
-| `/` | The home page. Signed out, the landing page (with the promo film); signed in, `HomeView` moves on to `/single-analysis` | — |
+| `/` | The home page. Signed out, the landing page (with the promo film); signed in, `HomeView` moves on to `/sessions` | — |
 | `/search` | Find a session by session id, by event id, or by browsing the workspace's events | a connection |
 | any page, signed out | The landing page (`LandingView`, rendered by `App.vue` in place of the route when `design/landing.js`'s `showsLanding` says so): what StormIQ does, an example report, how it works, why it can be trusted, and "Connect with Livestorm". The top bar shows no navigation. Public pages (`/beta-info`, `/design`, `/auth/callback`) open as usual | no connection |
-| `/single-analysis` | The Sessions page (`SessionsView`, worded by `src/sessions/list.js`): counts, search, event filter, sort, one row per session opening its Report | a connection |
-| `/single-analysis/:sessionId/session-overview` | Hero metrics, people, charts | a fetched session |
-| `/single-analysis/:sessionId/transcript` | Transcript diagnostics (8 tabs) | a transcript |
-| `/single-analysis/:sessionId/chat-questions` | Audience analytics (5 tabs) | a fetched session |
-| `/single-analysis/:sessionId/analysis` | Overall and deep analysis | a transcript |
-| `/single-analysis/:sessionId/smart-recap` | Smart Recap in three tones | a transcript |
-| `/single-analysis/:sessionId/content-repurposing` | Summary, blog post, email, social posts | a transcript |
+| `/sessions` | The Sessions page (`SessionsView`, worded by `src/sessions/list.js`): counts, search, event filter, sort, one row per session opening its Report | a connection |
+| `/sessions/:sessionId/session-overview` | Hero metrics, people, charts | a fetched session |
+| `/sessions/:sessionId/transcript` | Transcript diagnostics (8 tabs) | a transcript |
+| `/sessions/:sessionId/chat-questions` | Audience analytics (5 tabs) | a fetched session |
+| `/sessions/:sessionId/analysis` | Overall and deep analysis | a transcript |
+| `/sessions/:sessionId/smart-recap` | Smart Recap in three tones | a transcript |
+| `/sessions/:sessionId/content-repurposing` | Summary, blog post, email, social posts | a transcript |
 | `/cross-analysis` | Placeholder for cross-session analysis ([roadmap](roadmap.md)) | — |
 | `/admin` | Users, admins, cached sessions, model settings | admin |
 | `/auth/callback`, `/beta-info` | OAuth return page (`App.vue` moves on at once to `next` or Sessions, `src/auth/callback.js`), beta notice | — |
 | `/design` | The v1 component gallery: tokens, type, icons, every base component, with fictional sample content (noindex) | — |
-| `/single-analysis/:sessionId/report` | The Report (`SessionReportView`): the ridge (the audience chat per minute, `components/report/SessionRidge.vue`), the "In short" card and the five vitals with their "how we know" panels (`VitalsRow.vue`, worded by `src/report/vitals.js`), the Pulse (chat, questions and speech per minute on one time axis, with a table view: `PulseChart.vue`, `SessionTimeAxis.vue`), "The room" (open: the chat themes, each row opening its messages, `RoomSection.vue`, `ChatMessageList.vue`), "The questions" (how many, in the Q&A and in the chat, and how the Q&A was answered: `QuestionsSection.vue`), "The audience" (a collapsible card with the room map, how concentrated the chat was, and the channel, registration-answer and lead-time tables: `AudienceSection.vue`, `AudienceBlock.vue`, `AudienceTable.vue`, worded by `src/report/audience.js`), "Method and data quality" (what the numbers rest on, and every hidden number with its reason: `MethodSection.vue`, worded by `src/report/method.js`), the session header, the "Analyse session" action and its progress, and the Report · Transcript · Follow-up tabs (the last two open the classic views for now). `/single-analysis/:sessionId` opens it | the v1 switch, a fetched session |
+| `/sessions/:sessionId/report` | The Report (`SessionReportView`): the ridge (the audience chat per minute, `components/report/SessionRidge.vue`), the "In short" card and the five vitals with their "how we know" panels (`VitalsRow.vue`, worded by `src/report/vitals.js`), the Pulse (chat, questions and speech per minute on one time axis, with a table view: `PulseChart.vue`, `SessionTimeAxis.vue`), "The room" (open: the chat themes, each row opening its messages, `RoomSection.vue`, `ChatMessageList.vue`), "The questions" (how many, in the Q&A and in the chat, and how the Q&A was answered: `QuestionsSection.vue`), "The audience" (a collapsible card with the room map, how concentrated the chat was, and the channel, registration-answer and lead-time tables: `AudienceSection.vue`, `AudienceBlock.vue`, `AudienceTable.vue`, worded by `src/report/audience.js`), "Method and data quality" (what the numbers rest on, and every hidden number with its reason: `MethodSection.vue`, worded by `src/report/method.js`), the session header, the "Analyse session" action and its progress, and the Report · Transcript · Follow-up tabs (the last two open the classic views for now). `/sessions/:sessionId` opens it | a fetched session |
 
-`/single-analysis/:sessionId/...` is the sharing contract: a teammate in the same Livestorm org can open any such link and land on that tab with the cached workspace loaded. Older paths (`/events`, `/transcript`, …) redirect to their new equivalents.
+`/sessions/:sessionId/...` is the sharing contract: a teammate in the same Livestorm org can open any such link and land on that tab with the cached workspace loaded. Links from before the rename (`/single-analysis/...`, until November 2026) redirect to the same path under `/sessions`, query and hash included (`src/sessions/paths.js`). Older paths (`/events`, `/transcript`, …) redirect to their new equivalents.
 
 ## The data pipeline
 

@@ -85,7 +85,7 @@ const sources = computed(() => {
 const summary = computed(() => analysisSummary(record.value?.chatLabels, state.analysis));
 const short = computed(() => inShort(record.value?.measures || {}));
 
-const base = computed(() => `/single-analysis/${encodeURIComponent(props.sessionId)}`);
+const base = computed(() => `/sessions/${encodeURIComponent(props.sessionId)}`);
 const tabs = computed(() => [
   { key: "report", label: "Report", to: `${base.value}/report`, current: true },
   { key: "transcript", label: "Transcript", to: `${base.value}/transcript`, current: false },
@@ -96,7 +96,7 @@ const tabs = computed(() => [
 <template>
   <div ref="page" class="r-page">
     <nav class="r-crumbs" aria-label="Breadcrumb">
-      <RouterLink class="r-crumb siq-fx" to="/single-analysis">Sessions</RouterLink>
+      <RouterLink class="r-crumb siq-fx" to="/sessions">Sessions</RouterLink>
       <Icon name="chevron-right" :size="14" />
       <span aria-current="page">{{ body ? title : "Session" }}</span>
     </nav>
@@ -108,7 +108,7 @@ const tabs = computed(() => [
       <p class="r-text">{{ state.error }}</p>
       <div class="r-row">
         <UiButton variant="secondary" icon="refresh-cw" @click="report.open(sessionId)">Try again</UiButton>
-        <UiButton variant="ghost" to="/single-analysis">Back to sessions</UiButton>
+        <UiButton variant="ghost" to="/sessions">Back to sessions</UiButton>
       </div>
     </Card>
 

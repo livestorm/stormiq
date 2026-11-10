@@ -32,7 +32,7 @@ const isAuthed = computed(
 );
 
 // Per-session tabs, shown above the pages not rebuilt yet
-// (/single-analysis/:sessionId/*); they start with the Report.
+// (/sessions/:sessionId/*); they start with the Report.
 const v1SessionTabs = computed(() => [{ suffix: "report", label: "Report", key: "report" }, ...sessionTabs]);
 const sessionTabs = [
   { suffix: "session-overview", label: "Overview", key: "overview" },
@@ -49,8 +49,8 @@ const routeSessionId = computed(() => {
 });
 
 const isOnSessionDetail = computed(() => Boolean(routeSessionId.value));
-const isOnSingleAnalysis = computed(
-  () => route.path === "/single-analysis" || route.path.startsWith("/single-analysis/"),
+const isOnSessions = computed(
+  () => route.path === "/sessions" || route.path.startsWith("/sessions/"),
 );
 // Hero only renders on the overview tab — keeps the Transcript /
 // Analysis / Recap tabs focused on their own content without a tall
@@ -81,7 +81,7 @@ function tabMeta(tab) {
 
 function tabHref(tab) {
   const id = routeSessionId.value;
-  return id ? `/single-analysis/${id}/${tab.suffix}` : "/single-analysis";
+  return id ? `/sessions/${id}/${tab.suffix}` : "/sessions";
 }
 
 function tabIsActive(tab) {
@@ -108,11 +108,11 @@ const v1NavItems = computed(() => {
   if (!isAuthed.value) return [];
   const items = [
     {
-      to: "/single-analysis",
+      to: "/sessions",
       label: "Sessions",
-      active: isOnSingleAnalysis.value,
+      active: isOnSessions.value,
       // "page" on the list itself; "true" (the current section) on a session's pages.
-      current: route.path === "/single-analysis" ? "page" : isOnSingleAnalysis.value ? "true" : undefined,
+      current: route.path === "/sessions" ? "page" : isOnSessions.value ? "true" : undefined,
       disabled: !isAuthed.value,
     },
     { to: "/search", label: "Add session", icon: "plus", active: route.path === "/search", disabled: !isAuthed.value },
@@ -206,7 +206,7 @@ watch([routeSessionId, isV1NativeRoute], async ([next, v1Native]) => {
 });
 
 function handleConnectClick() {
-  const returnTo = route.path || "/single-analysis";
+  const returnTo = route.path || "/sessions";
   window.location.href = `/api/auth/livestorm/start?returnTo=${encodeURIComponent(returnTo)}`;
 }
 
