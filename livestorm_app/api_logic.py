@@ -572,6 +572,24 @@ def get_session_record(session_id: str, *, organization_id: OrgScope) -> Dict[st
     return {"sessionId": session_id, "updatedAt": stamp.get("updated_at"), "meta": block["meta"], "record": record}
 
 
+def get_session_chat_messages(session_id: str, *, organization_id: OrgScope) -> Dict[str, Any]:
+    """The chat's text by evidence id, for the v1 Report: `{sessionId,
+    updatedAt, messages}` (`record.messages.chat_messages`). The record
+    lists `C` ids and never text; the page reads this when someone opens a
+    count. One scoped read of the session and chat payloads; a row that is
+    missing or outside the caller's scope raises `SessionNotFoundError`.
+    Nothing is cached: it is read on demand, once per open page."""
+    row = fetch_session_fields(
+        session_id, ["session_payload", "chat_payload", "updated_at"], organization_id=organization_id
+    )
+    if not isinstance(row, dict):
+        raise SessionNotFoundError()
+    from livestorm_app.record.messages import chat_messages
+
+    body = _sanitize_json_value(chat_messages(row.get("session_payload"), row.get("chat_payload")))
+    return {"sessionId": session_id, "updatedAt": row.get("updated_at"), **body}
+
+
 # ── Workspace sessions list ────────────────────────────────────────────────
 #
 # Powers the Single Analysis card grid. Returns every cached session

@@ -15,6 +15,7 @@ from livestorm_app.api_logic import (
     fetch_session_base_data,
     fetch_session_transcript_data,
     get_cached_workspace,
+    get_session_chat_messages,
     get_session_record,
     get_transcript_download,
     get_transcript_job_status_data,
@@ -103,6 +104,23 @@ def read_session_record(session_id: SessionId, caller: Caller = Depends(get_call
         raise HTTPException(
             status_code=500,
             detail={"resource": "Session record", "message": "The session record could not be built."},
+        ) from exc
+
+
+@router.get("/api/sessions/{session_id}/record/chat")
+def read_session_chat_messages(session_id: SessionId, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
+    """The chat's text by evidence id (`C0001`), for the v1 Report's counts
+    that open their messages (`api_logic.get_session_chat_messages`). No
+    author. The classic app doesn't call it."""
+    try:
+        return get_session_chat_messages(session_id, organization_id=caller.read_scope)
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail={"resource": "Session chat", "message": str(exc)}) from exc
+    except Exception as exc:
+        logger.exception("Session chat failed for session_id=%s", session_id)
+        raise HTTPException(
+            status_code=500,
+            detail={"resource": "Session chat", "message": "The session's chat could not be read."},
         ) from exc
 
 

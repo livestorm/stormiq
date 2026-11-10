@@ -148,3 +148,81 @@ def test_the_record_route_reads_the_stamp_on_every_request_and_the_labels_once_p
 def test_the_cache_key_carries_the_labels_stamp():
     stamp = {"label_version": 1, "chat_hash": "h", "created_at": LABELLED_AT}
     assert api_logic._record_input_versions(None, stamp) == (None, (1, "h", str(LABELLED_AT)), None)
+
+
+# ── The chat's text by id (`GET /record/chat`) ──────────────────────────────
+
+
+def _serve_labelled(row):
+    labels = stored_labels()
+    stamp = {key: labels[key] for key in ("label_version", "chat_hash", "created_at")}
+    return (
+        mock.patch.object(api_logic, "fetch_chat_labels_stamp", lambda session_id, organization_id: stamp),
+        mock.patch.object(api_logic, "fetch_chat_labels", lambda session_id, organization_id: labels),
+    )
+
+
+def test_the_chat_route_gives_every_message_by_the_records_ids():
+    row = synthetic.cached_row()
+    events = load_record_inputs(row).events
+    chat = events[events["kind"] == "chat"]
+    with synthetic.serving(row) as client:
+        response = client.get(f"/api/sessions/{row['session_id']}/record/chat")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert list(body) == ["sessionId", "updatedAt", "messages"]
+    messages = body["messages"]
+    assert [m["id"] for m in messages] == list(chat["eid"])
+    assert [m["text"] for m in messages] == list(chat["text"])
+    assert sum(m["team"] for m in messages) == TEAM_MESSAGES
+    assert [m["t"] for m in messages] == [int(t) if float(t).is_integer() else t for t in chat["t"]]
+    assert all(set(m) == {"id", "t", "text", "team"} for m in messages), "no author, name or ref"
+
+
+def test_every_chat_theme_row_opens_its_messages():
+    row = synthetic.cached_row()
+    stamp_patch, labels_patch = _serve_labelled(row)
+    with stamp_patch, labels_patch, synthetic.serving(row, fresh_record_cache=True) as client:
+        themes = client.get(f"/api/sessions/{row['session_id']}/record").json()["record"]["measures"]["m.chat_themes"]
+        texts = {m["id"]: m for m in client.get(f"/api/sessions/{row['session_id']}/record/chat").json()["messages"]}
+    for theme in themes["rows"]:
+        assert len(theme["ids"]) == theme["messages"]
+        for message_id in theme["ids"]:
+            assert message_id in texts and not texts[message_id]["team"]
+            assert CLASSES[texts[message_id]["text"]][0] == theme["key"]
+
+
+def test_the_chat_route_is_scoped_and_reads_no_label_or_roster():
+    row = synthetic.cached_row()
+    untouched = mock.Mock(side_effect=AssertionError("not read"))
+    with mock.patch.object(api_logic, "fetch_chat_labels", untouched), mock.patch.object(
+        api_logic, "fetch_session_roster", untouched
+    ), synthetic.serving(row) as client:
+        assert client.get(f"/api/sessions/{row['session_id']}/record/chat").status_code == 200
+        missing = client.get("/api/sessions/no-such-session/record/chat")
+        assert missing.status_code == 404 and missing.json()["detail"]["resource"] == "Session chat"
+        client.cookies.clear()
+        assert client.get(f"/api/sessions/{row['session_id']}/record/chat").status_code == 401
+
+
+def test_a_session_without_a_chat_or_a_clock_answers_with_what_it_has():
+    from livestorm_app.record.messages import chat_messages
+
+    assert chat_messages(None, None) == {"messages": []}
+    row = synthetic.cached_row()
+    without_clock = chat_messages({}, row["chat_payload"])["messages"]
+    assert len(without_clock) == len(synthetic.CHAT) and all(m["t"] is None for m in without_clock)
+
+
+def test_a_bug_in_the_chat_route_returns_500_without_its_detail(monkeypatch):
+    from livestorm_app.record import messages
+
+    def broken(session_payload, chat_payload):
+        raise RuntimeError("synthetic failure with internal detail")
+
+    monkeypatch.setattr(messages, "chat_messages", broken)
+    row = synthetic.cached_row()
+    with synthetic.serving(row) as client:
+        response = client.get(f"/api/sessions/{row['session_id']}/record/chat")
+    assert response.status_code == 500
+    assert "internal detail" not in response.text

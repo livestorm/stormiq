@@ -23,6 +23,7 @@ describe("formatting", () => {
 
   it("maps a measure's state to a status word, and a hidden one to a reason", () => {
     expect(statusFor({ state: "ok" })).toBe("measured");
+    expect(statusFor({ state: "ok", coverage: { labels: "model" } })).toBe("estimated");
     expect(statusFor({ state: "partial" })).toBe("estimated");
     expect(statusFor({ state: "approximation" })).toBe("estimated");
     expect(statusFor({ state: "insufficient" })).toBe("");

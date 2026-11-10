@@ -32,10 +32,12 @@ export function plural(count, one, many) {
 }
 
 /** The status word for a shown value: "measured" when ok, "estimated" when
- * the method is approximate or the inputs incomplete; "" when hidden. */
+ * the method is approximate, the inputs incomplete, or the value counts the
+ * chat labels (a model's reading, `coverage.labels: "model"`); "" when
+ * hidden. */
 export function statusFor(measure) {
   const state = measure?.state;
-  if (state === "ok") return "measured";
+  if (state === "ok") return measure.coverage?.labels === "model" ? "estimated" : "measured";
   if (state === "partial" || state === "approximation") return "estimated";
   return "";
 }

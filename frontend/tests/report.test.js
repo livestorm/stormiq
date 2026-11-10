@@ -185,3 +185,64 @@ describe("format", () => {
     });
   });
 });
+
+describe("loadChat", () => {
+  const chat = { sessionId: "sess-1", updatedAt: record.updatedAt, messages: [{ id: "C0001", t: 12, text: "Hello", team: false }] };
+
+  it("reads the chat once, by id, with the session's signal", async () => {
+    const api = fakeApi({ getSessionChat: vi.fn(async () => chat) });
+    const report = createSessionReport({ api });
+    await report.open("sess-1");
+    expect(report.state.chat.status).toBe("idle");
+    await report.loadChat();
+    expect(api.getSessionChat).toHaveBeenCalledWith("sess-1", expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(report.state.chat.status).toBe("ready");
+    expect(report.state.chat.byId.C0001.text).toBe("Hello");
+    await report.loadChat();
+    expect(api.getSessionChat).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a failure retryable", async () => {
+    const answers = [Promise.reject(httpError(500, "The session's chat could not be read.")), Promise.resolve(chat)];
+    const api = fakeApi({ getSessionChat: vi.fn(() => answers.shift()) });
+    const report = createSessionReport({ api });
+    await report.open("sess-1");
+    await report.loadChat();
+    expect(report.state.chat).toMatchObject({ status: "error", error: "The session's chat could not be read." });
+    await report.loadChat();
+    expect(report.state.chat.status).toBe("ready");
+  });
+
+  it("drops a late chat after another session opened", async () => {
+    let release;
+    const api = fakeApi({ getSessionChat: vi.fn(() => new Promise((resolve) => (release = resolve))) });
+    const report = createSessionReport({ api });
+    await report.open("sess-1");
+    const pending = report.loadChat();
+    await report.open("sess-2");
+    release(chat);
+    await pending;
+    expect(report.state.chat.status).toBe("idle");
+    expect(report.state.chat.byId).toEqual({});
+  });
+
+  it("drops the chat when a reloaded record has a new updatedAt", async () => {
+    const records = [record, { ...record, updatedAt: "2030-01-01T00:00:00+00:00" }];
+    const statuses = ["running", "completed"];
+    const api = fakeApi({
+      getSessionRecord: vi.fn(async () => records.shift() ?? record),
+      getSessionAnalysisJob: vi.fn(async () => ({ jobStatus: statuses.shift() ?? "not_found" })),
+      getSessionChat: vi.fn(async () => chat),
+    });
+    vi.useFakeTimers();
+    const report = createSessionReport({ api });
+    await report.open("sess-1");
+    await report.loadChat();
+    expect(report.state.chat.status).toBe("ready");
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    expect(api.getSessionRecord).toHaveBeenCalledTimes(2);
+    expect(report.state.chat.status).toBe("idle");
+    report.close();
+    vi.useRealTimers();
+  });
+});

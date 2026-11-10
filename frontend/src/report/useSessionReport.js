@@ -6,6 +6,10 @@
 //                     run is in flight (a teammate may have started one)
 //   startAnalysis()   `POST /session-analysis`, then polls until it finishes,
 //                     and reloads the record so the labels show at once
+//   loadChat()        `GET /record/chat` once, when someone first opens a count
+//                     that lists message ids: `state.chat.byId` maps a `C` id to
+//                     `{id, t, text, team}`. A failure can be retried; a record
+//                     with a new `updatedAt` (a re-fetch) drops the chat read
 //   close()           cancels everything (the view calls it on unmount)
 //
 // Scope rules, as in the workspace store (frontend/CLAUDE.md): every request
@@ -33,6 +37,10 @@ function isAbort(error) {
   return error?.name === "AbortError";
 }
 
+function emptyChat() {
+  return { status: "idle", error: "", updatedAt: null, byId: {} }; // idle | loading | ready | error
+}
+
 export function createSessionReport({ api = defaultApi } = {}) {
   const state = reactive({
     sessionId: "",
@@ -40,6 +48,7 @@ export function createSessionReport({ api = defaultApi } = {}) {
     error: "",
     record: null, // the route's whole response: {sessionId, updatedAt, meta, record}
     analysis: { status: "idle", error: "" }, // idle | starting | pending | running | completed | error
+    chat: emptyChat(), // the chat's text by id, read on demand
   });
   let scope = null;
 
@@ -65,6 +74,10 @@ export function createSessionReport({ api = defaultApi } = {}) {
     try {
       const body = await api.getSessionRecord(own.sessionId, { signal: own.controller.signal });
       if (!isCurrent(own)) return;
+      if (state.chat.status !== "idle" && state.chat.updatedAt !== (body?.updatedAt ?? null)) {
+        own.chatToken = null; // a chat read in flight belongs to the old payload
+        state.chat = emptyChat();
+      }
       state.record = body;
       state.error = "";
     } catch (error) {
@@ -136,12 +149,13 @@ export function createSessionReport({ api = defaultApi } = {}) {
   async function open(sessionId) {
     const id = String(sessionId ?? "").trim();
     close();
-    const own = { sessionId: id, controller: new AbortController(), timer: null, failures: 0 };
+    const own = { sessionId: id, controller: new AbortController(), timer: null, failures: 0, chatToken: null };
     scope = own;
     state.sessionId = id;
     state.record = null;
     state.error = "";
     state.analysis = { status: "idle", error: "" };
+    state.chat = emptyChat();
     if (!id) return;
     await loadRecord(own);
     if (isCurrent(own) && state.record) await checkRunInFlight(own);
@@ -163,5 +177,24 @@ export function createSessionReport({ api = defaultApi } = {}) {
     }
   }
 
-  return { state, open, close, startAnalysis };
+  async function loadChat() {
+    const own = scope;
+    if (!own || !state.record || state.chat.status === "loading" || state.chat.status === "ready") return;
+    const token = {};
+    own.chatToken = token;
+    const updatedAt = state.record.updatedAt ?? null;
+    state.chat = { ...emptyChat(), status: "loading", updatedAt };
+    try {
+      const body = await api.getSessionChat(own.sessionId, { signal: own.controller.signal });
+      if (!isCurrent(own) || own.chatToken !== token) return;
+      const byId = {};
+      for (const message of body?.messages || []) byId[message.id] = message;
+      state.chat = { status: "ready", error: "", updatedAt, byId };
+    } catch (error) {
+      if (!isCurrent(own) || own.chatToken !== token || isAbort(error)) return;
+      state.chat = { ...emptyChat(), status: "error", error: error?.message || "The chat could not be loaded.", updatedAt };
+    }
+  }
+
+  return { state, open, close, startAnalysis, loadChat };
 }
