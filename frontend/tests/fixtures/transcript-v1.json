@@ -1,0 +1,1799 @@
+{
+  "sessionId": "synthetic-webinar",
+  "updatedAt": "2026-10-02T08:30:00Z",
+  "version": 1,
+  "clock": {
+    "interleave": true,
+    "offsetS": 18.9
+  },
+  "speakers": [
+    {
+      "key": "0",
+      "name": "Nora Vale",
+      "named": true
+    },
+    {
+      "key": "1",
+      "name": "Rhea Stone",
+      "named": true
+    },
+    {
+      "key": "2",
+      "name": "Speaker 3",
+      "named": false
+    }
+  ],
+  "speech": [
+    {
+      "id": "U0001",
+      "r": 3,
+      "rEnd": 6.05,
+      "t": 21.9,
+      "speaker": "0",
+      "text": "welcome everyone thanks for joining us today",
+      "unclear": []
+    },
+    {
+      "id": "U0002",
+      "r": 12,
+      "rEnd": 16.4,
+      "t": 30.9,
+      "speaker": "0",
+      "text": "today we look at the new dashboard and the export",
+      "unclear": []
+    },
+    {
+      "id": "U0003",
+      "r": 20,
+      "rEnd": 23.95,
+      "t": 38.9,
+      "speaker": "0",
+      "text": "i just put the slides link in the chat",
+      "unclear": []
+    },
+    {
+      "id": "U0004",
+      "r": 30,
+      "rEnd": 34.4,
+      "t": 48.9,
+      "speaker": "0",
+      "text": "tell us in the chat where you are joining from",
+      "unclear": []
+    },
+    {
+      "id": "U0005",
+      "r": 44,
+      "rEnd": 51.55,
+      "t": 62.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0006",
+      "r": 60,
+      "rEnd": 63.95,
+      "t": 78.9,
+      "speaker": "1",
+      "text": "happy to be here let me share my screen",
+      "unclear": []
+    },
+    {
+      "id": "U0007",
+      "r": 74,
+      "rEnd": 81.55,
+      "t": 92.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0008",
+      "r": 84,
+      "rEnd": 91.55,
+      "t": 102.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0009",
+      "r": 94,
+      "rEnd": 101.55,
+      "t": 112.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0010",
+      "r": 104,
+      "rEnd": 111.55,
+      "t": 122.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0011",
+      "r": 114,
+      "rEnd": 121.55,
+      "t": 132.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0012",
+      "r": 124,
+      "rEnd": 131.55,
+      "t": 142.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0013",
+      "r": 134,
+      "rEnd": 141.55,
+      "t": 152.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0014",
+      "r": 144,
+      "rEnd": 151.55,
+      "t": 162.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0015",
+      "r": 154,
+      "rEnd": 161.55,
+      "t": 172.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0016",
+      "r": 164,
+      "rEnd": 171.55,
+      "t": 182.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0017",
+      "r": 174,
+      "rEnd": 181.55,
+      "t": 192.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0018",
+      "r": 184,
+      "rEnd": 191.55,
+      "t": 202.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0019",
+      "r": 194,
+      "rEnd": 201.55,
+      "t": 212.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0020",
+      "r": 204,
+      "rEnd": 211.55,
+      "t": 222.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0021",
+      "r": 214,
+      "rEnd": 221.55,
+      "t": 232.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0022",
+      "r": 224,
+      "rEnd": 231.55,
+      "t": 242.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0023",
+      "r": 234,
+      "rEnd": 241.55,
+      "t": 252.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0024",
+      "r": 244,
+      "rEnd": 251.55,
+      "t": 262.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0025",
+      "r": 254,
+      "rEnd": 261.55,
+      "t": 272.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0026",
+      "r": 264,
+      "rEnd": 271.55,
+      "t": 282.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0027",
+      "r": 274,
+      "rEnd": 281.55,
+      "t": 292.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0028",
+      "r": 288,
+      "rEnd": 293.75,
+      "t": 306.9,
+      "speaker": "1",
+      "text": "great question how does pricing work for larger teams with several hundred seats",
+      "unclear": []
+    },
+    {
+      "id": "U0029",
+      "r": 300,
+      "rEnd": 303.5,
+      "t": 318.9,
+      "speaker": "1",
+      "text": "pricing works per team and scales with seats",
+      "unclear": []
+    },
+    {
+      "id": "U0030",
+      "r": 314,
+      "rEnd": 321.55,
+      "t": 332.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0031",
+      "r": 324,
+      "rEnd": 331.55,
+      "t": 342.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0032",
+      "r": 334,
+      "rEnd": 341.55,
+      "t": 352.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0033",
+      "r": 344,
+      "rEnd": 351.55,
+      "t": 362.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0034",
+      "r": 354,
+      "rEnd": 361.55,
+      "t": 372.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0035",
+      "r": 364,
+      "rEnd": 371.55,
+      "t": 382.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0036",
+      "r": 374,
+      "rEnd": 381.55,
+      "t": 392.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0037",
+      "r": 384,
+      "rEnd": 391.55,
+      "t": 402.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0038",
+      "r": 394,
+      "rEnd": 401.55,
+      "t": 412.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0039",
+      "r": 404,
+      "rEnd": 411.55,
+      "t": 422.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0040",
+      "r": 414,
+      "rEnd": 421.55,
+      "t": 432.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0041",
+      "r": 424,
+      "rEnd": 431.55,
+      "t": 442.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0042",
+      "r": 434,
+      "rEnd": 441.55,
+      "t": 452.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0043",
+      "r": 444,
+      "rEnd": 451.55,
+      "t": 462.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0044",
+      "r": 454,
+      "rEnd": 461.55,
+      "t": 472.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0045",
+      "r": 464,
+      "rEnd": 471.55,
+      "t": 482.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0046",
+      "r": 474,
+      "rEnd": 481.55,
+      "t": 492.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0047",
+      "r": 484,
+      "rEnd": 491.55,
+      "t": 502.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0048",
+      "r": 494,
+      "rEnd": 501.55,
+      "t": 512.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0049",
+      "r": 504,
+      "rEnd": 511.55,
+      "t": 522.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0050",
+      "r": 514,
+      "rEnd": 521.55,
+      "t": 532.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0051",
+      "r": 524,
+      "rEnd": 531.55,
+      "t": 542.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0052",
+      "r": 534,
+      "rEnd": 541.55,
+      "t": 552.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0053",
+      "r": 544,
+      "rEnd": 551.55,
+      "t": 562.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0054",
+      "r": 554,
+      "rEnd": 561.55,
+      "t": 572.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0055",
+      "r": 564,
+      "rEnd": 571.55,
+      "t": 582.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0056",
+      "r": 574,
+      "rEnd": 581.55,
+      "t": 592.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0057",
+      "r": 584,
+      "rEnd": 591.55,
+      "t": 602.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0058",
+      "r": 594,
+      "rEnd": 601.55,
+      "t": 612.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0059",
+      "r": 604,
+      "rEnd": 611.55,
+      "t": 622.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0060",
+      "r": 614,
+      "rEnd": 621.55,
+      "t": 632.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0061",
+      "r": 624,
+      "rEnd": 631.55,
+      "t": 642.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0062",
+      "r": 634,
+      "rEnd": 641.55,
+      "t": 652.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0063",
+      "r": 644,
+      "rEnd": 651.55,
+      "t": 662.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0064",
+      "r": 654,
+      "rEnd": 661.55,
+      "t": 672.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0065",
+      "r": 664,
+      "rEnd": 671.55,
+      "t": 682.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0066",
+      "r": 674,
+      "rEnd": 681.55,
+      "t": 692.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0067",
+      "r": 684,
+      "rEnd": 691.55,
+      "t": 702.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0068",
+      "r": 694,
+      "rEnd": 701.55,
+      "t": 712.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0069",
+      "r": 704,
+      "rEnd": 711.55,
+      "t": 722.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0070",
+      "r": 714,
+      "rEnd": 721.55,
+      "t": 732.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0071",
+      "r": 724,
+      "rEnd": 731.55,
+      "t": 742.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0072",
+      "r": 734,
+      "rEnd": 741.55,
+      "t": 752.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0073",
+      "r": 744,
+      "rEnd": 751.55,
+      "t": 762.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0074",
+      "r": 760,
+      "rEnd": 763.05,
+      "t": 778.9,
+      "speaker": "0",
+      "text": "yes you can export everything to csv",
+      "unclear": []
+    },
+    {
+      "id": "U0075",
+      "r": 774,
+      "rEnd": 781.55,
+      "t": 792.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0076",
+      "r": 784,
+      "rEnd": 791.55,
+      "t": 802.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0077",
+      "r": 794,
+      "rEnd": 801.55,
+      "t": 812.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0078",
+      "r": 804,
+      "rEnd": 811.55,
+      "t": 822.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0079",
+      "r": 814,
+      "rEnd": 821.55,
+      "t": 832.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0080",
+      "r": 824,
+      "rEnd": 831.55,
+      "t": 842.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0081",
+      "r": 834,
+      "rEnd": 841.55,
+      "t": 852.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0082",
+      "r": 844,
+      "rEnd": 851.55,
+      "t": 862.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0083",
+      "r": 854,
+      "rEnd": 861.55,
+      "t": 872.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0084",
+      "r": 864,
+      "rEnd": 871.55,
+      "t": 882.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0085",
+      "r": 874,
+      "rEnd": 881.55,
+      "t": 892.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0086",
+      "r": 884,
+      "rEnd": 891.55,
+      "t": 902.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0087",
+      "r": 894,
+      "rEnd": 901.55,
+      "t": 912.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0088",
+      "r": 905,
+      "rEnd": 905.8,
+      "t": 923.9,
+      "speaker": "2",
+      "text": "right exactly",
+      "unclear": []
+    },
+    {
+      "id": "U0089",
+      "r": 924,
+      "rEnd": 931.55,
+      "t": 942.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0090",
+      "r": 934,
+      "rEnd": 941.55,
+      "t": 952.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0091",
+      "r": 944,
+      "rEnd": 951.55,
+      "t": 962.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0092",
+      "r": 954,
+      "rEnd": 961.55,
+      "t": 972.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0093",
+      "r": 964,
+      "rEnd": 971.55,
+      "t": 982.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0094",
+      "r": 974,
+      "rEnd": 981.55,
+      "t": 992.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0095",
+      "r": 984,
+      "rEnd": 991.55,
+      "t": 1002.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0096",
+      "r": 994,
+      "rEnd": 1001.55,
+      "t": 1012.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0097",
+      "r": 1004,
+      "rEnd": 1011.55,
+      "t": 1022.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0098",
+      "r": 1014,
+      "rEnd": 1021.55,
+      "t": 1032.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0099",
+      "r": 1024,
+      "rEnd": 1031.55,
+      "t": 1042.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0100",
+      "r": 1034,
+      "rEnd": 1041.55,
+      "t": 1052.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0101",
+      "r": 1044,
+      "rEnd": 1051.55,
+      "t": 1062.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0102",
+      "r": 1054,
+      "rEnd": 1061.55,
+      "t": 1072.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0103",
+      "r": 1064,
+      "rEnd": 1071.55,
+      "t": 1082.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0104",
+      "r": 1074,
+      "rEnd": 1081.55,
+      "t": 1092.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0105",
+      "r": 1084,
+      "rEnd": 1091.55,
+      "t": 1102.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0106",
+      "r": 1094,
+      "rEnd": 1101.55,
+      "t": 1112.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0107",
+      "r": 1104,
+      "rEnd": 1111.55,
+      "t": 1122.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0108",
+      "r": 1114,
+      "rEnd": 1121.55,
+      "t": 1132.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0109",
+      "r": 1124,
+      "rEnd": 1131.55,
+      "t": 1142.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0110",
+      "r": 1134,
+      "rEnd": 1141.55,
+      "t": 1152.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0111",
+      "r": 1144,
+      "rEnd": 1151.55,
+      "t": 1162.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0112",
+      "r": 1154,
+      "rEnd": 1161.55,
+      "t": 1172.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0113",
+      "r": 1164,
+      "rEnd": 1171.55,
+      "t": 1182.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0114",
+      "r": 1174,
+      "rEnd": 1181.55,
+      "t": 1192.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0115",
+      "r": 1184,
+      "rEnd": 1191.55,
+      "t": 1202.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0116",
+      "r": 1194,
+      "rEnd": 1201.55,
+      "t": 1212.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0117",
+      "r": 1204,
+      "rEnd": 1211.55,
+      "t": 1222.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": [
+        [
+          0,
+          2
+        ],
+        [
+          3,
+          7
+        ],
+        [
+          8,
+          15
+        ],
+        [
+          16,
+          20
+        ],
+        [
+          21,
+          25
+        ],
+        [
+          26,
+          30
+        ],
+        [
+          31,
+          33
+        ],
+        [
+          34,
+          38
+        ],
+        [
+          39,
+          42
+        ],
+        [
+          43,
+          47
+        ],
+        [
+          48,
+          51
+        ],
+        [
+          52,
+          54
+        ],
+        [
+          55,
+          60
+        ],
+        [
+          61,
+          65
+        ],
+        [
+          66,
+          70
+        ],
+        [
+          71,
+          76
+        ],
+        [
+          77,
+          81
+        ]
+      ]
+    },
+    {
+      "id": "U0118",
+      "r": 1214,
+      "rEnd": 1221.55,
+      "t": 1232.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0119",
+      "r": 1224,
+      "rEnd": 1231.55,
+      "t": 1242.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0120",
+      "r": 1234,
+      "rEnd": 1241.55,
+      "t": 1252.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0121",
+      "r": 1244,
+      "rEnd": 1251.55,
+      "t": 1262.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0122",
+      "r": 1254,
+      "rEnd": 1261.55,
+      "t": 1272.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0123",
+      "r": 1264,
+      "rEnd": 1271.55,
+      "t": 1282.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0124",
+      "r": 1274,
+      "rEnd": 1281.55,
+      "t": 1292.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0125",
+      "r": 1284,
+      "rEnd": 1291.55,
+      "t": 1302.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0126",
+      "r": 1294,
+      "rEnd": 1301.55,
+      "t": 1312.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0127",
+      "r": 1304,
+      "rEnd": 1311.55,
+      "t": 1322.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0128",
+      "r": 1314,
+      "rEnd": 1321.55,
+      "t": 1332.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0129",
+      "r": 1324,
+      "rEnd": 1331.55,
+      "t": 1342.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0130",
+      "r": 1334,
+      "rEnd": 1341.55,
+      "t": 1352.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0131",
+      "r": 1344,
+      "rEnd": 1351.55,
+      "t": 1362.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0132",
+      "r": 1354,
+      "rEnd": 1361.55,
+      "t": 1372.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0133",
+      "r": 1364,
+      "rEnd": 1371.55,
+      "t": 1382.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0134",
+      "r": 1374,
+      "rEnd": 1381.55,
+      "t": 1392.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0135",
+      "r": 1384,
+      "rEnd": 1391.55,
+      "t": 1402.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0136",
+      "r": 1394,
+      "rEnd": 1401.55,
+      "t": 1412.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0137",
+      "r": 1404,
+      "rEnd": 1411.55,
+      "t": 1422.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0138",
+      "r": 1414,
+      "rEnd": 1421.55,
+      "t": 1432.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0139",
+      "r": 1424,
+      "rEnd": 1431.55,
+      "t": 1442.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0140",
+      "r": 1434,
+      "rEnd": 1441.55,
+      "t": 1452.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0141",
+      "r": 1444,
+      "rEnd": 1451.55,
+      "t": 1462.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0142",
+      "r": 1454,
+      "rEnd": 1461.55,
+      "t": 1472.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0143",
+      "r": 1464,
+      "rEnd": 1471.55,
+      "t": 1482.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0144",
+      "r": 1474,
+      "rEnd": 1481.55,
+      "t": 1492.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0145",
+      "r": 1484,
+      "rEnd": 1491.55,
+      "t": 1502.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0146",
+      "r": 1494,
+      "rEnd": 1501.55,
+      "t": 1512.9,
+      "speaker": "0",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0147",
+      "r": 1504,
+      "rEnd": 1511.55,
+      "t": 1522.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0148",
+      "r": 1514,
+      "rEnd": 1521.55,
+      "t": 1532.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0149",
+      "r": 1524,
+      "rEnd": 1531.55,
+      "t": 1542.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0150",
+      "r": 1534,
+      "rEnd": 1541.55,
+      "t": 1552.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0151",
+      "r": 1544,
+      "rEnd": 1551.55,
+      "t": 1562.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0152",
+      "r": 1554,
+      "rEnd": 1561.55,
+      "t": 1572.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0153",
+      "r": 1564,
+      "rEnd": 1571.55,
+      "t": 1582.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0154",
+      "r": 1574,
+      "rEnd": 1581.55,
+      "t": 1592.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0155",
+      "r": 1584,
+      "rEnd": 1591.55,
+      "t": 1602.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0156",
+      "r": 1594,
+      "rEnd": 1601.55,
+      "t": 1612.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0157",
+      "r": 1604,
+      "rEnd": 1611.55,
+      "t": 1622.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0158",
+      "r": 1614,
+      "rEnd": 1621.55,
+      "t": 1632.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0159",
+      "r": 1624,
+      "rEnd": 1631.55,
+      "t": 1642.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0160",
+      "r": 1634,
+      "rEnd": 1641.55,
+      "t": 1652.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0161",
+      "r": 1644,
+      "rEnd": 1651.55,
+      "t": 1662.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0162",
+      "r": 1654,
+      "rEnd": 1661.55,
+      "t": 1672.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0163",
+      "r": 1664,
+      "rEnd": 1671.55,
+      "t": 1682.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0164",
+      "r": 1674,
+      "rEnd": 1681.55,
+      "t": 1692.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0165",
+      "r": 1684,
+      "rEnd": 1691.55,
+      "t": 1702.9,
+      "speaker": "1",
+      "text": "we walk through each view step by step and show how it helps your team every week",
+      "unclear": []
+    },
+    {
+      "id": "U0166",
+      "r": 1700,
+      "rEnd": 1703.05,
+      "t": 1718.9,
+      "speaker": "0",
+      "text": "thank you all see you next time",
+      "unclear": []
+    }
+  ],
+  "room": [
+    {
+      "id": "C0001",
+      "kind": "chat",
+      "t": -300,
+      "text": "Hello everyone",
+      "author": "Theo P.",
+      "team": false
+    },
+    {
+      "id": "C0002",
+      "kind": "chat",
+      "t": -120,
+      "text": "Excited for this one",
+      "author": "Mila F.",
+      "team": false
+    },
+    {
+      "id": "C0003",
+      "kind": "chat",
+      "t": -60,
+      "text": "Welcome! We start in a minute.",
+      "author": "Nora V.",
+      "team": true
+    },
+    {
+      "id": "Q001",
+      "kind": "question",
+      "t": -45,
+      "text": "Will the slides be shared?",
+      "author": "Theo P.",
+      "team": false,
+      "answered": true
+    },
+    {
+      "id": "C0004",
+      "kind": "chat",
+      "t": -30,
+      "text": "Can you hear us?",
+      "author": "Sam R.",
+      "team": false
+    },
+    {
+      "id": "C0005",
+      "kind": "chat",
+      "t": 45,
+      "text": "Slides: https://example.test/slides",
+      "author": "Nora V.",
+      "team": true
+    },
+    {
+      "id": "A001",
+      "kind": "answer",
+      "t": 50,
+      "text": "Yes, see the chat.",
+      "author": "Nora V.",
+      "team": true,
+      "replyTo": "Q001"
+    },
+    {
+      "id": "C0006",
+      "kind": "chat",
+      "t": 62,
+      "text": "Hi from Lyon",
+      "author": "Mila F.",
+      "team": false
+    },
+    {
+      "id": "C0007",
+      "kind": "chat",
+      "t": 66,
+      "text": "Hello from Berlin",
+      "author": "Lena H.",
+      "team": false
+    },
+    {
+      "id": "C0008",
+      "kind": "chat",
+      "t": 70,
+      "text": "Thanks!",
+      "author": "Theo P.",
+      "team": false
+    },
+    {
+      "id": "C0009",
+      "kind": "chat",
+      "t": 130,
+      "text": "Great intro",
+      "author": "Mila F.",
+      "team": false
+    },
+    {
+      "id": "C0010",
+      "kind": "chat",
+      "t": 200,
+      "text": "What about pricing?",
+      "author": "Sam R.",
+      "team": false
+    },
+    {
+      "id": "C0011",
+      "kind": "chat",
+      "t": 260,
+      "text": "Happy to cover pricing later",
+      "author": "Rhea S.",
+      "team": true
+    },
+    {
+      "id": "Q002",
+      "kind": "question",
+      "t": 300,
+      "text": "How does pricing work for larger teams with several hundred seats?",
+      "author": "Mila F.",
+      "team": false,
+      "answered": false
+    },
+    {
+      "id": "C0012",
+      "kind": "chat",
+      "t": 600,
+      "text": "This dashboard looks useful",
+      "author": "Lena H.",
+      "team": false
+    },
+    {
+      "id": "C0013",
+      "kind": "chat",
+      "t": 615,
+      "text": "+1",
+      "author": "Theo P.",
+      "team": false
+    },
+    {
+      "id": "Q003",
+      "kind": "question",
+      "t": 720,
+      "text": "Can we export to CSV?",
+      "author": "Sam R.",
+      "team": false,
+      "answered": true
+    },
+    {
+      "id": "A002",
+      "kind": "answer",
+      "t": 760,
+      "text": "Yes, from the Chat page.",
+      "author": "Nora V.",
+      "team": true,
+      "replyTo": "Q003"
+    },
+    {
+      "id": "C0014",
+      "kind": "chat",
+      "t": 900,
+      "text": "Is there a replay?",
+      "author": "Mila F.",
+      "team": false
+    },
+    {
+      "id": "C0015",
+      "kind": "chat",
+      "t": 905,
+      "text": "Yes, the replay link comes by email",
+      "author": "Ilan M.",
+      "team": true
+    },
+    {
+      "id": "C0016",
+      "kind": "chat",
+      "t": 1200,
+      "text": "Love the export feature",
+      "author": "Theo P.",
+      "team": false
+    },
+    {
+      "id": "C0017",
+      "kind": "chat",
+      "t": 1500,
+      "text": "Thank you all",
+      "author": "Sam R.",
+      "team": false
+    },
+    {
+      "id": "Q004",
+      "kind": "question",
+      "t": 1650,
+      "text": "Is there an API?",
+      "author": "Omar Q.",
+      "team": false,
+      "answered": false
+    },
+    {
+      "id": "C0018",
+      "kind": "chat",
+      "t": 1800,
+      "text": "Bye!",
+      "author": "Mila F.",
+      "team": false
+    },
+    {
+      "id": "C0019",
+      "kind": "chat",
+      "t": 1840,
+      "text": "See you next time",
+      "author": "Lena H.",
+      "team": false
+    }
+  ]
+}

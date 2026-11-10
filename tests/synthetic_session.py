@@ -19,7 +19,9 @@ Three committed files come from it:
   for this row, built by the real code, and `record-v1-crowd.json`, its
   response for a larger made-up webinar (`crowd_row`), whose grouped
   measures pass their gates. `tests/test_record_route.py` fails when
-  either drifts. Regenerate both after a deliberate change to the record:
+  either drifts. `transcript-v1.json` is the Transcript tab's room view
+  for this row (`GET /record/transcript`); `tests/test_transcript_view.py`
+  fails when it drifts. Regenerate both after a deliberate change to the record:
 
       .venv/bin/python tests/synthetic_session.py
 
@@ -59,6 +61,7 @@ CREATED_AT = datetime(2026, 10, 1, 10, 0, tzinfo=timezone.utc)
 
 RECORD_FIXTURE = REPO_ROOT / "frontend" / "tests" / "fixtures" / "record-v1.json"
 RECORD_CROWD_FIXTURE = REPO_ROOT / "frontend" / "tests" / "fixtures" / "record-v1-crowd.json"
+TRANSCRIPT_FIXTURE = REPO_ROOT / "frontend" / "tests" / "fixtures" / "transcript-v1.json"
 CLASSIC_SNAPSHOT = REPO_ROOT / "tests" / "fixtures" / "classic-workspace.json"
 
 # Values a v1 record response must never carry: names, emails and their
@@ -684,11 +687,20 @@ def classic_workspace(row: Dict[str, Any]) -> Dict[str, Any]:
     return rounded(_get_json(row, f"/api/sessions/{row['session_id']}"))
 
 
+def transcript_response(row: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """What `GET /api/sessions/{id}/record/transcript` sends for `row`
+    (default: `cached_row()`), through the real route."""
+    row = cached_row() if row is None else row
+    return _get_json(row, f"/api/sessions/{row['session_id']}/record/transcript")
+
+
 def write_record_fixture() -> None:
     for path, row in ((RECORD_FIXTURE, cached_row()), (RECORD_CROWD_FIXTURE, crowd_row())):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(dump(record_response(row)), encoding="utf-8")
         print(f"wrote {path.relative_to(REPO_ROOT)}")
+    TRANSCRIPT_FIXTURE.write_text(dump(transcript_response()), encoding="utf-8")
+    print(f"wrote {TRANSCRIPT_FIXTURE.relative_to(REPO_ROOT)}")
 
 
 def write_classic_snapshot() -> None:
