@@ -19,6 +19,10 @@ const BetaNoticeView = () => import("./views/BetaNoticeView.vue");
 const AdminView = () => import("./views/AdminView.vue");
 const DesignGalleryView = () => import("./views/DesignGalleryView.vue");
 const SessionReportView = () => import("./views/SessionReportView.vue");
+// The session list: the v1 index with the switch on, the classic card grid
+// (in the entry bundle) otherwise.
+const SessionsView = () => import("./views/SessionsView.vue");
+const sessionListView = () => (isV1() ? SessionsView() : Promise.resolve(SingleAnalysisListView));
 
 // Routing.
 //
@@ -63,7 +67,8 @@ const routes = [
   // ── Top level ───────────────────────────────────────────────────────────
   { path: "/", redirect: "/single-analysis" },
   { path: "/search", component: SearchView },
-  { path: "/single-analysis", component: SingleAnalysisListView },
+  // `v1Native` only matters in the v1 shell, where this route is the v1 index.
+  { path: "/single-analysis", component: sessionListView, meta: { v1Native: true } },
   { path: "/cross-analysis", component: CrossAnalysisView },
 
   // ── Session detail (parameterised) ──────────────────────────────────────

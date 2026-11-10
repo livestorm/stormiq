@@ -85,6 +85,12 @@ Lists past Livestorm events in the connected workspace with paginated fetching, 
 
 Clicking an event expands it and shows a "Fetch sessions" action. Sessions are listed; selecting a session triggers the fetch of all four data sources for that session.
 
+### The Sessions page (v1)
+
+**Route:** `/single-analysis`, with the v1 switch on (`views/SessionsView.vue`; the classic card grid otherwise).
+
+Every session the organization has fetched, as one index. At the top: "Sessions" and "Add session". Three counts over all of them: sessions, sessions with a transcript, and events. Then a search (by title, event or the teammate who added it), an event filter (when there is more than one event), a sort (session date, newest or oldest first, recently added, title) and how many sessions show. One row per session: the date, the title (the event's title, as on the Report, with the session's own name and its length under it), attendees "of" registrants, the transcript (Ready or Not yet) and who added it. The whole row opens the session's Report. On a phone each row is a short block: the title, then the date, attendees and transcript. Attendees and registrants are Livestorm's counts, the team included; the page says so, as each Report counts the audience alone. Wording and order: `src/sessions/list.js`.
+
 ---
 
 ## 5. Session Overview
