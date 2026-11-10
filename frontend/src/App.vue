@@ -55,7 +55,9 @@ const isAuthed = computed(
   () => Boolean(state.auth?.connectedUser || state.auth?.allowLocalApiKeyFallback),
 );
 
-// Per-session sub-nav. Rendered only on /single-analysis/:sessionId/*.
+// Per-session sub-nav. Rendered only on /single-analysis/:sessionId/*. The
+// v1 shell's copy starts with the v1 Report, so its classic tabs lead back.
+const v1SessionTabs = computed(() => [{ suffix: "report", label: "Report", key: "report" }, ...sessionTabs]);
 const sessionTabs = [
   { suffix: "session-overview", label: "Overview", key: "overview" },
   { suffix: "transcript", label: "Transcript", key: "transcript" },
@@ -189,8 +191,9 @@ onMounted(async () => {
     state.error = "StormIQ could not load your account. Check your connection and reload the page.";
   }
   // If the user deep-links into a session detail page (shared link or
-  // page reload), make sure the store has the matching workspace.
-  if (routeSessionId.value) {
+  // page reload), make sure the store has the matching workspace. A v1
+  // page (the Report) loads its own data instead.
+  if (routeSessionId.value && !isV1NativeRoute.value) {
     loadSessionById(routeSessionId.value).catch(logSessionLoadFailure);
   }
 });
@@ -222,9 +225,11 @@ onBeforeUnmount(() => {
 });
 
 // Watch the URL :sessionId — switching sessions is a route navigation,
-// not a button click, so the store needs to react to it.
-watch(routeSessionId, async (next, previous) => {
-  if (!next || next === previous) return;
+// not a button click, so the store needs to react to it. Pages built for
+// v1 (the Report) read their own data and never load the classic workspace;
+// moving from one of them to a classic tab of the same session loads it then.
+watch([routeSessionId, isV1NativeRoute], async ([next, v1Native]) => {
+  if (!next || v1Native) return;
   if (state.workspace?.sessionId === next) return;
   try {
     await loadSessionById(next);
@@ -280,7 +285,7 @@ function toggleSidebar() {
                router sees it (a plain @click on RouterLink runs after its
                own navigate handler). -->
           <RouterLink
-            v-for="tab in sessionTabs"
+            v-for="tab in v1SessionTabs"
             :key="tab.key"
             v-slot="{ href, navigate }"
             :to="tabHref(tab)"

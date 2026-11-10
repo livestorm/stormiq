@@ -5,6 +5,7 @@ import Card from "../components/ui/Card.vue";
 import CardHeader from "../components/ui/CardHeader.vue";
 import Chip from "../components/ui/Chip.vue";
 import Icon from "../components/ui/Icon.vue";
+import SessionRidge from "../components/report/SessionRidge.vue";
 import UiButton from "../components/ui/UiButton.vue";
 import { analysisSummary, formatLength, formatSessionStart } from "../report/format";
 import { createSessionReport } from "../report/useSessionReport";
@@ -82,6 +83,7 @@ const tabs = computed(() => [
     </Card>
 
     <template v-else-if="body">
+      <SessionRidge :minutes="record?.pulse?.minutes || []" />
       <header class="r-head">
         <h1 class="r-title">{{ title }}</h1>
         <p class="r-date">
@@ -253,6 +255,13 @@ const tabs = computed(() => [
 
 .r-tab.siq-fx:focus-visible {
   outline-offset: -3px;
+}
+
+@media (max-width: 640px) {
+  .r-title {
+    font-size: var(--siq-text-headline);
+    line-height: var(--siq-text-headline-lh);
+  }
 }
 
 @media (forced-colors: active) {

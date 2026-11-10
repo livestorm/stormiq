@@ -65,7 +65,7 @@ Two designs live side by side while the redesign ships: the classic app (sidebar
 | `src/utils/csv.js` | CSV export for every table |
 | `src/styles.css` | Global styles of the classic design |
 | `src/design/` | The v1 design system: `tokens.css` (every `--siq-*` token for light and dark, Sora), `uiVersion.js` (the switch), `theme.js` and `useTheme.js` (light/dark) |
-| `src/report/` | The v1 Report's data and words: `useSessionReport.js` (`createSessionReport`: loads `GET /record`, starts the session analysis and polls it, one per view, scoped and aborted like the store) and `format.js` (the header's date and length, the analysis panel's wording) |
+| `src/report/` | The v1 Report's data and words: `useSessionReport.js` (`createSessionReport`: loads `GET /record`, starts the session analysis and polls it, one per view, scoped and aborted like the store) and `format.js` (the header's date and length, the analysis panel's wording) and `chartGeometry.js` (the session clock's labels and axis ticks, the ridge's path) |
 | `src/components/ui/` | v1 base components: `TopBar`, `ThemeToggle`, `Card`, `CardHeader`, `IconTile`, `StatCard`, `Collapsible`, `StatusWord`, `Chip`, `UiButton`, `TipBar`, `Icon` (vendored Lucide icons), `StormIqMark`, `ForLivestorm` (the "for Livestorm" lockup) |
 | `src/assets/livestorm/` | The official Livestorm logo, on-light and on-dark, as supplied by Livestorm's brand kit |
 | `public/` | Copied as-is into the build root: the StormIQ "IQ" monogram as `favicon.svg`, `favicon.ico` and `apple-touch-icon.png`, and `fonts/` (Sora and its licence) |
@@ -90,7 +90,7 @@ The rules for working in it are in [`frontend/CLAUDE.md`](../frontend/CLAUDE.md)
 | `/admin` | Users, admins, cached sessions, model settings | admin |
 | `/auth/callback`, `/beta-info` | OAuth landing, beta notice | — |
 | `/design` | The v1 component gallery: tokens, type, icons, every base component, with fictional sample content (noindex) | the v1 switch |
-| `/single-analysis/:sessionId/report` | The v1 Report (`SessionReportView`): the session header, the "Analyse session" action and its progress, and the Report · Transcript · Follow-up tabs (the last two open the classic views for now). With the switch on, `/single-analysis/:sessionId` opens it; with it off it redirects to the overview | the v1 switch, a fetched session |
+| `/single-analysis/:sessionId/report` | The v1 Report (`SessionReportView`): the ridge (the audience chat per minute, `components/report/SessionRidge.vue`), the session header, the "Analyse session" action and its progress, and the Report · Transcript · Follow-up tabs (the last two open the classic views for now). With the switch on, `/single-analysis/:sessionId` opens it; with it off it redirects to the overview | the v1 switch, a fetched session |
 
 `/single-analysis/:sessionId/...` is the sharing contract: a teammate in the same Livestorm org can open any such link and land on that tab with the cached workspace loaded. Older paths (`/events`, `/transcript`, …) redirect to their new equivalents.
 
