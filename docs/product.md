@@ -4,7 +4,7 @@ A companion application for Livestorm that turns a finished session into a struc
 
 This document describes what the app does, the data it produces, and the formulas behind each metric and chart.
 
-> The navigation and routes described here (the Events list, `/session-overview`…) predate the current Search and Single Analysis pages ([architecture.md](architecture.md#pages)) and will be rewritten with the redesign. The views, charts and formulas are current. Everyone uses the new design ([brand.md](brand.md#one-design)): the home page, Sessions, Add session and each session's Report are rebuilt; the other pages keep their older look inside the new shell until they are rebuilt.
+> The navigation and routes described here (the Events list, `/session-overview`…) predate the current Search and Single Analysis pages ([architecture.md](architecture.md#pages)) and will be rewritten with the redesign. The views, charts and formulas are current. Everyone uses the new design ([brand.md](brand.md#one-design)): the home page, Sessions, Add session and each session's Report, Transcript and Follow-up are rebuilt; Admin keeps its older look inside the new shell until it is rebuilt.
 
 ---
 
@@ -103,37 +103,7 @@ How a session gets into StormIQ. "Your events" lists the organization's Livestor
 
 ## 5. Session Overview
 
-**Route:** `/session-overview`
-
-### Hero metrics
-
-Six top-level cards, from the session payload (Chat Messages: from the cached chat, see [§13](#13-glossary-of-metrics-and-formulas)):
-
-| Metric | Source / formula |
-|---|---|
-| Registrants | `attributes.registrants_count` |
-| Attendees | `attributes.attendees_count` |
-| Attendance Rate | `attendees_count / registrants_count × 100` |
-| Replay Viewers | Count of people with `has_viewed_replay = true` |
-| Chat Messages | Audience messages in the chat ([§13](#13-glossary-of-metrics-and-formulas)); the card says "Excludes your team (n)" with the number of team and guest-speaker messages. On an internal session everyone counts and the card says "Internal session: everyone counts" |
-| Questions | Sum of `questions_count` across people |
-
-### Tab: Summary
-- **Session payload** table — status, timezone, session name, start/end timestamps (UTC), duration label, registrants, attendees, attendance rate
-
-### Tab: People
-- **List of People** — name, email, country, city, attendance rate, role, company, job title, attendance duration, message count, question count, upvote count
-- **Most Engaged People** — top 12 audience members sorted by engagement score; team members (`role = team_member`) and guest speakers (`is_guest_speaker`) are left out, except on an internal session ([§13](#13-glossary-of-metrics-and-formulas))
-  - **Engagement Score formula:**
-    `messages_count + (questions_count × 3) + (up_votes_count × 2)`
-
-### Tab: Charts
-
-| Chart | Type | Data |
-|---|---|---|
-| Attendance By Country | Bar | Top 12 countries by attendees (people with `attended = true`); countries with no attendee are left out |
-| People By Role | Pie | Distribution across owner, team member, moderator, guest speaker, participant, viewer |
-| Attendance Rate Distribution | Column | Bands: 0%, 1–25%, 26–50%, 51–75%, 76–100% |
+Removed in November 2026: the session's [Report](#measures-v1-report) covers what it showed (attendance, the audience, the chat and questions over time). `/sessions/:sessionId/session-overview` opens the Report.
 
 ---
 
@@ -157,41 +127,7 @@ The classic Transcript's eight diagnostic tabs are gone; Speaking stats keeps wh
 
 ## 7. Chat & Questions
 
-**Route:** `/chat-questions`
-
-### Hero metrics
-
-Chat metrics count **audience messages** only ([§13](#13-glossary-of-metrics-and-formulas)). When the team or guest speakers wrote in the chat, the Messages card says "Excludes your team (n)" with the number of their messages, and the Unique Chatters card with the number of those people. On an internal session, such as a company all-hands, every message counts: the cards, Top Contributors and Activity Over Time say "Internal session: everyone counts".
-
-| Metric | Formula |
-|---|---|
-| Messages | Number of audience messages |
-| Unique Chatters | Count of distinct `author_id` among audience messages |
-| Avg Msg Length | Mean character length of audience messages |
-| Questions | `len(questions)` |
-| Unique Askers | Count of distinct question `asked_by` |
-
-### Tab: Chat
-Full chat thread, team messages included: message text, who sent it ("From": Attendee, Team or Guest speaker), created/updated timestamps, author ID.
-
-### Tab: Questions
-Submitted questions with: question text, asker, asked-at timestamp, responder, responded-at timestamp, response text.
-
-### Tab: Top Contributors
-- **Top 10 chat contributors** by audience message count
-- **Top 10 question contributors** by question count
-- **Contributors Comparison** chart — side-by-side comparison
-
-### Tab: Activity Over Time
-**Activity Timeline** — audience chat messages and questions bucketed by UTC minute across the session, plotted as parallel series.
-
-### Tab: Question Response Coverage
-Three cards:
-- Answered
-- Unanswered
-- Coverage Rate — `answered / total_questions × 100`
-
-A question is "answered" if it has a responder or was answered orally (live).
+Removed in November 2026: the [Report](#measures-v1-report) ("The room", "The questions", "The audience") and the [Transcript](#6-transcript) tab, which lists every chat message and question, cover it. `/sessions/:sessionId/chat-questions` opens the Report.
 
 ---
 
