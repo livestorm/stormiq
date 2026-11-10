@@ -87,7 +87,6 @@ The rules for working in it are in [`frontend/CLAUDE.md`](../frontend/CLAUDE.md)
 | `/sessions/:sessionId/transcript` | The Transcript tab (`SessionTranscriptView`, worded by `src/transcript/lines.js`, data from `src/transcript/useTranscript.js`): speech and the room on one clock when the alignment allows seconds, apart otherwise; search, filters, speaker names, subtitles; the transcript's job when there is none yet | a fetched session |
 | `/sessions/:sessionId/chat-questions` | Audience analytics (5 tabs) | a fetched session |
 | `/sessions/:sessionId/follow-up` | The Follow-up tab (`SessionFollowUpView`, worded by `src/followup/outputs.js`): every AI output (overall and deep analysis, Smart Recap in three tones, summary, blog post, email, social posts), each written on a click through the store's AI flows, in English or French, with Copy and PDF; the Markdown rendered as text (`MarkdownBlocks`). It loads the classic workspace itself (`loadSessionById`). `/analysis`, `/smart-recap` and `/content-repurposing` redirect here | a transcript |
-| `/cross-analysis` | Placeholder for cross-session analysis ([roadmap](roadmap.md)) | — |
 | `/admin` | Users, admins, cached sessions, model settings | admin |
 | `/auth/callback`, `/beta-info` | OAuth return page (`App.vue` moves on at once to `next` or Sessions, `src/auth/callback.js`), beta notice | — |
 | `/design` | The v1 component gallery: tokens, type, icons, every base component, with fictional sample content (noindex) | — |
