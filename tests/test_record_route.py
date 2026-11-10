@@ -290,7 +290,7 @@ def test_a_misaligned_clock_keeps_speech_off_the_pulse(rows):
 
 def test_the_record_serves_every_measure_live(client):
     record = get(client).json()["record"]
-    assert record["metricsVersion"] == measures.METRICS_VERSION == 6
+    assert record["metricsVersion"] == measures.METRICS_VERSION == 7
     assert record["measuresSource"] == "live"
     assert list(record["measures"]) == list(measures.REGISTRY)
     measures.validate_measures(record["measures"])

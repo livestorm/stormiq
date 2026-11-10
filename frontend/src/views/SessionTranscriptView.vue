@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
 import SessionTabs from "../components/report/SessionTabs.vue";
+import SpeakingStats from "../components/report/SpeakingStats.vue";
 import TranscriptLine from "../components/report/TranscriptLine.vue";
 import Card from "../components/ui/Card.vue";
 import CardHeader from "../components/ui/CardHeader.vue";
@@ -242,6 +243,8 @@ const jobBusy = computed(() => ["pending", "running", "starting", "checking"].in
           <UiButton v-if="filtered" variant="ghost" small icon="x" @click="clearFilters">Clear</UiButton>
         </p>
       </Card>
+
+      <SpeakingStats v-if="hasSpeech && record?.record?.measures" :measures="record.record.measures" :speakers="speakers" />
 
       <p v-if="hasSpeech && !shown.interleaved && !nothingMatches" class="t-note">
         <Icon name="info" :size="16" />

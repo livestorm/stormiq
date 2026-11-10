@@ -102,7 +102,7 @@ STATES: Tuple[str, ...] = (UNAVAILABLE, UNRESOLVED, INSUFFICIENT, APPROXIMATION,
 # States whose value is hidden (None).
 HIDDEN_STATES = frozenset({UNAVAILABLE, UNRESOLVED, INSUFFICIENT})
 
-UNITS = ("ratio", "count", "seconds", "rows")
+UNITS = ("ratio", "count", "seconds", "rate", "rows")  # rate: per minute
 
 # What a measure reads.
 SOURCE_SESSION = "session"  # the session payload's own attributes
@@ -120,8 +120,8 @@ AUDIENCE_ONLY = "team, guest speakers"
 # and in tests/test_measures.py. The pin also covers each measure's unit,
 # sources, exclusions and gates, so editing one without a new version fails
 # the test. Stored numbers are keyed by it.
-METRICS_VERSION = 6
-REGISTRY_PIN = "fbfbe6c5d1229ec88dd204df14a21e474fe3bd7d01fe7b25b869e6fb5c630a74"
+METRICS_VERSION = 7
+REGISTRY_PIN = "baf059609030dacc4ccb9c1108bd7bc34b3072b2e97c59e773ec3f32b9e4df35"
 
 # Gate thresholds. Provisional: they move with a version bump.
 WROTE_RATE_MIN_ATTENDEES = 10
@@ -138,6 +138,8 @@ LEAD_TIME_MIN_REGISTRANTS = 100
 LEAD_BUCKET_MIN_REGISTRANTS = 20  # per bucket; smaller ones merge with a neighbour
 REPLAY_MIN_NO_SHOWS = 10
 CHAT_THEMES_MIN_MESSAGES = 30  # the chat themes' shares; below it, counts only
+SPEAKING_MIN_S = 60  # the speaking stats need a minute of speech
+STRETCH_MAX_GAP_S = 2.0  # one speaker's utterances this close make one stretch
 
 # Other rules of the grouped measures.
 STAYED_MIN_SHARE = 0.75  # the room map's "stayed": at least this share of the session
@@ -1158,6 +1160,118 @@ def _replay_caught_up(facts: _Facts) -> _Draft:
     )
 
 
+def _speech_rows(facts: _Facts) -> pd.DataFrame:
+    """The utterances that have both times, with their length (`dur`, never
+    negative), in recording order. Recording seconds: these measures don't
+    need the session clock."""
+    transcript = facts.inputs.transcript
+    if transcript is None or transcript.utterances.empty:
+        return pd.DataFrame(columns=["uid", "r_start", "r_end", "speaker_key", "n_words", "dur"])
+    rows = transcript.utterances[["uid", "r_start", "r_end", "speaker_key", "n_words"]].copy()
+    rows = rows[rows["r_start"].notna() & rows["r_end"].notna()]
+    rows["dur"] = (rows["r_end"] - rows["r_start"]).clip(lower=0)
+    return rows.sort_values(["r_start", "uid"], kind="stable")
+
+
+def _speaking_gates(facts: _Facts) -> Dict[str, float]:
+    gates = facts.inputs.transcript_health.get("gates", {})
+    return {"pace_ok": 1.0 if gates.get("pace") else 0.0, "shares_ok": 1.0 if gates.get("speakerShares") else 0.0}
+
+
+def _speaking_pace(facts: _Facts) -> _Draft:
+    """Words per minute of speech: the utterances' words (`num`) over their
+    total length in minutes (`coverage.speakingS`). Shown when the
+    transcript covers enough of the recording for a pace (transcript
+    health's `gates.pace`) and holds a minute of speech; an approximation
+    when the transcript's health is degraded."""
+    rows = _speech_rows(facts)
+    speaking_s = float(rows["dur"].sum()) if not rows.empty else 0.0
+    words = int(rows["n_words"].sum()) if not rows.empty else 0
+    health = facts.inputs.transcript_health
+    return _Draft(
+        value=words / (speaking_s / 60.0) if speaking_s > 0 else None,
+        num=words,
+        quantities={**_speaking_gates(facts), "speaking_s": speaking_s},
+        flags=_flags(approximation=health.get("state") == "degraded"),
+        coverage={"speakingS": speaking_s, "words": words, "utteranceCount": int(len(rows)), "health": health.get("state")},
+    )
+
+
+def _speaker_talk_time(facts: _Facts) -> _Draft:
+    """Talk time per speaker, as the transcript's diarization splits it: one
+    row per speaker key (`unknown` for speech no speaker was found for),
+    most talk first, with its seconds, share of the speech, words and words
+    per minute (None under `SPEAKING_MIN_S` of that speaker's speech). `value` is the first row's share; `den` is the speakers.
+    Speakers are keys, never names (the Transcript tab names them). Shown
+    when the shares can be trusted (transcript health's
+    `gates.speakerShares`) over a minute of speech; an approximation when a
+    speaker may have been split across keys."""
+    rows = _speech_rows(facts)
+    speaking_s = float(rows["dur"].sum()) if not rows.empty else 0.0
+    table: List[Dict[str, Any]] = []
+    if not rows.empty and speaking_s > 0:
+        keys = rows["speaker_key"].where(rows["speaker_key"].notna(), "unknown")
+        grouped = rows.assign(key=keys).groupby("key", sort=False).agg(seconds=("dur", "sum"), words=("n_words", "sum"))
+        for key, item in grouped.sort_values(["seconds"], ascending=False, kind="stable").iterrows():
+            seconds, words = float(item["seconds"]), int(item["words"])
+            table.append(
+                {
+                    "key": str(key),
+                    "speakingS": seconds,
+                    "share": seconds / speaking_s,
+                    "words": words,
+                    # A pace over less than a minute of speech is noise.
+                    "wpm": words / (seconds / 60.0) if seconds >= SPEAKING_MIN_S else None,
+                }
+            )
+    health = facts.inputs.transcript_health
+    return _Draft(
+        value=table[0]["share"] if table else None,
+        den=len(table),
+        quantities={**_speaking_gates(facts), "speaking_s": speaking_s},
+        flags=_flags(approximation=bool(health.get("speakers", {}).get("splitRisk"))),
+        coverage={"speakingS": speaking_s},
+        rows=table,
+        row_values=("speakingS", "share", "words", "wpm"),
+    )
+
+
+def _longest_stretch(facts: _Facts) -> _Draft:
+    """The longest time one speaker held the floor: their consecutive
+    utterances joined while the gap between them is at most
+    `STRETCH_MAX_GAP_S`, the stretch running from the first's start to the
+    last's end (recording seconds). `coverage` names its speaker key, its
+    times and its utterance ids. Gated as the talk time is: it needs the
+    speakers told apart."""
+    rows = _speech_rows(facts)
+    best: Optional[Dict[str, Any]] = None
+    current: Optional[Dict[str, Any]] = None
+    for uid, start, end, key in zip(rows["uid"], rows["r_start"], rows["r_end"], rows["speaker_key"], strict=True):
+        speaker = key if isinstance(key, str) else None
+        joins = (
+            current is not None
+            and speaker is not None
+            and speaker == current["speaker"]
+            and start - current["rEnd"] <= STRETCH_MAX_GAP_S
+        )
+        if joins:
+            current["rEnd"] = max(current["rEnd"], float(end))
+            current["ids"].append(uid)
+        else:
+            current = {"speaker": speaker, "rStart": float(start), "rEnd": float(end), "ids": [uid]}
+        if speaker is not None and (best is None or current["rEnd"] - current["rStart"] > best["rEnd"] - best["rStart"]):
+            best = {**current, "ids": list(current["ids"])}
+    return _Draft(
+        value=best["rEnd"] - best["rStart"] if best else None,
+        quantities={**_speaking_gates(facts), "speaking_s": float(rows["dur"].sum()) if not rows.empty else 0.0},
+        coverage=(
+            {"speaker": best["speaker"], "rStart": best["rStart"], "rEnd": best["rEnd"], "ids": best["ids"]}
+            if best
+            else {"speaker": None, "rStart": None, "rEnd": None, "ids": []}
+        ),
+    )
+
+
 def _transcript_health(facts: _Facts) -> _Draft:
     """The mean word confidence over the words that have one (`den`), with
     the transcript's health in `coverage` (`record.transcriptHealth`, built
@@ -1282,6 +1396,18 @@ _DEFINITIONS = (
     ),
     MeasureDef(
         "m.transcript_health", 1, "ratio", (SOURCE_TRANSCRIPT,), "", (Gate("den", 1),), "transcript-health", _transcript_health,
+    ),
+    MeasureDef(
+        "m.speaking_pace", 1, "rate", (SOURCE_TRANSCRIPT,), "",
+        (Gate("pace_ok", 1), Gate("speaking_s", SPEAKING_MIN_S)), "speaking-pace", _speaking_pace,
+    ),
+    MeasureDef(
+        "m.speaker_talk_time", 1, "rows", (SOURCE_TRANSCRIPT,), "",
+        (Gate("shares_ok", 1), Gate("speaking_s", SPEAKING_MIN_S)), "speaker-talk-time", _speaker_talk_time,
+    ),
+    MeasureDef(
+        "m.longest_stretch", 1, "seconds", (SOURCE_TRANSCRIPT,), "",
+        (Gate("shares_ok", 1), Gate("speaking_s", SPEAKING_MIN_S)), "longest-stretch", _longest_stretch,
     ),
     MeasureDef(
         "m.clock_alignment", 1, "ratio", (SOURCE_SESSION, SOURCE_TRANSCRIPT), "", (Gate("den", 1), Gate("aligned", 1)),

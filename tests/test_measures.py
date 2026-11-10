@@ -76,7 +76,7 @@ GROUPED = (
     "m.lead_time_show_up",
     "m.replay_caught_up",
 )
-TRANSCRIPT = ("m.transcript_health", "m.clock_alignment")
+TRANSCRIPT = ("m.transcript_health", "m.speaking_pace", "m.speaker_talk_time", "m.longest_stretch", "m.clock_alignment")
 LABELLED = ("m.questions_total", "m.chat_themes")
 AUDIENCE_MEASURES = tuple(measure_id for measure_id, definition in REGISTRY.items() if definition.excludes)
 
@@ -89,6 +89,7 @@ PUBLISHED_PINS = {
     4: "371ad80ebb3c49f67537164dae3c8e33b359f0dfb3e9761fc9db464be99f9f46",
     5: "75c8565904ab4520049f3e65e4b13435bea2610c28359ea32600dfd0dafe9653",
     6: "fbfbe6c5d1229ec88dd204df14a21e474fe3bd7d01fe7b25b869e6fb5c630a74",
+    7: "baf059609030dacc4ccb9c1108bd7bc34b3072b2e97c59e773ec3f32b9e4df35",
 }
 
 
@@ -426,7 +427,7 @@ def test_a_stored_roster_without_a_session_payload():
     assert unavailable == {
         "m.show_up_rate", "m.livestorm_counts", "m.wrote_rate", "m.questions_qa", "m.time_to_answer", "m.author_resolution",
         "m.chat_concentration", "m.room_map", "m.channel_quality", "m.segment_quality", "m.lead_time_show_up",
-        "m.transcript_health", "m.clock_alignment", *LABELLED,
+        "m.transcript_health", "m.speaking_pace", "m.speaker_talk_time", "m.longest_stretch", "m.clock_alignment", *LABELLED,
     }
     assert found["m.lead_time_show_up"]["coverage"] == {"missing": ["session"]}, "no start, no lead time"
     assert found["m.show_up_rate"]["coverage"] == {"missing": ["session"]}
@@ -1890,6 +1891,9 @@ def test_the_synthetic_webinar():
         "m.lead_time_show_up": (None, None, 7, INSUFFICIENT),
         "m.replay_caught_up": (None, 1, 2, INSUFFICIENT),
         "m.transcript_health": (0.9169, None, 2734, OK),
+        "m.speaking_pace": (135.157, 2734, None, OK),
+        "m.speaker_talk_time": (0.5157, None, 3, OK),
+        "m.longest_stretch": (7.55, None, None, OK),
         "m.clock_alignment": (1.0, 3, 3, OK),
         "m.questions_total": (None, None, None, UNAVAILABLE),
         "m.chat_themes": (None, None, None, UNAVAILABLE),
@@ -1910,3 +1914,84 @@ def test_measures_module_is_pure():
     source = Path(measures.__file__).read_text(encoding="utf-8")
     for name in ("livestorm_app.db", "requests", "fastapi", "psycopg", "redis"):
         assert f"import {name}" not in source and f"from {name}" not in source
+
+
+# ── Speaking stats ──────────────────────────────────────────────────────────
+
+
+def speech(*utterances, audio_s=None):
+    """A Gladia transcript of these utterances, `(start, end, speaker,
+    words)` each (speaker None: diarization found none), over a recording
+    as long as the last one ends (or `audio_s`)."""
+    items = []
+    for start, end, speaker, count in utterances:
+        step = (end - start) / max(count, 1)
+        words = [{"word": f" w{i}", "start": start + i * step, "end": start + (i + 0.5) * step, "confidence": 0.95} for i in range(count)]
+        items.append(
+            {"start": start, "end": end, **({} if speaker is None else {"speaker": speaker}), "language": "en", "text": "words", "words": words}
+        )
+    duration = float(audio_s if audio_s is not None else max(end for _, end, _, _ in utterances))
+    return {
+        "request_params": {"model": "solaria-1"},
+        "result": {
+            "metadata": {"audio_duration": duration},
+            "transcription": {"languages": ["en"], "utterances": items},
+            "stormiq_chunks": [{"index": 1, "offset_s": 0.0}],
+        },
+    }
+
+
+TWO_SPEAKERS = speech((0.0, 60.0, 0, 150), (60.0, 90.0, 1, 30), (90.0, 120.0, 0, 60))
+
+
+def test_speaking_pace_is_words_per_minute_of_speech():
+    item = one("m.speaking_pace", webinar(), transcript_payload=TWO_SPEAKERS)
+    assert item["state"] == OK
+    assert item["value"] == 120.0  # 240 words over 2 minutes
+    assert item["num"] == 240
+    assert item["coverage"]["speakingS"] == 120.0
+
+
+def test_speaking_pace_needs_a_minute_of_speech_and_the_pace_gate():
+    short = one("m.speaking_pace", webinar(), transcript_payload=speech((0.0, 30.0, 0, 60)))
+    assert short["state"] == INSUFFICIENT and short["value"] is None
+    assert short["gate"] == {"field": "speaking_s", "minimum": 60, "actual": 30.0}
+    sparse = one("m.speaking_pace", webinar(), transcript_payload=speech((0.0, 90.0, 0, 200), audio_s=3000.0))
+    assert sparse["state"] == INSUFFICIENT and sparse["value"] is None
+    assert sparse["gate"]["field"] == "pace_ok", "speech covering 3% of the recording gets no pace"
+
+
+def test_talk_time_has_one_row_per_speaker_most_talk_first():
+    item = one("m.speaker_talk_time", webinar(), transcript_payload=TWO_SPEAKERS)
+    assert item["state"] in (OK, "approximation")
+    rows = item["rows"]
+    assert [row["key"] for row in rows] == ["0", "1"]
+    assert rows[0]["speakingS"] == 90.0 and rows[1]["speakingS"] == 30.0
+    assert rows[0]["share"] == 0.75 and rows[1]["share"] == 0.25
+    assert rows[0]["words"] == 210 and rows[0]["wpm"] == 140.0
+    assert rows[1]["wpm"] is None, "30 s of speech is too little for a pace"
+    assert item["value"] == 0.75 and item["den"] == 2
+    assert all("name" not in row for row in rows), "keys, never names"
+
+
+def test_talk_time_rows_hide_their_numbers_when_the_shares_cant_be_trusted():
+    item = one("m.speaker_talk_time", webinar(), transcript_payload=speech((0.0, 120.0, None, 200)))
+    assert item["state"] == INSUFFICIENT and item["gate"]["field"] == "shares_ok"
+    assert item["rows"] and all(row["share"] is None and row["speakingS"] is None for row in item["rows"])
+
+
+def test_the_longest_stretch_joins_one_speakers_lines_across_short_gaps():
+    talk = speech((0.0, 30.0, 0, 50), (31.0, 60.0, 0, 50), (60.0, 75.0, 1, 20), (80.0, 120.0, 0, 60))
+    item = one("m.longest_stretch", webinar(), transcript_payload=talk)
+    assert item["state"] in (OK, "approximation")
+    assert item["value"] == 60.0, "0–30 and 31–60 by the same speaker make one stretch"
+    assert item["coverage"]["speaker"] == "0" and item["coverage"]["rStart"] == 0.0 and item["coverage"]["rEnd"] == 60.0
+    assert item["coverage"]["ids"] == ["U0001", "U0002"]
+    apart = speech((0.0, 30.0, 0, 50), (33.0, 60.0, 0, 50), (60.0, 120.0, 1, 90))
+    assert one("m.longest_stretch", webinar(), transcript_payload=apart)["value"] == 60.0
+    assert one("m.longest_stretch", webinar(), transcript_payload=apart)["coverage"]["speaker"] == "1"
+
+
+@pytest.mark.parametrize("measure_id", ["m.speaking_pace", "m.speaker_talk_time", "m.longest_stretch"])
+def test_the_speaking_stats_without_a_transcript_are_unavailable(measure_id):
+    assert one(measure_id, webinar(), transcript_payload=None)["state"] == UNAVAILABLE
