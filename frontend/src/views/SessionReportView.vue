@@ -6,6 +6,8 @@ import CardHeader from "../components/ui/CardHeader.vue";
 import Chip from "../components/ui/Chip.vue";
 import Icon from "../components/ui/Icon.vue";
 import PulseChart from "../components/report/PulseChart.vue";
+import VitalsRow from "../components/report/VitalsRow.vue";
+import { inShort } from "../report/vitals";
 import SessionRidge from "../components/report/SessionRidge.vue";
 import UiButton from "../components/ui/UiButton.vue";
 import { analysisSummary, formatLength, formatSessionStart } from "../report/format";
@@ -55,6 +57,7 @@ const sources = computed(() => {
 });
 
 const summary = computed(() => analysisSummary(record.value?.chatLabels, state.analysis));
+const short = computed(() => inShort(record.value?.measures || {}));
 
 const base = computed(() => `/single-analysis/${encodeURIComponent(props.sessionId)}`);
 const tabs = computed(() => [
@@ -129,6 +132,16 @@ const tabs = computed(() => [
         </RouterLink>
       </nav>
 
+      <Card v-if="short.sentence || short.chips.length" padding="hero">
+        <CardHeader icon="star" title="In short" :level="2" />
+        <p v-if="short.sentence" class="r-lead">{{ short.sentence }}</p>
+        <div v-if="short.chips.length" class="r-row">
+          <Chip v-for="chip in short.chips" :key="chip.text" tone="accent" :icon="chip.icon">{{ chip.text }}</Chip>
+        </div>
+      </Card>
+
+      <VitalsRow :measures="record.measures || {}" />
+
       <Card>
         <PulseChart :pulse="record.pulse" :alignment="clock.alignment || null" />
       </Card>
@@ -136,7 +149,8 @@ const tabs = computed(() => [
       <Card>
         <CardHeader icon="list" title="More sections come next" :level="2" />
         <p class="r-text">
-          The vitals and the audience will appear here. Until then, the Transcript and Follow-up tabs open the current views.
+          The audience and the chat's topics will appear here. Until then, the Transcript and Follow-up tabs open the current
+          views.
         </p>
       </Card>
     </template>
@@ -212,6 +226,15 @@ const tabs = computed(() => [
   font-size: var(--siq-text-ui);
   line-height: var(--siq-text-ui-lh);
   color: var(--siq-ink-2);
+}
+
+.r-lead {
+  margin: var(--siq-space-3) 0 0;
+  max-width: 680px;
+  font-size: var(--siq-text-lead);
+  line-height: var(--siq-text-lead-lh);
+  color: var(--siq-ink-2);
+  text-wrap: pretty;
 }
 
 .r-row {
