@@ -10,7 +10,7 @@ const { state } = useWorkspace();
 const router = useRouter();
 
 onMounted(() => {
-  if (state.auth.connectedUser || state.auth.allowLocalApiKeyFallback) router.replace("/single-analysis");
+  if (state.auth.connectedUser || state.auth.allowLocalApiKeyFallback) router.replace("/sessions");
 });
 </script>
 

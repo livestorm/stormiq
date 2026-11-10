@@ -2,7 +2,7 @@
 import { computed } from "vue";
 import { useWorkspace } from "../store/workspace";
 
-// Hero header for every per-session route under /single-analysis/:id/*.
+// Hero header for every per-session route under /sessions/:id/*.
 // Echoes the cover image the user clicked on the grid (or the
 // gradient placeholder when no cover exists yet), then a tight
 // title + meta block below.

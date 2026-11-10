@@ -3,7 +3,7 @@
 // connected from, when it is a path on this site) or `auth=error`.
 
 export const CALLBACK_PATH = "/auth/callback";
-const SIGNED_IN_HOME = "/single-analysis";
+const SIGNED_IN_HOME = "/sessions";
 
 /** `value` when it is a path on this site (one leading "/", no backslash
  * or control character, not the OAuth pages or the API), else "". The

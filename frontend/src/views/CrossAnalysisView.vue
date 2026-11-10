@@ -75,7 +75,7 @@ import { RouterLink } from "vue-router";
         </svg>
         <span>
           Get a head start — run
-          <RouterLink to="/single-analysis" class="cross-prep-link">Single Analysis</RouterLink>
+          <RouterLink to="/sessions" class="cross-prep-link">Single Analysis</RouterLink>
           on your sessions now. Cross Analysis reuses those cached results, so it'll be instant when it ships.
         </span>
       </div>
