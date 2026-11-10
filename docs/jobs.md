@@ -100,6 +100,18 @@ The runner picks its model by job kind (`llm_client.get_llm_model`): `overall_an
 
 Smart Recap is on demand only: nothing generates it automatically.
 
+### The session analysis (v1)
+
+The v1 Report's analysis, started by the user and never on its own. For now it labels the chat; later steps of the v1 analysis will join the same run.
+
+| Start | Poll | Worker job | One job per |
+|---|---|---|---|
+| `POST /api/sessions/{id}/session-analysis` | `GET …/session-analysis/job` | `run_session_analysis_job` | session |
+
+- **Start** (`api_logic.start_session_analysis`): the caller must be able to read the session (404 otherwise). It queues the job with the session id only, under the fixed id `session_analysis:{session_id}:_`, and returns `{jobId, jobStatus, enqueued}`; a second click while it runs joins the same job. 503 when the queue is down.
+- **Poll** (`api_logic.get_session_analysis_job`): `{jobId, jobStatus, error?}`, with the statuses above. The job id is derived from the session; a `jobId` parameter is ignored.
+- **The run** (`api_logic.run_session_analysis`, in `asyncio.to_thread`; the key comes from the worker's env): it reads the cached chat through the record (`record.inputs.load_record_inputs`), and skips the model when the stored labels already describe this chat (same `chat_hash` and `LABEL_VERSION`). Otherwise it labels the chat (`ai/chat_labelling.label_chat`, [ai-outputs.md](ai-outputs.md#chat-labels-v1)) and stores the labels whole (`db.replace_chat_labels`). It returns `{chatLabels: "labelled" | "up_to_date", messages}`. A failure stores nothing and keeps the earlier labels. Each call records an `llm_usage` row with the job kind `chat_labels` and the run's job id. Not held to the daily budget: the user starts it.
+
 ## Cover images
 
 `run_cover_image_job` renders a landscape cover (1536×1024 by default) from the session's Professional Smart Recap (prompt: `prompts/cover_image_prompt.txt`) and stores the PNG in `session_cache.cover_image_bytes`. It runs in exactly two cases: after a Professional Smart Recap completes (the worker chains it, unless the session already has a cover), and from `scripts/backfill_cover_images.py`. Reading a session never starts one. The arq id is `cover_image:{session_id}`, so a cover that is queued, running, or failed within the last hour is not started again. Failures are logged and swallowed, so a broken image generator never fails the recap. Its paid OpenAI Images call goes through `cover_image.generate_cover_image_with_openai`, not `llm_client.call_llm`, so it leaves no `llm_usage` row and isn't held to the daily budget ([roadmap](roadmap.md#5-models)).
@@ -110,7 +122,7 @@ Smart Recap is on demand only: nothing generates it automatically.
 |---|---|
 | Transcription | 120 min |
 | People sync | 15 min, the wait for the org's lock included |
-| AI flows | 15 min |
+| AI flows, the session analysis included | 15 min |
 | Cover image | 5 min |
 | `ping` | 5 min (arq default) |
 

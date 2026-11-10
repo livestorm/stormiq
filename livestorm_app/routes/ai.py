@@ -13,8 +13,10 @@ from livestorm_app.api_logic import (
     get_content_repurposing_job_data,
     get_deep_analysis_job_data,
     get_overall_analysis_job_data,
+    get_session_analysis_job,
     get_smart_recap_job_data,
     start_content_repurposing,
+    start_session_analysis,
     start_deep_analysis,
     start_overall_analysis,
     start_smart_recap,
@@ -27,6 +29,26 @@ from livestorm_app.routes.common import SessionId, pdf_response, raise_http_erro
 from livestorm_app.routes.models import AnalysisRequest, SmartRecapRequest
 
 router = APIRouter()
+
+
+@router.post("/api/sessions/{session_id}/session-analysis")
+def session_analysis(session_id: SessionId, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
+    """Start the v1 session analysis (the chat labels, for now), or join the
+    run in flight. Returns {jobId, jobStatus, enqueued}; poll `/session-analysis/job`."""
+    try:
+        return start_session_analysis(session_id, organization_id=caller.read_scope)
+    except Exception as exc:
+        raise_http_error("Session analysis", exc)
+        raise
+
+
+@router.get("/api/sessions/{session_id}/session-analysis/job")
+def session_analysis_job(session_id: SessionId, caller: Caller = Depends(get_caller), jobId: str = Query("")) -> Dict[str, Any]:
+    try:
+        return get_session_analysis_job(session_id, jobId, organization_id=caller.read_scope)
+    except Exception as exc:
+        raise_http_error("Session analysis", exc)
+        raise
 
 
 @router.post("/api/sessions/{session_id}/analysis")

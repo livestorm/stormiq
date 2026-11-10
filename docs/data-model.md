@@ -164,7 +164,7 @@ livestorm_sync_jobs (                           -- worker jobs that call Livesto
 
 ## `session_chat_labels`
 
-One row per session: a label for each chat message, for the v1 Report. A model will write them in an analysis the user starts; nothing writes them yet. The labels' contract is in `record/chat_labels.py`.
+One row per session: a label for each chat message, for the v1 Report. The session analysis the user starts writes them ([jobs.md](jobs.md#the-session-analysis-v1)). The labels' contract is in `record/chat_labels.py`.
 
 ```sql
 session_chat_labels (
