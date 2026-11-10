@@ -8,7 +8,7 @@ Every request's identity is resolved once, by `livestorm_app/auth.py`. Routes de
 
 There are two ways in:
 
-1. **Livestorm OAuth**, the standard path. The session cookie is `livestorm_oauth_connection`. The flow uses PKCE, with an HMAC-signed handshake cookie that expires after 10 minutes and is checked server-side. Access tokens are refreshed when they are within 5 minutes of expiry; a failed refresh returns 401 "Please reconnect".
+1. **Livestorm OAuth**, the standard path. The session cookie is `livestorm_oauth_connection`. The flow uses PKCE, with an HMAC-signed handshake cookie that expires after 10 minutes and is checked server-side. Access tokens are refreshed when they are within 5 minutes of expiry; a failed refresh returns 401 "Please reconnect". After a sign-in the callback returns the user to the page they connected from, carried in the signed handshake; that path is used only when it is on this site (one leading `/`, no backslash or control character, not `/auth/` or `/api/`), checked by `oauth_client.safe_return_path` and again by the SPA (`src/auth/callback.js`), so the redirect can't be pointed at another site.
 2. **Local-dev mode**, for developers only. It is on when `STORMIQ_LOCAL_DEV=1` **and** the process is not on Render (Render sets `RENDER=true` on every service). Requests must also use a loopback `Host` (`localhost`, `127.0.0.1`, `::1`). That check doesn't authenticate anyone: it stops a web page from reaching a developer's local server through DNS rebinding. In local-dev mode:
    - requests without an OAuth cookie act as a trusted local operator;
    - Livestorm calls use `LS_API_KEY`;

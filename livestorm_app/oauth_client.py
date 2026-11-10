@@ -132,6 +132,25 @@ def build_authorization_url(return_to: str = "/") -> Dict[str, str]:
     }
 
 
+def safe_return_path(value: Any) -> str:
+    """The page to open after sign-in: `value` when it is a path on this
+    site, else "".
+
+    The path comes from the signed handshake (the page the user was on when
+    they clicked Connect), but it is still checked here, so the redirect can
+    never leave the site: it must start with one "/", hold no backslash or
+    control character, and not point back at the OAuth pages or the API.
+    """
+    path = str(value or "").strip()
+    if not path.startswith("/") or path.startswith("//"):
+        return ""
+    if "\\" in path or any(ord(char) < 32 or ord(char) == 127 for char in path):
+        return ""
+    if len(path) > 512 or path.startswith(("/auth/", "/api/")):
+        return ""
+    return path
+
+
 def validate_handshake(handshake_token: str, state: str) -> Dict[str, Any]:
     payload = _unsign_payload(handshake_token)
     if not isinstance(payload, dict):

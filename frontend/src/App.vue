@@ -4,6 +4,7 @@ import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
 import { api, onUnauthorized } from "./api";
 import SessionHero from "./components/SessionHero.vue";
 import TopBar from "./components/ui/TopBar.vue";
+import { CALLBACK_PATH, afterCallback } from "./auth/callback";
 import { showsLanding } from "./design/landing";
 import { useWorkspace } from "./store/workspace";
 
@@ -137,12 +138,15 @@ onMounted(async () => {
   try {
     const bootstrap = await api.bootstrap();
     applyBootstrap(bootstrap);
-    if (route.path === "/auth/callback") {
+    // The OAuth return page. Read the browser's own address, not `route`:
+    // the router may not have resolved its first route yet (the page's
+    // chunk can still be loading when the bootstrap answers), and `route`
+    // then still says "/", which left users on the "Connecting" screen.
+    if (window.location.pathname === CALLBACK_PATH) {
       // Full page navigation (not router.replace) so the browser fetches
-      // fresh index.html. Otherwise a session that started on an old
-      // cached bundle keeps running it after OAuth, leaving the user on
-      // a pre-restructure UI with broken hashed-asset references.
-      window.location.replace("/single-analysis");
+      // fresh index.html: a session that started on an old cached bundle
+      // would otherwise keep running it after OAuth.
+      window.location.replace(afterCallback(window.location.search));
       return;
     }
     // Local dev: LS_API_KEY is set but no OAuth session exists yet.

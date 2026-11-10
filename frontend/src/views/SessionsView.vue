@@ -389,8 +389,13 @@ function clearFilters() {
   color: var(--siq-muted);
 }
 
+/* "53 of 57" on one line. */
+.s-table td.s-num {
+  white-space: nowrap;
+}
+
 .s-num .s-meta {
-  display: block;
+  margin-left: var(--siq-space-1);
 }
 
 .s-added {
@@ -474,10 +479,6 @@ function clearFilters() {
   }
   .s-transcript {
     grid-area: transcript;
-  }
-  .s-num .s-meta {
-    display: inline;
-    margin-left: var(--siq-space-1);
   }
   .s-added {
     display: none;
