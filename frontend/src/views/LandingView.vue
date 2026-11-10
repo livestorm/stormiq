@@ -92,6 +92,31 @@ const TRUST = [
       </Card>
     </section>
 
+    <!-- The promo film: fetched only when played (preload="none"), never
+         autoplayed. Its session is made up, and it shows some of what is
+         still being built, so its caption says both. -->
+    <section class="l-section" aria-labelledby="l-film">
+      <h2 id="l-film" class="l-section-title">See it in a minute</h2>
+      <Card as="figure" padding="flush" class="l-film">
+        <video
+          class="l-film-video"
+          controls
+          playsinline
+          preload="none"
+          width="1920"
+          height="1080"
+          poster="/media/stormiq-promo-poster.jpg"
+          aria-describedby="l-film-caption"
+        >
+          <source src="/media/stormiq-promo.mp4" type="video/mp4" />
+          <a href="/media/stormiq-promo.mp4">Download the StormIQ tour (MP4, 5 MB)</a>
+        </video>
+        <figcaption id="l-film-caption" class="l-film-caption">
+          A one-minute tour of a made-up session. Some of what it shows is still being built.
+        </figcaption>
+      </Card>
+    </section>
+
     <section class="l-section" aria-labelledby="l-features">
       <h2 id="l-features" class="l-section-title">What you get</h2>
       <ul class="l-features">
@@ -256,6 +281,27 @@ const TRUST = [
 }
 
 .l-example-caption {
+  font-size: var(--siq-text-caption);
+  line-height: var(--siq-text-caption-lh);
+  color: var(--siq-muted);
+}
+
+/* ── The film ── */
+.l-film {
+  margin: 0;
+  overflow: hidden;
+}
+
+.l-film-video {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  background: var(--siq-ink);
+}
+
+.l-film-caption {
+  padding: var(--siq-space-3) var(--siq-space-6);
   font-size: var(--siq-text-caption);
   line-height: var(--siq-text-caption-lh);
   color: var(--siq-muted);

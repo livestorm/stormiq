@@ -23,6 +23,7 @@ const SessionReportView = () => import("./views/SessionReportView.vue");
 // (in the entry bundle) otherwise.
 const SessionsView = () => import("./views/SessionsView.vue");
 const sessionListView = () => (isV1() ? SessionsView() : Promise.resolve(SingleAnalysisListView));
+const HomeView = () => import("./views/HomeView.vue");
 
 // Routing.
 //
@@ -65,7 +66,14 @@ function redirectLegacyTab(tab) {
 
 const routes = [
   // ── Top level ───────────────────────────────────────────────────────────
-  { path: "/", redirect: "/single-analysis" },
+  // The site's home. v1: signed out, the shell shows the landing page here;
+  // signed in, HomeView moves on to Sessions. Classic: straight to Sessions.
+  {
+    path: "/",
+    component: HomeView,
+    meta: { v1Native: true },
+    beforeEnter: () => (isV1() ? true : { path: "/single-analysis" }),
+  },
   { path: "/search", component: SearchView },
   // `v1Native` only matters in the v1 shell, where this route is the v1 index.
   { path: "/single-analysis", component: sessionListView, meta: { v1Native: true } },

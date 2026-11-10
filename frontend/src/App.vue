@@ -267,7 +267,8 @@ async function handleLogoutClick() {
   state.auth.connectedUser = null;
   state.apiKey = "";
   resetWorkspace();
-  router.push("/single-analysis");
+  // Signed out: the home page (the v1 landing page; classic redirects).
+  router.push("/");
 }
 
 function toggleSidebar() {

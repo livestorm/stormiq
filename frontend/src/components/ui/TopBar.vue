@@ -43,6 +43,13 @@ const initials = computed(() => {
     .toUpperCase();
 });
 
+// The wordmark leads home: Sessions when signed in, the home page otherwise.
+const homeLink = computed(() =>
+  props.account || props.localMode
+    ? { to: "/single-analysis", label: "StormIQ, go to Sessions" }
+    : { to: "/", label: "StormIQ, go to the home page" },
+);
+
 const accountLabel = computed(() => {
   const parts = [props.account?.name, props.account?.detail].filter(Boolean);
   return `Account: ${parts.join(", ")}`;
@@ -87,7 +94,7 @@ function onLogout() {
   <header class="siq-topbar">
     <div class="siq-topbar-inner">
       <div class="siq-topbar-brand">
-        <RouterLink to="/single-analysis" class="siq-topbar-home siq-fx" aria-label="StormIQ, go to Sessions">
+        <RouterLink :to="homeLink.to" class="siq-topbar-home siq-fx" :aria-label="homeLink.label">
           <StormIqMark :mark="false" />
         </RouterLink>
         <span class="siq-topbar-beta">Beta</span>
