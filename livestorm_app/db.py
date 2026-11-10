@@ -447,6 +447,7 @@ def ensure_database_schema() -> None:
                 """
             )
             _ensure_people_schema(cursor)
+            _ensure_chat_labels_schema(cursor)
         connection.commit()
 
 
@@ -590,6 +591,26 @@ def _ensure_people_schema(cursor: Any) -> None:
         """
         CREATE INDEX IF NOT EXISTS idx_livestorm_sync_session
         ON livestorm_sync_jobs (session_id, created_at DESC)
+        """
+    )
+
+
+def _ensure_chat_labels_schema(cursor: Any) -> None:
+    """One row per session: the labels of its chat, stored whole
+    (`replace_chat_labels`). Like the people tables, it references
+    `session_cache` (deleted with it) and has no org column: every read
+    joins `session_cache` on its org (`fetch_chat_labels`)."""
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS session_chat_labels (
+            session_id    TEXT PRIMARY KEY REFERENCES session_cache (session_id) ON DELETE CASCADE,
+            label_version INTEGER NOT NULL,
+            chat_hash     TEXT NOT NULL,
+            model         TEXT NOT NULL,
+            message_count INTEGER NOT NULL,
+            labels        JSONB NOT NULL,
+            created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
         """
     )
 
@@ -2209,6 +2230,108 @@ def livestorm_sync_is_first_initial(sync_id: str) -> bool:
             (sync_id_value,),
         ).fetchone()
     return bool(row and row["first_initial"])
+
+
+# ── Chat labels (record/chat_labels.py) ───────────────────────────────────
+#
+# One row per session: every chat message's label, written whole by the
+# analysis the user starts. A replace swaps the whole set; a failed write
+# keeps the previous one. Reads join `session_cache` on its org.
+
+_CHAT_HASH = re.compile(r"^[0-9a-f]{64}$")
+
+
+def replace_chat_labels(
+    session_id: str,
+    labels: Sequence[Mapping[str, Any]],
+    *,
+    chat_hash: str,
+    model: str,
+) -> Dict[str, Any]:
+    """Store a session's chat labels, replacing any earlier set.
+
+    `labels` must pass `record.chat_labels.check_labels` (ValueError
+    otherwise, naming ids, never text); the caller has already checked that
+    they cover the chat whose `chat_hash` it passes. Stored with
+    `LABEL_VERSION`. Raises RuntimeError when the write fails or the session
+    isn't cached; the earlier labels are kept. Returns `{label_version,
+    message_count}`.
+    """
+    from livestorm_app.record.chat_labels import LABEL_VERSION, check_labels
+
+    session_id_value = str(session_id or "").strip()
+    if not session_id_value:
+        raise ValueError("replace_chat_labels requires a session_id.")
+    if not isinstance(chat_hash, str) or not _CHAT_HASH.match(chat_hash):
+        raise ValueError("chat_hash is a lowercase SHA-256 hex digest.")
+    model_value = str(model or "").strip()
+    if not model_value:
+        raise ValueError("replace_chat_labels requires the model that made the labels.")
+    checked = check_labels(labels)
+    if not database_enabled():
+        raise RuntimeError("Database is not configured.")
+    try:
+        with get_db_connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO session_chat_labels (
+                    session_id, label_version, chat_hash, model, message_count, labels, created_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s::jsonb, NOW())
+                ON CONFLICT (session_id) DO UPDATE SET
+                    label_version = EXCLUDED.label_version,
+                    chat_hash = EXCLUDED.chat_hash,
+                    model = EXCLUDED.model,
+                    message_count = EXCLUDED.message_count,
+                    labels = EXCLUDED.labels,
+                    created_at = NOW()
+                """,
+                (
+                    session_id_value,
+                    LABEL_VERSION,
+                    chat_hash,
+                    model_value,
+                    len(checked),
+                    json.dumps(checked, ensure_ascii=False),
+                ),
+            )
+            connection.commit()
+    except Exception as exc:
+        logger.error("Failed to save the chat labels for session_id=%s (%s)", session_id_value, _error_label(exc))
+        raise RuntimeError("Could not save the chat labels; the previous labels are kept.") from exc
+    return {"label_version": LABEL_VERSION, "message_count": len(checked)}
+
+
+def fetch_chat_labels(session_id: str, organization_id: OrgScope) -> Optional[Dict[str, Any]]:
+    """A session's stored chat labels, scoped by org: `{label_version,
+    chat_hash, model, message_count, labels, created_at}`, the labels in id
+    order. None when there are none, or the session isn't cached or isn't in
+    the scope; a blank scope matches nothing and never queries. Returned as
+    stored, whatever their version or chat: the reader compares
+    `label_version` and `chat_hash` with the chat it shows. Raises when the
+    database can't be read.
+    """
+    session_id_value = str(session_id or "").strip()
+    if not database_enabled() or not session_id_value:
+        return None
+    try:
+        org_filter = _org_filter(organization_id)
+    except ScopeMatchesNothing:
+        return None
+    where_clause = "l.session_id = %s" + (" AND c.organization_id = %s" if org_filter is not None else "")
+    params = (session_id_value,) + ((org_filter,) if org_filter is not None else ())
+    with get_db_connection() as connection:
+        row = connection.execute(
+            f"""
+            SELECT l.label_version, l.chat_hash, l.model, l.message_count, l.labels, l.created_at
+            FROM session_chat_labels l
+            JOIN session_cache c ON c.session_id = l.session_id
+            WHERE {where_clause}
+            LIMIT 1
+            """,
+            params,
+        ).fetchone()
+    return dict(row) if row else None
 
 
 # ── Model usage (ai/usage.py) ──────────────────────────────────────────────

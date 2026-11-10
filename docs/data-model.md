@@ -162,6 +162,27 @@ livestorm_sync_jobs (                           -- worker jobs that call Livesto
 - **Workspace field labels.** `db.upsert_org_people_attributes` replaces an org's attributes only with an `ok` result; `forbidden` or `error` keeps the last good ones and records the status and time. The people sync reuses an `ok` or `forbidden` row read less than 24 hours ago, and otherwise reads them again and saves `ok` or `forbidden`; any other failure fails the sync and saves nothing.
 - **Sync rows.** `db.create_livestorm_sync` inserts a `pending` row (or a `scheduled` one, which never holds a connection id) unless the session already has one in flight: a lost race attaches to the existing row (`created: false`), as transcript jobs do. `db.claim_livestorm_sync` moves `pending` to `running` and hands the connection id over once, clearing it in the same statement (like `claim_transcript_job`). `db.update_livestorm_sync` sets the status, error and counts, and clears the connection id when the row leaves `pending`; with `only_from` it updates only a row still in one of those statuses, so closing a lost sync never overwrites one that finished meanwhile. A row that is never claimed is closed that way: by the request after a failed enqueue, or by the next status read when its arq job is gone. `db.sweep_stuck_livestorm_syncs` (the stuck-job sweeper) closes any `pending` or `running` row silent for an hour, connection id cleared, and `db.touch_livestorm_sync` keeps a running sync fresh while it waits for its org's lock. `db.livestorm_sync_calls_since(org, since)` sums one org's `pages_fetched` over the rows updated since then, leaving out each session's first `initial` sync (the daily cap; a blank scope gives 0 without querying, `ALL_ORGS` is refused), and `db.livestorm_sync_is_first_initial(sync_id)` says whether a sync is that exempt one, for the worker's own cap check.
 
+## `session_chat_labels`
+
+One row per session: a label for each chat message, for the v1 Report. A model will write them in an analysis the user starts; nothing writes them yet. The labels' contract is in `record/chat_labels.py`.
+
+```sql
+session_chat_labels (
+  session_id    TEXT PRIMARY KEY REFERENCES session_cache (session_id) ON DELETE CASCADE,
+  label_version INTEGER NOT NULL,      -- record.chat_labels.LABEL_VERSION when written
+  chat_hash     TEXT NOT NULL,         -- SHA-256 of the labelled chat (record.chat_labels.chat_hash)
+  model         TEXT NOT NULL,         -- the model that made the labels
+  message_count INTEGER NOT NULL,
+  labels        JSONB NOT NULL,        -- [{id, livestorm_id, class, question, language}], in id order
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+```
+
+- **One label per message.** `id` is the message's `C` evidence id (`record/evidence.py`) and `livestorm_id` its own id. `class` is one of `content`, `question`, `tech`, `logistics`, `social`, `laughter`, `off_topic`; a `question` also says whether it is about the content or logistics; `language` is a lowercase ISO 639 code or null. No text, author or name is stored here: the chat stays in `session_cache`.
+- **Which chat.** `chat_hash` covers each message's evidence id, Livestorm id and text. A reader shows the labels only when it and `label_version` match the chat it shows, so labels made for an older chat or by an older prompt never appear against a newer one.
+- **Replaced whole.** `db.replace_chat_labels` checks the set (`check_labels`: known classes, a kind on questions only, unique ids; errors name ids, never text) before it writes, then upserts the row. A failed write raises and keeps the previous labels.
+- **Scoped and deleted through the session**, like the people tables: `db.fetch_chat_labels` joins `session_cache` and filters on its org (a blank scope never queries), and `ON DELETE CASCADE` removes the labels with the session.
+
 ## `oauth_connections`
 
 ```sql
