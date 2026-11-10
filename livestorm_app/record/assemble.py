@@ -46,7 +46,7 @@ from livestorm_app.record.inputs import RecordInputs
 from livestorm_app.record.measures import METRICS_VERSION, compute_measures, validate_measures
 from livestorm_app.record.roster import Roster
 
-RECORD_VERSION = 7
+RECORD_VERSION = 8
 
 # Where the measures come from: computed from the cached payloads when the
 # block is built (the caller caches the block per process; nothing is
@@ -102,6 +102,16 @@ def clock_meta(inputs: RecordInputs) -> Dict[str, Any]:
         "timezone": (zone.strip() or None) if isinstance(zone, str) else None,
         "alignment": inputs.alignment.to_json(),
     }
+
+
+def session_meta(inputs: RecordInputs) -> Dict[str, Any]:
+    """`meta.session`: what the page header names the session by. `title`
+    is the event's title (`event_payload.data.attributes.title`), or None
+    when the event wasn't fetched or has none."""
+    data = inputs.event_payload.get("data") if isinstance(inputs.event_payload, Mapping) else None
+    attributes = data.get("attributes") if isinstance(data, Mapping) else None
+    title = attributes.get("title") if isinstance(attributes, Mapping) else None
+    return {"title": title.strip() or None if isinstance(title, str) else None}
 
 
 def roster_header(roster: Roster) -> Dict[str, Any]:
@@ -184,7 +194,7 @@ def assemble_record(inputs: RecordInputs) -> Dict[str, Any]:
     speech = speech_state(inputs)
     speech_df = speech_events(inputs.transcript.utterances, inputs.alignment.offset_s) if speech["shown"] else None
     return {
-        "meta": {"clock": clock_meta(inputs)},
+        "meta": {"clock": clock_meta(inputs), "session": session_meta(inputs)},
         "record": {
             "version": RECORD_VERSION,
             "roster": roster_header(inputs.roster),

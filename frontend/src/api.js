@@ -139,6 +139,20 @@ export const api = {
     const params = new URLSearchParams({ ...query, outputsOnly: "true" });
     return request(sessionPath(sessionId, `/${flow}/job?${params.toString()}`), { signal });
   },
+  // ── The v1 Report ───────────────────────────────────────────────────────
+  //
+  // The session's record (numbers computed by the server, docs/api.md "The
+  // v1 record"), and the session analysis the user starts (the chat labels,
+  // for now). The analysis poll takes no job id: the server derives it.
+  getSessionRecord(sessionId, { signal } = {}) {
+    return request(sessionPath(sessionId, "/record"), { signal });
+  },
+  startSessionAnalysis(sessionId, { signal } = {}) {
+    return request(sessionPath(sessionId, "/session-analysis"), { method: "POST", signal });
+  },
+  getSessionAnalysisJob(sessionId, { signal } = {}) {
+    return request(sessionPath(sessionId, "/session-analysis/job"), { signal });
+  },
   // ── Download URLs ───────────────────────────────────────────────────────
   getAnalysisPdfUrl(sessionId, kind, language) {
     const params = new URLSearchParams({ kind, language });

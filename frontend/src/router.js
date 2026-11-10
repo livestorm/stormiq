@@ -18,6 +18,7 @@ const AuthCallbackView = () => import("./views/AuthCallbackView.vue");
 const BetaNoticeView = () => import("./views/BetaNoticeView.vue");
 const AdminView = () => import("./views/AdminView.vue");
 const DesignGalleryView = () => import("./views/DesignGalleryView.vue");
+const SessionReportView = () => import("./views/SessionReportView.vue");
 
 // Routing.
 //
@@ -68,9 +69,18 @@ const routes = [
   // ── Session detail (parameterised) ──────────────────────────────────────
   // The :sessionId is the URL contract for sharing. The store
   // synchronises state.workspace to whatever this segment carries.
+  // With the v1 switch on, a session opens on the v1 Report.
   {
     path: "/single-analysis/:sessionId",
-    redirect: (to) => ({ path: `/single-analysis/${to.params.sessionId}/session-overview` }),
+    redirect: (to) => ({ path: `/single-analysis/${to.params.sessionId}/${isV1() ? "report" : "session-overview"}` }),
+  },
+  // The v1 Report: v1 only; with the switch off it falls back to the overview.
+  {
+    path: "/single-analysis/:sessionId/report",
+    component: SessionReportView,
+    props: true,
+    meta: { v1Native: true },
+    beforeEnter: (to) => (isV1() ? true : { path: `/single-analysis/${to.params.sessionId}/session-overview` }),
   },
   { path: "/single-analysis/:sessionId/session-overview", component: SessionOverviewView, props: true },
   { path: "/single-analysis/:sessionId/transcript", component: TranscriptView, props: true },
