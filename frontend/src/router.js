@@ -54,10 +54,10 @@ const routes = [
   // ── Top level ───────────────────────────────────────────────────────────
   // The site's home: signed out, the shell shows the landing page here;
   // signed in, HomeView moves on to Sessions.
-  { path: "/", component: HomeView, meta: { v1Native: true } },
-  { path: "/sessions/add", component: AddSessionView, meta: { v1Native: true } },
+  { path: "/", component: HomeView },
+  { path: "/sessions/add", component: AddSessionView },
   { path: "/search", redirect: "/sessions/add" },
-  { path: "/sessions", component: SessionsView, meta: { v1Native: true } },
+  { path: "/sessions", component: SessionsView },
   // Comparing sessions ("Cross Analysis") is out of the app for now; old links open Sessions.
   { path: "/cross-analysis", redirect: "/sessions" },
 
@@ -66,14 +66,14 @@ const routes = [
   // synchronises state.workspace to whatever this segment carries.
   // A session opens on its Report.
   { path: "/sessions/:sessionId", redirect: (to) => ({ path: `/sessions/${encodeURIComponent(to.params.sessionId)}/report` }) },
-  { path: "/sessions/:sessionId/report", component: SessionReportView, props: true, meta: { v1Native: true } },
+  { path: "/sessions/:sessionId/report", component: SessionReportView, props: true },
   // The classic Overview and Chat & Questions views are gone: the Report covers them.
   ...["session-overview", "chat-questions"].map((tab) => ({
     path: `/sessions/:sessionId/${tab}`,
     redirect: (to) => ({ path: `/sessions/${encodeURIComponent(to.params.sessionId)}/report`, query: to.query }),
   })),
-  { path: "/sessions/:sessionId/transcript", component: SessionTranscriptView, props: true, meta: { v1Native: true } },
-  { path: "/sessions/:sessionId/follow-up", component: SessionFollowUpView, props: true, meta: { v1Native: true } },
+  { path: "/sessions/:sessionId/transcript", component: SessionTranscriptView, props: true },
+  { path: "/sessions/:sessionId/follow-up", component: SessionFollowUpView, props: true },
   // The classic output views are now Follow-up's outputs.
   ...Object.entries(LEGACY_OUTPUTS).map(([tab, output]) => ({
     path: `/sessions/:sessionId/${tab}`,
@@ -102,7 +102,7 @@ const routes = [
 
   // The component gallery, for reviewing the design system in light and
   // dark; fictional content.
-  { path: "/design", component: DesignGalleryView, meta: { v1Native: true } },
+  { path: "/design", component: DesignGalleryView },
 ];
 
 export default createRouter({
