@@ -147,6 +147,9 @@ export const api = {
   getSessionRecord(sessionId, { signal } = {}) {
     return request(sessionPath(sessionId, "/record"), { signal });
   },
+  getSessionChat(sessionId, { signal } = {}) {
+    return request(sessionPath(sessionId, "/record/chat"), { signal });
+  },
   startSessionAnalysis(sessionId, { signal } = {}) {
     return request(sessionPath(sessionId, "/session-analysis"), { method: "POST", signal });
   },

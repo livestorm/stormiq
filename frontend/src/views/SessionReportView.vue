@@ -7,6 +7,8 @@ import Chip from "../components/ui/Chip.vue";
 import Icon from "../components/ui/Icon.vue";
 import AudienceSection from "../components/report/AudienceSection.vue";
 import PulseChart from "../components/report/PulseChart.vue";
+import QuestionsSection from "../components/report/QuestionsSection.vue";
+import RoomSection from "../components/report/RoomSection.vue";
 import VitalsRow from "../components/report/VitalsRow.vue";
 import { inShort } from "../report/vitals";
 import SessionRidge from "../components/report/SessionRidge.vue";
@@ -146,6 +148,10 @@ const tabs = computed(() => [
       <Card>
         <PulseChart :pulse="record.pulse" :alignment="clock.alignment || null" />
       </Card>
+
+      <RoomSection :measures="record.measures || {}" :chat="state.chat" @load-chat="report.loadChat()" />
+
+      <QuestionsSection :measures="record.measures || {}" :chat="state.chat" @load-chat="report.loadChat()" />
 
       <AudienceSection :measures="record.measures || {}" />
     </template>
