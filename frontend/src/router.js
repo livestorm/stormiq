@@ -9,7 +9,7 @@ import { useWorkspace } from "./store/workspace";
 const AddSessionView = () => import("./views/AddSessionView.vue");
 const CrossAnalysisView = () => import("./views/CrossAnalysisView.vue");
 const SessionOverviewView = () => import("./views/SessionOverviewView.vue");
-const TranscriptView = () => import("./views/TranscriptView.vue");
+const SessionTranscriptView = () => import("./views/SessionTranscriptView.vue");
 const ChatQuestionsView = () => import("./views/ChatQuestionsView.vue");
 const AnalysisView = () => import("./views/AnalysisView.vue");
 const SmartRecapView = () => import("./views/SmartRecapView.vue");
@@ -72,7 +72,7 @@ const routes = [
   { path: "/sessions/:sessionId", redirect: (to) => ({ path: `/sessions/${encodeURIComponent(to.params.sessionId)}/report` }) },
   { path: "/sessions/:sessionId/report", component: SessionReportView, props: true, meta: { v1Native: true } },
   { path: "/sessions/:sessionId/session-overview", component: SessionOverviewView, props: true },
-  { path: "/sessions/:sessionId/transcript", component: TranscriptView, props: true },
+  { path: "/sessions/:sessionId/transcript", component: SessionTranscriptView, props: true, meta: { v1Native: true } },
   { path: "/sessions/:sessionId/chat-questions", component: ChatQuestionsView, props: true },
   { path: "/sessions/:sessionId/analysis", component: AnalysisView, props: true },
   { path: "/sessions/:sessionId/smart-recap", component: SmartRecapView, props: true },

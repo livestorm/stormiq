@@ -139,79 +139,17 @@ Six top-level cards, from the session payload (Chat Messages: from the cached ch
 
 ## 6. Transcript
 
-**Route:** `/transcript`
+**Route:** `/sessions/:sessionId/transcript` (`views/SessionTranscriptView.vue`), the session's second tab (Report · Transcript · Follow-up).
 
-The transcript view requires a completed transcription job. If still running, a progress message is shown.
+What was said and what the room wrote, as one readable timeline. Data: `GET /api/sessions/{id}/record/transcript` ([api.md](api.md#the-v1-record)); wording and order: `src/transcript/lines.js`.
 
-**Speakers.** A new transcript looks for only a few more speakers than the people on stage (the organizers and guest speakers), so it shows fewer speakers that don't exist ([§13](#transcript-level)). When nobody is marked on stage, as on an internal meeting where nobody is marked as an organizer, the limit stays at 20. Transcripts saved before the speaker cap (November 2026) keep their speakers.
+- **One clock, when it can be trusted.** When the recording is matched to the session's clock to the second (the alignment probe's `seconds`, [§13](#alignment-probe-v1-report)), speech and the room are interleaved: each line at its session time, a speech line before a chat line at the same second. Otherwise the page shows "What was said" and "Chat and questions" apart and says why; speech then carries the recording's own times.
+- **Speech lines:** the time, the speaker (once per stretch of their lines) and the text. A word below 0.6 confidence is underlined, dotted, and read out as "low confidence"; neighbouring unclear words make one mark.
+- **The room's lines** (indented, with a rule in the chat's or the Q&A's colour): the author's short name ("Priya S."), "Team" or "Attendee" when the people list can't name them (an internal session names nobody), the source (Chat, Q&A, Answer), and for a question "Answered in writing" when a written answer replies to it. Nothing calls a question open: an answer given out loud leaves no trace. A message before the start reads "Before".
+- **Tools:** a search (text and names), "Everything · Speech only · Chat and questions", the speakers as filters, "Name speakers" (the names show here, in the subtitles and in the analyses made afterwards), "Subtitles (SRT)" (one cue per line of speech, on the recording's times, made in the browser) and "Raw (JSON)".
+- **Without a transcript:** the page says so and offers "Make the transcript" (a paid transcription that runs only on that click); while one is being made it shows its progress and updates by itself; a failed one says why and offers "Try again". The chat and questions show meanwhile.
 
-**Recordings longer than 135 minutes** are transcribed in parts of up to 135 minutes, then joined into one transcript. Each part numbers its speakers on its own, so one person gets one speaker number per part. The speaker labels on the Transcript tab can give those numbers the same name, but charts and tables still list each number on its own. Long transcripts saved before the merge fix (November 2026) were joined without word timings, so their pauses come from segments, and their sentences and named entities stop after the first part. Their speaker numbers also restart in each part, so one number can cover different people, and its airtime share mixes them. They are not rewritten.
-
-### Tab: Transcript
-- Full searchable transcript text
-- **Editable speaker labels** — speakers can be renamed; labels are persisted with the session and applied throughout the workspace
-- Subtitle download (SRT and other formats supported by the transcription provider)
-- Raw transcript JSON download
-
-### Tab: Speaking Pace
-Summary cards:
-- Global WPM
-- Min WPM
-- Max WPM
-- Total speaking time
-
-Chart: **Words Per Minute Over Time** — segment-level words-per-minute across the session.
-
-**WPM formula (per segment):** `(word_count / segment_duration_seconds) × 60`
-**Global WPM:** `(total_words / total_speaking_seconds) × 60`
-
-### Tab: Speaker Airtime
-- **Speaker Metrics** table — speaking seconds, share %, segment count, word count per speaker
-  - **Share % formula:** `speaker_speaking_seconds / total_speaking_seconds × 100`
-- **Pie Chart Per Speaker** — share of total speaking time
-- **Timeline Per Speaker** — when each speaker spoke across the session
-- **Speaker Turns** table — chronological list of segments with excerpts
-
-### Tab: NER (Named Entity Recognition)
-Named entities extracted from the transcript, grouped by entity and type, sorted by occurrence count. Entity types include MONEY, DATE_INTERVAL, EVENT, ORGANIZATION, LOCATION_CITY, LOCATION_COUNTRY, NAME, OCCUPATION, DURATION, FILENAME.
-
-For each entity: occurrence count, first-seen timestamp, surrounding context sentence.
-
-### Tab: Words Count
-- Per-speaker word count summary cards
-- **Words By Speaker** bar chart
-- **Words Over Time** line chart — words spoken per minute bucket
-- **Words Count** table
-
-### Tab: Speaking Segments
-- Summary cards
-- **Speaking Duration Before Pause** chart — distribution of speaking-burst durations
-- Speaking segments table
-- Bursts are merged consecutive segments by the same speaker with gaps below the pause threshold (0.75s)
-- **Burst duration bins:** 0–10s, 10–30s, 30–60s, 60s+
-
-### Tab: Silence & Pause
-Summary cards: total silences, average pause, longest silence, count of pauses over 1s.
-
-- **Pause Histogram** — distribution of pause durations
-  - Bins: `0.75–1s`, `1–2s`, `2–3s`, `3s+`
-- **Pause Timeline** — every pause event placed on the session timeline
-- **Pause Types** table
-
-**Pause classification:**
-
-| Gap duration | Pause type |
-|---|---|
-| < 0.3s | Natural flow (not counted as a pause) |
-| 0.3–1.0s | Thinking pause |
-| 1.0–2.0s | Hesitation |
-| ≥ 2.0s | Strong silence |
-
-Pause threshold for inclusion: gaps must be ≥ 0.75s to be flagged. Pauses are detected at the word level when word timings are available, otherwise at the segment level.
-
-### Tab: Utterance Duration
-**Distribution Of Utterance Length** — histogram of segment durations.
-- Bins: `0–5s`, `5–10s`, `10–20s`, `20–30s`, `30s+`
+The classic Transcript's eight diagnostic tabs are gone; pace, talk time per speaker and the longest stretch come back as a "Speaking stats" card, computed on the server ([roadmap](roadmap.md)).
 
 ---
 

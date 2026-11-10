@@ -13,6 +13,7 @@ import RoomSection from "../components/report/RoomSection.vue";
 import VitalsRow from "../components/report/VitalsRow.vue";
 import { inShort } from "../report/vitals";
 import SessionRidge from "../components/report/SessionRidge.vue";
+import SessionTabs from "../components/report/SessionTabs.vue";
 import UiButton from "../components/ui/UiButton.vue";
 import { analysisSummary, formatLength, formatSessionStart } from "../report/format";
 import { createSessionReport } from "../report/useSessionReport";
@@ -85,12 +86,6 @@ const sources = computed(() => {
 const summary = computed(() => analysisSummary(record.value?.chatLabels, state.analysis));
 const short = computed(() => inShort(record.value?.measures || {}));
 
-const base = computed(() => `/sessions/${encodeURIComponent(props.sessionId)}`);
-const tabs = computed(() => [
-  { key: "report", label: "Report", to: `${base.value}/report`, current: true },
-  { key: "transcript", label: "Transcript", to: `${base.value}/transcript`, current: false },
-  { key: "follow-up", label: "Follow-up", to: `${base.value}/content-repurposing`, current: false },
-]);
 </script>
 
 <template>
@@ -145,18 +140,7 @@ const tabs = computed(() => [
         </div>
       </Card>
 
-      <nav class="r-tabs" aria-label="Session sections">
-        <RouterLink
-          v-for="tab in tabs"
-          :key="tab.key"
-          :to="tab.to"
-          class="r-tab siq-fx"
-          :class="{ 'is-current': tab.current }"
-          :aria-current="tab.current ? 'page' : undefined"
-        >
-          {{ tab.label }}
-        </RouterLink>
-      </nav>
+      <SessionTabs :session-id="sessionId" current="report" />
 
       <Card v-if="short.sentence || short.chips.length" padding="hero">
         <CardHeader icon="star" title="In short" :level="2" />
@@ -274,41 +258,10 @@ const tabs = computed(() => [
   margin-top: var(--siq-space-2);
 }
 
-.r-tabs {
-  display: flex;
-  gap: var(--siq-space-2);
-  overflow-x: auto;
-  box-shadow: inset 0 -1px 0 var(--siq-hairline);
-}
 
-.r-tab {
-  display: inline-flex;
-  align-items: center;
-  min-height: var(--siq-target);
-  padding: 0 var(--siq-space-3);
-  font-size: var(--siq-text-nav);
-  line-height: var(--siq-text-nav-lh);
-  font-weight: var(--siq-weight-medium);
-  color: var(--siq-ink-2);
-  text-decoration: none;
-  white-space: nowrap;
-  transition-property: color, box-shadow;
-  transition-duration: var(--siq-duration);
-  transition-timing-function: var(--siq-ease);
-}
 
-.r-tab:hover {
-  color: var(--siq-ink);
-}
 
-.r-tab.is-current {
-  color: var(--siq-ink);
-  box-shadow: inset 0 -2px 0 var(--siq-accent);
-}
 
-.r-tab.siq-fx:focus-visible {
-  outline-offset: -3px;
-}
 
 @media (max-width: 640px) {
   .r-title {
@@ -317,17 +270,6 @@ const tabs = computed(() => [
   }
 }
 
-@media (forced-colors: active) {
-  .r-tab.is-current {
-    border-bottom: 2px solid CanvasText;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .r-tab {
-    transition: none;
-  }
-}
 
 /* The printed Report: the computed page, on paper. Print is always light
    (tokens.css). Controls that only work on screen go: the tabs, the
@@ -338,7 +280,6 @@ const tabs = computed(() => [
     gap: var(--siq-space-4);
   }
 
-  .r-tabs,
   .r-analysis,
   .r-page :deep(.siq-stat-head .siq-tile),
   .r-page :deep(.siq-btn),
