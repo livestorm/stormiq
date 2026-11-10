@@ -6,6 +6,7 @@ import CardHeader from "../components/ui/CardHeader.vue";
 import Chip from "../components/ui/Chip.vue";
 import Icon from "../components/ui/Icon.vue";
 import AudienceSection from "../components/report/AudienceSection.vue";
+import MethodSection from "../components/report/MethodSection.vue";
 import PulseChart from "../components/report/PulseChart.vue";
 import QuestionsSection from "../components/report/QuestionsSection.vue";
 import RoomSection from "../components/report/RoomSection.vue";
@@ -154,6 +155,8 @@ const tabs = computed(() => [
       <QuestionsSection :measures="record.measures || {}" :chat="state.chat" @load-chat="report.loadChat()" />
 
       <AudienceSection :measures="record.measures || {}" />
+
+      <MethodSection :body="body" />
     </template>
   </div>
 </template>

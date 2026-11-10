@@ -153,7 +153,7 @@ def test_the_owner_gets_the_clock_the_roster_header_and_the_pulse(client):
     }
     record = body["record"]
     assert list(record) == ["version", "roster", "pulse", "transcriptHealth", "chatLabels", "metricsVersion", "measuresSource", "measures"]
-    assert record["version"] == assemble.RECORD_VERSION == 8
+    assert record["version"] == assemble.RECORD_VERSION == 9
     assert record["roster"] == {
         "source": "session_include",
         "complete": None,
@@ -306,7 +306,11 @@ def test_the_record_serves_every_measure_live(client):
         "excluded": {"team": 2, "guestSpeakers": 1, "total": 3, "internal": False},
         "livestorm": {"attendeesCount": 8, "registrantsCount": 10, "value": 0.8},
         "rows": None,
+        "gate": None,
     }
+    wrote = record["measures"]["m.wrote_rate"]
+    assert wrote["state"] == "insufficient"
+    assert wrote["gate"] == {"field": "den", "minimum": measures.WROTE_RATE_MIN_ATTENDEES, "actual": wrote["den"]}
 
 
 def test_the_transcript_health_comes_with_the_record(client):

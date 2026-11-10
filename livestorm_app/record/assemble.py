@@ -46,7 +46,7 @@ from livestorm_app.record.inputs import RecordInputs
 from livestorm_app.record.measures import METRICS_VERSION, compute_measures, validate_measures
 from livestorm_app.record.roster import Roster
 
-RECORD_VERSION = 8
+RECORD_VERSION = 9
 
 # Where the measures come from: computed from the cached payloads when the
 # block is built (the caller caches the block per process; nothing is
