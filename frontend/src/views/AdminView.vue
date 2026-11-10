@@ -391,7 +391,7 @@ onMounted(() => {
               >
                 <td class="cell-id">
                   <a
-                    :href="`/single-analysis/${session.session_id}/session-overview`"
+                    :href="`/sessions/${session.session_id}/session-overview`"
                     class="session-link"
                     target="_blank"
                     rel="noopener"

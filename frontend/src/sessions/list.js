@@ -54,7 +54,7 @@ export function sessionRow(session, options = {}) {
   const title = text(session.eventTitle) || name || UNTITLED;
   return {
     id: text(session.sessionId),
-    href: `/single-analysis/${encodeURIComponent(text(session.sessionId))}`,
+    href: `/sessions/${encodeURIComponent(text(session.sessionId))}`,
     title,
     // The session's own name only when it says something the title doesn't.
     subtitle: name && name !== title ? name : "",

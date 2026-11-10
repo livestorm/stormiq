@@ -26,7 +26,7 @@ const SESSIONS = [
 describe("sessionRow", () => {
   it("names a session by its event, with its own name under it, and words every cell", () => {
     expect(sessionRow(SESSIONS[0], { timeZone: "UTC" })).toEqual({
-      id: "s-1", href: "/single-analysis/s-1", title: "Release tours", subtitle: "Spring release tour", length: "45 min",
+      id: "s-1", href: "/sessions/s-1", title: "Release tours", subtitle: "Spring release tour", length: "45 min",
       day: "12 Mar 2026", attendees: "251", registrants: "of 600", transcript: "ready", addedBy: "Camille Martin",
     });
   });
@@ -39,7 +39,7 @@ describe("sessionRow", () => {
 
   it("never shows the route's placeholder as a name, and encodes the id", () => {
     expect(sessionRow({ ...SESSIONS[2], sessionName: "Untitled session" })).toMatchObject({
-      title: "Release tours", subtitle: "", day: "—", attendees: "—", length: "", href: "/single-analysis/s%2F3",
+      title: "Release tours", subtitle: "", day: "—", attendees: "—", length: "", href: "/sessions/s%2F3",
     });
     expect(sessionRow({ sessionId: "x", sessionName: "Spring tour" }).title).toBe("Spring tour");
     expect(sessionRow({ sessionId: "x", sessionName: "Untitled session" }).title).toBe("Untitled session");

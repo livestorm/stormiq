@@ -54,7 +54,7 @@ function fetchBySessionId() {
     // Errors surface via state.error; the destination page already
     // renders the error banner.
   });
-  router.push(`/single-analysis/${sessionId}/session-overview`);
+  router.push(`/sessions/${sessionId}/session-overview`);
 }
 
 async function fetchSessionsForEvent() {
@@ -70,7 +70,7 @@ function openEventSession() {
   loadSessionById(sessionId).catch(() => {
     // Same fallback as fetchBySessionId — error banner on the page.
   });
-  router.push(`/single-analysis/${sessionId}/session-overview`);
+  router.push(`/sessions/${sessionId}/session-overview`);
 }
 
 const filteredWorkspaceEvents = computed(() => {
