@@ -77,7 +77,7 @@ The rules for working in it are in [`frontend/CLAUDE.md`](../frontend/CLAUDE.md)
 
 | Route | View | Needs |
 |---|---|---|
-| `/` | redirects to `/single-analysis` | — |
+| `/` | v1: the home page. Signed out, the landing page (with the promo film); signed in, `HomeView` moves on to `/single-analysis`. Classic: redirects to `/single-analysis` | — |
 | `/search` | Find a session by session id, by event id, or by browsing the workspace's events | a connection |
 | any page, signed out (v1) | The landing page (`LandingView`, rendered by `App.vue` in place of the route when `design/landing.js`'s `showsLanding` says so): what StormIQ does, an example report, how it works, why it can be trusted, and "Connect with Livestorm". The top bar shows no navigation. Public pages (`/beta-info`, `/design`, `/auth/callback`) open as usual | the v1 switch, no connection |
 | `/single-analysis` | Classic: card grid of the org's cached sessions, with search, filters, sort and grid/list modes (`SingleAnalysisListView`). v1: the index table (`SessionsView`, worded by `src/sessions/list.js`): counts, search, event filter, sort, one row per session opening its Report. The router picks one by the switch (`sessionListView`) | a connection |

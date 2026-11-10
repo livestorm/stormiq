@@ -130,7 +130,7 @@ RENDER                        # Set by Render on every service. Turns off local-
 
 ## Scripts
 
-`scripts/` holds one-off backfills and diagnostics, run by hand. Read a script's docstring before running it: the backfills write to whatever `DATABASE_URL` points at, and some call paid APIs (`backfill_cover_images.py` costs about $0.17 per cover).
+`scripts/` holds one-off backfills and diagnostics, run by hand. Read a script's docstring before running it: the backfills write to whatever `DATABASE_URL` points at, and some call paid APIs (`backfill_cover_images.py` costs about $0.17 per cover). `make_favicon.py` rebuilds the favicons from the Sora font, in a throwaway environment with fontTools and Pillow (its docstring says how); it reads no database.
 
 `llm_smoke.py --i-understand-this-costs` makes real, paid calls (well under a dollar in all) to check that the models StormIQ plans to use accept the parameters it plans to send: each planned parameter on the offered Claude models, each v1 job's request as the app itself writes it (`ai/request.py`), three calls of the understanding job over one dossier that show whether a cached prefix is read, and the OpenAI rows' parameters. It reads `CLAUDE_API_KEY` and `OPENAI_API_KEY` from the environment, never `.env`, skips a provider without a key, touches no database, and prints one line per call: whether it was accepted (or the HTTP status and error type it got), the stop reason and, for the cache calls, `cache_read_tokens`. Never a prompt, an answer or a key. The last line counts the calls not accepted and the cache misses (a repeated cached prefix that read 0 tokens from the cache); it exits 1 when either is above 0. Run it by hand only; its docstring lists every call.
 
