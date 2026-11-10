@@ -64,6 +64,8 @@ Two paths are supported:
 - **Livestorm OAuth** — the user is redirected to Livestorm, authorises the app, and is sent back with a server-side session cookie. The connected user's identity is shown in the sidebar (in the v1 design, on the top bar's account button).
 - **API key fallback** — only for local development: the operator must explicitly turn on local-development mode and configure an `LS_API_KEY`. It is never available in production.
 
+**Signed out, in the v1 design**, every page but the beta notice, the design gallery and the OAuth return page shows the landing page instead (`views/LandingView.vue`): what StormIQ does, an example report with made-up numbers (labelled as such), what you get, how it works in three steps, why it can be trusted (your organization only, numbers you can check, AI only when you ask), and "Connect with Livestorm". The top bar keeps only the "StormIQ for Livestorm" lockup, the theme toggle and "Connect with Livestorm": no Sessions or Add session. The URL doesn't change, so connecting from a shared session link brings you back to that session. Nothing shows until the app knows whether you are signed in, so a signed-in user never sees the landing page flash. The classic design is unchanged.
+
 Access is scoped to the user's Livestorm organization: teammates in the same organization share cached sessions and analyses, while sessions from other organizations are not visible at all, not even through a shared link. Without a Livestorm connection, no session data is accessible.
 
 Server-side secrets used by the backend (not exposed to the client) include the AI provider keys (for analysis, content generation and cover images) and the transcription provider key.

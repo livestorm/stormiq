@@ -1,11 +1,12 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
 import { api, onUnauthorized } from "./api";
 import SessionHero from "./components/SessionHero.vue";
 import StormIqMark from "./components/ui/StormIqMark.vue";
 import ForLivestorm from "./components/ui/ForLivestorm.vue";
 import TopBar from "./components/ui/TopBar.vue";
+import { showsLanding } from "./design/landing";
 import { isV1 } from "./design/uiVersion";
 import { useWorkspace } from "./store/workspace";
 
@@ -124,10 +125,21 @@ const connectedBadgeLabel = computed(
 );
 
 // ── v1 shell ──────────────────────────────────────────────────────────────
+// Signed out, the v1 shell shows the landing page (`LandingView`) in place
+// of any page but the public ones, and the top bar keeps only the lockup,
+// the theme toggle and "Connect with Livestorm". The URL stays, so
+// connecting brings the visitor back to the page they opened (a shared
+// session link keeps working). Nothing shows until the bootstrap has said
+// who is signed in, so a signed-in user never sees the landing flash.
+const LandingView = defineAsyncComponent(() => import("./views/LandingView.vue"));
+const authReady = ref(false);
+const showLanding = computed(() => showsLanding({ authReady: authReady.value, authed: isAuthed.value, path: route.path }));
+
 // Top-bar navigation, mapped onto the existing routes until the rebuilt
 // screens land: "Sessions" is the session list (and every session page),
 // "Add session" is Search.
 const v1NavItems = computed(() => {
+  if (!isAuthed.value) return [];
   const items = [
     {
       to: "/single-analysis",
@@ -189,6 +201,8 @@ onMounted(async () => {
   } catch (error) {
     console.error("Bootstrap failed", error);
     state.error = "StormIQ could not load your account. Check your connection and reload the page.";
+  } finally {
+    authReady.value = true;
   }
   // If the user deep-links into a session detail page (shared link or
   // page reload), make sure the store has the matching workspace. A v1
@@ -277,7 +291,9 @@ function toggleSidebar() {
     <main id="siq-main" class="siq-main" tabindex="-1">
       <p v-if="state.error" class="siq-alert" role="alert">{{ state.error }}</p>
 
-      <RouterView v-if="isV1NativeRoute" />
+      <p v-if="!authReady" class="siq-sr-only" role="status">Loading StormIQ…</p>
+      <LandingView v-else-if="showLanding" :can-connect="isOAuthMode" @connect="handleConnectClick" />
+      <RouterView v-else-if="isV1NativeRoute" />
       <template v-else>
         <!-- Per-session tabs, as in the classic sidebar's sub-nav. -->
         <nav v-if="isOnSessionDetail" class="siq-session-tabs" aria-label="Session sections">
