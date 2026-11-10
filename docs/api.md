@@ -27,6 +27,7 @@ Every route is a FastAPI handler in [`livestorm_app/routes/`](../livestorm_app/r
 | `/api/sessions/{id}/cached` | GET | caller | Same, but 204 instead of 404 when missing |
 | `/api/sessions/{id}/record` | GET | caller | v1 Report only: the session clock and the recording's alignment, the roster header, the Pulse, the transcript's health and the measures ([below](#the-v1-record)). 404 if not cached |
 | `/api/sessions/{id}/record/chat` | GET | caller | v1 Report only: the chat's text by evidence id (`C0001`), with each message's session time and team flag, for the counts that open their messages ([below](#the-v1-record)). No author. 404 if not cached |
+| `/api/sessions/{id}/record/transcript` | GET | caller | The Transcript tab's room view: the speech, the chat, the questions and the written answers as text by id, with speakers' names and authors' short names ([below](#the-v1-record)). 404 if not cached |
 | `/api/sessions/{id}/fetch` | POST | caller | Session, chat and questions, then start the transcript job ([jobs.md](jobs.md#fetching-a-session)). Also starts the people sync when the session needs one (`rosterSync`, [below](#fetching-a-session)) |
 | `/api/sessions/{id}/fetch-base` | POST | caller | Session, chat and questions only. Also starts the people sync when the session needs one (`rosterSync`, [below](#fetching-a-session)) |
 | `/api/sessions/{id}/fetch-transcript` | POST | caller | Start (or attach to) the transcript job |
@@ -75,6 +76,13 @@ It says what the fetch did about the session's people sync ([jobs.md](jobs.md#pe
 ```
 
 The record carries no message text: a count of chat messages lists their evidence ids instead (`m.chat_themes` rows, `ids`). `GET /api/sessions/{id}/record/chat` gives their text, for the page to open a count when someone asks (`api_logic.get_session_chat_messages`, built by `record/messages.py`'s `chat_messages`). Every chat message comes in id order, team messages included and marked; the ids are the record's, as both read `record.evidence.audience_events`. `t` is seconds since the session's start, null without a clock. No author: no name, people id or `P-` ref. It is read on demand and not cached.
+
+`GET /api/sessions/{id}/record/transcript` is the Transcript tab's room view (`api_logic.get_session_transcript_view`, built by `record/transcript_view.py`'s `transcript_view`), read on demand and not cached:
+
+- `clock`: `interleave` is true only when the alignment allows findings to the second (`alignment_allows(…, "seconds")`); then `offsetS` is the offset applied. Otherwise speech has no session time and the page shows speech and the room apart.
+- `speakers`: `{key, name, named}` in order of first appearance. `name` is the one saved with "Confirm names", else "Speaker 1", "Speaker 2"…; `named` says whether it was saved.
+- `speech`: one line per utterance, `{id, r, rEnd, t, speaker, text, unclear}`. `id` is the utterance's `U` id, `r` and `rEnd` are seconds into the recording, and `t` is `r + offsetS` on the session clock or null. `unclear` lists the character spans of the words below 0.6 confidence, found in the text in order (a word not found is left out).
+- `room`: the chat, the questions and the written answers in session-time order, `{id, kind, t, text, author, team}`, plus `answered` on a question (a written answer replies to it) and `replyTo` on an answer. `author` is a short name, "Priya S.", only through `roster.display_people`, which fails closed: an internal session or an author who doesn't resolve gets "Team" (the message's own team or guest-speaker flag) or "Attendee". Never an email address, a people id or a `P-` ref. Nothing says a question is open: an answer given out loud leaves no trace.
 
 ```
 {sessionId, updatedAt, messages: [{id: "C0001", t: 125.5, text, team}]}

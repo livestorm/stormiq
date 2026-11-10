@@ -16,6 +16,7 @@ from livestorm_app.api_logic import (
     fetch_session_transcript_data,
     get_cached_workspace,
     get_session_chat_messages,
+    get_session_transcript_view,
     get_session_record,
     get_transcript_download,
     get_transcript_job_status_data,
@@ -121,6 +122,23 @@ def read_session_chat_messages(session_id: SessionId, caller: Caller = Depends(g
         raise HTTPException(
             status_code=500,
             detail={"resource": "Session chat", "message": "The session's chat could not be read."},
+        ) from exc
+
+
+@router.get("/api/sessions/{session_id}/record/transcript")
+def read_session_transcript_view(session_id: SessionId, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
+    """The Transcript tab's room view: speech, chat and questions as text by
+    id, with authors' short names (`api_logic.get_session_transcript_view`).
+    The classic app doesn't call it."""
+    try:
+        return get_session_transcript_view(session_id, organization_id=caller.read_scope)
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail={"resource": "Session transcript", "message": str(exc)}) from exc
+    except Exception as exc:
+        logger.exception("Session transcript view failed for session_id=%s", session_id)
+        raise HTTPException(
+            status_code=500,
+            detail={"resource": "Session transcript", "message": "The session's transcript could not be read."},
         ) from exc
 
 

@@ -572,6 +572,34 @@ def get_session_record(session_id: str, *, organization_id: OrgScope) -> Dict[st
     return {"sessionId": session_id, "updatedAt": stamp.get("updated_at"), "meta": block["meta"], "record": record}
 
 
+def get_session_transcript_view(session_id: str, *, organization_id: OrgScope) -> Dict[str, Any]:
+    """The Transcript tab's room view: `{sessionId, updatedAt, version,
+    clock, speakers, speech, room}` (`record.transcript_view.transcript_view`).
+    Speech, the chat and the questions as text by id, the speech on the
+    session clock only when the alignment allows it to the second, and
+    authors' short names only through `roster.display_people`. Read on
+    demand, once per open tab, with the caller's scope: the session's
+    payloads and, when there is one, its stored roster (read with its rows,
+    of one version). Nothing is cached. A row that is missing or outside the
+    scope raises `SessionNotFoundError`."""
+    row = fetch_session_fields(session_id, list(RECORD_FIELDS), organization_id=organization_id)
+    if not isinstance(row, dict):
+        raise SessionNotFoundError()
+    from livestorm_app.record.inputs import load_record_inputs
+    from livestorm_app.record.roster import stored_roster_rows
+    from livestorm_app.record.transcript_view import transcript_view
+
+    roster_status = fetch_roster_status(session_id, organization_id) or {}
+    stored = fetch_session_roster(session_id, organization_id) if roster_status.get("roster") is not None else None
+    inputs = load_record_inputs(
+        {**row, "session_id": session_id},
+        roster_rows=stored_roster_rows(stored) if stored is not None else None,
+    )
+    names = row.get("transcript_speaker_names") if isinstance(row.get("transcript_speaker_names"), dict) else {}
+    body = _sanitize_json_value(transcript_view(inputs, names))
+    return {"sessionId": session_id, "updatedAt": row.get("updated_at"), **body}
+
+
 def get_session_chat_messages(session_id: str, *, organization_id: OrgScope) -> Dict[str, Any]:
     """The chat's text by evidence id, for the v1 Report: `{sessionId,
     updatedAt, messages}` (`record.messages.chat_messages`). The record
