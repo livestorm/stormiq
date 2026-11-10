@@ -79,6 +79,7 @@ The rules for working in it are in [`frontend/CLAUDE.md`](../frontend/CLAUDE.md)
 |---|---|---|
 | `/` | redirects to `/single-analysis` | — |
 | `/search` | Find a session by session id, by event id, or by browsing the workspace's events | a connection |
+| any page, signed out (v1) | The landing page (`LandingView`, rendered by `App.vue` in place of the route when `design/landing.js`'s `showsLanding` says so): what StormIQ does, an example report, how it works, why it can be trusted, and "Connect with Livestorm". The top bar shows no navigation. Public pages (`/beta-info`, `/design`, `/auth/callback`) open as usual | the v1 switch, no connection |
 | `/single-analysis` | Card grid of the org's cached sessions, with search, filters, sort and grid/list modes | a connection |
 | `/single-analysis/:sessionId/session-overview` | Hero metrics, people, charts | a fetched session |
 | `/single-analysis/:sessionId/transcript` | Transcript diagnostics (8 tabs) | a transcript |
