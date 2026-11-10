@@ -117,6 +117,7 @@ def fetch_session_workspace(session_id: SessionId, request: FetchSessionRequest,
             job_connection_id=caller.job_connection_id(),
             read_scope=caller.read_scope,
             organization_id=caller.org_id,
+            local_dev=caller.local_dev,
             **caller.generator_kwargs(),
         )
     except Exception as exc:
@@ -132,8 +133,10 @@ def fetch_session_base_workspace(session_id: SessionId, request: FetchSessionReq
             api_key=api_key,
             session_id=session_id,
             force_refresh=request.force_refresh,
+            job_connection_id=caller.job_connection_id(),
             read_scope=caller.read_scope,
             organization_id=caller.org_id,
+            local_dev=caller.local_dev,
             **caller.generator_kwargs(),
         )
     except Exception as exc:

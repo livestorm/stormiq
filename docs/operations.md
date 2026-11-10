@@ -126,7 +126,7 @@ RENDER                        # Set by Render on every service. Turns off local-
 
 ## Benchmark
 
-`make bench` seeds a **local** database with synthetic sessions (10-minute, 2-hour, a running transcription, 40 cards; their people come from many channels and answer select fields, so the v1 record's grouped measures do their full work) with `scripts/seed_benchmark_sessions.py`, then times the heaviest routes in-process with `scripts/benchmark_routes.py` (the workspace, the v1 record, polls, the card list): first-request and median ms, response size, and Postgres connections opened. Both scripts refuse non-local databases. Run it before and after a performance change.
+`make bench` seeds a **local** database with synthetic sessions (10-minute, 2-hour, a running transcription, 40 cards; their people come from many channels and answer select fields, so the v1 record's grouped measures do their full work; the 2-hour session's people are also stored as a synced roster, which its record reads) with `scripts/seed_benchmark_sessions.py`, then times the heaviest routes in-process with `scripts/benchmark_routes.py` (the workspace, the v1 record, polls, the card list): first-request and median ms, response size, and Postgres connections opened. Both scripts refuse non-local databases. Run it before and after a performance change.
 
 ## Scripts
 

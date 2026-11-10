@@ -10,6 +10,10 @@ Web side (the routes in `routes/sessions.py`):
   caller's org; a sync whose queue job is gone is closed here (`_reconcile_sync`).
 - `request_people_sync`: an explicit sync (`POST /roster-sync`), scope-checked
   first, then `start_people_sync`.
+- `start_sync_on_fetch`: the automatic start after a session's base fetch
+  (`api_logic.fetch_session_base_data`), through `start_people_sync` too.
+- `roster_live_state`: the sync's state as the v1 record's roster header
+  carries it (`api_logic.get_session_record`), read on every request.
 - `start_people_sync`: the guards (same org, an active sync to attach to, the
   cooldown, the error backoff for automatic starts, the per-org daily call
   cap), then the `livestorm_sync_jobs` row and the arq job. The job's
@@ -272,6 +276,45 @@ def _sync_view(sync: Optional[Mapping[str, Any]]) -> Optional[Dict[str, Any]]:
     }
 
 
+def roster_live_state(
+    roster: Optional[Mapping[str, Any]], sync: Optional[Mapping[str, Any]], *, now: Optional[datetime] = None
+) -> Dict[str, Any]:
+    """What the v1 record's roster header says about the people sync:
+    `record.roster.sync` and `record.roster.refreshDue`.
+
+    `roster` is the stored roster's header and `sync` the session's latest
+    people sync, both as `db.fetch_roster_status` gives them (None when the
+    session has none). They change without a new version of the session's
+    row, so `api_logic.get_session_record` reads them on every request and
+    never caches them.
+
+    - `sync`: `status` (`none` without a sync), `active` (pending or
+      running: the page polls `GET /roster-status` until it ends), `reason`,
+      `error` (the sync's own message, `failure_message`, never an upstream
+      one) and `updatedAt`. The status is the stored one: a sync whose
+      queue job was lost is closed by `read_roster_status`, not here, so a
+      record read never asks Redis.
+    - `refreshDue`: the stored roster is due its refresh (`refresh_due_at`
+      has passed). False without a stored roster.
+
+    Never a person, a sync id, a connection id or a token.
+    """
+    sync = sync if isinstance(sync, Mapping) else {}
+    roster = roster if isinstance(roster, Mapping) else {}
+    status = str(sync.get("status") or "").strip() or "none"
+    due = _age(roster.get("refresh_due_at"), now or _now())
+    return {
+        "sync": {
+            "status": status,
+            "active": status in ACTIVE_SYNC_STATUSES,
+            "reason": sync.get("reason") or None,
+            "error": sync.get("error") or None,
+            "updatedAt": _iso(sync.get("updated_at")),
+        },
+        "refreshDue": due is not None and due >= timedelta(0),
+    }
+
+
 def read_roster_status(session_id: str, *, organization_id: OrgScope) -> Dict[str, Any]:
     """`GET /api/sessions/{id}/roster-status`: the roster header and the latest sync.
 
@@ -423,6 +466,58 @@ def request_people_sync(
     if result.get("skipped") == SKIPPED_DAILY_CAP:
         raise PeopleSyncCapReached(limit=int(result["limit"]), used=int(result["used"]))
     return {"sessionId": session_id, **result}
+
+
+def start_sync_on_fetch(
+    session_id: str,
+    *,
+    fresh: bool,
+    read_scope: OrgScope,
+    caller_org_id: str,
+    session_org_id: str,
+    job_connection_id: str,
+    local_dev: bool = False,
+) -> Dict[str, Any]:
+    """The automatic start: a people sync after a session's base fetch.
+
+    Called by `api_logic.fetch_session_base_data` once the caller's own
+    Livestorm credentials returned the session, or the cache answered within
+    their scope. `fresh` says the base payloads were just read from
+    Livestorm. A sync is started:
+
+    - when the session has no stored roster yet (reason `initial`);
+    - after a fresh fetch of a session that has one (reason `manual`): the
+      user refreshed the session, so its people are read again too.
+
+    A cache hit on a session that already has a roster starts nothing and
+    reports its latest sync. Every start goes through `start_people_sync`
+    as an `automatic` one, so all its guards apply, the error backoff
+    included: only `POST /roster-sync` retries a failed sync within the hour.
+
+    Returns `{status, started, skipped}` (the response's `rosterSync`), never
+    a sync id, a connection id or a person. Raises what the reads and the
+    start raise (`RosterSessionNotFound`, `PeopleSyncUnavailable`, database
+    errors): the caller decides that a failed start never fails the fetch.
+    """
+    session_id = str(session_id or "").strip()
+    roster_status = fetch_roster_status(session_id, read_scope)
+    if roster_status is None:
+        raise RosterSessionNotFound()
+    has_roster = roster_status.get("roster") is not None
+    if has_roster and not fresh:
+        sync = roster_status.get("sync")
+        return {"status": sync.get("status") if sync else "none", "started": False, "skipped": None}
+    result = start_people_sync(
+        session_id,
+        reason="manual" if has_roster else "initial",
+        caller_org_id=caller_org_id,
+        session_org_id=session_org_id,
+        job_connection_id=job_connection_id,
+        roster_status=roster_status,
+        local_dev=local_dev,
+        automatic=True,
+    )
+    return {"status": result.get("status"), "started": bool(result.get("started")), "skipped": result.get("skipped")}
 
 
 # ── Worker side ─────────────────────────────────────────────────────────────

@@ -26,8 +26,8 @@ Every route is a FastAPI handler in [`livestorm_app/routes/`](../livestorm_app/r
 | `/api/sessions/{id}` | GET | caller | Cached workspace (404 if not cached) |
 | `/api/sessions/{id}/cached` | GET | caller | Same, but 204 instead of 404 when missing |
 | `/api/sessions/{id}/record` | GET | caller | v1 Report only: the session clock and the recording's alignment, the roster header, the Pulse, the transcript's health and the measures ([below](#the-v1-record)). 404 if not cached |
-| `/api/sessions/{id}/fetch` | POST | caller | Session, chat and questions, then start the transcript job ([jobs.md](jobs.md#fetching-a-session)) |
-| `/api/sessions/{id}/fetch-base` | POST | caller | Session, chat and questions only |
+| `/api/sessions/{id}/fetch` | POST | caller | Session, chat and questions, then start the transcript job ([jobs.md](jobs.md#fetching-a-session)). Also starts the people sync when the session needs one (`rosterSync`, [below](#fetching-a-session)) |
+| `/api/sessions/{id}/fetch-base` | POST | caller | Session, chat and questions only. Also starts the people sync when the session needs one (`rosterSync`, [below](#fetching-a-session)) |
 | `/api/sessions/{id}/fetch-transcript` | POST | caller | Start (or attach to) the transcript job |
 | `/api/sessions/{id}/transcript-job` | GET | caller | Transcript job status and progress |
 | `/api/sessions/{id}/transcript.json` | GET | caller | Full raw transcript as a download (the workspace carries only subtitles) |
@@ -53,6 +53,16 @@ Every route is a FastAPI handler in [`livestorm_app/routes/`](../livestorm_app/r
 - **SPA.** The catch-all `GET /{full_path}` serves the Vue app from `frontend/dist` and returns JSON 404s for unknown `/api/*` paths. Files in the build root (`favicon.svg`, `favicon.ico`, `apple-touch-icon.png`, `fonts/`) are served by the same route.
 - `/docs`, `/redoc` and `/openapi.json` exist locally only.
 
+## Fetching a session
+
+`POST /api/sessions/{id}/fetch-base` and `POST /api/sessions/{id}/fetch` return the classic workspace (`/fetch` adds `transcriptJob` while the transcript isn't cached) plus one key the classic app ignores:
+
+```
+rosterSync: {status, started, skipped}
+```
+
+It says what the fetch did about the session's people sync ([jobs.md](jobs.md#people-sync)). `started` is true when the fetch queued one (`status` `pending`): the session had no stored roster yet, or was just fetched again from Livestorm. Otherwise `status` is the latest sync's (`pending`, `running`, `completed`, `error`, or `none` before the first), and `skipped` says why nothing started: null (nothing was needed, or a sync is already running), `other_org`, `cooldown`, `error_backoff` (a sync failed less than an hour ago; `POST /roster-sync` retries it) or `daily_cap`. `status` is `unavailable` when the sync could not be started because the database or the job queue failed; the fetch itself still succeeds. It never carries a sync id, a connection id or a person: poll `GET /api/sessions/{id}/roster-status` for the sync.
+
 ## The v1 record
 
 `GET /api/sessions/{id}/record` serves the v1 Report (behind `?ui=v1`). The classic app doesn't call it, and the classic workspace doesn't carry it. It is built by `livestorm_app/record/assemble.py` (`api_logic.get_session_record`); rules and formulas are in [product.md §13](product.md#session-clock-v1-report). Apart from the session's own id, it never carries a Livestorm id: no name, email, company, person or message id, message or transcript text, or speaker label. `frontend/tests/fixtures/record-v1.json` is its response for a synthetic session, and `record-v1-crowd.json` for a larger one whose grouped measures show their rows.
@@ -68,8 +78,9 @@ Every route is a FastAPI handler in [`livestorm_app/routes/`](../livestorm_app/r
 | `meta.clock.lateStartS` | The late start in seconds ([product.md §13](product.md#session-clock-v1-report)), or null |
 | `meta.clock.timezone` | The session's time zone, as Livestorm sends it |
 | `meta.clock.alignment` | Where the recording sits on the session clock ([product.md §13](product.md#alignment-probe-v1-report)): `{version, status, source, offsetS, plusminusS, allows, nAnchors, nAgree, estimate, durations, drift, anchors, reasons}`. `status` is `verified`, `assumed`, `misaligned` or `unavailable` (no transcript or no `started_at`). `offsetS` is the offset applied (`t = r + offsetS`): the agreed one when verified, 0 when assumed, null otherwise; `plusminusS` is set only when verified. `allows` is `{seconds, minutes}`, the gate's answers for findings measured in seconds and in minutes (audience-only views always run): render from it, never from `status`. `estimate` is the range the most anchors agree on, `{offsetS, lo, hi, nAgree}`, whatever the status (null without anchors). `durations`: `{sessionS, audioS, gapS, endSource, durationAttrS, lo, hi}`, where `gapS` is session − recording and `lo`, `hi` the offsets one continuous recording allows. `drift`: `{early, late}`, each half's agreed range when it is bounded, else null. `anchors`: `[{kind, e, u, t, r, lo, hi, agrees, half}]`, plus `burst` (messages) on a wave; `kind` is `link`, `wave`, `read_aloud` or `media_time`, `e` an evidence id (`C0001`, `Q001`), `u` utterance ids, `t` session seconds, `r` recording seconds. `reasons` lists the codes behind the status. Ids and times only: no word, speaker label or Livestorm id |
-| `record.version` | `RECORD_VERSION` in `record/assemble.py` (5) |
-| `record.roster` | The roster's header, no person: `source` (`session_include` for now), `complete` (true, false or null), `coverage` (`complete` or `partial`), `peopleCount`, `recordCount`, `syncedAt`, and `internal`, the classic internal-session rule applied to the roster's people ([product.md §13](product.md#roster-v1-report)). The roster counts a person once and skips people without an id, so on such a list it can differ from the workspace's `meta.internalSession` |
+| `record.version` | `RECORD_VERSION` in `record/assemble.py` (6) |
+| `record.roster` | The roster's header, no person: `source` (`paginated` once a people sync saved the session's roster, `session_include` until then: the people cached with the session), `complete` (true, false or null), `coverage` (`complete` or `partial`), `peopleCount`, `recordCount`, `syncedAt` (ISO 8601, null for `session_include`), and `internal`, the classic internal-session rule applied to the roster's people ([product.md §13](product.md#roster-v1-report)). The roster counts a person once and skips people without an id, so on such a list it can differ from the workspace's `meta.internalSession` |
+| `record.roster.sync`, `record.roster.refreshDue` | The people sync's state, read on every request and never cached (`people_sync.roster_live_state`). `sync` is `{status, active, reason, error, updatedAt}`: `status` is the latest sync's (`pending`, `running`, `completed`, `error`) or `none`; `active` is true while it is pending or running, when the page polls `GET /roster-status`; `error` is StormIQ's own message. The status is the stored one: a sync whose queue job was lost is closed by `GET /roster-status`, not by this route. `refreshDue` is true when the stored roster's refresh date has passed (the page then calls `POST /roster-sync` once). No sync id |
 | `record.pulse.lanes` | The lanes in display order: `audienceChat`, `teamChat`, `questions`, `answers`, then `speakingS` and `words` when speech is shown |
 | `record.pulse.minutes` | One row per live minute, from 0, zero-filled: `{minute, audienceChat, teamChat, questions, answers}`, plus `speakingS` (seconds) and `words` (one decimal: an utterance's words are split across minutes) when speech is shown |
 | `record.pulse.edges` | `before` (the waiting room) and `after` (after the end): `{counts: {lane: n}, firstT}` and `{counts, lastT}`, in seconds on the session clock. The counts hold the speech lanes too when speech is shown |
@@ -84,7 +95,7 @@ On an internal session nobody is relabelled: its chat stays team chat, and `reco
 
 ## The people sync
 
-Two routes for the v1 Report's people list, which the worker reads from Livestorm and stores ([jobs.md](jobs.md#people-sync)). Both check the caller's scope first: a session out of scope is a 404 and starts nothing. Neither returns a person, a connection id or a token. Times are ISO 8601 strings in UTC.
+Two routes for the v1 Report's people list, which the worker reads from Livestorm and stores ([jobs.md](jobs.md#people-sync)). A fetch starts the sync by itself ([above](#fetching-a-session)); these routes follow it and retry it. Both check the caller's scope first: a session out of scope is a 404 and starts nothing. Neither returns a person, a connection id or a token. Times are ISO 8601 strings in UTC.
 
 `GET /api/sessions/{id}/roster-status` (`people_sync.read_roster_status`), polled while a sync runs:
 

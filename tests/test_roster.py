@@ -919,6 +919,42 @@ def test_people_on_stage_come_from_the_same_source_as_the_record():
     assert count_people_on_stage(cached_row(), roster_rows=RosterRows(people=[])) is None
 
 
+def test_a_stored_roster_becomes_roster_rows():
+    """`db.fetch_session_roster`'s header and rows, as the loader takes them."""
+    people = [parse_person(full_record()), parse_person(person("aud-9"))]
+    fields = [{"slug": "team_size", "name": "Team size", "type": "select"}]
+    stored = {
+        "roster": {
+            "roster_version": 3, "source": "paginated", "complete": True, "record_count": 2, "people_count": 2,
+            "fields": fields, "fields_source": "people_attributes", "reason": "initial",
+            "synced_at": datetime(2026, 10, 8, 9, 0, tzinfo=timezone.utc), "refresh_due_at": None, "refreshed_at": None,
+        },
+        "people": people,
+    }
+    rows = roster_module.stored_roster_rows(stored)
+    assert rows == RosterRows(
+        people=people, source="paginated", complete=True, record_count=2, fields=fields,
+        fields_source="people_attributes", synced_at="2026-10-08T09:00:00+00:00",
+    )
+    meta = load_record_inputs(cached_row(), roster_rows=rows).roster.meta
+    assert (meta.source, meta.complete, meta.coverage, meta.people_count, meta.record_count) == ("paginated", True, "complete", 2, 2)
+    assert meta.fields == tuple(fields) and meta.fields_source == "people_attributes"
+    json.dumps(dataclasses.asdict(meta))  # the time is kept as text: the header stays plain JSON
+
+
+def test_a_stored_roster_with_an_odd_header_reads_as_unknown():
+    people = [parse_person(person("aud-9"))]
+    rows = roster_module.stored_roster_rows(
+        {"roster": {"source": "", "complete": "yes", "record_count": "many", "fields": None, "synced_at": 0}, "people": people + ["x", None]}
+    )
+    assert rows == RosterRows(people=people, source="paginated", complete=None, record_count=None, fields=[], fields_source="none", synced_at=None)
+    assert roster_module.stored_roster_rows({}) == RosterRows(people=[], fields=[])
+    # A backfilled roster keeps its own source, and an unknown completeness stays partial.
+    backfilled = roster_module.stored_roster_rows({"roster": {"source": "session_include", "complete": None}, "people": people})
+    meta = roster_from_rows(backfilled, session_id="s1").meta
+    assert (meta.source, meta.complete, meta.coverage) == ("session_include", None, "partial")
+
+
 def stored_roster(people, **header):
     return roster_from_rows(RosterRows(people=people, **header), session_id="s1").meta
 

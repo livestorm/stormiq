@@ -15,6 +15,8 @@ import copy
 import dataclasses
 import json
 import re
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -81,6 +83,54 @@ def fixture():
     return json.loads(synthetic.RECORD_FIXTURE.read_text(encoding="utf-8"))
 
 
+# `record.roster.sync` for a session that never had a people sync.
+NO_SYNC = {"status": "none", "active": False, "reason": None, "error": None, "updatedAt": None}
+SYNCED_AT = datetime(2026, 3, 2, 9, 30, tzinfo=timezone.utc)
+
+
+def stored_roster(people=None, *, version=1, **header):
+    """A stored roster as `db.fetch_session_roster` returns it: the synthetic
+    webinar's people as person rows, under a complete paginated header."""
+    people = synthetic.person_rows() if people is None else people
+    return {
+        "roster": {
+            "roster_version": version, "source": "paginated", "complete": True, "record_count": len(people),
+            "people_count": len(people), "fields": [], "fields_source": "none", "reason": "initial",
+            "synced_at": SYNCED_AT, "refresh_due_at": None, "refreshed_at": None, **header,
+        },
+        "people": people,
+    }
+
+
+@pytest.fixture
+def roster_store(rows, monkeypatch):
+    """The stored roster and the latest people sync of the synthetic session,
+    served through `api_logic`'s two scoped readers. `scopes` lists the scope
+    of every read, and `people_reads` counts the reads of the person rows."""
+    state = SimpleNamespace(stored=None, sync=None, scopes=[], people_reads=0, fail_people=False)
+
+    def in_scope(session_id, organization_id):
+        state.scopes.append(organization_id)
+        return session_id == SESSION_ID and organization_id == ORGANIZATION_ID
+
+    def read_status(session_id, organization_id):
+        if not in_scope(session_id, organization_id):
+            return None
+        return {"session_id": session_id, "roster": state.stored["roster"] if state.stored else None, "sync": state.sync}
+
+    def read_roster(session_id, organization_id):
+        if not in_scope(session_id, organization_id):
+            return None
+        state.people_reads += 1
+        if state.fail_people:
+            raise RuntimeError("could not read the people of postgresql://user:secret@db/x")
+        return state.stored
+
+    monkeypatch.setattr(api_logic, "fetch_roster_status", read_status)
+    monkeypatch.setattr(api_logic, "fetch_session_roster", read_roster)
+    return state
+
+
 # ── The response ────────────────────────────────────────────────────────────
 
 
@@ -102,7 +152,7 @@ def test_the_owner_gets_the_clock_the_roster_header_and_the_pulse(client):
     }
     record = body["record"]
     assert list(record) == ["version", "roster", "pulse", "transcriptHealth", "metricsVersion", "measuresSource", "measures"]
-    assert record["version"] == assemble.RECORD_VERSION == 5
+    assert record["version"] == assemble.RECORD_VERSION == 6
     assert record["roster"] == {
         "source": "session_include",
         "complete": None,
@@ -111,6 +161,8 @@ def test_the_owner_gets_the_clock_the_roster_header_and_the_pulse(client):
         "recordCount": None,
         "syncedAt": None,
         "internal": False,
+        "sync": NO_SYNC,
+        "refreshDue": False,
     }
 
 
@@ -485,6 +537,110 @@ def test_an_invalid_set_of_measures_is_never_served_or_cached(client, monkeypatc
     response = get(client)
     assert response.status_code == 500 and "m.show_up_rate" not in response.text
     assert len(api_logic._record_cache) == 0
+
+
+# ── The stored roster and the people sync ───────────────────────────────────
+
+
+def test_a_stored_roster_is_the_records_people_source(client, roster_store):
+    """Once a people sync saved a roster, the record is built from its rows,
+    not from the session payload's people, and says how complete they are."""
+    before = get(client).json()["record"]
+    assert before["roster"]["source"] == "session_include" and roster_store.people_reads == 0
+
+    roster_store.stored = stored_roster(synthetic.person_rows()[:8])
+    record = get(client).json()["record"]
+    assert record["roster"] == {
+        "source": "paginated",
+        "complete": True,
+        "coverage": "complete",
+        "peopleCount": 8,
+        "recordCount": 8,
+        "syncedAt": SYNCED_AT.isoformat(),
+        "internal": False,
+        "sync": NO_SYNC,
+        "refreshDue": False,
+    }
+    coverage = record["measures"]["m.roster_coverage"]["coverage"]
+    assert (coverage["roster"], coverage["people"], coverage["recordCount"]) == ("complete", 8, 8)
+    assert record["measures"]["m.audience_registrants"]["value"] < before["measures"]["m.audience_registrants"]["value"]
+    assert roster_store.people_reads == 1
+
+
+def test_a_roster_whose_count_disagrees_reads_partial(client, roster_store):
+    people = synthetic.person_rows()
+    roster_store.stored = stored_roster(people, complete=False, record_count=len(people) + 3)
+    roster = get(client).json()["record"]["roster"]
+    assert (roster["complete"], roster["coverage"], roster["peopleCount"], roster["recordCount"]) == (False, "partial", 10, 13)
+
+
+def test_the_stored_people_are_read_once_per_roster_version(client, roster_store):
+    roster_store.stored = stored_roster()
+    first = get(client).json()
+    assert get(client).json() == first
+    assert roster_store.people_reads == 1, "a cache hit reads the roster's header, never its people"
+
+    roster_store.stored = stored_roster(synthetic.person_rows()[:6], version=2)
+    assert get(client).json()["record"]["roster"]["peopleCount"] == 6
+    assert roster_store.people_reads == 2
+    assert [key[-2] for key in api_logic._record_cache] == [2], "the older roster's block is dropped"
+
+
+def test_the_sync_state_is_live_and_never_cached(client, roster_store):
+    """The people sync's status and the refresh flag change without a new
+    version of the row or the roster, so they are read on every request."""
+    assert get(client).json()["record"]["roster"]["sync"] == NO_SYNC
+    moment = datetime(2026, 3, 2, 9, 0, tzinfo=timezone.utc)
+    roster_store.sync = {
+        "sync_id": "sync-0123456789abcdef", "kind": "people", "reason": "initial", "status": "running",
+        "error": None, "pages_fetched": None, "updated_at": moment,
+    }
+    running = get(client)
+    assert running.json()["record"]["roster"]["sync"] == {
+        "status": "running", "active": True, "reason": "initial", "error": None, "updatedAt": moment.isoformat(),
+    }
+    assert "sync-0123456789abcdef" not in running.text, "the record never carries a sync id"
+
+    roster_store.sync = {**roster_store.sync, "status": "error", "error": "Livestorm's rate limit was reached. Please try again later."}
+    failed = get(client).json()["record"]["roster"]["sync"]
+    assert (failed["status"], failed["active"]) == ("error", False) and failed["error"].startswith("Livestorm's rate limit")
+
+    roster_store.stored = stored_roster(refresh_due_at=datetime.now(timezone.utc) - timedelta(minutes=1))
+    assert get(client).json()["record"]["roster"]["refreshDue"] is True
+    roster_store.stored = stored_roster(refresh_due_at=datetime.now(timezone.utc) + timedelta(days=3))
+    assert get(client).json()["record"]["roster"]["refreshDue"] is False
+
+    for block in api_logic._record_cache.values():
+        assert "sync" not in block["record"]["roster"] and "refreshDue" not in block["record"]["roster"]
+
+
+def test_the_roster_is_read_with_the_callers_scope_after_the_scope_check(client, roster_store):
+    roster_store.stored = stored_roster()
+    assert get(client, cookie="conn-other").status_code == 404
+    assert get(client, cookie=None).status_code == 401
+    assert roster_store.scopes == [] and roster_store.people_reads == 0, "an outsider's request never reaches the people"
+    assert get(client).status_code == 200
+    assert set(roster_store.scopes) == {ORGANIZATION_ID}
+
+
+def test_a_roster_that_cannot_be_read_fails_the_record_and_leaves_classic_working(client, roster_store):
+    """A failed read of the people must never look like an empty roster."""
+    roster_store.stored = stored_roster()
+    roster_store.fail_people = True
+    response = get(client)
+    assert response.status_code == 500
+    assert response.json() == {"detail": {"resource": "Session record", "message": "The session record could not be built."}}
+    assert "secret" not in response.text
+    assert len(api_logic._record_cache) == 0
+    assert get(client, path=f"/api/sessions/{SESSION_ID}").status_code == 200
+
+
+def test_a_roster_deleted_between_the_two_reads_falls_back_to_the_payload(client, roster_store, monkeypatch):
+    roster_store.stored = stored_roster()
+    monkeypatch.setattr(api_logic, "fetch_session_roster", lambda session_id, organization_id: None)
+    roster = get(client).json()["record"]["roster"]
+    assert (roster["source"], roster["peopleCount"]) == ("session_include", 10)
+    assert [key[-2] for key in api_logic._record_cache] == [None], "keyed as built: without a stored roster"
 
 
 # ── The frontend fixture ────────────────────────────────────────────────────

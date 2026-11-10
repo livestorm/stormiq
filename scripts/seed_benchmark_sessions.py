@@ -2,7 +2,8 @@
 
 Creates, in organization `bench-org`:
     bench-short     10-minute session, 60 attendees, full outputs
-    bench-long      2-hour session, 400 attendees, full outputs
+    bench-long      2-hour session, 400 attendees, full outputs, and its
+                    people stored as a synced roster (the v1 record reads it)
     bench-pending   2-hour session whose transcript job is still running
     bench-card-NN   40 one-hour sessions for the card list (half with a cover)
 plus an OAuth connection `bench-conn` for that org (expires in a year).
@@ -48,6 +49,7 @@ from livestorm_app.db import (  # noqa: E402
     ensure_database_schema,
     get_database_url,
     get_db_connection,
+    replace_session_roster,
     upsert_cached_session,
 )
 from livestorm_app.gladia.transcriber import _normalize_transcription  # noqa: E402
@@ -316,8 +318,33 @@ def build_outputs(rng: random.Random) -> Dict[str, Any]:
 # ── Seeding ─────────────────────────────────────────────────────────────────
 
 
+def seed_roster(session_id: str, people: List[Dict[str, Any]], event_payload: Dict[str, Any]) -> None:
+    """Store `people` as the session's roster, as a completed people sync
+    leaves it (`people_sync.run_people_sync`): one row per person from
+    `parse_person` with its `P-` ref, the event's field definitions, and a
+    complete paginated header. The v1 record then reads these rows."""
+    from livestorm_app.livestorm.payloads import parse_person
+    from livestorm_app.record.roster import assign_person_refs, event_fields, resolve_field_definitions
+
+    rows = [row for row in (parse_person(record) for record in people) if row]
+    refs = assign_person_refs(session_id, [row["person_id"] for row in rows])
+    definitions, fields_source = resolve_field_definitions(event_fields(event_payload))
+    replace_session_roster(
+        session_id,
+        [{**row, "person_ref": refs[row["person_id"]]} for row in rows],
+        source="paginated",
+        complete=True,
+        record_count=len(rows),
+        reason="initial",
+        fields=definitions,
+        fields_source=fields_source,
+        refresh_due_at=None,
+    )
+
+
 def seed_session(rng: random.Random, session_id: str, *, duration_s: int, attendees: int, chat: int, questions: int,
-                 with_transcript: bool = True, with_outputs: bool = True, cover: bool = False, started_at: int) -> None:
+                 with_transcript: bool = True, with_outputs: bool = True, cover: bool = False,
+                 stored_roster: bool = False, started_at: int) -> None:
     event_id = f"evt-{session_id}"
     people = build_people(rng, attendees, started_at)
     event_attributes = {"title": f"Benchmark webinar {session_id}", "fields": EVENT_FIELDS}
@@ -341,6 +368,8 @@ def seed_session(rng: random.Random, session_id: str, *, duration_s: int, attend
         fields["cover_image_mime"] = "image/png"
         fields["cover_image_generated_at"] = datetime.now(timezone.utc)
     upsert_cached_session("bench-credential", session_id, **fields)
+    if stored_roster:
+        seed_roster(session_id, people, fields["event_payload"])
 
 
 def seed_connection() -> None:
@@ -380,7 +409,8 @@ def main() -> int:
     base = int(datetime(2026, 10, 1, 9, tzinfo=timezone.utc).timestamp())
     seed_connection()
     seed_session(rng, "bench-short", duration_s=600, attendees=60, chat=40, questions=10, started_at=base)
-    seed_session(rng, "bench-long", duration_s=7200, attendees=400, chat=600, questions=80, cover=True, started_at=base)
+    seed_session(rng, "bench-long", duration_s=7200, attendees=400, chat=600, questions=80, cover=True,
+                 stored_roster=True, started_at=base)
     seed_session(rng, "bench-pending", duration_s=7200, attendees=400, chat=600, questions=80,
                  with_transcript=False, with_outputs=False, started_at=base)
     create_transcript_job("bench-pending")

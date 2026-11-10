@@ -1806,6 +1806,42 @@ def list_session_people(session_id: str, organization_id: OrgScope) -> List[Dict
     return [dict(row) for row in rows]
 
 
+# How many times `fetch_session_roster` reads again when a sync replaces the
+# roster while it is being read.
+ROSTER_READ_ATTEMPTS = 3
+
+
+def fetch_session_roster(session_id: str, organization_id: OrgScope) -> Optional[Dict[str, Any]]:
+    """A session's stored roster, header and person rows of one version, scoped by org.
+
+    Returns `{roster, people}`: the header as `fetch_roster_status` gives it
+    and the rows as `list_session_people` gives them. None when the session
+    has no stored roster, isn't cached or isn't in the scope; a blank scope
+    matches nothing and never queries.
+
+    The header and the rows are two reads, and a sync can replace the roster
+    between them (`replace_session_roster`, one transaction, which bumps
+    `roster_version`). So the header is read again after the rows: the same
+    version on both sides means no replace was committed in between, and the
+    rows belong to it. Otherwise the rows are read again, up to
+    `ROSTER_READ_ATTEMPTS` times, then it raises: a caller never gets one
+    version's header with another's people. Raises when the database can't
+    be read.
+    """
+    status = fetch_roster_status(session_id, organization_id)
+    header = status.get("roster") if status else None
+    for _attempt in range(ROSTER_READ_ATTEMPTS):
+        if header is None:
+            return None
+        people = list_session_people(session_id, organization_id)
+        status = fetch_roster_status(session_id, organization_id)
+        latest = status.get("roster") if status else None
+        if latest is not None and latest.get("roster_version") == header.get("roster_version"):
+            return {"roster": header, "people": people}
+        header = latest
+    raise RuntimeError("The session's people changed while they were being read. Please try again.")
+
+
 def get_org_people_attributes(organization_id: OrgScope) -> Optional[Dict[str, Any]]:
     """One org's cached people attributes: `{organization_id, attributes,
     status, fetched_at}`, or None when there are none.

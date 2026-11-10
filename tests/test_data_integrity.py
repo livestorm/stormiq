@@ -538,7 +538,9 @@ def test_a_base_fetch_never_saves_a_join_link(monkeypatch):
     monkeypatch.setattr(api_logic, "fetch_cached_session", lambda key, sid, *, organization_id: dict(saved))
     monkeypatch.setattr(api_logic, "_serialize_cached_session", lambda sid, cached: {"sessionId": sid})
 
-    api_logic.fetch_session_base_data("Bearer t", "s1", force_refresh=True, read_scope="org-a", organization_id="org-a")
+    api_logic.fetch_session_base_data(
+        "Bearer t", "s1", force_refresh=True, job_connection_id="conn-a", read_scope="org-a", organization_id="org-a",
+    )
 
     for column in db.BASE_PAYLOAD_COLUMNS:
         assert _has_join_link(upstream[column]), f"the {column} fixture must hold a join link"
@@ -800,6 +802,52 @@ def test_a_failed_replace_keeps_the_previous_roster_and_version(test_database, c
     assert "sqlstate=22003" in caplog.text, "the failure came from the insert itself"
     assert db.list_session_people("sess-a", ALL_ORGS) == people_before
     assert db.fetch_roster_status("sess-a", ALL_ORGS) == status_before
+
+
+def test_a_roster_replaced_while_it_is_read_is_read_again(test_database, monkeypatch):
+    """`fetch_session_roster` never hands back one version's header with
+    another's people: a sync that replaces the roster between its two reads
+    makes it read the people again."""
+    db.upsert_cached_session("key-a", "sess-a", organization_id="org-a")
+    _replace_roster("sess-a")
+    fewer = synthetic.person_rows("sess-a")[:4]
+    real_list = db.list_session_people
+    reads: list = []
+
+    def list_then_replace(session_id, organization_id):
+        people = real_list(session_id, organization_id)
+        reads.append(len(people))
+        if len(reads) == 1:
+            _replace_roster("sess-a", fewer, reason="manual")  # a sync commits right after the first read
+        return people
+
+    monkeypatch.setattr(db, "list_session_people", list_then_replace)
+    stored = db.fetch_session_roster("sess-a", "org-a")
+    assert reads == [10, 4], "the stale rows were dropped and the people read again"
+    assert (stored["roster"]["roster_version"], stored["roster"]["people_count"], len(stored["people"])) == (2, 4, 4)
+    assert [row["person_id"] for row in stored["people"]] == sorted(row["person_id"] for row in fewer)
+
+
+def test_a_roster_that_keeps_changing_is_never_read_half(test_database, monkeypatch):
+    db.upsert_cached_session("key-a", "sess-a", organization_id="org-a")
+    _replace_roster("sess-a")
+    real_list = db.list_session_people
+    reads: list = []
+
+    def list_then_replace(session_id, organization_id):
+        people = real_list(session_id, organization_id)
+        reads.append(len(people))
+        _replace_roster("sess-a", reason="manual")
+        return people
+
+    monkeypatch.setattr(db, "list_session_people", list_then_replace)
+    with pytest.raises(RuntimeError, match="changed while they were being read"):
+        db.fetch_session_roster("sess-a", "org-a")
+    assert len(reads) == db.ROSTER_READ_ATTEMPTS
+
+    # A session deleted between the two reads has no roster left to return.
+    monkeypatch.setattr(db, "list_session_people", lambda session_id, organization_id: db.admin_delete_session(session_id) and [])
+    assert db.fetch_session_roster("sess-a", "org-a") is None
 
 
 def test_people_of_a_session_that_is_not_cached_are_refused(test_database):

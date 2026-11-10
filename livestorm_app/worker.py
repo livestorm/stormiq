@@ -54,6 +54,7 @@ from livestorm_app.db import (
     ensure_database_schema,
     fetch_cached_session,
     fetch_session_fields,
+    fetch_session_roster,
     get_db_connection,
     sweep_stuck_livestorm_syncs,
     touch_livestorm_sync,
@@ -245,11 +246,13 @@ def _transcription_options(session_id: str) -> Tuple[Dict[str, Any], Optional[in
 
     The speaker cap follows the people on stage of the cached session
     (`record.inputs.count_people_on_stage`, which picks the people source as
-    the v1 record does; docs/product.md §13, "Speaker cap"). When that count
-    is unknown (no cached people, nobody marked on stage, or any failure
-    here), the cap stays at Gladia's default ceiling: options never fail a
-    transcription. One light read with `ALL_ORGS`: the worker has no caller,
-    and the job was started by one who could read the session.
+    the v1 record does; docs/product.md §13, "Speaker cap"): the session's
+    stored roster when a people sync saved one (`db.fetch_session_roster`),
+    the session payload's people otherwise. When that count is unknown (no
+    cached people, nobody marked on stage, or any failure here), the cap
+    stays at Gladia's default ceiling: options never fail a transcription.
+    Light reads with `ALL_ORGS`: the worker has no caller, and the job was
+    started by one who could read the session.
     """
     from livestorm_app.gladia.transcriber import speaker_options
 
@@ -258,11 +261,13 @@ def _transcription_options(session_id: str) -> Tuple[Dict[str, Any], Optional[in
         # Imported here, the only place the worker runs v1 code, so an error
         # in `record/` falls back to the default cap (tests/test_roster.py).
         from livestorm_app.record.inputs import count_people_on_stage
+        from livestorm_app.record.roster import stored_roster_rows
 
         fields = fetch_session_fields(session_id, ["session_payload"], organization_id=ALL_ORGS)
-        # Only the include list is cached today. Once stored person rows
-        # exist, pass them here (`roster_rows`), as the record route does.
-        people_on_stage = count_people_on_stage(fields or {})
+        stored = fetch_session_roster(session_id, ALL_ORGS)
+        people_on_stage = count_people_on_stage(
+            fields or {}, roster_rows=stored_roster_rows(stored) if stored is not None else None,
+        )
     except Exception:
         logger.exception("[run_transcription] session_id=%s people on stage unknown; default speaker cap", session_id)
         people_on_stage = None
