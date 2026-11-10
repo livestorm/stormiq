@@ -8,7 +8,7 @@ A full visual and UX overhaul that uses Livestorm's design language (colours, Ob
 
 1. ~~Prototype two directions for the key screens; choose one.~~ Done: the Winter direction, light and dark, in Sora.
 2. ~~Design tokens and the first base components~~ (cards, stat cards, collapsibles, status words, chips, buttons, tip bar) and ~~the app shell with the StormIQ mark~~: shipped ([changelog](changelog.md)); since November 2026 they are the only design. Still to come: accessible tabs, paginated tables, empty states, loading skeletons, toasts.
-3. Each screen, rebuilt on the v1 components, splitting the oversized views and `styles.css` along the way. Done: the home page, Sessions, Add session, the session Report, its Transcript tab (with its Speaking stats) and its Follow-up tab (today's AI outputs). Next: the Follow-up design's new parts (the question desk, "Before you share", FAQ and chapters, the open questions CSV), then Chat & Questions and the Overview, Cross Analysis and Admin.
+3. Each screen, rebuilt on the v1 components, splitting the oversized views and `styles.css` along the way. Done: the home page, Sessions, Add session, the session Report, its Transcript tab (with its Speaking stats) and its Follow-up tab (today's AI outputs). Next: the Follow-up design's new parts (the question desk, "Before you share", FAQ and chapters, the open questions CSV), then Chat & Questions and the Overview, and Admin.
 4. ~~Turn v1 on for everyone and remove the switch~~ (November 2026); remove the classic styles once the last classic view is rebuilt.
 5. Rewrite [product.md](product.md) for the new navigation (it still describes the older Events-based flow).
 
@@ -28,39 +28,13 @@ Replace the markdown blob and its regex section parser ([ai-outputs.md](ai-outpu
   - **Business Signals**: a table from `numbers_df`.
 - The frontend renders cards instead of parsing headings. The redesign's analysis screens should be designed around this.
 
-## 3. Cross-session analysis
-
-Comparative (2 sessions) and cumulative (up to 10) analysis. Depends on the card registry.
-
-- A `cross_analyses` table:
-  ```sql
-  cross_analyses (
-    id               TEXT PRIMARY KEY,          -- uuid
-    user_id          TEXT,                      -- oauth_connections.user_id
-    mode             TEXT,                      -- 'comparative' | 'cumulative'
-    session_ids      JSONB,
-    session_count    INT,
-    status           TEXT,                      -- 'pending' | 'processing' | 'done' | 'error'
-    result           JSONB,                     -- card-keyed result map
-    context_strategy TEXT,                      -- 'full' | 'trimmed' | 'summary-only'
-    error_message    TEXT,
-    created_at       TIMESTAMPTZ,
-    completed_at     TIMESTAMPTZ
-  )
-  ```
-- Routes: `POST /api/cross-analysis/comparative {sessionIdA, sessionIdB, outputLanguage}`, `POST /api/cross-analysis/cumulative {sessionIds[], outputLanguage}`, `GET /api/cross-analysis/{id}`, `GET /api/cross-analysis`. Org-scoped like every session route.
-- A loader, `load_cross_session_sources(session_ids)`, builds one slice per session (meta, transcript and insights, chat and questions frames, speaker names, prior overall and deep analyses) and raises `PriorAnalysisMissingError([ids])` if any session hasn't been analysed: no job is queued without every prerequisite.
-- Cumulative starts capped at 10 sessions; raise to 20 once context-strategy switching is tuned.
-- Card ideas. Comparative: engagement head-to-head, pacing overlay, audience question overlap, speaker dynamics, friction, cross-pollination recommendations. Cumulative: audience DNA, engagement trend, speaker drift, topic map, unanswered-questions backlog, strategic read, next-session brief.
-- English and French, with PDF export, like single-session analyses.
-
-## 4. Card preferences
+## 3. Card preferences
 
 - Per-tab card grids on every analysis surface, with header icons and an optional info popover per card.
 - Per-user card preferences (hide, reorder) in a `user_card_preferences` table keyed by `oauth_connections.user_id`.
 - Empty-state cards inline, instead of hiding whole sections behind "Generate" buttons.
 
-## 5. Models
+## 4. Models
 
 - Replace the four OpenAI text models before OpenAI shuts them down on 2027-01-14 ([providers.md](providers.md#choosing-the-provider-and-models)).
 - Offer the Claude models that think by default (Claude 5 and later) for the classic outputs once each has a larger token budget and sends its effort. The catalog already offers the 5.5 models for the v1 jobs ([providers.md](providers.md#the-model-catalog)).

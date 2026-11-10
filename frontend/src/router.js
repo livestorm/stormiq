@@ -8,7 +8,6 @@ import { useWorkspace } from "./store/workspace";
 // view is a separate chunk loaded on first visit, so admin, transcript and
 // analysis code doesn't slow down the first page load.
 const AddSessionView = () => import("./views/AddSessionView.vue");
-const CrossAnalysisView = () => import("./views/CrossAnalysisView.vue");
 const SessionOverviewView = () => import("./views/SessionOverviewView.vue");
 const SessionTranscriptView = () => import("./views/SessionTranscriptView.vue");
 const ChatQuestionsView = () => import("./views/ChatQuestionsView.vue");
@@ -26,7 +25,6 @@ const HomeView = () => import("./views/HomeView.vue");
 //   /sessions                        — every session the organization has fetched
 //   /sessions/:sessionId/{tab}       — one session's pages (it opens on its Report)
 //   /sessions/add                    — add a session (was /search)
-//   /cross-analysis                  — placeholder (cross-session analysis)
 //
 // A session's URL is a sharing contract: teammates in the same Livestorm org
 // paste /sessions/:sessionId/... and land on that page. Links from before
@@ -62,7 +60,8 @@ const routes = [
   { path: "/sessions/add", component: AddSessionView, meta: { v1Native: true } },
   { path: "/search", redirect: "/sessions/add" },
   { path: "/sessions", component: SessionsView, meta: { v1Native: true } },
-  { path: "/cross-analysis", component: CrossAnalysisView },
+  // Comparing sessions ("Cross Analysis") is out of the app for now; old links open Sessions.
+  { path: "/cross-analysis", redirect: "/sessions" },
 
   // ── Session detail (parameterised) ──────────────────────────────────────
   // The :sessionId is the URL contract for sharing. The store

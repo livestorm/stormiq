@@ -147,7 +147,7 @@ A v1 job never hands a model a list of messages. It builds a request with `ai.re
 
 OpenAI gets the same order (the dossier first, so its automatic prefix cache sees the same prefix; the instructions after it as a `system` message), the token parameter of the model's row, no `temperature` and no effort.
 
-**The server-side fallback.** With `fallbacks: "default"`, a request the model declines is answered by the fallback model Anthropic recommends for that refusal category, in the same call. On Sonnet 5.5 only some categories are retried, so a refusal can still come back; it is handled as any refusal. When the fallback answers, the usage row names the model that answered (`model_served`), `usage_raw.iterations` lists both attempts, and `llm_client` logs a WARNING. The row's token counts and cost are the answering attempt's alone: what the declined attempt cost is not in the estimate ([roadmap](roadmap.md#5-models)).
+**The server-side fallback.** With `fallbacks: "default"`, a request the model declines is answered by the fallback model Anthropic recommends for that refusal category, in the same call. On Sonnet 5.5 only some categories are retried, so a refusal can still come back; it is handled as any refusal. When the fallback answers, the usage row names the model that answered (`model_served`), `usage_raw.iterations` lists both attempts, and `llm_client` logs a WARNING. The row's token counts and cost are the answering attempt's alone: what the declined attempt cost is not in the estimate ([roadmap](roadmap.md#4-models)).
 
 **Hashes.** Each v1 call's usage row holds the `effort` it sent, a `prompt_hash` (the SHA-256 of the layout, the system text, the instructions and the answer's schema: the same for every session until a prompt or a schema changes) and, for a dossier call, the `dossier_hash`. They let usage be compared before and after a prompt change, and a run's calls be matched to one dossier.
 
@@ -165,7 +165,7 @@ OpenAI gets the same order (the dossier first, so its automatic prefix cache see
 
 The cost is estimated when the row is written, from the price of the model that answered (`ai.usage.estimate_cost_usd_micros`); a served id outside the catalog is priced as the model asked for. A model with no price in the catalog (the OpenAI rows) gets no cost; its tokens are still counted.
 
-The cover image call (OpenAI Images, `cover_image.generate_cover_image_with_openai`) doesn't go through `llm_client`. It leaves no `llm_usage` row and isn't held to the daily budget, although the worker starts it on its own after a Professional Smart Recap ([jobs.md](jobs.md#cover-images)). Logging it is on the [roadmap](roadmap.md#5-models).
+The cover image call (OpenAI Images, `cover_image.generate_cover_image_with_openai`) doesn't go through `llm_client`. It leaves no `llm_usage` row and isn't held to the daily budget, although the worker starts it on its own after a Professional Smart Recap ([jobs.md](jobs.md#cover-images)). Logging it is on the [roadmap](roadmap.md#4-models).
 
 **Daily budget.** `ORG_DAILY_LLM_BUDGET_USD` stops one organization's automatic text jobs for the rest of the UTC day once its estimated spend reaches it. It applies only to the job kinds marked `automatic` in `ai/jobs.py` (`ai.jobs.automatic_kinds`), and none is yet, so today it limits nothing. A job a user starts, every classic output included, is never held to it. `llm_client` checks it in the worker before each send, the truncation retry included (`ai.usage.check_org_budget`):
 
