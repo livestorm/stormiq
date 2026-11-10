@@ -28,6 +28,9 @@ Every route is a FastAPI handler in [`livestorm_app/routes/`](../livestorm_app/r
 | `/api/sessions/{id}/record` | GET | caller | v1 Report only: the session clock and the recording's alignment, the roster header, the Pulse, the transcript's health and the measures ([below](#the-v1-record)). 404 if not cached |
 | `/api/sessions/{id}/record/chat` | GET | caller | v1 Report only: the chat's text by evidence id (`C0001`), with each message's session time and team flag, for the counts that open their messages ([below](#the-v1-record)). No author. 404 if not cached |
 | `/api/sessions/{id}/record/transcript` | GET | caller | The Transcript tab's room view: the speech, the chat, the questions and the written answers as text by id, with speakers' names and authors' short names ([below](#the-v1-record)). 404 if not cached |
+| `/api/sessions/{id}/record/questions` | GET | caller | The Follow-up tab's question desk: every audience question with its status and what the host saved ([below](#the-question-desk)). 404 if not cached |
+| `/api/sessions/{id}/record/questions` | PUT | caller | Mark one desk question answered (or not), with an optional reply: `{questionId, answered, reply}` (`questionId` like `Q001` or `C0001`, `reply` up to 4,000 characters). Returns the desk. 404 if not cached or not a desk question, 409 if the question has no Livestorm id, 422 for a malformed body |
+| `/api/sessions/{id}/record/questions.csv` | GET | caller | The open questions as a CSV download, with who asked each one (name and company, on every session; never an email). `Cache-Control: private, no-store`. 404 if not cached |
 | `/api/sessions/{id}/fetch` | POST | caller | Session, chat and questions, then start the transcript job ([jobs.md](jobs.md#fetching-a-session)). Also starts the people sync when the session needs one (`rosterSync`, [below](#fetching-a-session)) |
 | `/api/sessions/{id}/fetch-base` | POST | caller | Session, chat and questions only. Also starts the people sync when the session needs one (`rosterSync`, [below](#fetching-a-session)) |
 | `/api/sessions/{id}/fetch-transcript` | POST | caller | Start (or attach to) the transcript job |
@@ -87,6 +90,23 @@ The record carries no message text: a count of chat messages lists their evidenc
 ```
 {sessionId, updatedAt, messages: [{id: "C0001", t: 125.5, text, team}]}
 ```
+
+### The question desk
+
+`GET /api/sessions/{id}/record/questions` (`api_logic.get_session_question_desk`, built by `record/question_desk.py`'s `question_desk`) is read on demand and not cached:
+
+```
+{sessionId, updatedAt, version: 1,
+ summary: {total, written, aloud, here, open, logistics, chatQuestions},
+ questions: [{id: "Q001", source: "qa", t, text, author, status, answer, reply, canSave}]}
+```
+
+- `questions`: the audience's Q&A questions (`source: "qa"`) and the chat messages the session analysis labelled questions about the content (`source: "chat"`), in session-time order. A team member's question is left out, except on an internal session, where everyone is audience. `id` is the record's evidence id; `t` seconds since the start, or null.
+- `status`, first match wins: `written` (answered in writing in Livestorm; `answer` holds the text), `aloud` (marked answered aloud in Livestorm), `here` (the host marked it answered in StormIQ; `reply` holds what they wrote, if anything), `open`. `canSave` is false for a question without a Livestorm id.
+- `summary`: the count per status, `logistics` (chat questions about the replay or the slides, counted and not listed) and `chatQuestions`, the labels' state: `ready`, `none` (not analysed yet: no chat rows) or `stale` (labels made for another chat: no chat rows).
+- `author` as on the Transcript tab: a short name only through `roster.display_people` (fails closed), else "Team" or "Attendee".
+
+`PUT` saves `{answered, reply}` for one question, keyed by its source and Livestorm id (`db.save_question_reply`), so it stays on the right question when the session is fetched again; the reply is trimmed and an empty one is stored as none. `GET …/questions.csv` (`record.question_desk.open_questions_csv`) lists the `open` questions, columns `Question, Asked by, Company, Where, When`: the asker's full name and company through `roster.export_people`, on every session, internal ones included (the owner's decision), never an email (StormIQ stores none). Cells that start like a formula get a leading `'`, as `src/utils/csv.js` does, and the file starts with a UTF-8 BOM for Excel.
 
 | Field | What it holds |
 |---|---|

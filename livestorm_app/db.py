@@ -448,6 +448,7 @@ def ensure_database_schema() -> None:
             )
             _ensure_people_schema(cursor)
             _ensure_chat_labels_schema(cursor)
+            _ensure_question_replies_schema(cursor)
         connection.commit()
 
 
@@ -610,6 +611,29 @@ def _ensure_chat_labels_schema(cursor: Any) -> None:
             message_count INTEGER NOT NULL,
             labels        JSONB NOT NULL,
             created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
+
+
+def _ensure_question_replies_schema(cursor: Any) -> None:
+    """What the host saved in the question desk (`record/question_desk.py`):
+    one row per question they marked or replied to, keyed by its source
+    (`qa` or `chat`) and Livestorm id, with the evidence id it had when
+    saved. References `session_cache` (deleted with it) and has no org
+    column: every read and write joins `session_cache` on its org."""
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS session_question_replies (
+            session_id   TEXT NOT NULL REFERENCES session_cache (session_id) ON DELETE CASCADE,
+            source       TEXT NOT NULL CHECK (source IN ('qa', 'chat')),
+            livestorm_id TEXT NOT NULL,
+            evidence_id  TEXT NOT NULL,
+            answered     BOOLEAN NOT NULL,
+            reply        TEXT,
+            updated_by   TEXT,
+            updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (session_id, source, livestorm_id)
         )
         """
     )
@@ -2230,6 +2254,116 @@ def livestorm_sync_is_first_initial(sync_id: str) -> bool:
             (sync_id_value,),
         ).fetchone()
     return bool(row and row["first_initial"])
+
+
+# ── The question desk's saved replies (record/question_desk.py) ───────────
+#
+# One row per question the host marked or replied to. Reads and writes join
+# `session_cache` on its org, so an out-of-scope session reads nothing and
+# writes nothing.
+
+
+def fetch_question_replies(session_id: str, organization_id: OrgScope) -> Dict[str, Dict[str, Any]]:
+    """A session's saved replies by `question_desk.saved_key` ("qa:<id>",
+    "chat:<id>"): `{answered, reply, evidence_id, updated_at}`. Empty when
+    there are none, the session isn't in the scope, or the scope is blank
+    (never queries). Raises when the database can't be read."""
+    session_id_value = str(session_id or "").strip()
+    if not database_enabled() or not session_id_value:
+        return {}
+    try:
+        org_filter = _org_filter(organization_id)
+    except ScopeMatchesNothing:
+        return {}
+    where_clause = "r.session_id = %s" + (" AND c.organization_id = %s" if org_filter is not None else "")
+    params = (session_id_value,) + ((org_filter,) if org_filter is not None else ())
+    with get_db_connection() as connection:
+        rows = connection.execute(
+            f"""
+            SELECT r.source, r.livestorm_id, r.evidence_id, r.answered, r.reply, r.updated_at
+            FROM session_question_replies r
+            JOIN session_cache c ON c.session_id = r.session_id
+            WHERE {where_clause}
+            ORDER BY r.source, r.livestorm_id
+            """,
+            params,
+        ).fetchall()
+    return {
+        f"{row['source']}:{row['livestorm_id']}": {
+            "answered": bool(row["answered"]),
+            "reply": row["reply"],
+            "evidence_id": row["evidence_id"],
+            "updated_at": row["updated_at"],
+        }
+        for row in rows
+    }
+
+
+def save_question_reply(
+    session_id: str,
+    *,
+    organization_id: OrgScope,
+    source: str,
+    livestorm_id: str,
+    evidence_id: str,
+    answered: bool,
+    reply: Optional[str],
+    updated_by: Optional[str],
+) -> bool:
+    """Save what the host marked for one question, replacing what they saved
+    before. Written only when the session is in the scope (the insert
+    selects it from `session_cache` with the org filter): False when it
+    isn't, or the scope is blank (never queries). `updated_by` is the
+    Livestorm user id, never an email. Raises RuntimeError when the write
+    fails."""
+    session_id_value = str(session_id or "").strip()
+    livestorm_id_value = str(livestorm_id or "").strip()
+    if not session_id_value or not livestorm_id_value or not str(evidence_id or "").strip():
+        raise ValueError("save_question_reply requires a session id, a Livestorm id and an evidence id.")
+    if source not in ("qa", "chat"):
+        raise ValueError("source is 'qa' or 'chat'.")
+    try:
+        org_filter = _org_filter(organization_id)
+    except ScopeMatchesNothing:
+        return False
+    if not database_enabled():
+        raise RuntimeError("Database is not configured.")
+    scope_clause = " AND c.organization_id = %s" if org_filter is not None else ""
+    params = (
+        str(source),
+        livestorm_id_value,
+        str(evidence_id).strip(),
+        bool(answered),
+        reply or None,
+        str(updated_by or "").strip() or None,
+        session_id_value,
+    ) + ((org_filter,) if org_filter is not None else ())
+    try:
+        with get_db_connection() as connection:
+            row = connection.execute(
+                f"""
+                INSERT INTO session_question_replies (
+                    session_id, source, livestorm_id, evidence_id, answered, reply, updated_by, updated_at
+                )
+                SELECT c.session_id, %s, %s, %s, %s, %s, %s, NOW()
+                FROM session_cache c
+                WHERE c.session_id = %s{scope_clause}
+                LIMIT 1
+                ON CONFLICT (session_id, source, livestorm_id) DO UPDATE SET
+                    evidence_id = EXCLUDED.evidence_id,
+                    answered = EXCLUDED.answered,
+                    reply = EXCLUDED.reply,
+                    updated_by = EXCLUDED.updated_by,
+                    updated_at = NOW()
+                RETURNING session_id
+                """,
+                params,
+            ).fetchone()
+            connection.commit()
+    except Exception as exc:
+        logger.error("Failed to save a question reply for session_id=%s (%s)", session_id_value, _error_label(exc))
+        raise RuntimeError("Could not save the question's answer.") from exc
+    return row is not None
 
 
 # ── Chat labels (record/chat_labels.py) ───────────────────────────────────

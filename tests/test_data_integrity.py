@@ -988,7 +988,7 @@ def test_the_per_session_tables_reference_the_session_through_its_unique_index(t
         ).fetchall()
     assert [(key["tbl"], key["confdeltype"], key["idx"]) for key in keys] == [
         (table, "c", "idx_session_cache_session_id_unique")
-        for table in ("livestorm_sync_jobs", "session_chat_labels", "session_people", "session_rosters")
+        for table in ("livestorm_sync_jobs", "session_chat_labels", "session_people", "session_question_replies", "session_rosters")
     ]
 
 

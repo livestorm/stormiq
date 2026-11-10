@@ -837,3 +837,20 @@ def display_people(roster: Roster, *, profile: Optional[str], limit: int = 50, o
     rows.sort(key=lambda row: (row["name"] is None, (row["name"] or "").casefold(), row["ref"]))
     start = max(int(offset), 0)
     return rows[start : start + max(int(limit), 0)]
+
+
+def export_people(roster: Roster) -> Dict[str, Dict[str, Optional[str]]]:
+    """Names and companies by `P-` ref, for the open-questions CSV only
+    (`record.question_desk.open_questions_csv`), on every session, internal
+    ones included: the owner's decision (November 2026), a deliberate
+    exception to `display_people`, which names nobody on an internal
+    session. Never an email (a row has none), a people id or a role. No page
+    and no prompt reads it."""
+    people = roster.people
+    return {
+        ref: {
+            "name": name if isinstance(name, str) and name.strip() else None,
+            "company": company if isinstance(company, str) and company.strip() else None,
+        }
+        for ref, name, company in zip(people["person_ref"], people["display_name"], people["company"], strict=True)
+    }
