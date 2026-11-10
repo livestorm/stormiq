@@ -18,14 +18,17 @@ What it calls, one small request per line of output:
   `system` message, the server-side fallback (`fallbacks: "default"`, beta
   `server-side-fallback-2026-07-01`) and a stream with a budget over 16,000
   tokens; each where the model's catalog row says it applies. Then one call
-  per v1 job shape (`job=<kind>`): the job's budget (`ai.jobs.budget`, so it
-  streams when the budget says so), its effort and adaptive thinking. No call
-  sends `temperature`.
-- **Three dossier calls** on `--dossier-model` (default `claude-haiku-5-5`): a
-  synthetic record of about 3,000 tokens marked `cache_control`, then the same
-  request again (its `cache_read_tokens` must be above 0: a 0 counts as a
-  cache miss), then the same with a JSON schema added (does a schema change
-  the cached prefix?).
+  per v1 job (`job=<kind>`), written by the app's own code
+  (`ai.request.build_request` and `anthropic_call`), so it is the request the
+  job will send: its layout, its budget (`ai.jobs.budget`, so it streams when
+  the budget says so), its effort, adaptive thinking and, on the models that
+  accept it, the server-side fallback. No call sends `temperature`.
+- **Three dossier calls** on `--dossier-model` (default `claude-haiku-5-5`):
+  the understanding job's request over a synthetic record of about 3,000
+  tokens, as a run of three passes sends it (the dossier marked
+  `cache_control`), then the same request again (its `cache_read_tokens` must
+  be above 0: a 0 counts as a cache miss), then the same with a JSON schema
+  added (does a schema change the cached prefix?).
 - **With `--legacy`**, the classic outputs' Claude models with their
   `temperature`, on the API version the SDK sends (2023-06-01).
 - **OpenAI, every catalog row**: plain (with the row's token parameter),
@@ -73,11 +76,15 @@ from pydantic import BaseModel  # noqa: E402
 
 from livestorm_app import llm_client  # noqa: E402
 from livestorm_app.ai import jobs, models, schemas  # noqa: E402
+from livestorm_app.ai.dossier import Dossier, make_dossier  # noqa: E402
+from livestorm_app.ai.request import JsonFormat, LLMRequest, anthropic_call, build_request  # noqa: E402
 from livestorm_app.config import OPENAI_CHAT_COMPLETIONS_URL  # noqa: E402
 
 CONFIRM_FLAG = "--i-understand-this-costs"
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 PROMPT = "Reply with the single word OK."
+SMOKE_SYSTEM = "You read a synthetic session record."
+SMOKE_DATA = "Synthetic data: 3 questions."
 SMALL_BUDGET = 4_000  # room for a 5.5 model's thinking before a one-word answer
 STREAM_BUDGET = 20_000  # over ai.jobs.STREAM_ABOVE_TOKENS
 OPENAI_BUDGET = 256
@@ -163,13 +170,27 @@ def anthropic_probes(caps: models.ModelCaps) -> List[Probe]:
     }, stream=True))
     for spec in _v1_specs():
         max_tokens, stream = jobs.budget(spec, caps)
-        params: Dict[str, Any] = {**base, "max_tokens": max_tokens}
-        if spec.effort in caps.effort_levels:
-            params["output_config"] = {"effort": spec.effort}
-        if caps.adaptive_thinking:
-            params["thinking"] = {"type": "adaptive"}
-        probes.append(Probe("anthropic", caps.id, f"job={spec.kind}", params, stream=stream))
+        params, beta = _job_call(_job_request(spec), caps, max_tokens)
+        probes.append(Probe("anthropic", caps.id, f"job={spec.kind}", params, stream=stream, beta=beta))
     return probes
+
+
+def _job_request(spec: jobs.JobSpec, *, context: Optional[Dossier] = None, **run: int) -> LLMRequest:
+    """A v1 job's request with made-up content, laid out as the app lays it out (`ai.request.build_request`)."""
+    if spec.layout == "dossier":
+        dossier = context or make_dossier(SMOKE_DATA, record_version="smoke")
+        return build_request(spec.kind, system=SMOKE_SYSTEM, context=dossier, instructions=PROMPT, **run)
+    return build_request(spec.kind, instructions=PROMPT, payload=SMOKE_DATA, **run)
+
+
+def _job_call(request: LLMRequest, caps: models.ModelCaps, max_tokens: int, json_format: Optional[JsonFormat] = None):
+    """(the SDK's keyword arguments, whether they need the beta endpoint) for a
+    request, exactly as `llm_client` sends it (`ai.request.anthropic_call`)."""
+    call = anthropic_call(request, caps, max_tokens, json_format)
+    params = dict(call.params)
+    if call.betas:
+        params["betas"] = list(call.betas)
+    return params, bool(call.betas)
 
 
 def legacy_probes(caps: models.ModelCaps) -> List[Probe]:
@@ -190,15 +211,21 @@ def synthetic_dossier(lines: int = 120) -> str:
 
 
 def dossier_probes(caps: models.ModelCaps) -> List[Probe]:
-    """Write the cache, read it with the same request, then with a schema added."""
-    dossier = {"role": "user", "content": [{"type": "text", "text": synthetic_dossier(), "cache_control": {"type": "ephemeral"}}]}
-    instruction = {"role": "system", "content": PROMPT} if caps.mid_conversation_system else {"role": "user", "content": PROMPT}
-    base = {"model": caps.id, "max_tokens": SMALL_BUDGET, "system": "You read a synthetic session record.", "messages": [dossier, instruction]}
-    schema = {"output_config": {"format": {"type": "json_schema", "schema": SMOKE_SCHEMA}}}
+    """Write the cache, read it with the same request, then with a schema
+    added. Each is the understanding job's request over one dossier, as the
+    app sends a run of three passes."""
+    spec = jobs.job_spec("understanding")
+    dossier = make_dossier(synthetic_dossier(), record_version="smoke")
+
+    def probe(name: str, number: int, json_format: Optional[JsonFormat] = None, **flags: bool) -> Probe:
+        request = _job_request(spec, context=dossier, shared_calls=3, call_number=number)
+        params, beta = _job_call(request, caps, SMALL_BUDGET, json_format)
+        return Probe("anthropic", caps.id, name, params, beta=beta, cache=True, **flags)
+
     return [
-        Probe("anthropic", caps.id, "dossier-write", dict(base), cache=True),
-        Probe("anthropic", caps.id, "dossier-repeat", dict(base), cache=True, expect_cache_read=True),
-        Probe("anthropic", caps.id, "dossier-with-schema", {**base, **schema}, cache=True),
+        probe("dossier-write", 1),
+        probe("dossier-repeat", 2, expect_cache_read=True),
+        probe("dossier-with-schema", 3, JsonFormat("SmokeAnswer", SMOKE_SCHEMA)),
     ]
 
 
@@ -263,13 +290,12 @@ def _anthropic_outcome(probe: Probe, message: Any) -> Outcome:
 
 def run_anthropic(probe: Probe, client: Any) -> Outcome:
     try:
+        messages = client.beta.messages if probe.beta else client.messages
         if probe.stream:
-            with client.messages.stream(**probe.params) as stream:
+            with messages.stream(**probe.params) as stream:
                 message = stream.get_final_message()
-        elif probe.beta:
-            message = client.beta.messages.create(**probe.params)
         else:
-            message = client.messages.create(**probe.params)
+            message = messages.create(**probe.params)
     except anthropic.APIStatusError as exc:
         detail = f"HTTP {exc.status_code}" + (f" {_tag(exc.type)}" if _tag(exc.type) else "")
         return Outcome(probe, "rejected", detail)

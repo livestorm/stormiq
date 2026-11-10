@@ -255,6 +255,44 @@ def test_call_llm_records_every_answered_call(http, rows, anthropic):
     assert set(row) == set(db._LLM_USAGE_COLUMNS)
 
 
+def test_a_v1_calls_row_holds_its_effort_and_hashes_and_never_text():
+    result = llm_client.LLMResult(
+        text="answer", stop="complete", stop_raw="end_turn", refusal_category=None, model_served="claude-sonnet-5-5",
+        request_id="req_1", usage=LLMUsage(input_tokens=10, output_tokens=5), duration_ms=12, streamed=True,
+    )
+    prompt_hash, dossier_hash = "a" * 64, "0123456789abcdef" * 4
+
+    def row(**values):
+        return usage.build_usage_row(
+            CallContext("understanding", "sess-1", "org-a", record_version="6"), result, purpose="main",
+            provider="anthropic", model_requested="claude-sonnet-5-5", max_tokens=48_000, **values,
+        )
+
+    kept = row(effort="medium", prompt_hash=prompt_hash, dossier_hash=dossier_hash)
+    assert (kept["effort"], kept["prompt_hash"], kept["dossier_hash"], kept["record_version"]) == ("medium", prompt_hash, dossier_hash, "6")
+    line = usage.usage_log_line(kept)
+    assert "effort=medium" in line and f"prompt={prompt_hash}" in line and f"dossier={dossier_hash}" in line
+    # A hash column holds a SHA-256 in hex or nothing: never a prompt or a dossier's text.
+    odd = row(effort="very high effort please", prompt_hash="You read sessions.", dossier_hash=dossier_hash.upper())
+    assert (odd["effort"], odd["prompt_hash"], odd["dossier_hash"]) == (None, None, None)
+    assert "effort=-" in usage.usage_log_line(odd) and "prompt=-" in usage.usage_log_line(odd)
+    assert set(kept) == set(db._LLM_USAGE_COLUMNS)
+
+
+@pytest.mark.parametrize(
+    ("raw", "fell_back"),
+    [
+        ({"iterations": [{"type": "message"}, {"type": "fallback_message", "model": "claude-sonnet-5"}]}, True),
+        ({"iterations": [{"type": "message"}]}, False),
+        ({"iterations": "fallback_message"}, False),
+        ({}, False),
+    ],
+)
+def test_a_fallback_answer_shows_in_the_usages_attempts(raw, fell_back):
+    assert usage.answered_by_fallback(LLMUsage(raw=raw)) is fell_back
+    assert usage.answered_by_fallback(usage.anthropic_usage({"input_tokens": 1, **raw})) is fell_back
+
+
 def test_a_truncated_answer_after_the_retry_is_still_recorded(http, rows, anthropic):
     script, _ = http
     script.extend([FakeResponse(anthropic_body("partial", "max_tokens"))] * 2)

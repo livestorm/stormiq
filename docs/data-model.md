@@ -224,7 +224,7 @@ llm_usage (
   provider              TEXT NOT NULL,    -- 'anthropic' | 'openai'
   model_requested       TEXT NOT NULL,
   model_served          TEXT,             -- the model the provider says answered
-  effort                TEXT,             -- NULL: the classic outputs send none
+  effort                TEXT,             -- the effort a v1 call sent; NULL for a classic output, or a model that takes none
   max_tokens            INTEGER,
   streamed              BOOLEAN NOT NULL DEFAULT FALSE,  -- the answer came as a stream (a v1 call over 16,000 tokens, Anthropic only)
   stop_reason           TEXT NOT NULL,    -- the provider's own value: 'end_turn', 'length', …
@@ -239,8 +239,8 @@ llm_usage (
   cost_usd_micros       BIGINT,           -- estimated cost in millionths of a dollar; NULL for a model with no price
   duration_ms           INTEGER,          -- transport retries included
   request_id            TEXT,             -- the provider's request id
-  prompt_hash           TEXT,             -- NULL until the v1 request layouts
-  dossier_hash          TEXT,             -- NULL until the v1 dossier
+  prompt_hash           TEXT,             -- v1 calls: SHA-256 of the layout, system text, instructions and schema (`LLMRequest.prompt_hash`)
+  dossier_hash          TEXT,             -- v1 dossier calls: SHA-256 of the dossier's text (`Dossier.sha256`); never the text
   record_version        TEXT,             -- v1 jobs only
   usage_raw             JSONB             -- the provider's usage object: counts and short tags only
 )

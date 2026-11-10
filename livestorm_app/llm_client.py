@@ -11,19 +11,25 @@ the provider; that lives in livestorm_app/ai/cover_image.py.
 Switching providers needs the matching API key on the worker; no code
 changes. See docs/providers.md.
 
-Each provider adapter (`_anthropic_send`, `_openai_send`) returns one
-`LLMResult`: the text, why the model stopped, the model that answered, the
-request id and the token usage. Every answered call is recorded in
+Each provider adapter returns one `LLMResult`: the text, why the model
+stopped, the model that answered, the request id and the token usage. The
+classic outputs go through `_anthropic_send` and `_openai_send`, which write
+their bodies as they always were; the v1 jobs through `_anthropic_call` and
+`_openai_call`, with a body written by `ai/request.py`. Every answered call is recorded in
 `llm_usage` (`ai.usage.record_call`).
 
 Two ways in:
 
 - `call_llm`, for the classic outputs: their own model, messages,
   `temperature` and `max_tokens`, as before. It returns the text.
-- `generate_text(kind, …)` and `generate_json(kind, schema, …)`, for the
-  v1 jobs: the model and budget come from the job registry (`ai/jobs.py`),
-  no `temperature` is sent, and a JSON step sends its registered schema
-  (`ai/schemas.py`) and gets back the validated answer.
+- `generate_text(kind, request, …)` and `generate_json(kind, schema,
+  request, …)`, for the v1 jobs: the model and budget come from the job
+  registry (`ai/jobs.py`), the request is laid out for the job
+  (`ai/request.py`: the dossier or the instructions first, the stable
+  prefix cached when a run shares it), the model's catalog row decides the
+  effort, the thinking and the fallback, no `temperature` is sent, and a
+  JSON step sends its registered schema (`ai/schemas.py`) and gets back the
+  validated answer.
 
 Both check why the model stopped, in this order: a refusal raises
 `LLMRefused` at once (never retried, its partial text dropped); an answer
@@ -35,7 +41,9 @@ caller to save on any of these errors.
 Transport. Anthropic goes through the official SDK (`anthropic` 1.x, which
 sends API version 2023-06-01): one client per process (`_anthropic_client`)
 with the SDK's own retries off, and StormIQ's retry policy around it
-(`_with_transport_retry`). A v1 call whose budget is large streams, stopped
+(`_with_transport_retry`). A v1 call goes through the SDK's own methods
+(`messages.create`, `messages.stream`; `client.beta.messages` when it asks
+for the server-side fallback), and one whose budget is large streams, stopped
 at a wall-clock deadline (`JobSpec.call_deadline_s`, `_StreamDeadline`); the
 classic outputs never stream, and their request bodies are byte for byte the
 ones the old `requests` transport sent (`_post_message`). OpenAI stays on
@@ -62,10 +70,12 @@ import requests
 from pydantic import BaseModel, ValidationError
 
 from livestorm_app.ai.models import ModelCaps, catalog_model
+from livestorm_app.ai.request import AnthropicCall, JsonFormat, LLMRequest, anthropic_call, openai_payload
 from livestorm_app.ai.usage import (
     INVALID_OUTPUT,
     CallContext,
     LLMUsage,
+    answered_by_fallback,
     anthropic_usage,
     check_org_budget,
     openai_usage,
@@ -146,14 +156,6 @@ class LLMResult:
     @property
     def truncated(self) -> bool:
         return self.stop == "max_tokens"
-
-
-@dataclass(frozen=True)
-class JsonFormat:
-    """A strict JSON schema the answer must follow (`ai.schemas.strict_json_schema`)."""
-
-    name: str  # the schema's registered name; OpenAI requires one
-    schema: Dict[str, Any]
 
 
 class LLMError(RuntimeError):
@@ -343,7 +345,7 @@ def _must_stream(max_tokens: int) -> bool:
 
 def _generate(
     kind: str,
-    messages: List[Dict[str, str]],
+    request: LLMRequest,
     *,
     api_key: str,
     ctx: CallContext,
@@ -353,15 +355,23 @@ def _generate(
     from livestorm_app.ai.schemas import strict_json_schema
 
     spec, provider, caps, max_tokens = _job_model(kind, ctx, structured=schema is not None)
+    if not isinstance(request, LLMRequest):
+        raise TypeError(f"A {spec.kind} call takes a request built with ai.request.build_request, not {type(request).__name__}.")
+    if request.spec.kind != spec.kind:
+        raise ValueError(f"A {spec.kind} call was given a request built for {request.spec.kind}.")
     json_format = JsonFormat(schema.__name__, strict_json_schema(schema)) if schema is not None else None
-    send = _sender(provider)
+    prompt_hash = request.prompt_hash(json_format)
 
     def attempt(budget: int, call_purpose: str):
         check_org_budget(ctx.job_kind, ctx.organization_id, caps.id)
-        options: Dict[str, Any] = {"json_format": json_format}
-        if _must_stream(budget):  # Anthropic only (`_job_model`)
-            options.update(stream=True, deadline_s=spec.call_deadline_s)
-        result = send(api_key, caps.id, messages, None, budget, **options)
+        effort: Optional[str] = None
+        if provider == "anthropic":
+            call = anthropic_call(request, caps, budget, json_format)
+            effort = call.effort
+            stream = _must_stream(budget)
+            result = _anthropic_call(api_key, call, stream=stream, deadline_s=spec.call_deadline_s if stream else None)
+        else:  # never a budget that must stream (`_job_model`)
+            result = _openai_call(api_key, openai_payload(request, caps, budget, json_format))
         value: Any = None
         problem: Optional[str] = None
         if result.stop == "complete":
@@ -372,7 +382,9 @@ def _generate(
         record_call(
             ctx, result, purpose=call_purpose, provider=provider, model_requested=caps.id, max_tokens=budget,
             outcome=INVALID_OUTPUT if problem else None,
+            effort=effort, prompt_hash=prompt_hash, dossier_hash=request.dossier_hash,
         )
+        _note_cache_and_fallback(request, caps, result, provider)
         if result.stop == "refusal":
             raise LLMRefused(result.refusal_category)
         return result, value, problem
@@ -398,6 +410,32 @@ def _generate(
     return value
 
 
+def _note_cache_and_fallback(request: LLMRequest, caps: ModelCaps, result: LLMResult, provider: str) -> None:
+    """Two things a v1 call's usage can show that nobody would otherwise see,
+    logged at WARNING with ids and counts only.
+
+    - A call that should have read its prefix from the prompt cache and read
+      nothing. A cache miss is silent and costs the whole prefix again on
+      every later call: the prefix is shorter than the model's minimum, the
+      cache's lifetime passed between two calls, or its bytes changed.
+    - A call answered by a fallback model after the requested one declined
+      (`fallbacks: "default"`). Its usage row names the model that answered;
+      the declined attempt's own usage is in the row's `usage_raw` only.
+    """
+    if provider != "anthropic":
+        return
+    if request.expects_cache_read and result.usage.cache_read_tokens == 0:
+        logger.warning(
+            "LLM call %d of %d for %s read nothing from the prompt cache (model %s, minimum prefix %d tokens, request_id=%s)",
+            request.call_number, request.shared_calls, request.kind, caps.id, caps.min_cache_tokens, result.request_id or "-",
+        )
+    if answered_by_fallback(result.usage):
+        logger.warning(
+            "LLM call for %s was declined by %s and answered by its fallback %s (request_id=%s)",
+            request.kind, caps.id, tag_or_none(result.model_served) or "-", result.request_id or "-",
+        )
+
+
 def _read_answer(text: str, schema: Optional[Type[BaseModel]]):
     """(value, problem): the usable answer, or why it isn't. The problem names
     no content: never the answer's text or its values."""
@@ -413,38 +451,44 @@ def _read_answer(text: str, schema: Optional[Type[BaseModel]]):
 
 def generate_text(
     kind: str,
-    messages: List[Dict[str, str]],
+    request: LLMRequest,
     *,
     api_key: str,
     ctx: CallContext,
     purpose: str = "main",
 ) -> str:
-    """A v1 job's text answer. The model and `max_tokens` come from the job
-    (`ai.jobs.resolve_model`, `ai.jobs.budget`); no `temperature` is sent. A
-    budget above `ai.jobs.STREAM_ABOVE_TOKENS` streams, stopped at the job's
+    """A v1 job's text answer. `request` is the call's content, laid out for
+    the job (`ai.request.build_request(kind, …)`). The model and `max_tokens`
+    come from the job (`ai.jobs.resolve_model`, `ai.jobs.budget`); the model's
+    catalog row decides the rest (`ai.request.anthropic_call`): the job's
+    effort and adaptive thinking where the model takes them, the server-side
+    fallback where it accepts one, never a `temperature`. A budget above
+    `ai.jobs.STREAM_ABOVE_TOKENS` streams, stopped at the job's
     `call_deadline_s`.
 
     Raises LLMRefused, LLMOutputTruncated (after the retry, when the job's
     spec has one), LLMInvalidOutput (empty, or an unexpected stop) or, on
     Anthropic, LLMProviderError (the call failed, or a stream ran past its
-    deadline). Every answered call is recorded in `llm_usage`.
+    deadline). Every answered call is recorded in `llm_usage`, with the
+    effort sent, the request's `prompt_hash` and its dossier's hash.
     """
-    return _generate(kind, messages, api_key=api_key, ctx=ctx, purpose=purpose, schema=None)
+    return _generate(kind, request, api_key=api_key, ctx=ctx, purpose=purpose, schema=None)
 
 
 def generate_json(
     kind: str,
     schema: Type[SchemaModel],
-    messages: List[Dict[str, str]],
+    request: LLMRequest,
     *,
     api_key: str,
     ctx: CallContext,
     purpose: str = "main",
 ) -> SchemaModel:
     """A v1 JSON step's answer, validated against `schema` (registered with
-    `ai.schemas.json_schema`). The provider is sent the strict schema
-    (Anthropic `output_config.format`, OpenAI strict `response_format`); the
-    model must accept structured outputs (`ModelCaps.structured_outputs`).
+    `ai.schemas.json_schema`). `request` as for `generate_text`. The provider
+    is sent the strict schema (Anthropic `output_config.format`, OpenAI strict
+    `response_format`); the model must accept structured outputs
+    (`ModelCaps.structured_outputs`).
 
     Checks, in order: refusal (LLMRefused), the token limit
     (LLMOutputTruncated), any other unexpected stop, then the answer against
@@ -452,7 +496,7 @@ def generate_json(
     whose answer fails the schema is recorded with the outcome
     "invalid_output".
     """
-    return _generate(kind, messages, api_key=api_key, ctx=ctx, purpose=purpose, schema=schema)
+    return _generate(kind, request, api_key=api_key, ctx=ctx, purpose=purpose, schema=schema)
 
 
 def _header(resp: Any, name: str) -> Optional[str]:
@@ -591,23 +635,17 @@ def _anthropic_send(
     messages: List[Dict[str, str]],
     temperature: Optional[float],
     max_tokens: int,
-    *,
-    json_format: Optional[JsonFormat] = None,
-    stream: bool = False,
-    deadline_s: Optional[float] = None,
 ) -> LLMResult:
-    """One Messages API call through the SDK client. Text comes from the text
-    blocks only (never a thinking or fallback block); a refusal keeps none of it.
+    """One Messages API call of a classic output, through the SDK client. Text
+    comes from the text blocks only (never a thinking or fallback block); a
+    refusal keeps none of it. `temperature` None sends none.
 
-    `temperature` None sends none. `json_format` asks for an answer that
-    follows its schema (`output_config.format`, type `json_schema`).
-
-    Without `stream`, the body is written by `_post_message`, byte for byte
-    as the old `requests` transport wrote it
-    (tests/fixtures/anthropic-requests-before-sdk.json). `stream` streams the
-    answer (`_stream_message`), stopped after `deadline_s` seconds. Transient
-    failures are retried by `_with_transport_retry`; a failed call raises
-    LLMProviderError.
+    The body is written by `_post_message`, byte for byte as the old
+    `requests` transport wrote it
+    (tests/fixtures/anthropic-requests-before-sdk.json). A classic output
+    never streams and never sends a schema, an effort or a fallback: those
+    belong to the v1 jobs' calls (`_anthropic_call`). Transient failures are
+    retried by `_with_transport_retry`; a failed call raises LLMProviderError.
     """
     system_parts = [m["content"] for m in messages if m["role"] == "system"]
     user_messages = [m for m in messages if m["role"] != "system"]
@@ -623,22 +661,53 @@ def _anthropic_send(
         payload["temperature"] = temperature
     if system_parts:
         payload["system"] = "\n\n".join(system_parts)
-    if json_format is not None:
-        payload["output_config"] = {"format": {"type": "json_schema", "schema": json_format.schema}}
 
     client = _anthropic_client(api_key)
     started = time.monotonic()
     try:
+        message = _with_transport_retry(lambda: _post_message(client, payload))
+    except LLMError:
+        raise
+    except anthropic.AnthropicError as exc:
+        raise _provider_error(exc) from exc
+    return _anthropic_result(_message_body(message), getattr(message, "_request_id", None), started, streamed=False)
+
+
+def _anthropic_call(
+    api_key: str,
+    call: AnthropicCall,
+    *,
+    stream: bool = False,
+    deadline_s: Optional[float] = None,
+) -> LLMResult:
+    """One Messages API call of a v1 job, written by `ai.request.anthropic_call`,
+    through the SDK's own methods: `messages.create`, or `messages.stream`
+    when `stream` (stopped after `deadline_s` seconds). A call that needs a
+    beta (the server-side fallback) goes through `client.beta.messages` with
+    its `betas`. The same client, timeouts, retry policy and errors as the
+    classic outputs' calls (`_anthropic_send`)."""
+    client = _anthropic_client(api_key)
+    started = time.monotonic()
+    try:
         if stream:
-            message, request_id = _with_transport_retry(lambda: _stream_message(client, _stream_params(payload), deadline_s))
+            message, request_id = _with_transport_retry(
+                lambda: _stream_message(client, call.params, deadline_s, betas=call.betas)
+            )
         else:
-            message = _with_transport_retry(lambda: _post_message(client, payload))
+            message = _with_transport_retry(lambda: _create_message(client, call))
             request_id = getattr(message, "_request_id", None)
     except LLMError:
         raise
     except anthropic.AnthropicError as exc:
         raise _provider_error(exc) from exc
     return _anthropic_result(_message_body(message), request_id, started, streamed=stream)
+
+
+def _create_message(client: anthropic.Anthropic, call: AnthropicCall) -> Any:
+    """One non-streamed call of a v1 job, through the SDK."""
+    if call.betas:
+        return client.beta.messages.create(betas=list(call.betas), **call.params)
+    return client.messages.create(**call.params)
 
 
 def _post_message(client: anthropic.Anthropic, payload: Dict[str, Any]) -> Any:
@@ -655,17 +724,20 @@ def _post_message(client: anthropic.Anthropic, payload: Dict[str, Any]) -> Any:
     )
 
 
-def _stream_params(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """`messages.stream` keyword arguments for a payload. SDK 1.x has no
-    `temperature` argument; `extra_body` puts it in the JSON as is (a v1 call,
-    the only kind that streams, sends none)."""
-    params = {key: value for key, value in payload.items() if key != "temperature"}
-    if "temperature" in payload:
-        params["extra_body"] = {"temperature": payload["temperature"]}
-    return params
+def _open_stream(client: anthropic.Anthropic, params: Dict[str, Any], betas: Tuple[str, ...]) -> Any:
+    """The SDK's stream manager for a call: `client.beta.messages` when the
+    call needs betas, `client.messages` otherwise. The stream asks for a
+    connection of its own (`Connection: close`), so `_StreamDeadline` can
+    never shut one that another call reuses."""
+    own_connection = {"connection": "close"}
+    if betas:
+        return client.beta.messages.stream(betas=list(betas), **params, extra_headers=own_connection)
+    return client.messages.stream(**params, extra_headers=own_connection)
 
 
-def _stream_message(client: anthropic.Anthropic, params: Dict[str, Any], deadline_s: Optional[float]) -> Tuple[Any, Optional[str]]:
+def _stream_message(
+    client: anthropic.Anthropic, params: Dict[str, Any], deadline_s: Optional[float], *, betas: Tuple[str, ...] = ()
+) -> Tuple[Any, Optional[str]]:
     """Stream one answer and return (the final message, its request id).
 
     A failure before the first event (an HTTP error when the stream opens, or
@@ -680,11 +752,11 @@ def _stream_message(client: anthropic.Anthropic, params: Dict[str, Any], deadlin
     yields nothing to check, and each ping restarts the 300 s read timeout.
     A timer (`_StreamDeadline`) therefore shuts the connection at the
     deadline, and the read in progress fails at once. The stream asks for a
-    connection of its own (`Connection: close`), so the timer can never shut
-    one that another call reuses.
+    connection of its own (`_open_stream`), so the timer can never shut one
+    that another call reuses.
     """
     started = time.monotonic()
-    with client.messages.stream(**params, extra_headers={"connection": "close"}) as stream:
+    with _open_stream(client, params, betas) as stream:
         deadline = _StreamDeadline(stream, deadline_s - (time.monotonic() - started)) if deadline_s is not None else None
         seen_event = False
         try:
@@ -846,29 +918,25 @@ def _openai_send(
     messages: List[Dict[str, str]],
     temperature: Optional[float],
     max_tokens: int,
-    *,
-    json_format: Optional[JsonFormat] = None,
 ) -> LLMResult:
-    """One Chat Completions call. A `message.refusal` is a refusal whatever the
-    finish reason, and so is `content_filter`; a refusal keeps no text, and the
-    refusal's own wording is never kept.
-
-    `temperature` None sends none. `json_format` asks for a strict JSON schema
-    answer (`response_format`, type `json_schema`, `strict: true`).
-    """
-    from livestorm_app.config import OPENAI_CHAT_COMPLETIONS_URL
-
+    """One Chat Completions call of a classic output. `temperature` None sends none."""
     token_param = "max_completion_tokens" if str(model or "").startswith("gpt-5") else "max_tokens"
     payload: Dict[str, Any] = {"model": model}
     if temperature is not None:
         payload["temperature"] = temperature
     payload["messages"] = messages
     payload[token_param] = max_tokens
-    if json_format is not None:
-        payload["response_format"] = {
-            "type": "json_schema",
-            "json_schema": {"name": json_format.name, "strict": True, "schema": json_format.schema},
-        }
+    return _openai_call(api_key, payload)
+
+
+def _openai_call(api_key: str, payload: Dict[str, Any]) -> LLMResult:
+    """One Chat Completions call with a body already written: a classic
+    output's (`_openai_send`) or a v1 job's (`ai.request.openai_payload`). A
+    `message.refusal` is a refusal whatever the finish reason, and so is
+    `content_filter`; a refusal keeps no text, and the refusal's own wording
+    is never kept."""
+    from livestorm_app.config import OPENAI_CHAT_COMPLETIONS_URL
+
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",

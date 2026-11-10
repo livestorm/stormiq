@@ -1,5 +1,5 @@
 {
-  "about": "The Anthropic request bodies the requests transport sent before the SDK swap: llm_client._anthropic_send at c253aab, captured from requests' prepared request (requests.adapters.HTTPAdapter.send). tests/test_llm_transport.py checks the SDK client sends the same bytes for the same call. Synthetic content.",
+  "about": "The Anthropic request bodies the requests transport sent before the SDK swap, for the classic outputs: llm_client._anthropic_send at c253aab, captured from requests' prepared request (requests.adapters.HTTPAdapter.send). tests/test_llm_transport.py checks the SDK client sends the same bytes for the same call. Synthetic content. The v1 jobs' requests are not here: they are written by ai/request.py (tests/test_llm_requests.py).",
   "url": "https://api.anthropic.com/v1/messages",
   "cases": [
     {
@@ -25,8 +25,7 @@
           }
         ],
         "temperature": 0.2,
-        "max_tokens": 2500,
-        "json_format": null
+        "max_tokens": 2500
       },
       "headers": {
         "anthropic-version": "2023-06-01",
@@ -49,8 +48,7 @@
           }
         ],
         "temperature": 0.2,
-        "max_tokens": 900,
-        "json_format": null
+        "max_tokens": 900
       },
       "headers": {
         "anthropic-version": "2023-06-01",
@@ -77,8 +75,7 @@
           }
         ],
         "temperature": 0.1,
-        "max_tokens": 6000,
-        "json_format": null
+        "max_tokens": 6000
       },
       "headers": {
         "anthropic-version": "2023-06-01",
@@ -101,8 +98,7 @@
           }
         ],
         "temperature": 0.2,
-        "max_tokens": 16000,
-        "json_format": null
+        "max_tokens": 16000
       },
       "headers": {
         "anthropic-version": "2023-06-01",
@@ -125,8 +121,7 @@
           }
         ],
         "temperature": 0.2,
-        "max_tokens": 2500,
-        "json_format": null
+        "max_tokens": 2500
       },
       "headers": {
         "anthropic-version": "2023-06-01",
@@ -145,60 +140,13 @@
           }
         ],
         "temperature": 0.2,
-        "max_tokens": 2500,
-        "json_format": null
+        "max_tokens": 2500
       },
       "headers": {
         "anthropic-version": "2023-06-01",
         "content-type": "application/json"
       },
       "body": "{\"model\": \"claude-haiku-4-5-20251001\", \"max_tokens\": 2500, \"messages\": [{\"role\": \"user\", \"content\": \"Data\"}], \"temperature\": 0.2}"
-    },
-    {
-      "name": "a v1 JSON step, Haiku 5.5",
-      "call": {
-        "model": "claude-haiku-5-5",
-        "messages": [
-          {
-            "role": "system",
-            "content": "Read the session."
-          },
-          {
-            "role": "user",
-            "content": "Session data"
-          }
-        ],
-        "temperature": null,
-        "max_tokens": 6000,
-        "json_format": {
-          "name": "Reading",
-          "schema": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "kind",
-              "summary"
-            ],
-            "properties": {
-              "kind": {
-                "type": "string",
-                "enum": [
-                  "public",
-                  "internal"
-                ]
-              },
-              "summary": {
-                "type": "string"
-              }
-            }
-          }
-        }
-      },
-      "headers": {
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json"
-      },
-      "body": "{\"model\": \"claude-haiku-5-5\", \"max_tokens\": 6000, \"messages\": [{\"role\": \"user\", \"content\": \"Session data\"}], \"system\": \"Read the session.\", \"output_config\": {\"format\": {\"type\": \"json_schema\", \"schema\": {\"type\": \"object\", \"additionalProperties\": false, \"required\": [\"kind\", \"summary\"], \"properties\": {\"kind\": {\"type\": \"string\", \"enum\": [\"public\", \"internal\"]}, \"summary\": {\"type\": \"string\"}}}}}}"
     }
   ]
 }

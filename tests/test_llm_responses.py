@@ -19,6 +19,8 @@ from pydantic import BaseModel, Field
 
 from livestorm_app import api_logic, db, llm_client
 from livestorm_app.ai import generation, jobs, models, schemas, usage
+from livestorm_app.ai.dossier import make_dossier
+from livestorm_app.ai.request import build_request
 from livestorm_app.ai.usage import CallContext
 
 from fake_anthropic import FakeStreamScript, scripted_providers
@@ -239,6 +241,15 @@ PROFILE = CallContext("profile", "sess-1", "org-a", "profile:sess-1:_")
 MESSAGES = [{"role": "system", "content": "Read the session."}, {"role": "user", "content": "Session data"}]
 
 
+def _request(kind: str = "profile"):
+    """A v1 call's request, laid out for its job: the same two texts as
+    MESSAGES, with a dossier in front for a job that reads one."""
+    if jobs.job_spec(kind).layout == "dossier":
+        dossier = make_dossier("Session data", record_version="6")
+        return build_request(kind, system="You read sessions.", context=dossier, instructions="Read the session.")
+    return build_request(kind, instructions="Read the session.", payload="Session data")
+
+
 def _json(**overrides) -> str:
     return json.dumps({**VALID, **overrides})
 
@@ -253,22 +264,30 @@ def _outcomes(rows: list) -> list:
 def test_anthropic_gets_the_schema_in_output_config(http, rows, anthropic, registered):
     script, sent = http
     script.append(FakeResponse(anthropic_body(_json())))
-    reading = llm_client.generate_json("profile", Reading, MESSAGES, api_key="key", ctx=PROFILE)
+    reading = llm_client.generate_json("profile", Reading, _request(), api_key="key", ctx=PROFILE)
     assert isinstance(reading, Reading) and reading.evidence[0].eid == "C0001"
     payload = sent[0]["payload"]
     assert payload["model"] == "claude-haiku-5-5"
     assert payload["max_tokens"] == 6_000  # the job's budget: 2,000 answer + 4,000 low-effort thinking
-    assert payload["output_config"] == {"format": {"type": "json_schema", "schema": schemas.strict_json_schema(Reading)}}
+    # The job's effort and the schema travel together; the instructions are the system prompt.
+    assert payload["output_config"] == {
+        "effort": "low", "format": {"type": "json_schema", "schema": schemas.strict_json_schema(Reading)},
+    }
+    assert payload["thinking"] == {"type": "adaptive"}
     assert "temperature" not in payload
-    assert payload["system"] == "Read the session."
+    assert payload["system"] == [{"type": "text", "text": "Read the session."}]
+    assert payload["messages"] == [{"role": "user", "content": "Session data"}]
+    # Haiku 5.5 has no server-side fallback, so the call asks for none and needs no beta.
+    assert "fallbacks" not in payload and sent[0]["betas"] == []
     assert _outcomes(rows) == [("main", "ok", "end_turn", None)]
     assert (rows[0]["job_kind"], rows[0]["job_id"], rows[0]["model_requested"]) == ("profile", "profile:sess-1:_", "claude-haiku-5-5")
+    assert rows[0]["effort"] == "low" and len(rows[0]["prompt_hash"]) == 64 and rows[0]["dossier_hash"] is None
 
 
 def test_openai_gets_a_strict_response_format(http, rows, openai, registered):
     script, sent = http
     script.append(FakeResponse(openai_body(_json())))
-    assert llm_client.generate_json("profile", Reading, MESSAGES, api_key="key", ctx=PROFILE).kind == "public"
+    assert llm_client.generate_json("profile", Reading, _request(), api_key="key", ctx=PROFILE).kind == "public"
     payload = sent[0]["payload"]
     assert payload["response_format"] == {
         "type": "json_schema",
@@ -297,9 +316,9 @@ def test_a_call_needs_the_context_of_its_own_job(http, rows, anthropic, register
     _, sent = http
     for ctx in (None, CallContext("chat_labels", "sess-1", "org-a")):
         with pytest.raises(ValueError, match="needs a CallContext for profile"):
-            llm_client.generate_json("profile", Reading, MESSAGES, api_key="key", ctx=ctx)
+            llm_client.generate_json("profile", Reading, _request(), api_key="key", ctx=ctx)
     with pytest.raises(schemas.SchemaError, match="not a registered schema"):
-        llm_client.generate_json("profile", Evidence, MESSAGES, api_key="key", ctx=PROFILE)
+        llm_client.generate_json("profile", Evidence, _request(), api_key="key", ctx=PROFILE)
     assert sent == [] and rows == []
 
 
@@ -313,7 +332,7 @@ def test_a_model_without_structured_outputs_is_never_called(http, rows, anthropi
     monkeypatch.setattr(jobs, "resolve_model", no_structured_outputs)
     _, sent = http
     with pytest.raises(llm_client.LLMError, match="can't return structured output"):
-        llm_client.generate_json("profile", Reading, MESSAGES, api_key="key", ctx=PROFILE)
+        llm_client.generate_json("profile", Reading, _request(), api_key="key", ctx=PROFILE)
     assert sent == []
 
 
@@ -321,7 +340,7 @@ def test_a_model_outside_the_catalog_is_never_called(http, rows, anthropic, regi
     monkeypatch.setattr(db, "get_setting", lambda key, default=None: "claude-unknown-9" if key == "llm_model.anthropic.profile" else default)
     _, sent = http
     with pytest.raises(llm_client.LLMError, match="not in the model catalog"):
-        llm_client.generate_json("profile", Reading, MESSAGES, api_key="key", ctx=PROFILE)
+        llm_client.generate_json("profile", Reading, _request(), api_key="key", ctx=PROFILE)
     assert sent == []
 
 
@@ -330,10 +349,95 @@ def test_a_budget_that_must_stream_streams_from_anthropic(http, rows, anthropic)
     script, sent = http
     script.append(FakeStreamScript(anthropic_body("Understood.", model="claude-sonnet-5-5")))
     ctx = CallContext("understanding", "sess-1", "org-a")
-    assert llm_client.generate_text("understanding", MESSAGES, api_key="key", ctx=ctx) == "Understood."
+    assert llm_client.generate_text("understanding", _request("understanding"), api_key="key", ctx=ctx) == "Understood."
     assert (sent[0]["stream"], sent[0]["payload"]["max_tokens"]) == (True, 48_000)
     assert "temperature" not in sent[0]["payload"]
     assert [(row["streamed"], row["max_tokens"], row["outcome"]) for row in rows] == [(True, 48_000, "ok")]
+
+
+# ── A request, laid out for its job ────────────────────────────────────────
+
+
+def test_a_v1_call_takes_only_a_request_built_for_its_own_job(http, rows, anthropic, registered):
+    _, sent = http
+    with pytest.raises(TypeError, match="build_request"):
+        llm_client.generate_json("profile", Reading, MESSAGES, api_key="key", ctx=PROFILE)
+    with pytest.raises(ValueError, match="built for chat_labels"):
+        llm_client.generate_json("profile", Reading, _request("chat_labels"), api_key="key", ctx=PROFILE)
+    assert sent == [] and rows == []
+
+
+def test_the_understanding_job_sends_the_dossier_first_and_asks_for_the_fallback(http, rows, anthropic):
+    script, sent = http
+    script.append(FakeStreamScript(anthropic_body("Understood.", model="claude-sonnet-5-5")))
+    ctx = CallContext("understanding", "sess-1", "org-a", record_version="6")
+    request = _request("understanding")
+    assert llm_client.generate_text("understanding", request, api_key="key", ctx=ctx) == "Understood."
+    payload = sent[0]["payload"]
+    assert payload["system"] == [{"type": "text", "text": "You read sessions."}]
+    assert payload["messages"] == [
+        {"role": "user", "content": [{"type": "text", "text": "Session data"}]},  # one call: nothing to cache
+        {"role": "system", "content": "Read the session."},
+    ]
+    assert payload["output_config"] == {"effort": "medium"} and payload["thinking"] == {"type": "adaptive"}
+    # Sonnet 5.5 accepts the server-side fallback: asked for through the beta namespace.
+    assert payload["fallbacks"] == "default" and sent[0]["betas"] == ["server-side-fallback-2026-07-01"]
+    row = rows[0]
+    assert (row["effort"], row["dossier_hash"], row["record_version"]) == ("medium", request.dossier_hash, "6")
+    assert row["prompt_hash"] == request.prompt_hash() and len(row["dossier_hash"]) == 64
+
+
+def test_an_answer_from_the_fallback_model_is_used_and_noted(http, rows, anthropic, caplog):
+    script, _ = http
+    body = anthropic_body(model="claude-sonnet-5", content=[
+        {"type": "fallback", "from": {"model": "claude-sonnet-5-5"}, "to": {"model": "claude-sonnet-5"}},
+        {"type": "text", "text": "Understood anyway."},
+    ])
+    body["usage"]["iterations"] = [
+        {"type": "message", "model": "claude-sonnet-5-5", "input_tokens": 1000, "output_tokens": 0},
+        {"type": "fallback_message", "model": "claude-sonnet-5", "input_tokens": 1000, "output_tokens": 200},
+    ]
+    script.append(FakeStreamScript(body))
+    ctx = CallContext("understanding", "sess-1", "org-a")
+    with caplog.at_level(logging.WARNING):
+        assert llm_client.generate_text("understanding", _request("understanding"), api_key="key", ctx=ctx) == "Understood anyway."
+    assert "declined by claude-sonnet-5-5 and answered by its fallback claude-sonnet-5" in caplog.text
+    row = rows[0]
+    assert (row["model_requested"], row["model_served"], row["outcome"]) == ("claude-sonnet-5-5", "claude-sonnet-5", "ok")
+    assert [attempt["type"] for attempt in row["usage_raw"]["iterations"]] == ["message", "fallback_message"]
+    assert "Understood anyway" not in caplog.text and "Session data" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("call_number", "cache_read", "warned"),
+    [(1, 0, False), (2, 0, True), (2, 900, False), (3, 0, True)],
+    ids=["first-call-writes", "second-call-misses", "second-call-reads", "third-call-misses"],
+)
+def test_a_later_call_that_reads_nothing_from_the_cache_is_noted(http, rows, anthropic, registered, caplog, call_number, cache_read, warned):
+    """A cache miss is silent: the call succeeds and costs the whole prefix again."""
+    script, sent = http
+    body = anthropic_body(_json())
+    body["usage"].update(cache_read_input_tokens=cache_read, cache_creation_input_tokens=0 if cache_read else 900)
+    script.append(FakeResponse(body))
+    request = build_request(
+        "chat_labels", instructions="Label each message.", payload="C0001 hello", shared_calls=3, call_number=call_number,
+    )
+    with caplog.at_level(logging.WARNING):
+        llm_client.generate_json("chat_labels", Reading, request, api_key="key", ctx=CallContext("chat_labels", "sess-1", "org-a"))
+    assert sent[0]["payload"]["system"][0]["cache_control"] == {"type": "ephemeral"}
+    assert ("read nothing from the prompt cache" in caplog.text) is warned
+    if warned:
+        assert f"call {call_number} of 3 for chat_labels" in caplog.text and "minimum prefix 512 tokens" in caplog.text
+        assert "Label each message" not in caplog.text and "hello" not in caplog.text
+    assert rows[0]["cache_read_tokens"] == cache_read
+
+
+def test_a_job_without_a_shared_prefix_is_never_warned_about_its_cache(http, rows, anthropic, registered, caplog):
+    script, _ = http
+    script.append(FakeResponse(anthropic_body(_json())))
+    with caplog.at_level(logging.WARNING):
+        llm_client.generate_json("profile", Reading, _request(), api_key="key", ctx=PROFILE)
+    assert "prompt cache" not in caplog.text and "fallback" not in caplog.text
 
 
 def test_a_budget_that_must_stream_is_refused_on_openai(http, rows, openai, monkeypatch):
@@ -343,14 +447,14 @@ def test_a_budget_that_must_stream_is_refused_on_openai(http, rows, openai, monk
     _, sent = http
     ctx = CallContext("understanding", "sess-1", "org-a")
     with pytest.raises(llm_client.LLMError, match="must stream"):
-        llm_client.generate_text("understanding", MESSAGES, api_key="key", ctx=ctx)
+        llm_client.generate_text("understanding", _request("understanding"), api_key="key", ctx=ctx)
     assert sent == []
 
 
 def test_only_a_budget_that_must_stream_streams(http, rows, anthropic, registered):
     script, sent = http
     script.append(FakeResponse(anthropic_body(_json())))
-    llm_client.generate_json("profile", Reading, MESSAGES, api_key="key", ctx=PROFILE)
+    llm_client.generate_json("profile", Reading, _request(), api_key="key", ctx=PROFILE)
     script.append(FakeResponse(anthropic_body("# Recap", model="claude-sonnet-4-6")))
     llm_client.call_llm("key", "claude-sonnet-4-6", MESSAGES, temperature=0.2, max_tokens=16_000)
     assert [call["stream"] for call in sent] == [False, False]
@@ -377,7 +481,7 @@ def test_an_anthropic_refusal_raises_and_keeps_no_text(http, rows, anthropic, re
     # A refusal mid-answer may come with partial text; none of it is kept.
     script.append(FakeResponse(anthropic_body('{"kind": "pub', "refusal", stop_details=stop_details)))
     with pytest.raises(llm_client.LLMRefused) as refused:
-        llm_client.generate_json("profile", Reading, MESSAGES, api_key=SECRET, ctx=PROFILE)
+        llm_client.generate_json("profile", Reading, _request(), api_key=SECRET, ctx=PROFILE)
     # The user sees the same neutral message whatever the category; the
     # category stays on the exception and in the usage row.
     assert str(refused.value) == REFUSED and refused.value.category == category
@@ -435,7 +539,7 @@ def test_an_openai_refusal_raises(http, rows, openai, registered, body):
     script, sent = http
     script.append(FakeResponse(body))
     with pytest.raises(llm_client.LLMRefused) as refused:
-        llm_client.generate_json("profile", Reading, MESSAGES, api_key="key", ctx=PROFILE)
+        llm_client.generate_json("profile", Reading, _request(), api_key="key", ctx=PROFILE)
     assert str(refused.value) == REFUSED
     assert len(sent) == 1
     assert [row["outcome"] for row in rows] == ["refused"]
@@ -528,7 +632,7 @@ def test_a_v1_job_fails_at_once_when_cut_off(http, rows, anthropic, registered):
     script, sent = http
     script.append(FakeResponse(anthropic_body('{"kind": "public", "summ', "max_tokens")))
     with pytest.raises(llm_client.LLMOutputTruncated, match="6000 tokens"):
-        llm_client.generate_json("profile", Reading, MESSAGES, api_key="key", ctx=PROFILE)
+        llm_client.generate_json("profile", Reading, _request(), api_key="key", ctx=PROFILE)
     assert len(sent) == 1
     assert _outcomes(rows) == [("main", "truncated", "max_tokens", None)]
 
@@ -545,7 +649,7 @@ def test_a_job_with_a_truncation_retry_doubles_its_budget_once(http, rows, anthr
     monkeypatch.setitem(jobs._SPECS, "profile", dataclasses.replace(jobs.job_spec("profile"), truncation_retry=True))
     script, sent = http
     script.extend([FakeResponse(anthropic_body("{", "max_tokens")), FakeResponse(anthropic_body(_json()))])
-    assert llm_client.generate_json("profile", Reading, MESSAGES, api_key="key", ctx=PROFILE).summary
+    assert llm_client.generate_json("profile", Reading, _request(), api_key="key", ctx=PROFILE).summary
     assert [call["payload"]["max_tokens"] for call in sent] == [6_000, 12_000]
     assert [(row["purpose"], row["outcome"]) for row in rows] == [("main", "truncated"), ("truncation_retry", "ok")]
 
@@ -585,9 +689,9 @@ def test_a_v1_call_over_the_daily_budget_is_never_sent(http, rows, anthropic, re
     _, sent = http
     with pytest.raises(usage.OrgBudgetExceeded, match="daily AI budget"):
         if entry == "generate_json":
-            llm_client.generate_json("profile", Reading, MESSAGES, api_key="key", ctx=PROFILE)
+            llm_client.generate_json("profile", Reading, _request(), api_key="key", ctx=PROFILE)
         else:
-            llm_client.generate_text("profile", MESSAGES, api_key="key", ctx=PROFILE)
+            llm_client.generate_text("profile", _request(), api_key="key", ctx=PROFILE)
     assert sent == [] and rows == []
 
 
@@ -599,7 +703,7 @@ def test_a_v1_truncation_retry_is_checked_against_the_budget_again(http, rows, a
     script, sent = http
     script.extend([FakeResponse(anthropic_body("{", "max_tokens")), FakeResponse(anthropic_body(_json()))])
     with pytest.raises(usage.OrgBudgetExceeded, match="daily AI budget"):
-        llm_client.generate_json("profile", Reading, MESSAGES, api_key="key", ctx=PROFILE)
+        llm_client.generate_json("profile", Reading, _request(), api_key="key", ctx=PROFILE)
     assert len(sent) == 1
     assert [(row["purpose"], row["outcome"], row["cost_usd_micros"]) for row in rows] == [("main", "truncated", 200)]
 
@@ -623,7 +727,7 @@ def test_an_answer_that_fails_its_schema_raises_and_names_no_content(http, rows,
     script.append(FakeResponse(anthropic_body(answer)))
     with caplog.at_level(logging.INFO):
         with pytest.raises(llm_client.LLMInvalidOutput, match="did not match its format") as invalid:
-            llm_client.generate_json("profile", Reading, MESSAGES, api_key=SECRET, ctx=PROFILE)
+            llm_client.generate_json("profile", Reading, _request(), api_key=SECRET, ctx=PROFILE)
     assert str(invalid.value).endswith("Nothing was saved.")
     assert _outcomes(rows) == [("main", "invalid_output", "end_turn", None)]
     for leaked in (CONFIDENTIAL, "hybrid", "Here is", SECRET):
@@ -635,7 +739,7 @@ def test_an_unexpected_stop_is_not_an_answer(http, rows, anthropic, registered, 
     script, sent = http
     script.append(FakeResponse(anthropic_body(_json(), stop)))
     with pytest.raises(llm_client.LLMInvalidOutput, match="stopped unexpectedly"):
-        llm_client.generate_json("profile", Reading, MESSAGES, api_key="key", ctx=PROFILE)
+        llm_client.generate_json("profile", Reading, _request(), api_key="key", ctx=PROFILE)
     assert len(sent) == 1 and [row["outcome"] for row in rows] == ["other_stop"]
 
 
@@ -643,11 +747,12 @@ def test_generate_text_returns_text_and_refuses_an_empty_answer(http, rows, anth
     script, sent = http
     ctx = CallContext("verify_meaning", "sess-1", "org-a")
     script.append(FakeResponse(anthropic_body("  Holds.  ")))
-    assert llm_client.generate_text("verify_meaning", MESSAGES, api_key="key", ctx=ctx) == "Holds."
-    assert "output_config" not in sent[0]["payload"] and "temperature" not in sent[0]["payload"]
+    assert llm_client.generate_text("verify_meaning", _request("verify_meaning"), api_key="key", ctx=ctx) == "Holds."
+    # No schema for a text answer: the output config holds the job's effort alone.
+    assert sent[0]["payload"]["output_config"] == {"effort": "low"} and "temperature" not in sent[0]["payload"]
     script.append(FakeResponse(anthropic_body("")))
     with pytest.raises(llm_client.LLMInvalidOutput, match="was empty"):
-        llm_client.generate_text("verify_meaning", MESSAGES, api_key="key", ctx=ctx)
+        llm_client.generate_text("verify_meaning", _request("verify_meaning"), api_key="key", ctx=ctx)
     assert [row["outcome"] for row in rows] == ["ok", "invalid_output"]
 
 
@@ -672,5 +777,5 @@ def test_a_paid_answer_that_cant_be_read_is_still_recorded(http, rows, anthropic
     script, _ = http
     script.append(FakeResponse(anthropic_body(_json())))
     with pytest.raises(llm_client.LLMInvalidOutput, match=r"could not be read \(RecursionError\)"):
-        llm_client.generate_json("profile", Reading, MESSAGES, api_key="key", ctx=PROFILE)
+        llm_client.generate_json("profile", Reading, _request(), api_key="key", ctx=PROFILE)
     assert [row["outcome"] for row in rows] == ["invalid_output"]
