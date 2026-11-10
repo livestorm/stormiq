@@ -695,6 +695,9 @@ onMounted(() => {
 
 /* ── Tables ── */
 .adm-table-wrap {
+  /* Positioned, so the table's screen-reader labels (absolute) scroll with
+     it instead of widening the page on a phone. */
+  position: relative;
   overflow-x: auto;
 }
 

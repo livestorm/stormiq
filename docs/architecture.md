@@ -50,7 +50,7 @@ Browser ── Vue SPA ──/api──▶ web: FastAPI (app.py) ─────
 
 A Vue 3 single-page app built by Vite into `frontend/dist`, which FastAPI serves in production. In development, `npm run dev` proxies `/api` to uvicorn. Dependencies are only `vue` and `vue-router`; charts are hand-built components.
 
-One design, for everyone ([brand.md](brand.md#one-design)): the top bar, light and dark (`src/design/` and `src/components/ui/`). The pages not rebuilt yet keep their older dark styling (`src/styles.css`) inside a framed area of the same shell until each is rebuilt.
+One design, for everyone ([brand.md](brand.md#one-design)): the top bar, light and dark (`src/design/` and `src/components/ui/`). Every page is built on it. The one global stylesheet is `src/design/tokens.css`; components style everything else in their own scoped styles.
 
 | Path | What it does |
 |---|---|
@@ -63,8 +63,7 @@ One design, for everyone ([brand.md](brand.md#one-design)): the top bar, light a
 | `src/views/` | One file per route |
 | `src/components/` | `ui/` (the v1 base components) and `report/` (the v1 session pages' components, `MarkdownBlocks` for AI text among them) |
 | `src/utils/csv.js` | CSV export for every table |
-| `src/styles.css` | The classic styles. No page uses them any more (every page is a v1 page); their element rules still reach every page, and they go in the next cleanup |
-| `src/design/` | The design system: `tokens.css` (every `--siq-*` token for light and dark, Sora), `theme.js` and `useTheme.js` (light/dark), `landing.js` (when the signed-out landing page shows) |
+| `src/design/` | The design system: `tokens.css` (every `--siq-*` token for light and dark, Sora, and the page basics: box-sizing, resets, a default focus ring; the app's only global stylesheet), `theme.js` and `useTheme.js` (light/dark), `landing.js` (when the signed-out landing page shows) |
 | `src/report/` | The v1 Report's data and words: `useSessionReport.js` (`createSessionReport`: loads `GET /record`, starts the session analysis and polls it, reads `GET /record/chat` once when a count first opens its messages, one per view, scoped and aborted like the store), `room.js`, `questions.js` and `method.js` (the wording of "The room", "The questions" and "Method and data quality") and `format.js` (the header's date and length, the analysis panel's wording) and `chartGeometry.js` (the session clock's labels and axis ticks, the ridge's path) |
 | `src/followup/` | The Follow-up tab's words: `outputs.js` (the outputs' list, where each lives in `workspace.outputs`, whether it is being written, its PDF) and `markdown.js` (AI Markdown as blocks of text, never HTML) |
 | `src/transcript/` | The Transcript tab's data and words: `useTranscript.js` (`createTranscriptView`: loads `GET /record/transcript`, follows the transcript job when there is no speech, starts one only on a click, saves the speakers' names; one per view, scoped and aborted like the store) `lines.js` (interleaving only when the server placed the speech, filters, unclear-word parts, subtitles) and `stats.js` (the wording of "Speaking stats", from `m.speaking_pace`, `m.speaker_talk_time` and `m.longest_stretch`) |

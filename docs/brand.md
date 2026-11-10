@@ -2,10 +2,7 @@
 
 StormIQ is a Livestorm-adjacent tool: it uses Livestorm's design language (colours, radii, voice) and should feel native to the Livestorm ecosystem, but it has its own name and mark and is not a Livestorm product.
 
-Two designs live in the app while the redesign ships screen by screen:
-
-- **v1** (the redesign, opt-in): described first, below. New UI is built only with it.
-- **Classic** (what users see by default): the [Livestorm brand reference](#livestorm-brand-reference-classic-design) further down, implemented in `frontend/src/styles.css`.
+The app has one design, v1, described below. The [Livestorm brand reference](#livestorm-brand-reference) further down is the palette and voice it takes its values from.
 
 ---
 
@@ -17,7 +14,7 @@ StormIQ has one design, this one, for everyone: there is no switch and no classi
 
 ### Typeface: Sora
 
-Sora (SIL Open Font License 1.1) is the free typeface closest to Object Sans: at 400 it has the same line width, and unlike Object Sans it has tabular figures, so tables and counters line up. One variable file, `frontend/public/fonts/Sora-Variable-latin.woff2` (weights 100–800, Latin, Latin-1, Œ/œ and €, so every French character), with its licence in `Sora-OFL.txt` beside it. Stack: `"Sora", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif` (`--siq-font`). Use weights 400, 500 and 600 only. The classic design keeps its own font stack.
+Sora (SIL Open Font License 1.1) is the free typeface closest to Object Sans: at 400 it has the same line width, and unlike Object Sans it has tabular figures, so tables and counters line up. One variable file, `frontend/public/fonts/Sora-Variable-latin.woff2` (weights 100–800, Latin, Latin-1, Œ/œ and €, so every French character), with its licence in `Sora-OFL.txt` beside it. Stack: `"Sora", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif` (`--siq-font`). Use weights 400, 500 and 600 only. Code (model names, AI text's inline code) uses the system's monospace (`--siq-font-mono`).
 
 ### Colour tokens
 
@@ -50,7 +47,7 @@ Every colour is a CSS custom property in `frontend/src/design/tokens.css`, named
 | `low` / `low-fill` / `low-tint` | | `#BE3A37` / `#BE3A37` / `#FDF7F7` | `#EB9E9F` / `#E26F71` / `rgba(226,111,113,0.14)` |
 | `s1`, `s2`, `s3`, `other` | chart series: audience, questions, host team, reference and "Other" | `#0B54FE`, `#DE7835`, `#0C7C59`, `#A4B5C1` | `#447CFD`, `#CB4A1A`, `#0C7C59`, `#8094A3` |
 | `logo-on-light` / `logo-on-dark` | which Livestorm logo file the lockup shows (`display` values) | `block` / `none` | `none` / `block` |
-| `lockup-ink` / `lockup-rule` | the lockup's "for" and its divider | `muted` / `hairline-head` | `muted` / `hairline-head` (classic frame: `#A4B5C1` / `rgba(255,255,255,0.12)`) |
+| `lockup-ink` / `lockup-rule` | the lockup's "for" and its divider | `muted` / `hairline-head` | `muted` / `hairline-head` |
 | `mark-fill` / `mark-iq` / `mark-ink` | the "IQ" monogram's disc, the wordmark's "IQ", the monogram's letters | `#0B42C3` / `#0B42C3` / white | `#447CFD` / `#88C0CD` / white |
 | `ridge-fill`, `img-outline` | the session ridge, outlines on images | `rgba(18,38,43,0.07)`, `rgba(0,0,0,0.1)` | `rgba(255,255,255,0.10)`, `rgba(255,255,255,0.1)` |
 
@@ -120,20 +117,20 @@ In Windows High Contrast (`forced-colors: active`) the browser removes box-shado
 
 ### The "StormIQ for Livestorm" lockup
 
-The headers show StormIQ as a co-brand: the wordmark "Storm" + "IQ" (no disc), the "Beta" tag in the v1 top bar, then a 1px divider, the word "for" and the official Livestorm logo (`ForLivestorm.vue`). In the classic sidebar the wordmark sits above "for" and the logo, without the divider. PDFs are headed by the same lockup, with the on-light logo (`pdf.py`, `livestorm_app/assets/livestorm-logo-on-light.png`, rendered unchanged from the kit's SVG; PDFs are always light). Spots that only fit a square show the "IQ" monogram instead (below).
+The headers show StormIQ as a co-brand: the wordmark "Storm" + "IQ" (no disc), the "Beta" tag in the v1 top bar, then a 1px divider, the word "for" and the official Livestorm logo (`ForLivestorm.vue`). PDFs are headed by the same lockup, with the on-light logo (`pdf.py`, `livestorm_app/assets/livestorm-logo-on-light.png`, rendered unchanged from the kit's SVG; PDFs are always light). Spots that only fit a square show the "IQ" monogram instead (below).
 
-The logo files in `frontend/src/assets/livestorm/` are the brand kit's own (brand.livestorm.co), with only a `viewBox` added so they scale: `logo-on-light.svg` (Winter Green) on light surfaces, `logo-on-dark.svg` (white) on dark ones. The `logo-on-light` and `logo-on-dark` tokens pick the file, so it follows the theme, and the classic frame always shows the on-dark file. Follow Livestorm's logo rules: a solid surface behind it, clear space around it, never stretched, recoloured or shown without its box, and never replaced by "Livestorm" set in type. The lockup says what StormIQ is for; it never makes StormIQ look like a Livestorm product, so the "not an official Livestorm product" notice stays.
+The logo files in `frontend/src/assets/livestorm/` are the brand kit's own (brand.livestorm.co), with only a `viewBox` added so they scale: `logo-on-light.svg` (Winter Green) on light surfaces, `logo-on-dark.svg` (white) on dark ones. The `logo-on-light` and `logo-on-dark` tokens pick the file, so it follows the theme. Follow Livestorm's logo rules: a solid surface behind it, clear space around it, never stretched, recoloured or shown without its box, and never replaced by "Livestorm" set in type. The lockup says what StormIQ is for; it never makes StormIQ look like a Livestorm product, so the "not an official Livestorm product" notice stays.
 
 ### The "IQ" monogram and the wordmark
 
-The wordmark is "Storm" + "IQ" (IQ in `mark-iq`), Sora 600 at 18/24; it opens the lockup. Where only a square fits, StormIQ shows its monogram: a circle (`mark-fill`) with the wordmark's own "I" and "Q" in white (`mark-ink`): Sora 600, outlined, 28×28 units, drawn from the font the app ships by `scripts/make_favicon.py`, which writes `favicon.svg`, `favicon.ico` and `apple-touch-icon.png` and prints the letters' path for `StormIqMark.vue`. It is a circle on purpose, so it never echoes Livestorm's rounded-square box. Both are drawn by `StormIqMark.vue` (the monogram in the collapsed classic sidebar, the compact top bar and `/design`; the wordmark alone, `:mark="false"`, in the lockup) and the monogram by `frontend/public/favicon.svg` as the favicon, with `favicon.ico` (16, 32, 48 px) and `apple-touch-icon.png` (180 px on white) rendered from that file for browsers and home screens that don't take SVG. The classic design is dark only, so there they always use their on-dark colours (`#447CFD` disc, `#88C0CD` IQ) whatever the theme. Neither is ever the Livestorm logo or icon.
+The wordmark is "Storm" + "IQ" (IQ in `mark-iq`), Sora 600 at 18/24; it opens the lockup. Where only a square fits, StormIQ shows its monogram: a circle (`mark-fill`) with the wordmark's own "I" and "Q" in white (`mark-ink`): Sora 600, outlined, 28×28 units, drawn from the font the app ships by `scripts/make_favicon.py`, which writes `favicon.svg`, `favicon.ico` and `apple-touch-icon.png` and prints the letters' path for `StormIqMark.vue`. It is a circle on purpose, so it never echoes Livestorm's rounded-square box. Both are drawn by `StormIqMark.vue` (the monogram in the compact top bar and `/design`; the wordmark alone, `:mark="false"`, in the lockup) and the monogram by `frontend/public/favicon.svg` as the favicon, with `favicon.ico` (16, 32, 48 px) and `apple-touch-icon.png` (180 px on white) rendered from that file for browsers and home screens that don't take SVG. Neither is ever the Livestorm logo or icon.
 
 ---
 
-## Livestorm brand reference (the older pages)
+## Livestorm brand reference
 
 > Source: https://brand.livestorm.co
-> The classic styles (`frontend/src/styles.css`, no longer used by any page and to be removed) followed this reference. Do not invent colors, fonts, or styles there; use only what is defined here. The v1 design above takes its values from the same palette.
+> The v1 design above takes its values from this palette. Do not invent colours, fonts or styles outside it.
 
 ---
 

@@ -19,8 +19,8 @@ describe("Livestorm logo tokens", () => {
     expect(root).toContain("--siq-logo-on-dark: none;");
   });
 
-  it("shows the on-dark logo in both dark blocks and in the classic dark frame", () => {
-    for (const selector of [':root[data-theme="dark"] {', ':root:not([data-theme="light"]) {', '[data-colors-semantic="dark"] {']) {
+  it("shows the on-dark logo in both dark blocks", () => {
+    for (const selector of [':root[data-theme="dark"] {', ':root:not([data-theme="light"]) {']) {
       const css = block(selector);
       expect(css).toContain("--siq-logo-on-light: none;");
       expect(css).toContain("--siq-logo-on-dark: block;");
