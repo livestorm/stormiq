@@ -1024,6 +1024,8 @@ RECORD_ENTRY_POINTS = {
     ("livestorm_app", "people_sync"): {"run_people_sync"},
     # Checks a set of chat labels before it is written (`record.chat_labels.check_labels`).
     ("livestorm_app", "db"): {"replace_chat_labels"},
+    # Labels the chat in the worker: the chat's hash and the labels' checks.
+    ("livestorm_app", "ai", "chat_labelling"): {"label_chat"},
 }
 
 
