@@ -15,11 +15,16 @@ from livestorm_app.api_logic import (
     fetch_session_base_data,
     fetch_session_transcript_data,
     get_cached_workspace,
+    QuestionNotFoundError,
+    QuestionNotSavableError,
     get_session_chat_messages,
+    get_session_open_questions_csv,
+    get_session_question_desk,
     get_session_transcript_view,
     get_session_record,
     get_transcript_download,
     get_transcript_job_status_data,
+    save_session_question_reply,
     save_speaker_labels,
 )
 from livestorm_app.auth import (
@@ -37,7 +42,7 @@ from livestorm_app.people_sync import (
     request_people_sync,
 )
 from livestorm_app.routes.common import SessionId, logger, raise_http_error
-from livestorm_app.routes.models import FetchSessionRequest, SpeakerLabelsRequest
+from livestorm_app.routes.models import FetchSessionRequest, QuestionReplyRequest, SpeakerLabelsRequest
 
 router = APIRouter()
 
@@ -140,6 +145,79 @@ def read_session_transcript_view(session_id: SessionId, caller: Caller = Depends
             status_code=500,
             detail={"resource": "Session transcript", "message": "The session's transcript could not be read."},
         ) from exc
+
+
+QUESTION_DESK_RESOURCE = "Question desk"
+
+
+def _question_desk_failed(session_id: str, exc: Exception, what: str) -> HTTPException:
+    logger.exception("Question desk %s failed for session_id=%s", what, session_id)
+    return HTTPException(
+        status_code=500,
+        detail={"resource": QUESTION_DESK_RESOURCE, "message": f"The session's questions could not be {what}."},
+    )
+
+
+@router.get("/api/sessions/{session_id}/record/questions")
+def read_session_question_desk(session_id: SessionId, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
+    """The Follow-up tab's question desk (`api_logic.get_session_question_desk`):
+    every audience question with its status and the host's saved reply,
+    authors as short names that fail closed."""
+    try:
+        return get_session_question_desk(session_id, organization_id=caller.read_scope)
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail={"resource": QUESTION_DESK_RESOURCE, "message": str(exc)}) from exc
+    except Exception as exc:
+        raise _question_desk_failed(session_id, exc, "read") from exc
+
+
+@router.put("/api/sessions/{session_id}/record/questions")
+def update_session_question(
+    session_id: SessionId, request: QuestionReplyRequest, caller: Caller = Depends(get_caller)
+) -> Dict[str, Any]:
+    """Mark one question answered (or not) with an optional reply, and
+    return the desk (`api_logic.save_session_question_reply`). Scoped like
+    every session route: another org's session looks missing."""
+    connection = caller.connection if isinstance(caller.connection, dict) else {}
+    try:
+        return save_session_question_reply(
+            session_id,
+            request.question_id,
+            answered=request.answered,
+            reply=request.reply,
+            organization_id=caller.read_scope,
+            updated_by=str(connection.get("user_id") or "") or None,
+        )
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail={"resource": QUESTION_DESK_RESOURCE, "message": str(exc)}) from exc
+    except QuestionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail={"resource": QUESTION_DESK_RESOURCE, "message": str(exc)}) from exc
+    except QuestionNotSavableError as exc:
+        raise HTTPException(status_code=409, detail={"resource": QUESTION_DESK_RESOURCE, "message": str(exc)}) from exc
+    except Exception as exc:
+        raise _question_desk_failed(session_id, exc, "saved") from exc
+
+
+@router.get("/api/sessions/{session_id}/record/questions.csv")
+def download_open_questions_csv(session_id: SessionId, caller: Caller = Depends(get_caller)) -> Response:
+    """The open questions with who asked them, as a CSV download
+    (`api_logic.get_session_open_questions_csv`): name and company on every
+    session, never an email. Private, never cached."""
+    try:
+        text = get_session_open_questions_csv(session_id, organization_id=caller.read_scope)
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail={"resource": QUESTION_DESK_RESOURCE, "message": str(exc)}) from exc
+    except Exception as exc:
+        raise _question_desk_failed(session_id, exc, "exported") from exc
+    return Response(
+        # A BOM, so Excel reads accented names as UTF-8.
+        content="﻿" + text,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="stormiq-open-questions-{session_id}.csv"',
+            "Cache-Control": "private, no-store",
+        },
+    )
 
 
 @router.post("/api/sessions/{session_id}/fetch")

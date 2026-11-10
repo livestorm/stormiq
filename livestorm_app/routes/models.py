@@ -47,6 +47,18 @@ class SpeakerLabelsRequest(BaseModel):
         return value
 
 
+MAX_QUESTION_REPLY_LENGTH = 4000  # record.question_desk.MAX_REPLY_LENGTH
+
+
+class QuestionReplyRequest(BaseModel):
+    """The question desk: mark one question answered (or not), with an
+    optional reply. `questionId` is the desk row's id (`Q001`, `C0001`)."""
+
+    question_id: str = Field(..., alias="questionId", pattern=r"^[QC][0-9]{1,6}$")
+    answered: bool = Field(..., alias="answered")
+    reply: str = Field("", alias="reply", max_length=MAX_QUESTION_REPLY_LENGTH)
+
+
 class AnalysisRequest(BaseModel):
     api_key: str = Field("", alias="apiKey")
     # Each language is a separate paid job; see config.OUTPUT_LANGUAGE_MAP.

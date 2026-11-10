@@ -63,7 +63,9 @@ def _row() -> dict:
         "organization_id": OWNER_ORG,
         "session_payload": {"name": MARKER},
         "chat_payload": {"data": []},
-        "questions_payload": {"data": []},
+        # One audience question, so the question desk's routes have a row
+        # to read and mark (`Q001`).
+        "questions_payload": {"data": [{"id": "lq-1", "attributes": {"question": MARKER, "created_at": 1700000100}}]},
         "transcript_payload": {"text": MARKER},
         "analysis_bundle": {"English": f"# Analysis {MARKER}"},
         "deep_analysis_bundle": {"English": f"# Deep {MARKER}"},
@@ -114,6 +116,12 @@ class FakeBackend:
             return {"session_id": SESSION_ID, "roster": None, "sync": None}
         return None
 
+    def save_question_reply(self, session_id, *, organization_id, **fields):
+        if session_id != SESSION_ID or not _visible(organization_id):
+            return False
+        self.upserts.append((session_id, {"question_reply": fields}))
+        return True
+
     def create_livestorm_sync(self, session_id, *, reason, connection_id="", **kwargs):
         self.sync_connections.append(connection_id)
         return {"sync_id": "sync-new", "status": "pending", "created": True}
@@ -147,6 +155,8 @@ def backend(monkeypatch):
     monkeypatch.setattr(api_logic, "fetch_session_fields", fake.fetch_session_fields)
     monkeypatch.setattr(routes_sessions, "fetch_cover_image", fake.fetch_cover_image)
     monkeypatch.setattr(api_logic, "upsert_cached_session", fake.upsert_cached_session)
+    monkeypatch.setattr(api_logic, "save_question_reply", fake.save_question_reply)
+    monkeypatch.setattr(api_logic, "fetch_question_replies", lambda session_id, organization_id: {})
     monkeypatch.setattr(api_logic, "enqueue_unique_job_sync", fake.enqueue_unique_job_sync)
     monkeypatch.setattr(
         api_logic,
@@ -189,7 +199,14 @@ def client(backend):
 # Superset of every query/body parameter the session routes accept; FastAPI
 # ignores the ones a given route doesn't declare.
 QUERY = {"kind": "overall", "tone": "professional", "item": "summary", "language": "English", "jobId": "job-1"}
-BODY = {"tone": "professional", "outputLanguage": "English", "speakerNames": {"spk_0": "Host"}}
+BODY = {
+    "tone": "professional",
+    "outputLanguage": "English",
+    "speakerNames": {"spk_0": "Host"},
+    "questionId": "Q001",
+    "answered": True,
+    "reply": "",
+}
 
 
 def _api_routes(prefix: str):

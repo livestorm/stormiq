@@ -20,12 +20,14 @@ from livestorm_app.db import (
     fetch_cached_session,
     fetch_chat_labels,
     fetch_chat_labels_stamp,
+    fetch_question_replies,
     fetch_roster_status,
     fetch_session_fields,
     fetch_session_roster,
     get_transcript_job_for_session,
     list_workspace_sessions,
     merge_cached_bundle_entry,
+    save_question_reply,
     update_transcript_job_status,
     upsert_cached_session,
 )
@@ -598,6 +600,98 @@ def get_session_transcript_view(session_id: str, *, organization_id: OrgScope) -
     names = row.get("transcript_speaker_names") if isinstance(row.get("transcript_speaker_names"), dict) else {}
     body = _sanitize_json_value(transcript_view(inputs, names))
     return {"sessionId": session_id, "updatedAt": row.get("updated_at"), **body}
+
+
+class QuestionNotFoundError(RuntimeError):
+    """The question desk has no row with this id (a team message, a chat
+    message not labelled a content question, an unknown id)."""
+
+
+class QuestionNotSavableError(RuntimeError):
+    """The question has no Livestorm id, so what the host marks can't be
+    kept across a fetch."""
+
+
+def _question_desk_inputs(session_id: str, *, organization_id: OrgScope) -> Tuple[Any, Dict[str, Any]]:
+    """The record inputs the question desk reads, with the caller's scope:
+    the session's payloads, its stored roster (one version) and its stored
+    chat labels. Raises `SessionNotFoundError` for a row that is missing or
+    outside the scope."""
+    row = fetch_session_fields(session_id, list(RECORD_FIELDS), organization_id=organization_id)
+    if not isinstance(row, dict):
+        raise SessionNotFoundError()
+    from livestorm_app.record.inputs import load_record_inputs
+    from livestorm_app.record.roster import stored_roster_rows
+
+    roster_status = fetch_roster_status(session_id, organization_id) or {}
+    stored = fetch_session_roster(session_id, organization_id) if roster_status.get("roster") is not None else None
+    labels = fetch_chat_labels(session_id, organization_id)
+    inputs = load_record_inputs(
+        {**row, "session_id": session_id},
+        roster_rows=stored_roster_rows(stored) if stored is not None else None,
+        stored_labels=labels,
+    )
+    return inputs, row
+
+
+def get_session_question_desk(session_id: str, *, organization_id: OrgScope) -> Dict[str, Any]:
+    """The Follow-up tab's question desk: `{sessionId, updatedAt, version,
+    summary, questions}` (`record.question_desk.question_desk`): the
+    audience's Q&A questions and the chat's content questions, each with its
+    status and what the host saved, authors as short names that fail closed.
+    Read on demand with the caller's scope; nothing is cached."""
+    inputs, row = _question_desk_inputs(session_id, organization_id=organization_id)
+    from livestorm_app.record.question_desk import question_desk
+
+    saved = fetch_question_replies(session_id, organization_id)
+    body = _sanitize_json_value(question_desk(inputs, saved))
+    return {"sessionId": session_id, "updatedAt": row.get("updated_at"), **body}
+
+
+def save_session_question_reply(
+    session_id: str,
+    question_id: str,
+    *,
+    answered: bool,
+    reply: str,
+    organization_id: OrgScope,
+    updated_by: Optional[str],
+) -> Dict[str, Any]:
+    """Mark one desk question answered (or not) with an optional reply, then
+    return the desk as `get_session_question_desk` does. The question must be
+    a desk row now (`QuestionNotFoundError` otherwise) with a Livestorm id
+    (`QuestionNotSavableError`); the session must be in the scope
+    (`SessionNotFoundError`). `updated_by` is the caller's Livestorm user id."""
+    inputs, _ = _question_desk_inputs(session_id, organization_id=organization_id)
+    from livestorm_app.record.question_desk import find_question
+
+    found = find_question(inputs, str(question_id or "").strip())
+    if found is None:
+        raise QuestionNotFoundError("No such question in this session's question desk.")
+    if not found["livestormId"]:
+        raise QuestionNotSavableError("This question has no Livestorm id, so it can't be marked.")
+    saved = save_question_reply(
+        session_id,
+        organization_id=organization_id,
+        source=found["source"],
+        livestorm_id=found["livestormId"],
+        evidence_id=found["id"],
+        answered=bool(answered),
+        reply=str(reply or "").strip() or None,
+        updated_by=updated_by,
+    )
+    if not saved:
+        raise SessionNotFoundError()
+    return get_session_question_desk(session_id, organization_id=organization_id)
+
+
+def get_session_open_questions_csv(session_id: str, *, organization_id: OrgScope) -> str:
+    """The open questions as CSV, with who asked each one (name and company,
+    on every session; never an email): `record.question_desk.open_questions_csv`."""
+    inputs, _ = _question_desk_inputs(session_id, organization_id=organization_id)
+    from livestorm_app.record.question_desk import open_questions_csv
+
+    return open_questions_csv(inputs, fetch_question_replies(session_id, organization_id))
 
 
 def get_session_chat_messages(session_id: str, *, organization_id: OrgScope) -> Dict[str, Any]:

@@ -177,6 +177,42 @@ def test_a_blank_scope_never_queries_the_people_tables(monkeypatch):
         assert db.get_org_people_attributes(blank) is None
         assert db.fetch_chat_labels("sess-a", blank) is None
         assert db.fetch_chat_labels_stamp("sess-a", blank) is None
+        assert db.fetch_question_replies("sess-a", blank) == {}
+        assert db.save_question_reply(
+            "sess-a", organization_id=blank, source="qa", livestorm_id="q-1", evidence_id="Q001",
+            answered=True, reply=None, updated_by=None,
+        ) is False
+
+
+def _reply(session_id, organization_id, **fields):
+    values = {"source": "qa", "livestorm_id": "q-1", "evidence_id": "Q001", "answered": True, "reply": "See the docs.", "updated_by": "user-a"}
+    return db.save_question_reply(session_id, organization_id=organization_id, **{**values, **fields})
+
+
+def test_question_replies_are_read_and_written_only_in_scope(test_database):
+    _seed()
+    db.upsert_cached_session("key-x", "sess-legacy", session_payload={"name": "L"})
+    assert _reply("sess-a", "org-a") is True
+    assert _reply("sess-a", "org-b", reply="outsider") is False, "another org writes nothing"
+    assert _reply("sess-legacy", "org-a") is False, "a row without an org is not any org's"
+    assert _reply("sess-missing", ALL_ORGS) is False, "no session, no row"
+    saved = db.fetch_question_replies("sess-a", "org-a")
+    assert list(saved) == ["qa:q-1"]
+    assert (saved["qa:q-1"]["answered"], saved["qa:q-1"]["reply"], saved["qa:q-1"]["evidence_id"]) == (True, "See the docs.", "Q001")
+    assert db.fetch_question_replies("sess-a", "org-b") == {}
+    assert list(db.fetch_question_replies("sess-a", ALL_ORGS)) == ["qa:q-1"]
+
+
+def test_a_question_reply_is_replaced_and_deleted_with_its_session(test_database):
+    _seed()
+    _reply("sess-a", "org-a")
+    _reply("sess-a", "org-a", evidence_id="Q002", answered=False, reply=None)
+    _reply("sess-a", "org-a", source="chat", livestorm_id="msg-9", evidence_id="C0009")
+    saved = db.fetch_question_replies("sess-a", "org-a")
+    assert set(saved) == {"qa:q-1", "chat:msg-9"}
+    assert (saved["qa:q-1"]["answered"], saved["qa:q-1"]["reply"], saved["qa:q-1"]["evidence_id"]) == (False, None, "Q002")
+    assert db.admin_delete_session("sess-a") is True
+    assert db.fetch_question_replies("sess-a", ALL_ORGS) == {}
 
 
 def test_chat_labels_are_scoped_by_org(test_database):

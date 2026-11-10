@@ -183,6 +183,28 @@ session_chat_labels (
 - **Replaced whole.** `db.replace_chat_labels` checks the set (`check_labels`: known classes, a kind on questions only, unique ids; errors name ids, never text) before it writes, then upserts the row. A failed write raises and keeps the previous labels.
 - **Scoped and deleted through the session**, like the people tables: `db.fetch_chat_labels` joins `session_cache` and filters on its org (a blank scope never queries), and `ON DELETE CASCADE` removes the labels with the session.
 
+## `session_question_replies`
+
+What the host saved in the question desk (Follow-up tab, `record/question_desk.py`): one row per question they marked answered, unmarked or replied to.
+
+```sql
+session_question_replies (
+  session_id   TEXT NOT NULL REFERENCES session_cache (session_id) ON DELETE CASCADE,
+  source       TEXT NOT NULL CHECK (source IN ('qa', 'chat')),
+  livestorm_id TEXT NOT NULL,          -- the question's or chat message's own id
+  evidence_id  TEXT NOT NULL,          -- its Q or C id when saved (Q001, C0001)
+  answered     BOOLEAN NOT NULL,
+  reply        TEXT,                   -- what the host wrote, up to 4,000 characters, or null
+  updated_by   TEXT,                   -- the Livestorm user id, never an email
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (session_id, source, livestorm_id)
+)
+```
+
+- **Keyed by the Livestorm id**, with the evidence id beside it: evidence ids are renumbered when a fetch changes the chat or the questions, Livestorm ids aren't.
+- **One write per question.** `db.save_question_reply` upserts the row; a failed write raises.
+- **Scoped and deleted through the session**, like the chat labels: the read (`db.fetch_question_replies`) and the write both join `session_cache` and filter on its org, so another org's session reads and writes nothing (the write's insert selects the session row with the filter); a blank scope never queries; `ON DELETE CASCADE` removes the rows with the session.
+
 ## `oauth_connections`
 
 ```sql
