@@ -8,7 +8,7 @@ A full visual and UX overhaul that uses Livestorm's design language (colours, Ob
 
 1. ~~Prototype two directions for the key screens; choose one.~~ Done: the Winter direction, light and dark, in Sora.
 2. ~~Design tokens and the first base components~~ (cards, stat cards, collapsibles, status words, chips, buttons, tip bar) and ~~the app shell with the StormIQ mark~~: shipped ([changelog](changelog.md)); since November 2026 they are the only design. Still to come: accessible tabs, paginated tables, empty states, loading skeletons, toasts.
-3. Each screen, rebuilt on the v1 components, splitting the oversized views and `styles.css` along the way. Done: the home page, Sessions, Add session, the session Report, its Transcript tab (with its Speaking stats) and its Follow-up tab (today's AI outputs). Next: the Follow-up design's new parts (the question desk, "Before you share", FAQ and chapters, the open questions CSV), then Chat & Questions and the Overview, and Admin.
+3. Each screen, rebuilt on the v1 components, splitting the oversized views and `styles.css` along the way. Done: the home page, Sessions, Add session, the session Report, its Transcript tab (with its Speaking stats) and its Follow-up tab (today's AI outputs). Next: the Follow-up design's new parts (the question desk, "Before you share", FAQ and chapters, the open questions CSV), then Admin.
 4. ~~Turn v1 on for everyone and remove the switch~~ (November 2026); remove the classic styles once the last classic view is rebuilt.
 5. Rewrite [product.md](product.md) for the new navigation (it still describes the older Events-based flow).
 

@@ -8,9 +8,7 @@ import { useWorkspace } from "./store/workspace";
 // view is a separate chunk loaded on first visit, so admin, transcript and
 // analysis code doesn't slow down the first page load.
 const AddSessionView = () => import("./views/AddSessionView.vue");
-const SessionOverviewView = () => import("./views/SessionOverviewView.vue");
 const SessionTranscriptView = () => import("./views/SessionTranscriptView.vue");
-const ChatQuestionsView = () => import("./views/ChatQuestionsView.vue");
 const SessionFollowUpView = () => import("./views/SessionFollowUpView.vue");
 const AuthCallbackView = () => import("./views/AuthCallbackView.vue");
 const BetaNoticeView = () => import("./views/BetaNoticeView.vue");
@@ -69,9 +67,12 @@ const routes = [
   // A session opens on its Report.
   { path: "/sessions/:sessionId", redirect: (to) => ({ path: `/sessions/${encodeURIComponent(to.params.sessionId)}/report` }) },
   { path: "/sessions/:sessionId/report", component: SessionReportView, props: true, meta: { v1Native: true } },
-  { path: "/sessions/:sessionId/session-overview", component: SessionOverviewView, props: true },
+  // The classic Overview and Chat & Questions views are gone: the Report covers them.
+  ...["session-overview", "chat-questions"].map((tab) => ({
+    path: `/sessions/:sessionId/${tab}`,
+    redirect: (to) => ({ path: `/sessions/${encodeURIComponent(to.params.sessionId)}/report`, query: to.query }),
+  })),
   { path: "/sessions/:sessionId/transcript", component: SessionTranscriptView, props: true, meta: { v1Native: true } },
-  { path: "/sessions/:sessionId/chat-questions", component: ChatQuestionsView, props: true },
   { path: "/sessions/:sessionId/follow-up", component: SessionFollowUpView, props: true, meta: { v1Native: true } },
   // The classic output views are now Follow-up's outputs.
   ...Object.entries(LEGACY_OUTPUTS).map(([tab, output]) => ({

@@ -61,7 +61,7 @@ One design, for everyone ([brand.md](brand.md#one-design)): the top bar, light a
 | `src/store/workspace.js` | The single reactive store (no Pinia): state, loaders, job polling |
 | `src/api.js` | `fetch` wrappers for `/api/*` |
 | `src/views/` | One file per route |
-| `src/components/` | `DataTable`, `SessionHero` and chart cards under `charts/` (the classic views still to rebuild); `ui/` (the v1 base components) and `report/` (the v1 session pages' components, `MarkdownBlocks` for AI text among them) |
+| `src/components/` | `ui/` (the v1 base components) and `report/` (the v1 session pages' components, `MarkdownBlocks` for AI text among them) |
 | `src/utils/csv.js` | CSV export for every table |
 | `src/styles.css` | Styles of the pages not rebuilt yet (shown in the dark frame) |
 | `src/design/` | The design system: `tokens.css` (every `--siq-*` token for light and dark, Sora), `theme.js` and `useTheme.js` (light/dark), `landing.js` (when the signed-out landing page shows) |
@@ -83,9 +83,8 @@ The rules for working in it are in [`frontend/CLAUDE.md`](../frontend/CLAUDE.md)
 | `/sessions/add` | Add session (`AddSessionView`, worded by `src/sessions/add.js`): the organization's events, each opening its finished sessions to add, and a box for a pasted link or ID. Adding opens the session's Report once it is saved. `/search` redirects here | a connection |
 | any page, signed out | The landing page (`LandingView`, rendered by `App.vue` in place of the route when `design/landing.js`'s `showsLanding` says so): what StormIQ does, an example report, how it works, why it can be trusted, and "Connect with Livestorm". The top bar shows no navigation. Public pages (`/beta-info`, `/design`, `/auth/callback`) open as usual | no connection |
 | `/sessions` | The Sessions page (`SessionsView`, worded by `src/sessions/list.js`): counts, search, event filter, sort, one row per session opening its Report | a connection |
-| `/sessions/:sessionId/session-overview` | Hero metrics, people, charts | a fetched session |
 | `/sessions/:sessionId/transcript` | The Transcript tab (`SessionTranscriptView`, worded by `src/transcript/lines.js`, data from `src/transcript/useTranscript.js`): speech and the room on one clock when the alignment allows seconds, apart otherwise; search, filters, speaker names, subtitles; the transcript's job when there is none yet | a fetched session |
-| `/sessions/:sessionId/chat-questions` | Audience analytics (5 tabs) | a fetched session |
+| `/sessions/:sessionId/session-overview`, `/chat-questions` | Redirect to the Report (the classic Overview and Chat & Questions views were removed in November 2026) | — |
 | `/sessions/:sessionId/follow-up` | The Follow-up tab (`SessionFollowUpView`, worded by `src/followup/outputs.js`): every AI output (overall and deep analysis, Smart Recap in three tones, summary, blog post, email, social posts), each written on a click through the store's AI flows, in English or French, with Copy and PDF; the Markdown rendered as text (`MarkdownBlocks`). It loads the classic workspace itself (`loadSessionById`). `/analysis`, `/smart-recap` and `/content-repurposing` redirect here | a transcript |
 | `/admin` | Users, admins, cached sessions, model settings | admin |
 | `/auth/callback`, `/beta-info` | OAuth return page (`App.vue` moves on at once to `next` or Sessions, `src/auth/callback.js`), beta notice | — |
@@ -129,7 +128,7 @@ Opening a session is the hottest path. These rules keep a 2-hour session around 
 - **Polls and job starts read only what they need.** `db.fetch_session_fields(session_id, [fields], organization_id=...)` reads allow-listed columns or flags, with the same scope rules as `fetch_cached_session`. The transcript poll reads `has_transcript`; AI polls and starts read their own bundle column. The full row is loaded only to return a finished result.
 - **The card list never loads payloads.** `db.list_workspace_sessions` selects the session attributes, the event title and language, and has-output flags computed in SQL (`db._has_content_sql`).
 - **No raw upstream payloads in the workspace.** The serialized workspace carries derived tables, the display transcript and AI outputs. `payloads.transcript` is `{subtitles, language, durationSeconds}` (or null); the full transcript is a separate download (`/transcript.json`). Add a table back only when a view needs it.
-- **The internal-session decision is made once per read.** `api_logic._serialize_cached_session` takes it from `build_session_overview_data`, passes it to `build_derived_stats` and `build_cross_source_insights`, and sends it as `meta.internalSession`; the SPA (`frontend/src/utils/audience.js`) uses it rather than deciding again.
+- **The internal-session decision is made once per read.** `api_logic._serialize_cached_session` takes it from `build_session_overview_data`, passes it to `build_derived_stats` and `build_cross_source_insights`, and sends it as `meta.internalSession` (the classic workspace's flag; the v1 Report reads `Roster.meta.internal` through its measures).
 - **System settings** are cached for 60 s per process.
 
 ## Reading the v1 record

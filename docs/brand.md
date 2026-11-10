@@ -13,7 +13,7 @@ Two designs live in the app while the redesign ships screen by screen:
 
 ### One design
 
-StormIQ has one design, this one, for everyone: there is no switch and no classic layout. The app shows the top bar; the pages not rebuilt yet (the session's Overview and Chat & Questions views, Admin) appear unchanged inside a dark frame until each is rebuilt. `/design` shows every token and component in the current theme, with fictional sample content; it is not indexed.
+StormIQ has one design, this one, for everyone: there is no switch and no classic layout. The app shows the top bar; the one page not rebuilt yet (Admin) appears unchanged inside a dark frame until it is rebuilt. `/design` shows every token and component in the current theme, with fictional sample content; it is not indexed.
 
 ### Typeface: Sora
 
