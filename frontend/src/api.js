@@ -150,6 +150,10 @@ export const api = {
   getSessionChat(sessionId, { signal } = {}) {
     return request(sessionPath(sessionId, "/record/chat"), { signal });
   },
+  // The Transcript tab's room view: speech, chat and questions as text by id.
+  getSessionTranscriptView(sessionId, { signal } = {}) {
+    return request(sessionPath(sessionId, "/record/transcript"), { signal });
+  },
   startSessionAnalysis(sessionId, { signal } = {}) {
     return request(sessionPath(sessionId, "/session-analysis"), { method: "POST", signal });
   },
