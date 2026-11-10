@@ -61,11 +61,12 @@ One design, for everyone ([brand.md](brand.md#one-design)): the top bar, light a
 | `src/store/workspace.js` | The single reactive store (no Pinia): state, loaders, job polling |
 | `src/api.js` | `fetch` wrappers for `/api/*` |
 | `src/views/` | One file per route |
-| `src/components/` | `DataTable`, markdown cards, `AiJobProgress`, `SessionHero`, `KeyMomentsTimeline`, and chart cards under `charts/` |
+| `src/components/` | `DataTable`, `SessionHero` and chart cards under `charts/` (the classic views still to rebuild); `ui/` (the v1 base components) and `report/` (the v1 session pages' components, `MarkdownBlocks` for AI text among them) |
 | `src/utils/csv.js` | CSV export for every table |
 | `src/styles.css` | Styles of the pages not rebuilt yet (shown in the dark frame) |
 | `src/design/` | The design system: `tokens.css` (every `--siq-*` token for light and dark, Sora), `theme.js` and `useTheme.js` (light/dark), `landing.js` (when the signed-out landing page shows) |
 | `src/report/` | The v1 Report's data and words: `useSessionReport.js` (`createSessionReport`: loads `GET /record`, starts the session analysis and polls it, reads `GET /record/chat` once when a count first opens its messages, one per view, scoped and aborted like the store), `room.js`, `questions.js` and `method.js` (the wording of "The room", "The questions" and "Method and data quality") and `format.js` (the header's date and length, the analysis panel's wording) and `chartGeometry.js` (the session clock's labels and axis ticks, the ridge's path) |
+| `src/followup/` | The Follow-up tab's words: `outputs.js` (the outputs' list, where each lives in `workspace.outputs`, whether it is being written, its PDF) and `markdown.js` (AI Markdown as blocks of text, never HTML) |
 | `src/transcript/` | The Transcript tab's data and words: `useTranscript.js` (`createTranscriptView`: loads `GET /record/transcript`, follows the transcript job when there is no speech, starts one only on a click, saves the speakers' names; one per view, scoped and aborted like the store) `lines.js` (interleaving only when the server placed the speech, filters, unclear-word parts, subtitles) and `stats.js` (the wording of "Speaking stats", from `m.speaking_pace`, `m.speaker_talk_time` and `m.longest_stretch`) |
 | `src/components/ui/` | v1 base components: `TopBar`, `ThemeToggle`, `Card`, `CardHeader`, `IconTile`, `StatCard`, `Collapsible`, `StatusWord`, `Chip`, `UiButton`, `TipBar`, `Icon` (vendored Lucide icons), `StormIqMark`, `ForLivestorm` (the "for Livestorm" lockup) |
 | `src/assets/livestorm/` | The official Livestorm logo, on-light and on-dark, as supplied by Livestorm's brand kit |
@@ -85,9 +86,7 @@ The rules for working in it are in [`frontend/CLAUDE.md`](../frontend/CLAUDE.md)
 | `/sessions/:sessionId/session-overview` | Hero metrics, people, charts | a fetched session |
 | `/sessions/:sessionId/transcript` | The Transcript tab (`SessionTranscriptView`, worded by `src/transcript/lines.js`, data from `src/transcript/useTranscript.js`): speech and the room on one clock when the alignment allows seconds, apart otherwise; search, filters, speaker names, subtitles; the transcript's job when there is none yet | a fetched session |
 | `/sessions/:sessionId/chat-questions` | Audience analytics (5 tabs) | a fetched session |
-| `/sessions/:sessionId/analysis` | Overall and deep analysis | a transcript |
-| `/sessions/:sessionId/smart-recap` | Smart Recap in three tones | a transcript |
-| `/sessions/:sessionId/content-repurposing` | Summary, blog post, email, social posts | a transcript |
+| `/sessions/:sessionId/follow-up` | The Follow-up tab (`SessionFollowUpView`, worded by `src/followup/outputs.js`): every AI output (overall and deep analysis, Smart Recap in three tones, summary, blog post, email, social posts), each written on a click through the store's AI flows, in English or French, with Copy and PDF; the Markdown rendered as text (`MarkdownBlocks`). It loads the classic workspace itself (`loadSessionById`). `/analysis`, `/smart-recap` and `/content-repurposing` redirect here | a transcript |
 | `/cross-analysis` | Placeholder for cross-session analysis ([roadmap](roadmap.md)) | — |
 | `/admin` | Users, admins, cached sessions, model settings | admin |
 | `/auth/callback`, `/beta-info` | OAuth return page (`App.vue` moves on at once to `next` or Sessions, `src/auth/callback.js`), beta notice | — |
