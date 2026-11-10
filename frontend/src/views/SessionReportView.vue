@@ -5,6 +5,7 @@ import Card from "../components/ui/Card.vue";
 import CardHeader from "../components/ui/CardHeader.vue";
 import Chip from "../components/ui/Chip.vue";
 import Icon from "../components/ui/Icon.vue";
+import PulseChart from "../components/report/PulseChart.vue";
 import SessionRidge from "../components/report/SessionRidge.vue";
 import UiButton from "../components/ui/UiButton.vue";
 import { analysisSummary, formatLength, formatSessionStart } from "../report/format";
@@ -129,10 +130,13 @@ const tabs = computed(() => [
       </nav>
 
       <Card>
-        <CardHeader icon="activity" title="The Report's sections come next" :level="2" />
+        <PulseChart :pulse="record.pulse" :alignment="clock.alignment || null" />
+      </Card>
+
+      <Card>
+        <CardHeader icon="list" title="More sections come next" :level="2" />
         <p class="r-text">
-          The Pulse, the vitals and the audience will appear here. Until then, the Transcript and Follow-up tabs open the
-          current views.
+          The vitals and the audience will appear here. Until then, the Transcript and Follow-up tabs open the current views.
         </p>
       </Card>
     </template>

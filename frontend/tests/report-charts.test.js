@@ -68,3 +68,25 @@ describe("busiestMinute", () => {
     expect(busiestMinute([{ minute: 0, audienceChat: 0 }], "audienceChat")).toBeNull();
   });
 });
+
+describe("countTicks and barPercent", () => {
+  it("ends a count axis on a round step, with integer ticks", async () => {
+    const { countTicks } = await import("../src/report/chartGeometry");
+    expect(countTicks(9)).toEqual({ top: 10, ticks: [0, 5, 10] });
+    expect(countTicks(19)).toEqual({ top: 20, ticks: [0, 10, 20] });
+    expect(countTicks(31)).toEqual({ top: 40, ticks: [0, 20, 40] });
+    expect(countTicks(2)).toEqual({ top: 2, ticks: [0, 1, 2] });
+    expect(countTicks(0)).toEqual({ top: 1, ticks: [0, 1] });
+    expect(countTicks(3, { maxTicks: 2 })).toEqual({ top: 5, ticks: [0, 5] });
+    expect(countTicks(140).ticks.length).toBeLessThanOrEqual(4);
+  });
+
+  it("sizes a bar against the axis, never past it", async () => {
+    const { barPercent } = await import("../src/report/chartGeometry");
+    expect(barPercent(5, 10)).toBe(50);
+    expect(barPercent(12, 10)).toBe(100);
+    expect(barPercent(null, 10)).toBe(0);
+    expect(barPercent(-1, 10)).toBe(0);
+    expect(barPercent(3, 0)).toBe(0);
+  });
+});
