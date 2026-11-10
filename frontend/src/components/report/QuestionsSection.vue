@@ -41,7 +41,7 @@ const showChat = ref(false);
           variant="ghost"
           :icon="showChat ? 'chevron-up' : 'chevron-down'"
           :aria-expanded="showChat ? 'true' : 'false'"
-          aria-controls="r-chat-questions"
+          :aria-controls="showChat ? 'r-chat-questions' : undefined"
           @click="showChat = !showChat"
         >
           {{ showChat ? "Hide the chat's questions" : `Read the chat's ${chatIds.length} questions` }}

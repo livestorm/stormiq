@@ -97,6 +97,16 @@ export function chatThemes(measure) {
   };
 }
 
+/** A theme row's name for screen readers, as one sentence: "Reactions to
+ * the content: 492 messages, 82% of the chat, English". A hidden share or
+ * an unknown language is left out. */
+export function themeRowName(row) {
+  const parts = [`${row.messages} ${row.messages === "1" ? "message" : "messages"}`];
+  if (row.share !== EMPTY) parts.push(`${row.share} of the chat`);
+  if (row.languages !== EMPTY) parts.push(row.languages);
+  return `${row.label}: ${parts.join(", ")}`;
+}
+
 /** The collapsed card's one line and key chip. The line names the largest
  * theme only when shares show (the first on a tie, in the server's order). */
 export function roomSummary(measures = {}) {
