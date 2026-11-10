@@ -27,7 +27,9 @@ import httpx2
 import pytest
 
 from livestorm_app import config, db, llm_client
-from livestorm_app.ai import jobs, models
+from livestorm_app.ai import jobs, models, usage
+from livestorm_app.ai.dossier import make_dossier
+from livestorm_app.ai.request import AnthropicCall, anthropic_call, build_request
 from livestorm_app.ai.usage import CallContext
 
 from fake_anthropic import (
@@ -73,8 +75,25 @@ def rows(monkeypatch):
     return saved
 
 
-def _send(model: str = "claude-haiku-4-5-20251001", **options):
-    return llm_client._anthropic_send(SECRET, model, MESSAGES, 0.2, 2_500, **options)
+def _stream_call(deadline_s: float = 600, model: str = "claude-sonnet-5-5"):
+    """A v1 job's streamed call (`llm_client._anthropic_call`) with a plain body."""
+    call = AnthropicCall({"model": model, "max_tokens": 48_000, "messages": MESSAGES[1:], "system": "Read the session."})
+    return llm_client._anthropic_call(SECRET, call, stream=True, deadline_s=deadline_s)
+
+
+def _send(model: str = "claude-haiku-4-5-20251001", *, stream: bool = False, deadline_s: float = 600):
+    """One Anthropic call: a classic output's, or a v1 job's stream when `stream`."""
+    if stream:
+        return _stream_call(deadline_s, model)
+    return llm_client._anthropic_send(SECRET, model, MESSAGES, 0.2, 2_500)
+
+
+def _request(kind: str):
+    """A v1 call's request, laid out for its job."""
+    if jobs.job_spec(kind).layout == "dossier":
+        dossier = make_dossier("Session data", record_version="6")
+        return build_request(kind, system="You read sessions.", context=dossier, instructions="Read the session.")
+    return build_request(kind, instructions="Read the session.", payload="Session data")
 
 
 # ── One client per process ─────────────────────────────────────────────────
@@ -303,7 +322,7 @@ def test_the_deadline_stops_a_stream_and_nothing_is_saved(fake, sleeps, rows, mo
     _job_clock(monkeypatch, fake, seconds_per_event=100)
     fake.script.extend([FakeStreamScript(answer_body("Never saved", model="claude-sonnet-5-5")), FakeStreamScript(answer_body("Second try"))])
     with pytest.raises(llm_client.LLMDeadlineExceeded, match="longer than 300 s") as stopped:
-        llm_client.generate_text("understanding", MESSAGES, api_key=SECRET, ctx=UNDERSTANDING)
+        llm_client.generate_text("understanding", _request("understanding"), api_key=SECRET, ctx=UNDERSTANDING)
     assert isinstance(stopped.value, llm_client.LLMProviderError)
     stream = fake.streams[0]
     assert stream.closed and stream.events_read == 4, "stopped at the first event past 300 s"
@@ -315,7 +334,7 @@ def test_the_deadline_stops_a_stream_and_nothing_is_saved(fake, sleeps, rows, mo
 def test_a_stream_within_its_deadline_is_answered(fake, rows, monkeypatch):
     _job_clock(monkeypatch, fake, seconds_per_event=10)
     fake.script.append(FakeStreamScript(answer_body("Understood.", model="claude-sonnet-5-5")))
-    assert llm_client.generate_text("understanding", MESSAGES, api_key=SECRET, ctx=UNDERSTANDING) == "Understood."
+    assert llm_client.generate_text("understanding", _request("understanding"), api_key=SECRET, ctx=UNDERSTANDING) == "Understood."
     assert jobs.job_spec("understanding").call_deadline_s == jobs.DEFAULT_CALL_DEADLINE_S == 600
     assert fake.body(0)["max_tokens"] == 48_000 and fake.body(0)["stream"] is True
     assert [(row["streamed"], row["outcome"]) for row in rows] == [(True, "ok")]
@@ -325,14 +344,14 @@ def test_a_streamed_refusal_keeps_no_text(fake, rows):
     refusal = answer_body("Partial text", "refusal", model="claude-sonnet-5-5", stop_details={"type": "refusal", "category": "cyber"})
     fake.script.append(FakeStreamScript(refusal))
     with pytest.raises(llm_client.LLMRefused) as refused:
-        llm_client.generate_text("understanding", MESSAGES, api_key=SECRET, ctx=UNDERSTANDING)
+        llm_client.generate_text("understanding", _request("understanding"), api_key=SECRET, ctx=UNDERSTANDING)
     assert refused.value.category == "cyber" and "Partial" not in str(refused.value)
     assert [(row["outcome"], row["streamed"]) for row in rows] == [("refused", True)]
 
 
 def test_only_v1_budgets_over_16k_stream(fake, rows):
     fake.script.extend([answer_body("Holds."), answer_body("# Recap")])
-    llm_client.generate_text("verify_meaning", MESSAGES, api_key=SECRET, ctx=CallContext("verify_meaning", "sess-1", "org-a"))
+    llm_client.generate_text("verify_meaning", _request("verify_meaning"), api_key=SECRET, ctx=CallContext("verify_meaning", "sess-1", "org-a"))
     llm_client.call_llm(SECRET, "claude-haiku-4-5-20251001", MESSAGES, temperature=0.2, max_tokens=16_000)
     assert [request["_stream"] for request in fake.requests] == [False, False]
 
@@ -358,8 +377,7 @@ def test_the_classic_requests_send_the_bytes_they_sent_before(monkeypatch, case)
 
     keys = install_mock_transport(monkeypatch, handler)
     call = case["call"]
-    json_format = llm_client.JsonFormat(**call["json_format"]) if call["json_format"] else None
-    result = llm_client._anthropic_send(SECRET, call["model"], call["messages"], call["temperature"], call["max_tokens"], json_format=json_format)
+    result = llm_client._anthropic_send(SECRET, call["model"], call["messages"], call["temperature"], call["max_tokens"])
     assert result.request_id == "req_1" and keys == [SECRET]
     request = sent[0]
     assert (request.method, str(request.url)) == ("POST", fixture["url"])
@@ -372,7 +390,9 @@ def test_the_classic_requests_send_the_bytes_they_sent_before(monkeypatch, case)
 def test_the_classic_fixture_covers_temperature_both_ways():
     bodies = [json.loads(case["body"]) for case in _fixture_cases()]
     assert {body.get("temperature") for body in bodies} == {0.2, 0.1, None}
-    assert any("output_config" in body for body in bodies) and any("system" not in body for body in bodies)
+    assert any("system" not in body for body in bodies)
+    # Classic outputs only: a schema, an effort or a fallback belongs to the v1 jobs' requests.
+    assert not any({"output_config", "thinking", "fallbacks"} & set(body) for body in bodies)
 
 
 def _stream_events(stop_reason: str = "end_turn", stop_details=None):
@@ -405,7 +425,7 @@ def test_a_real_stream_becomes_one_result(monkeypatch):
         return _stream_response(_stream_events())
 
     install_mock_transport(monkeypatch, handler)
-    result = llm_client._anthropic_send(SECRET, "claude-sonnet-5-5", MESSAGES, None, 48_000, stream=True, deadline_s=600)
+    result = _stream_call(600)
     assert (result.text, result.stop, result.request_id, result.streamed) == ("Understood.", "complete", "req_stream", True)
     assert (result.usage.input_tokens, result.usage.output_tokens, result.usage.cache_read_tokens) == (1200, 9000, 300)
     assert [json.loads(request.content) for request in sent] == [
@@ -417,8 +437,100 @@ def test_a_real_stream_becomes_one_result(monkeypatch):
 def test_a_real_streamed_refusal_keeps_its_category(monkeypatch):
     events = _stream_events("refusal", {"type": "refusal", "category": "cyber", "explanation": "declined"})
     install_mock_transport(monkeypatch, lambda request: _stream_response(events))
-    result = llm_client._anthropic_send(SECRET, "claude-sonnet-5-5", MESSAGES, None, 48_000, stream=True, deadline_s=600)
+    result = _stream_call(600)
     assert (result.stop, result.refusal_category, result.text) == ("refusal", "cyber", "")
+
+
+# A v1 job's request (`ai/request.py`), sent by the pinned SDK's own methods.
+FALLBACK_BETA = "server-side-fallback-2026-07-01"
+
+
+def _v1_call(model: str, kind: str = "understanding", **parts):
+    spec = jobs.job_spec(kind)
+    caps = models.catalog_model(model)
+    request = _request(kind) if not parts else build_request(kind, **parts)
+    return anthropic_call(request, caps, min(jobs.budget(spec, caps)[0], 6_000))
+
+
+def test_a_v1_call_on_haiku_goes_through_messages_create_without_a_beta(monkeypatch):
+    sent: list = []
+
+    def handler(request):
+        sent.append(request)
+        return json_response(answer_body("Labelled.", model="claude-haiku-5-5"), headers={"request-id": "req_v1"})
+
+    install_mock_transport(monkeypatch, handler)
+    call = _v1_call("claude-haiku-5-5", "chat_labels", instructions="Label each message.", payload="C0001 hello", shared_calls=2)
+    result = llm_client._anthropic_call(SECRET, call)
+    assert (result.text, result.stop, result.request_id, result.streamed) == ("Labelled.", "complete", "req_v1", False)
+    request = sent[0]
+    assert (request.method, request.url.path, request.url.query) == ("POST", "/v1/messages", b"")
+    assert "anthropic-beta" not in request.headers
+    assert request.headers["anthropic-version"] == config.ANTHROPIC_API_VERSION
+    assert json.loads(request.content) == {
+        "model": "claude-haiku-5-5",
+        "max_tokens": 6_000,
+        "system": [{"type": "text", "text": "Label each message.", "cache_control": {"type": "ephemeral"}}],
+        "messages": [{"role": "user", "content": "C0001 hello"}],
+        "thinking": {"type": "adaptive"},
+        "output_config": {"effort": "low"},
+    }
+
+
+def test_a_v1_call_on_sonnet_asks_for_the_fallback_and_reads_a_fallback_answer(monkeypatch):
+    """The dossier layout through the real SDK: the instructions travel as a
+    `role: "system"` message, the fallback as a beta, and an answer the
+    fallback model wrote is read from its text blocks."""
+    sent: list = []
+    rescued = answer_body(model="claude-sonnet-5", content=[
+        {"type": "fallback", "from": {"model": "claude-sonnet-5-5"}, "to": {"model": "claude-sonnet-5"}},
+        {"type": "text", "text": "Rescued."},
+    ])
+    rescued["usage"] = {
+        "input_tokens": 1200, "output_tokens": 300,
+        "iterations": [
+            {"type": "message", "model": "claude-sonnet-5-5", "input_tokens": 1200, "output_tokens": 0},
+            {"type": "fallback_message", "model": "claude-sonnet-5", "input_tokens": 1200, "output_tokens": 300},
+        ],
+    }
+
+    def handler(request):
+        sent.append(request)
+        return json_response(rescued, headers={"request-id": "req_fb"})
+
+    install_mock_transport(monkeypatch, handler)
+    call = _v1_call("claude-sonnet-5-5")
+    assert call.betas == (FALLBACK_BETA,)
+    result = llm_client._anthropic_call(SECRET, call)
+    assert (result.text, result.stop, result.model_served, result.request_id) == ("Rescued.", "complete", "claude-sonnet-5", "req_fb")
+    assert usage.answered_by_fallback(result.usage)
+    request = sent[0]
+    assert request.url.path == "/v1/messages"
+    assert FALLBACK_BETA in request.headers["anthropic-beta"].split(",")
+    body = json.loads(request.content)
+    assert body["fallbacks"] == "default" and "betas" not in body
+    assert [message["role"] for message in body["messages"]] == ["user", "system"]
+    assert body["messages"][1] == {"role": "system", "content": "Read the session."}
+    assert body["system"] == [{"type": "text", "text": "You read sessions."}]
+    assert body["thinking"] == {"type": "adaptive"} and body["output_config"] == {"effort": "medium"}
+    assert "temperature" not in body
+
+
+def test_a_v1_stream_with_the_fallback_goes_through_the_beta_stream(monkeypatch):
+    sent: list = []
+
+    def handler(request):
+        sent.append(request)
+        return _stream_response(_stream_events())
+
+    install_mock_transport(monkeypatch, handler)
+    result = llm_client._anthropic_call(SECRET, _v1_call("claude-sonnet-5-5"), stream=True, deadline_s=600)
+    assert (result.text, result.stop, result.request_id, result.streamed) == ("Understood.", "complete", "req_stream", True)
+    request = sent[0]
+    body = json.loads(request.content)
+    assert body["stream"] is True and body["fallbacks"] == "default"
+    assert FALLBACK_BETA in request.headers["anthropic-beta"].split(",")
+    assert request.headers["connection"] == "close", "a stream has a connection of its own, for its deadline to shut"
 
 
 def test_a_real_error_event_mid_stream_is_not_retried(monkeypatch, sleeps):
@@ -431,7 +543,7 @@ def test_a_real_error_event_mid_stream_is_not_retried(monkeypatch, sleeps):
 
     install_mock_transport(monkeypatch, handler)
     with pytest.raises(llm_client.LLMProviderError, match="error while answering: overloaded_error"):
-        llm_client._anthropic_send(SECRET, "claude-sonnet-5-5", MESSAGES, None, 48_000, stream=True, deadline_s=600)
+        _stream_call(600)
     assert len(seen) == 1 and sleeps == []
 
 
@@ -477,7 +589,7 @@ def test_the_deadline_stops_a_stream_that_sends_no_event(monkeypatch, sleeps, pi
     install_mock_transport(monkeypatch, handler)
     started = time.monotonic()
     with pytest.raises(llm_client.LLMDeadlineExceeded, match="longer than 1 s"):
-        llm_client._anthropic_send(SECRET, "claude-sonnet-5-5", MESSAGES, None, 48_000, stream=True, deadline_s=1)
+        _stream_call(1)
     assert time.monotonic() - started < 10, "stopped by the deadline, not by the end of the stream"
     assert body.closed.is_set() and len(seen) == 1 and sleeps == [], "closed, never retried"
     assert (body.pings_sent > 10) is pings
@@ -539,7 +651,7 @@ def test_the_deadline_shuts_a_real_connection(monkeypatch, sleeps, thinking_serv
     monkeypatch.setattr(llm_client, "_anthropic_client", lambda api_key: client)
     started = time.monotonic()
     with pytest.raises(llm_client.LLMDeadlineExceeded, match="longer than 1 s"):
-        llm_client._anthropic_send(SECRET, "claude-sonnet-5-5", MESSAGES, None, 48_000, stream=True, deadline_s=1)
+        _stream_call(1)
     assert time.monotonic() - started < 10, "not the read timeout, not the end of the server's stream"
     assert seen == ["close"] and sleeps == []
 
@@ -743,10 +855,14 @@ def test_the_smoke_plan_follows_the_catalog():
             if probe.name.startswith("job="):
                 spec = jobs.job_spec(probe.name[4:])
                 assert (probe.params["max_tokens"], probe.stream) == jobs.budget(spec, caps)
-                assert probe.params["output_config"] == {"effort": spec.effort}
+                # The job's own request, as the app writes it: nothing hand-built.
+                expected = anthropic_call(script._job_request(spec), caps, probe.params["max_tokens"])
+                assert {key: value for key, value in probe.params.items() if key != "betas"} == expected.params
+                assert (probe.params.get("betas", []), probe.beta) == (list(expected.betas), caps.server_fallback)
     assert not any(probe.name == "fallbacks=default" for probe in by_model[("anthropic", "claude-haiku-5-5")])
     understanding = [probe for probe in by_model[("anthropic", "claude-sonnet-5-5")] if probe.name == "job=understanding"]
     assert understanding[0].stream and understanding[0].params["max_tokens"] == 48_000
+    assert understanding[0].params["messages"][-1] == {"role": "system", "content": script.PROMPT}, "the dossier layout"
     dossier = [probe for probe in probes if probe.cache]
     assert [probe.name for probe in dossier] == ["dossier-write", "dossier-repeat", "dossier-with-schema"]
     assert dossier[0].params == dossier[1].params, "the repeat is the same request, so it reads the cache"

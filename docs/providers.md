@@ -45,7 +45,15 @@ The OpenAI rows are unverified until a live check; their `temperature` and token
 | `understanding` | v1: the understanding passes | `claude-sonnet-5-5` · none yet | medium | 32,000 |
 | `verify_meaning` | v1: the meaning check | `claude-haiku-5-5` · none yet | low | 2,000 |
 
-Smart Recap deliberately uses a stronger model than the other classic outputs. The classic outputs still send no effort, and their callers pass the answer tokens above as `max_tokens`. Nothing runs the v1 jobs yet, and they have no OpenAI model until the live check.
+Smart Recap deliberately uses a stronger model than the other classic outputs. The classic outputs still send no effort, and their callers pass the answer tokens above as `max_tokens`. A v1 job sends its effort to every model that takes one ([Request layouts and caching](#request-layouts-and-caching)). Nothing runs the v1 jobs yet, and they have no OpenAI model until the live check.
+
+A v1 job's spec also sets how its request is laid out (`layout`), whether its stable prefix may be cached (`cache`, with `cache_ttl`), and whether it asks for the server-side fallback (`fallbacks`):
+
+| Job kind | Layout | Cached prefix |
+|---|---|---|
+| `profile`, `verify_meaning` | instructions | none |
+| `chat_labels` | instructions | the instructions, when a session has at least two batches |
+| `understanding` | dossier | the dossier, when a run has at least two passes |
 
 A spec also says whether an answer cut off at the token limit is asked for once more (`truncation_retry`): yes for every classic output, as before; no for the v1 jobs, whose budgets already hold thinking headroom ([Structured outputs and refusals](#structured-outputs-and-refusals)).
 
@@ -82,10 +90,10 @@ The image model is the `image_model` setting, then `IMAGE_MODEL`, then `gpt-imag
 
 ### Structured outputs and refusals
 
-Each adapter (`llm_client._anthropic_send`, `llm_client._openai_send`) returns one `LLMResult`: the text, why the model stopped (`complete`, `max_tokens`, `refusal` or `other`, plus the provider's own value), Anthropic's refusal category, the model that answered, the request id (`request-id`, or OpenAI's `x-request-id`) and the token usage. There are two ways to call a model:
+Each adapter returns one `LLMResult`: the text, why the model stopped (`complete`, `max_tokens`, `refusal` or `other`, plus the provider's own value), Anthropic's refusal category, the model that answered, the request id (`request-id`, or OpenAI's `x-request-id`) and the token usage. There are two ways to call a model:
 
-- `llm_client.call_llm`, for the classic outputs. Each passes its own model, messages, `temperature` and `max_tokens`, and gets the text back. Their requests don't change.
-- `llm_client.generate_text(kind, …)` and `llm_client.generate_json(kind, schema, …)`, for the v1 jobs. The model comes from the job (`ai.jobs.resolve_model`), `max_tokens` from its budget (`ai.jobs.budget`), and no `temperature` is sent. A model outside the catalog, or a JSON step on a model whose row doesn't accept structured outputs (`ModelCaps.structured_outputs`), is refused before any paid call. Nothing calls them yet.
+- `llm_client.call_llm`, for the classic outputs (adapters `llm_client._anthropic_send` and `_openai_send`). Each passes its own model, messages, `temperature` and `max_tokens`, and gets the text back. Their requests don't change.
+- `llm_client.generate_text(kind, request, …)` and `llm_client.generate_json(kind, schema, request, …)`, for the v1 jobs (adapters `llm_client._anthropic_call` and `_openai_call`). `request` is built for the job with `ai.request.build_request` ([Request layouts and caching](#request-layouts-and-caching)); anything else, or a request built for another job, is refused. The model comes from the job (`ai.jobs.resolve_model`), `max_tokens` from its budget (`ai.jobs.budget`), and no `temperature` is sent. A model outside the catalog, or a JSON step on a model whose row doesn't accept structured outputs (`ModelCaps.structured_outputs`), is refused before any paid call. Nothing calls them yet.
 
 **Why the model stopped** is checked in this order, on both providers:
 
@@ -106,6 +114,40 @@ The text is read from the `text` blocks only, so a leading `thinking` block (the
 The strict schema is a subset of JSON Schema that both providers accept. StormIQ chose this common subset; each provider accepts a little more. Every object closes (`additionalProperties: false`) and requires all its fields, and an optional field is `X | None` without a default. Nested models are written out in place, with no `$ref`: the providers accept references, but inlining keeps the schema simple and makes a recursive model easy to refuse. Recursion, free-form objects (`dict[str, X]`), tuples and untyped values are refused. Keywords outside the subset are left out of what is sent: bounds such as `minimum`, `maximum`, `minLength`, `maxLength`, `pattern`, `minItems` and `maxItems`, and `format` and `title`. Pydantic checks them on the answer. The answer must parse and validate against the full model (`model_validate_json`), or `LLMInvalidOutput` is raised. The error names how many checks failed and their kinds, never the answer's text.
 
 A refusal or a cut-off raises before validation, so neither becomes `LLMInvalidOutput`. A complete answer can still fail: it can come back empty, or break a bound that only Pydantic checks, since the model never sees it. There is no repair call, so such an answer fails the step. Put a bound on a JSON step only when breaking it should fail the job.
+
+### Request layouts and caching
+
+A v1 job never hands a model a list of messages. It builds a request with `ai.request.build_request(kind, …)`, and [`ai/request.py`](../livestorm_app/ai/request.py) writes it for the provider (`anthropic_call`, `openai_payload`). The job's spec picks one of three layouts:
+
+| Layout | What comes first | Then | Used by |
+|---|---|---|---|
+| `dossier` | the frozen system text, then the session dossier as the first user block | the call's own data, if any, then the job's instructions | the understanding passes |
+| `instructions` | the job's instructions, as the system prompt | the call's own data (`payload`: one chat batch, say) as the user turn | the profile, the chat labels, the meaning check |
+| `legacy` | a classic output's own messages, system entries joined into the system prompt | | no v1 job; the classic outputs still go through `call_llm` |
+
+**Why the dossier comes first.** The passes of one run all read the same dossier, so it is the prefix worth caching, and Anthropic's cache is a prefix match in the order tools, system, messages: anything a job chooses, placed in front of the dossier, would stop the passes from sharing it. So the system text of a dossier job is the same for every job and session, byte for byte, and the instructions come after the dossier.
+
+**Why the instructions use the operator's channel.** The dossier holds what attendees wrote in the chat, and text inside a user turn can be forged by whoever wrote it. So the instructions are sent as a `role: "system"` message after the dossier, where the model accepts one (`ModelCaps.mid_conversation_system`: the 5.5 models and Opus 4.8). It must be the last message. A model without that channel gets them as a text block after the dossier, in the same user turn.
+
+**Caching.** The stable prefix (the dossier block, or the instructions block) carries the request's one `cache_control` marker, and only when both hold: the spec allows it (`JobSpec.cache`), and the run makes at least two calls over that prefix (`build_request(…, shared_calls=n)`). With a single call, a cache write costs 25% more than plain input and nothing reads it back. The lifetime is the spec's (`cache_ttl`: 5 minutes, or 1 hour). A prefix shorter than the model's minimum (`ModelCaps.min_cache_tokens`: 512 tokens on the 5.5 models, 4,096 on Haiku 4.5) is not cached, and the API says nothing. A miss is silent and costs the whole prefix again on every later call, so `build_request(…, call_number=k)` says which call of the run this is, and from the second on `llm_client` logs a WARNING when the call read nothing from the cache (ids and counts only). Calls that share a prefix must run one after the other: an entry can be read only once the call that writes it has started to answer.
+
+**The dossier's bytes.** One byte that differs between two builds of the same record is a cache miss. [`ai/dossier.py`](../livestorm_app/ai/dossier.py) has the `Dossier` type and the helpers a dossier is built from: `stable_dumps` (JSON with sorted keys, no spaces, no ASCII escapes), `fixed_number` (a fixed count of decimals), `normalize_text` (one newline style, NFC, no trailing spaces) and `make_dossier`, which adds the text's SHA-256. A dossier holds no wall-clock time, request id or randomness, and lists its items in id order. It names people by `P-` ref only ([security.md](security.md#what-v1-code-reads-about-people)). The builder that writes a record as a dossier ships with the job that reads it.
+
+**What every v1 call sends**, read from the model's catalog row, never from the shape of its id:
+
+| Parameter | Sent when | Value |
+|---|---|---|
+| `output_config.effort` | the model takes an effort (`effort_levels`; never Haiku 4.5) | the job's, or the nearest level the model takes below it (`ai.jobs.effort_for`) |
+| `thinking` | the model thinks by default (the 5.5 models) | `{"type": "adaptive"}`. Never `disabled`, never a token budget; it is not turned on for a model whose budget has no room for it |
+| `output_config.format` | a JSON step | the strict schema ([above](#structured-outputs-and-refusals)) |
+| `fallbacks` | the model accepts the server-side fallback (`server_fallback`: Sonnet 5.5 and Opus 5.5, never Haiku 5.5) and the spec keeps it on | `"default"`, with the beta `server-side-fallback-2026-07-01` |
+| `temperature` | never | |
+
+OpenAI gets the same order (the dossier first, so its automatic prefix cache sees the same prefix; the instructions after it as a `system` message), the token parameter of the model's row, no `temperature` and no effort.
+
+**The server-side fallback.** With `fallbacks: "default"`, a request the model declines is answered by the fallback model Anthropic recommends for that refusal category, in the same call. On Sonnet 5.5 only some categories are retried, so a refusal can still come back; it is handled as any refusal. When the fallback answers, the usage row names the model that answered (`model_served`), `usage_raw.iterations` lists both attempts, and `llm_client` logs a WARNING. The row's token counts and cost are the answering attempt's alone: what the declined attempt cost is not in the estimate ([roadmap](roadmap.md#5-models)).
+
+**Hashes.** Each v1 call's usage row holds the `effort` it sent, a `prompt_hash` (the SHA-256 of the layout, the system text, the instructions and the answer's schema: the same for every session until a prompt or a schema changes) and, for a dossier call, the `dossier_hash`. They let usage be compared before and after a prompt change, and a run's calls be matched to one dossier.
 
 ### Usage and the daily budget
 
@@ -158,7 +200,8 @@ Anthropic calls go through the official Python SDK (`anthropic`, pinned below 2:
 - **The SDK's retries are off** (`max_retries=0`). They retry timeouts too, and a timed-out call may still be generating, and billing, its answer. `llm_client._with_transport_retry` applies the policy in the table above, the same as before the SDK: it catches `APITimeoutError` before `APIConnectionError` (its parent class), so a timeout is never retried. One thing changed: the SDK reports a connect timeout as a timeout, so a connect timeout is no longer retried (`requests` counted it as a connection error). Nothing was sent then, so a retry would have been safe: the change can fail a job that a retry would have saved, but it never bills twice. The SDK raises a 529 as `OverloadedError`, not as an `InternalServerError`, so the policy reads the status code.
 - **Streaming.** A v1 call whose budget is over 16,000 tokens streams (`llm_client._stream_message`). Its job's `call_deadline_s` (600 s unless the spec says otherwise) is a wall-clock limit from the call's start, and the job fails with `LLMDeadlineExceeded` once it passes. It can't be checked only when an event arrives: the SDK drops the server's `ping` events, so a model that thinks for minutes without sending text gives nothing to check, and each ping restarts the 300 s wait between chunks. So a timer (`llm_client._StreamDeadline`) shuts the connection at the deadline, and the read in progress fails at once, pings or silence. A stream asks for a connection of its own (`Connection: close`), so the timer never shuts one another call reuses. A stream is retried only when it fails before its first event; from the first event on, output may be billed, so a failure there, the deadline included, is never retried. A stream that doesn't finish keeps none of its text, and leaves no `llm_usage` row: like any call that failed in transport, it is only in the log.
 - **Errors.** A failed call raises `llm_client.LLMProviderError`, which names the HTTP status and the API's error type (or the error's class), never the API's message, a body, a URL or the key, for example "The Anthropic call failed (HTTP 529 overloaded_error). Nothing was saved. Please try again." The poll shows it as the job's `error`: arq can store it, which it can't do for the SDK's own errors.
-- **Same requests.** A call that doesn't stream (every classic output, and the v1 calls up to 16,000 tokens) has its body written by `llm_client._post_message` as `requests` wrote it, then sent through the SDK client: the classic outputs send the same bytes as before the SDK (`tests/fixtures/anthropic-requests-before-sdk.json`, captured from the old `requests` transport, is checked byte for byte). The SDK's `messages.create` would write the same JSON in other bytes (compact, unescaped UTF-8, its own key order).
+- **Same requests for the classic outputs.** A classic output's body is written by `llm_client._post_message` as `requests` wrote it, then sent through the SDK client: the classic outputs send the same bytes as before the SDK (`tests/fixtures/anthropic-requests-before-sdk.json`, captured from the old `requests` transport, is checked byte for byte). The SDK's `messages.create` would write the same JSON in other bytes (compact, unescaped UTF-8, its own key order).
+- **The SDK's own methods for the v1 jobs.** A v1 call (`llm_client._anthropic_call`) goes through `messages.create`, or `messages.stream` above 16,000 tokens, with the keyword arguments `ai.request.anthropic_call` wrote. A call that asks for the server-side fallback needs a beta, so it goes through `client.beta.messages` with its `betas`. Same client, timeouts, retry policy and errors.
 - **The SDK's own logging.** With `ANTHROPIC_LOG` set, the SDK logs each request's options, the prompt included. It stays unset ([operations.md](operations.md#environment-variables)), and `llm_client` keeps the SDK's logger at INFO otherwise.
 
 `scripts/llm_smoke.py` checks, with real paid calls, that the planned parameters are accepted ([operations.md](operations.md#scripts)).

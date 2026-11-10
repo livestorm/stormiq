@@ -152,6 +152,18 @@ def openai_usage(usage: Any) -> LLMUsage:
     )
 
 
+def answered_by_fallback(usage: LLMUsage) -> bool:
+    """Whether a fallback model answered after the requested one declined
+    (Anthropic's `fallbacks`): the usage then lists a `fallback_message`
+    attempt in `iterations`. The counts on the usage are the answering
+    attempt's alone; the declined attempt's are in `raw` only."""
+    iterations = usage.raw.get("iterations") if isinstance(usage.raw, Mapping) else None
+    return any(
+        isinstance(attempt, Mapping) and attempt.get("type") == "fallback_message"
+        for attempt in (iterations if isinstance(iterations, list) else [])
+    )
+
+
 def estimate_cost_usd_micros(model_id: str, usage: LLMUsage) -> Optional[int]:
     """The call's estimated cost in millionths of a dollar, from the model's price in
     the catalog (`ai.models.PRICES_AS_OF`). None when the catalog has no price for it."""
@@ -180,6 +192,14 @@ def _id_or_none(value: Any) -> Optional[str]:
     return cleaned or None
 
 
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _hash_or_none(value: Any) -> Optional[str]:
+    """`value` when it is a SHA-256 in hex, else None: a hash column never holds text."""
+    return value if isinstance(value, str) and _SHA256_RE.match(value) else None
+
+
 def build_usage_row(
     ctx: Optional[CallContext],
     result: "LLMResult",
@@ -189,9 +209,15 @@ def build_usage_row(
     model_requested: str,
     max_tokens: int,
     outcome: Optional[str] = None,
+    effort: Optional[str] = None,
+    prompt_hash: Optional[str] = None,
+    dossier_hash: Optional[str] = None,
 ) -> Dict[str, Any]:
     """The `llm_usage` row for one answered call (`db.insert_llm_usage`). `outcome`
-    overrides the one read from the stop (`INVALID_OUTPUT`)."""
+    overrides the one read from the stop (`INVALID_OUTPUT`). A v1 call also
+    gives the `effort` it sent and its request's two hashes
+    (`ai.request.LLMRequest.prompt_hash`, `dossier_hash`); a value that isn't
+    an effort tag or a hex hash is left out."""
     ctx = ctx or CallContext(job_kind="unknown")
     usage = result.usage
     priced_model = result.model_served if catalog_model(result.model_served) else model_requested
@@ -204,7 +230,7 @@ def build_usage_row(
         "provider": provider,
         "model_requested": str(model_requested or ""),
         "model_served": _id_or_none(result.model_served),
-        "effort": None,
+        "effort": tag_or_none(effort),
         "max_tokens": int(max_tokens),
         "streamed": bool(getattr(result, "streamed", False)),
         "stop_reason": str(result.stop_raw or ""),
@@ -219,8 +245,8 @@ def build_usage_row(
         "cost_usd_micros": estimate_cost_usd_micros(priced_model, usage),
         "duration_ms": int(result.duration_ms),
         "request_id": _id_or_none(result.request_id),
-        "prompt_hash": None,
-        "dossier_hash": None,
+        "prompt_hash": _hash_or_none(prompt_hash),
+        "dossier_hash": _hash_or_none(dossier_hash),
         "record_version": _id_or_none(ctx.record_version),
         "usage_raw": usage.raw or None,
     }
@@ -235,6 +261,7 @@ _LOG_FIELDS = (
     ("provider", "provider"),
     ("model", "model_requested"),
     ("served", "model_served"),
+    ("effort", "effort"),
     ("max_tokens", "max_tokens"),
     ("stop", "stop_reason"),
     ("outcome", "outcome"),
@@ -248,6 +275,8 @@ _LOG_FIELDS = (
     ("usd", "cost_usd_micros"),
     ("ms", "duration_ms"),
     ("request_id", "request_id"),
+    ("prompt", "prompt_hash"),
+    ("dossier", "dossier_hash"),
 )
 
 
@@ -279,6 +308,9 @@ def record_call(
     model_requested: str,
     max_tokens: int,
     outcome: Optional[str] = None,
+    effort: Optional[str] = None,
+    prompt_hash: Optional[str] = None,
+    dossier_hash: Optional[str] = None,
 ) -> None:
     """Log one answered call and save its `llm_usage` row. Never raises: the
     call's output is complete and paid for, so losing its usage row must not
@@ -288,7 +320,7 @@ def record_call(
             logger.warning("llm_usage: a model call had no call context; it is recorded as job=unknown")
         row = build_usage_row(
             ctx, result, purpose=purpose, provider=provider, model_requested=model_requested, max_tokens=max_tokens,
-            outcome=outcome,
+            outcome=outcome, effort=effort, prompt_hash=prompt_hash, dossier_hash=dossier_hash,
         )
         line = usage_log_line(row)
     except Exception as exc:

@@ -21,13 +21,18 @@ import logging
 from dataclasses import dataclass
 from typing import Dict, Literal, Optional, Tuple
 
-from livestorm_app.ai.models import PROVIDERS, ModelCaps, catalog_model, catalog_models
+from livestorm_app.ai.models import ALL_EFFORTS, PROVIDERS, ModelCaps, catalog_model, catalog_models
 
 logger = logging.getLogger(__name__)
 
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
 Group = Literal["v1", "legacy"]
 Source = Literal["setting", "legacy_setting", "default"]
+# How a job's request is laid out (`ai/request.py`): the session dossier
+# first and the job's instructions after it; the instructions first and the
+# call's own data after them; or the classic outputs' own messages.
+Layout = Literal["dossier", "instructions", "legacy"]
+CacheTtl = Literal["5m", "1h"]
 
 LEGACY_DEFAULT_SETTING = "llm_default_model"
 LEGACY_RECAP_SETTING = "llm_smart_recap_model"
@@ -65,6 +70,15 @@ class JobSpec:
     # passed since it started, whether or not the stream is sending anything
     # (`llm_client._StreamDeadline` shuts the connection).
     call_deadline_s: int = DEFAULT_CALL_DEADLINE_S
+    layout: Layout = "legacy"
+    # The request's stable prefix (the dossier, or the instructions) may be
+    # cached. A request marks it only when its run makes at least two calls
+    # over that prefix: with one call, a cache write is a pure surcharge.
+    cache: bool = False
+    cache_ttl: CacheTtl = "5m"
+    # Ask Anthropic to answer a declined request with its recommended
+    # fallback model, on the models that accept it (`ModelCaps.server_fallback`).
+    fallbacks: bool = True
 
     def default_model(self, provider: str) -> Optional[str]:
         return self.default_anthropic if provider == "anthropic" else self.default_openai
@@ -76,10 +90,14 @@ class JobSpec:
 JOB_SPECS: Tuple[JobSpec, ...] = (
     # v1 jobs. Nothing runs them yet; their OpenAI models wait for the live check.
     # A cut-off answer fails them at once: their budgets already hold thinking headroom.
-    JobSpec("profile", "Session profile", "v1", "claude-haiku-5-5", None, "low", 2_000),
-    JobSpec("chat_labels", "Chat labels", "v1", "claude-haiku-5-5", None, "low", 8_000),
-    JobSpec("understanding", "Session understanding", "v1", "claude-sonnet-5-5", None, "medium", 32_000),
-    JobSpec("verify_meaning", "Meaning check", "v1", "claude-haiku-5-5", None, "low", 2_000),
+    # Layouts: the understanding passes share one dossier, so it comes first
+    # and is cached; the other jobs send their instructions first, and the
+    # chat labels cache them across their batches.
+    JobSpec("profile", "Session profile", "v1", "claude-haiku-5-5", None, "low", 2_000, layout="instructions"),
+    JobSpec("chat_labels", "Chat labels", "v1", "claude-haiku-5-5", None, "low", 8_000, layout="instructions", cache=True),
+    JobSpec("understanding", "Session understanding", "v1", "claude-sonnet-5-5", None, "medium", 32_000,
+            layout="dossier", cache=True),
+    JobSpec("verify_meaning", "Meaning check", "v1", "claude-haiku-5-5", None, "low", 2_000, layout="instructions"),
     # The classic outputs. Their callers still pass today's max_tokens, and a
     # cut-off answer is retried once, as before.
     JobSpec("overall_analysis", "Overall Analysis", "legacy", "claude-haiku-4-5-20251001", "gpt-4o-mini",
@@ -131,6 +149,21 @@ def budget(spec: JobSpec, caps: ModelCaps) -> Tuple[int, bool]:
     max_tokens = spec.answer_tokens + (THINKING_HEADROOM[spec.effort] if caps.thinks else 0)
     max_tokens = min(max_tokens, caps.max_output)
     return max_tokens, max_tokens > STREAM_ABOVE_TOKENS
+
+
+def effort_for(spec: JobSpec, caps: ModelCaps) -> Optional[str]:
+    """The effort a job sends to a model: its own when the model accepts
+    that level, else the highest level the model accepts below it, else the
+    model's lowest. None for a model that takes no effort (it must never be
+    sent one)."""
+    levels = caps.effort_levels
+    if not levels:
+        return None
+    if spec.effort in levels:
+        return spec.effort
+    wanted = ALL_EFFORTS.index(spec.effort)
+    below = [level for level in levels if ALL_EFFORTS.index(level) < wanted]
+    return below[-1] if below else levels[0]
 
 
 # ── Which model a job uses ─────────────────────────────────────────────────

@@ -2,9 +2,11 @@
 
 Two kinds, both installed in place of `llm_client._anthropic_client`:
 
-- `FakeAnthropic`, a fake client object. `post` (a non-streamed call: the
-  body `llm_client._post_message` wrote) and `messages.stream` record what
-  they were sent and take the next step of a script: an answer body (a dict,
+- `FakeAnthropic`, a fake client object. `post` (a classic output's
+  non-streamed call: the body `llm_client._post_message` wrote),
+  `messages.create` and `messages.stream` (a v1 job's calls), and the same
+  two under `beta.messages` (a call that asks for betas), record what they
+  were sent and take the next step of a script: an answer body (a dict,
   or `FakeMessage`), a `FakeStreamScript` for a stream, or an exception to
   raise (`status_error`, `timeout_error`, `connection_error` build the ones
   the pinned SDK raises).
@@ -122,10 +124,30 @@ class _FakeStreamManager:
 
 
 class _FakeMessages:
-    def __init__(self, fake: "FakeAnthropic"):
+    """`client.messages`, or `client.beta.messages` when `beta`. As in the SDK,
+    only the beta namespace takes `betas` and `fallbacks`, and it needs its betas."""
+
+    def __init__(self, fake: "FakeAnthropic", *, beta: bool = False):
         self._fake = fake
+        self._beta = beta
+
+    def _check(self, params: Dict[str, Any]) -> None:
+        if self._beta:
+            assert params.get("betas"), "client.beta.messages was called without betas"
+        else:
+            assert "betas" not in params and "fallbacks" not in params, "client.messages takes no betas or fallbacks"
+
+    def create(self, **params):
+        """A non-streamed call of a v1 job, as `llm_client._create_message` makes it."""
+        self._check(params)
+        self._fake._record({**params, "_stream": False})
+        step = self._fake._next()
+        if isinstance(step, BaseException):
+            raise step
+        return step if isinstance(step, FakeMessage) else FakeMessage(step)
 
     def stream(self, **params):
+        self._check(params)
         self._fake._record({**params, "_stream": True})
         return _FakeStreamManager(self._fake)
 
@@ -155,6 +177,7 @@ class FakeAnthropic:
         self.on_request = on_request
         self._next_step = next_step
         self.messages = _FakeMessages(self)
+        self.beta = SimpleNamespace(messages=_FakeMessages(self, beta=True))
 
     def _record(self, params: Dict[str, Any], content: Optional[bytes] = None) -> None:
         self.requests.append(params)
@@ -182,11 +205,17 @@ class FakeAnthropic:
         params = dict(self.requests[index])
         stream = params.pop("_stream")
         params.pop("extra_headers", None)
+        params.pop("betas", None)  # sent as the anthropic-beta header: see `betas(index)`
         extra = params.pop("extra_body", None) or {}
         body = {**params, **extra}
         if stream:
             body["stream"] = True
         return body
+
+
+def betas_of(fake: FakeAnthropic, index: int = -1) -> List[str]:
+    """The betas call `index` asked for ([] for a call through `client.messages`)."""
+    return list(fake.requests[index].get("betas") or [])
 
 
 def install(monkeypatch, fake: Any) -> List[str]:
@@ -287,6 +316,7 @@ def scripted_providers(monkeypatch, script: list, sent: list) -> FakeAnthropic:
         "payload": fake.body(index),
         "provider": "anthropic",
         "stream": fake.requests[index]["_stream"],
+        "betas": betas_of(fake, index),
     })
     install(monkeypatch, fake)
 

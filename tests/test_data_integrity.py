@@ -28,6 +28,7 @@ from pydantic import BaseModel
 
 from livestorm_app import api_logic, db, llm_client, worker
 from livestorm_app.ai import generation, schemas
+from livestorm_app.ai.request import build_request
 from livestorm_app.ai.usage import CallContext
 from livestorm_app.db import ALL_ORGS
 from livestorm_app.gladia import transcriber
@@ -381,6 +382,9 @@ def test_a_refusal_saves_nothing_but_its_usage_row(test_database, monkeypatch, r
     assert "Partial" not in repr(rows)
 
 
+VERIFY_REQUEST = build_request("verify_meaning", instructions="Say whether the claim holds.", payload="Check")
+
+
 def test_an_invalid_structured_answer_is_recorded_and_not_returned(test_database, monkeypatch):
     class Verdict(BaseModel):
         holds: bool
@@ -392,7 +396,7 @@ def test_an_invalid_structured_answer_is_recorded_and_not_returned(test_database
     _provider_http(monkeypatch, [answer])
     ctx = CallContext("verify_meaning", "sess-v", "org-a", "verify_meaning:sess-v:_")
     with pytest.raises(llm_client.LLMInvalidOutput, match="did not match its format"):
-        llm_client.generate_json("verify_meaning", Verdict, [{"role": "user", "content": "Check"}], api_key=SECRET_KEY, ctx=ctx)
+        llm_client.generate_json("verify_meaning", Verdict, VERIFY_REQUEST, api_key=SECRET_KEY, ctx=ctx)
     rows = _usage_rows("sess-v")
     assert [(row["job_kind"], row["outcome"], row["stop_reason"], row["model_requested"]) for row in rows] == [
         ("verify_meaning", "invalid_output", "end_turn", "claude-haiku-5-5"),
