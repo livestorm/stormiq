@@ -976,7 +976,7 @@ def test_deleting_a_session_deletes_its_people_roster_and_syncs(test_database):
     assert db.get_org_people_attributes("org-a")["status"] == "forbidden", "workspace field labels aren't per session"
 
 
-def test_the_people_tables_reference_the_session_through_its_unique_index(test_database):
+def test_the_per_session_tables_reference_the_session_through_its_unique_index(test_database):
     with db.get_db_connection() as conn:
         keys = conn.execute(
             """
@@ -988,7 +988,7 @@ def test_the_people_tables_reference_the_session_through_its_unique_index(test_d
         ).fetchall()
     assert [(key["tbl"], key["confdeltype"], key["idx"]) for key in keys] == [
         (table, "c", "idx_session_cache_session_id_unique")
-        for table in ("livestorm_sync_jobs", "session_people", "session_rosters")
+        for table in ("livestorm_sync_jobs", "session_chat_labels", "session_people", "session_rosters")
     ]
 
 

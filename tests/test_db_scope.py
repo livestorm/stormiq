@@ -175,6 +175,20 @@ def test_a_blank_scope_never_queries_the_people_tables(monkeypatch):
         assert db.list_session_people("sess-a", blank) == []
         assert db.fetch_session_roster("sess-a", blank) is None
         assert db.get_org_people_attributes(blank) is None
+        assert db.fetch_chat_labels("sess-a", blank) is None
+
+
+def test_chat_labels_are_scoped_by_org(test_database):
+    _seed()
+    db.upsert_cached_session("key-x", "sess-legacy", session_payload={"name": "L"})
+    label = {"id": "C0001", "livestorm_id": "msg-1", "class": "content", "question": None, "language": "en"}
+    for session_id in ("sess-a", "sess-legacy"):
+        db.replace_chat_labels(session_id, [label], chat_hash="c" * 64, model="claude-haiku-5-5")
+    assert db.fetch_chat_labels("sess-a", "org-a")["labels"] == [label]
+    assert db.fetch_chat_labels("sess-a", "org-b") is None
+    assert db.fetch_chat_labels("sess-b", "org-b") is None, "no labels yet"
+    assert db.fetch_chat_labels("sess-legacy", "org-a") is None, "a row without an org is not any org's"
+    assert db.fetch_chat_labels("sess-legacy", ALL_ORGS)["message_count"] == 1
 
 
 def test_people_attributes_are_per_org(test_database):
