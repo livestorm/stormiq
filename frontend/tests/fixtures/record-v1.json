@@ -486,7 +486,7 @@
       "labelledAt": null,
       "messages": null
     },
-    "metricsVersion": 6,
+    "metricsVersion": 7,
     "measuresSource": "live",
     "measures": {
       "m.roster_coverage": {
@@ -1151,6 +1151,81 @@
           "speakersExpected": 2,
           "splitRisk": false,
           "chunks": 1
+        },
+        "excluded": null,
+        "livestorm": null,
+        "rows": null,
+        "gate": null
+      },
+      "m.speaking_pace": {
+        "id": "m.speaking_pace",
+        "version": 1,
+        "value": 135.157,
+        "num": 2734,
+        "den": null,
+        "state": "ok",
+        "coverage": {
+          "speakingS": 1213.7,
+          "words": 2734,
+          "utteranceCount": 166,
+          "health": "ok"
+        },
+        "excluded": null,
+        "livestorm": null,
+        "rows": null,
+        "gate": null
+      },
+      "m.speaker_talk_time": {
+        "id": "m.speaker_talk_time",
+        "version": 1,
+        "value": 0.5157,
+        "num": null,
+        "den": 3,
+        "state": "ok",
+        "coverage": {
+          "speakingS": 1213.7
+        },
+        "excluded": null,
+        "livestorm": null,
+        "rows": [
+          {
+            "key": "0",
+            "speakingS": 625.9,
+            "share": 0.5157,
+            "words": 1410,
+            "wpm": 135.1654
+          },
+          {
+            "key": "1",
+            "speakingS": 587.0,
+            "share": 0.4836,
+            "words": 1322,
+            "wpm": 135.1278
+          },
+          {
+            "key": "2",
+            "speakingS": 0.8,
+            "share": 0.0007,
+            "words": 2,
+            "wpm": null
+          }
+        ],
+        "gate": null
+      },
+      "m.longest_stretch": {
+        "id": "m.longest_stretch",
+        "version": 1,
+        "value": 7.55,
+        "num": null,
+        "den": null,
+        "state": "ok",
+        "coverage": {
+          "speaker": "0",
+          "rStart": 124.0,
+          "rEnd": 131.55,
+          "ids": [
+            "U0012"
+          ]
         },
         "excluded": null,
         "livestorm": null,

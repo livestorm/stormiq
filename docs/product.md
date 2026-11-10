@@ -149,7 +149,9 @@ What was said and what the room wrote, as one readable timeline. Data: `GET /api
 - **Tools:** a search (text and names), "Everything · Speech only · Chat and questions", the speakers as filters, "Name speakers" (the names show here, in the subtitles and in the analyses made afterwards), "Subtitles (SRT)" (one cue per line of speech, on the recording's times, made in the browser) and "Raw (JSON)".
 - **Without a transcript:** the page says so and offers "Make the transcript" (a paid transcription that runs only on that click); while one is being made it shows its progress and updates by itself; a failed one says why and offers "Try again". The chat and questions show meanwhile.
 
-The classic Transcript's eight diagnostic tabs are gone; pace, talk time per speaker and the longest stretch come back as a "Speaking stats" card, computed on the server ([roadmap](roadmap.md)).
+- **Speaking stats** (collapsed, between the tools and the lines): the pace in words a minute ([speaking pace](#speaking-pace)), the longest stretch and who held it ([longest stretch](#longest-stretch)), and the talk time per speaker with its share and pace ([speaker talk time](#speaker-talk-time)), named as on the tab. Its line says the pace and who spoke most. A hidden number says why (too little of the recording transcribed, speakers that couldn't be told apart, less than a minute of speech); an approximation is marked "Estimated". Wording: `src/transcript/stats.js`.
+
+The classic Transcript's eight diagnostic tabs are gone; Speaking stats keeps what they were read for.
 
 ---
 
@@ -617,6 +619,18 @@ The Report. No page shows them yet; the record route sends them as `record.measu
 #### Transcript health
 
 `m.transcript_health`. The [mean word confidence](#transcript-health-v1-report) of the transcript, over the words that have a confidence (`den`). Gate: at least 1 such word; below it, insufficient, never 0. Partial when some words have no confidence. Unavailable without a Gladia transcript. Coverage carries the transcript's health: its state and reasons, the Gladia model, the words, the low-confidence share, the speech coverage of the recording, the substantial and expected speakers, the split risk and the parts.
+
+#### Speaking pace
+
+`m.speaking_pace`. Words per minute of speech: the transcript's words (`num`) over the utterances' total length in minutes (`coverage.speakingS`, recording seconds; an utterance without both times is left out). Gates: the transcript covers at least 60% of the recording ([transcript health](#transcript-health-v1-report)'s pace gate) and holds at least 60 s of speech; below either, insufficient. An approximation when the transcript's health is degraded. Shown on the Transcript tab's "Speaking stats".
+
+#### Speaker talk time
+
+`m.speaker_talk_time`. Talk time per speaker, as the transcript's diarization splits it: one row per speaker key (`unknown` for speech without a speaker), most talk first, with its seconds (`speakingS`), its share of all speech (`share`), its words and its words per minute (`wpm`; empty for a speaker with less than 60 s of speech, where a pace is noise). `value` is the first row's share; `den` is how many speakers. Speakers are keys, never names: the Transcript tab names them with the names saved there. Gates: speaker shares can be trusted (transcript health's speaker-share gate: at least one substantial speaker, and no risk of one speaker split across keys unless every substantial speaker is labelled) and at least 60 s of speech; below either, the rows' numbers are hidden. An approximation when a speaker may have been split.
+
+#### Longest stretch
+
+`m.longest_stretch`. The longest time one speaker held the floor, in seconds: their consecutive utterances joined while the gap between two is at most 2 s, from the first's start to the last's end (recording seconds). `coverage` names the speaker key, its start and end, and its utterance ids. Gated as [speaker talk time](#speaker-talk-time) is.
 
 #### Clock alignment
 

@@ -334,7 +334,7 @@
       "labelledAt": null,
       "messages": null
     },
-    "metricsVersion": 6,
+    "metricsVersion": 7,
     "measuresSource": "live",
     "measures": {
       "m.roster_coverage": {
@@ -1075,6 +1075,57 @@
       },
       "m.transcript_health": {
         "id": "m.transcript_health",
+        "version": 1,
+        "value": null,
+        "num": null,
+        "den": null,
+        "state": "unavailable",
+        "coverage": {
+          "missing": [
+            "transcript"
+          ]
+        },
+        "excluded": null,
+        "livestorm": null,
+        "rows": null,
+        "gate": null
+      },
+      "m.speaking_pace": {
+        "id": "m.speaking_pace",
+        "version": 1,
+        "value": null,
+        "num": null,
+        "den": null,
+        "state": "unavailable",
+        "coverage": {
+          "missing": [
+            "transcript"
+          ]
+        },
+        "excluded": null,
+        "livestorm": null,
+        "rows": null,
+        "gate": null
+      },
+      "m.speaker_talk_time": {
+        "id": "m.speaker_talk_time",
+        "version": 1,
+        "value": null,
+        "num": null,
+        "den": null,
+        "state": "unavailable",
+        "coverage": {
+          "missing": [
+            "transcript"
+          ]
+        },
+        "excluded": null,
+        "livestorm": null,
+        "rows": null,
+        "gate": null
+      },
+      "m.longest_stretch": {
+        "id": "m.longest_stretch",
         "version": 1,
         "value": null,
         "num": null,
