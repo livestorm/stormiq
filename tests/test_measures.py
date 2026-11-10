@@ -77,6 +77,7 @@ GROUPED = (
     "m.replay_caught_up",
 )
 TRANSCRIPT = ("m.transcript_health", "m.clock_alignment")
+LABELLED = ("m.questions_total", "m.chat_themes")
 AUDIENCE_MEASURES = tuple(measure_id for measure_id, definition in REGISTRY.items() if definition.excludes)
 
 # Every registry pin ever published, by METRICS_VERSION. Never edit an entry:
@@ -87,6 +88,7 @@ PUBLISHED_PINS = {
     3: "864d68d8871758f3a65cce51e25a172b4026a366c9eda7998a272486567e8432",
     4: "371ad80ebb3c49f67537164dae3c8e33b359f0dfb3e9761fc9db464be99f9f46",
     5: "75c8565904ab4520049f3e65e4b13435bea2610c28359ea32600dfd0dafe9653",
+    6: "fbfbe6c5d1229ec88dd204df14a21e474fe3bd7d01fe7b25b869e6fb5c630a74",
 }
 
 
@@ -261,7 +263,7 @@ def one(measure_id, people, *args, roster_rows=None, **kwargs):
 
 
 def test_the_registry_holds_the_vitals_then_the_grouped_measures_then_the_transcript_in_order():
-    assert tuple(REGISTRY) == VITALS + GROUPED + TRANSCRIPT
+    assert tuple(REGISTRY) == VITALS + GROUPED + TRANSCRIPT + LABELLED
     for measure_id, definition in REGISTRY.items():
         assert definition.id == measure_id and definition.version >= 1
         assert definition.unit in UNITS
@@ -411,7 +413,8 @@ def test_a_session_without_its_payloads_is_unavailable():
 def test_a_source_that_was_not_fetched_makes_its_measures_unavailable(payload, unavailable):
     cached = {**row(webinar()), payload: None}
     found = compute(cached)
-    assert {measure_id for measure_id, item in found.items() if item["state"] == UNAVAILABLE} == unavailable
+    # Without labels, the measures that read them are unavailable too.
+    assert {measure_id for measure_id, item in found.items() if item["state"] == UNAVAILABLE} == unavailable | set(LABELLED)
 
 
 def test_a_stored_roster_without_a_session_payload():
@@ -423,7 +426,7 @@ def test_a_stored_roster_without_a_session_payload():
     assert unavailable == {
         "m.show_up_rate", "m.livestorm_counts", "m.wrote_rate", "m.questions_qa", "m.time_to_answer", "m.author_resolution",
         "m.chat_concentration", "m.room_map", "m.channel_quality", "m.segment_quality", "m.lead_time_show_up",
-        "m.transcript_health", "m.clock_alignment",
+        "m.transcript_health", "m.clock_alignment", *LABELLED,
     }
     assert found["m.lead_time_show_up"]["coverage"] == {"missing": ["session"]}, "no start, no lead time"
     assert found["m.show_up_rate"]["coverage"] == {"missing": ["session"]}
@@ -436,7 +439,8 @@ def test_a_stored_roster_without_a_session_payload():
 
 def test_an_empty_source_is_not_a_missing_one():
     found = compute(row(webinar(), chat(), questions()))
-    assert all(item["state"] != UNAVAILABLE for item in found.values())
+    assert all(item["state"] != UNAVAILABLE for measure_id, item in found.items() if measure_id not in LABELLED)
+    assert all(found[measure_id]["coverage"] == {"missing": ["labels"]} for measure_id in LABELLED), "no labels yet"
 
 
 def test_audience_measures_say_whom_they_left_out():
@@ -1871,6 +1875,8 @@ def test_the_synthetic_webinar():
         "m.replay_caught_up": (None, 1, 2, INSUFFICIENT),
         "m.transcript_health": (0.9169, None, 2734, OK),
         "m.clock_alignment": (1.0, 3, 3, OK),
+        "m.questions_total": (None, None, None, UNAVAILABLE),
+        "m.chat_themes": (None, None, None, UNAVAILABLE),
     }
 
 

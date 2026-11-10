@@ -27,12 +27,13 @@ Pure: no database, network or web framework. The caller does the scoped read.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Mapping, Optional
+from dataclasses import dataclass, field
+from typing import Any, Dict, Mapping, Optional, Tuple
 
 import pandas as pd
 
 from livestorm_app.record.alignment import Alignment, probe_alignment
+from livestorm_app.record.chat_labels import LABEL_VERSION, chat_hash
 from livestorm_app.record.authors import AuthorIndex, resolve_authors
 from livestorm_app.record.clock import ClockBase, clock_base
 from livestorm_app.record.evidence import audience_events
@@ -71,6 +72,42 @@ class RecordInputs:
     # sits on that clock (`meta.clock.alignment`), each built once per load.
     events: pd.DataFrame
     alignment: Alignment
+    # The chat's labels by `C` id, when the stored labels describe this chat
+    # (same `chat_hash` and `LABEL_VERSION`); None otherwise. `chat_labels_info`
+    # is `record.chatLabels`: their state (`none`, `stale` or `ready`), model,
+    # time and message count.
+    chat_labels: Optional[Mapping[str, Mapping[str, Any]]] = None
+    chat_labels_info: Mapping[str, Any] = field(default_factory=lambda: dict(_NO_LABELS))
+
+
+# `record.chatLabels` before any labels are stored.
+_NO_LABELS = {"state": "none", "model": None, "labelledAt": None, "messages": None}
+
+
+def chat_labels_view(
+    events: pd.DataFrame, stored: Optional[Mapping[str, Any]]
+) -> Tuple[Optional[Dict[str, Mapping[str, Any]]], Dict[str, Any]]:
+    """The stored labels (`db.fetch_chat_labels`) as the record reads them:
+    `(labels by C id, record.chatLabels)`. Labels count only when they were
+    made from this chat (`chat_hash` over the events' chat rows) with the
+    current `LABEL_VERSION`; otherwise their state is `stale` and the record
+    reads none of them."""
+    if not stored:
+        return None, dict(_NO_LABELS)
+    chat = events[events["kind"] == "chat"] if not events.empty else events
+    rows = chat[["eid", "livestorm_id", "text"]].to_dict("records") if not chat.empty else []
+    current = chat_hash([{**row, "livestorm_id": row["livestorm_id"] or None} for row in rows])
+    created = stored.get("created_at")
+    info = {
+        "state": "stale",
+        "model": stored.get("model"),
+        "labelledAt": created.isoformat() if hasattr(created, "isoformat") else created,
+        "messages": stored.get("message_count"),
+    }
+    if stored.get("chat_hash") != current or stored.get("label_version") != LABEL_VERSION:
+        return None, info
+    labels = stored.get("labels") or []
+    return {str(label["id"]): label for label in labels if isinstance(label, Mapping)}, {**info, "state": "ready"}
 
 
 def _mapping(value: Any) -> Optional[Mapping[str, Any]]:
@@ -132,11 +169,18 @@ def _event_language(event_payload: Optional[Mapping[str, Any]]) -> Any:
     return attributes.get("language") if isinstance(attributes, Mapping) else None
 
 
-def load_record_inputs(cached: Mapping[str, Any], *, roster_rows: Optional[RosterRows] = None) -> RecordInputs:
+def load_record_inputs(
+    cached: Mapping[str, Any],
+    *,
+    roster_rows: Optional[RosterRows] = None,
+    stored_labels: Optional[Mapping[str, Any]] = None,
+) -> RecordInputs:
     """The record's inputs from a cached session row.
 
     `roster_rows`, when given, are the session's stored people and wins over
-    the payload's `include=people` list. Missing payloads are None; a missing
+    the payload's `include=people` list. `stored_labels`, the session's
+    stored chat labels (`db.fetch_chat_labels`), count only when they
+    describe this chat (`chat_labels_view`). Missing payloads are None; a missing
     session payload gives no clock and an empty roster, so no author
     resolves. The row's `transcript_payload` and `transcript_speaker_names`,
     when present, give the parsed transcript and its health.
@@ -166,6 +210,7 @@ def load_record_inputs(cached: Mapping[str, Any], *, roster_rows: Optional[Roste
     alignment = probe_alignment(
         transcript, events, clock, questions_payload=questions_payload, internal=bool(roster.meta.internal)
     )
+    chat_labels, chat_labels_info = chat_labels_view(events, stored_labels)
 
     return RecordInputs(
         session_id=session_id,
@@ -181,4 +226,6 @@ def load_record_inputs(cached: Mapping[str, Any], *, roster_rows: Optional[Roste
         transcript_health=transcript_health,
         events=events,
         alignment=alignment,
+        chat_labels=chat_labels,
+        chat_labels_info=chat_labels_info,
     )

@@ -151,8 +151,8 @@ def test_the_owner_gets_the_clock_the_roster_header_and_the_pulse(client):
         "timezone": "Europe/Paris",
     }
     record = body["record"]
-    assert list(record) == ["version", "roster", "pulse", "transcriptHealth", "metricsVersion", "measuresSource", "measures"]
-    assert record["version"] == assemble.RECORD_VERSION == 6
+    assert list(record) == ["version", "roster", "pulse", "transcriptHealth", "chatLabels", "metricsVersion", "measuresSource", "measures"]
+    assert record["version"] == assemble.RECORD_VERSION == 7
     assert record["roster"] == {
         "source": "session_include",
         "complete": None,
@@ -289,7 +289,7 @@ def test_a_misaligned_clock_keeps_speech_off_the_pulse(rows):
 
 def test_the_record_serves_every_measure_live(client):
     record = get(client).json()["record"]
-    assert record["metricsVersion"] == measures.METRICS_VERSION == 5
+    assert record["metricsVersion"] == measures.METRICS_VERSION == 6
     assert record["measuresSource"] == "live"
     assert list(record["measures"]) == list(measures.REGISTRY)
     measures.validate_measures(record["measures"])
@@ -583,7 +583,7 @@ def test_the_stored_people_are_read_once_per_roster_version(client, roster_store
     roster_store.stored = stored_roster(synthetic.person_rows()[:6], version=2)
     assert get(client).json()["record"]["roster"]["peopleCount"] == 6
     assert roster_store.people_reads == 2
-    assert [key[-2] for key in api_logic._record_cache] == [2], "the older roster's block is dropped"
+    assert [key[-3] for key in api_logic._record_cache] == [2], "the older roster's block is dropped"
 
 
 def test_the_sync_state_is_live_and_never_cached(client, roster_store):

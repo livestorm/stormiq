@@ -2334,6 +2334,35 @@ def fetch_chat_labels(session_id: str, organization_id: OrgScope) -> Optional[Di
     return dict(row) if row else None
 
 
+def fetch_chat_labels_stamp(session_id: str, organization_id: OrgScope) -> Optional[Dict[str, Any]]:
+    """What identifies a session's stored labels, without the labels:
+    `{label_version, chat_hash, created_at}`, scoped like
+    `fetch_chat_labels`. The record route reads it on every request for its
+    cache key. None when there are none or the session isn't in the scope;
+    a blank scope never queries. Raises when the database can't be read."""
+    session_id_value = str(session_id or "").strip()
+    if not database_enabled() or not session_id_value:
+        return None
+    try:
+        org_filter = _org_filter(organization_id)
+    except ScopeMatchesNothing:
+        return None
+    where_clause = "l.session_id = %s" + (" AND c.organization_id = %s" if org_filter is not None else "")
+    params = (session_id_value,) + ((org_filter,) if org_filter is not None else ())
+    with get_db_connection() as connection:
+        row = connection.execute(
+            f"""
+            SELECT l.label_version, l.chat_hash, l.created_at
+            FROM session_chat_labels l
+            JOIN session_cache c ON c.session_id = l.session_id
+            WHERE {where_clause}
+            LIMIT 1
+            """,
+            params,
+        ).fetchone()
+    return dict(row) if row else None
+
+
 # ── Model usage (ai/usage.py) ──────────────────────────────────────────────
 
 _LLM_USAGE_COLUMNS = (

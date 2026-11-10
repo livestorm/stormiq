@@ -70,6 +70,7 @@ import pandas as pd
 from livestorm_app.record.alignment import ANCHOR_KINDS, MINUTES, SECONDS, alignment_allows
 from livestorm_app.record.authors import KINDS, UNRESOLVED as AUTHORS_UNRESOLVED, AuthorCoverage
 from livestorm_app.record.clock import parse_time
+from livestorm_app.record.chat_labels import LABEL_CLASSES as CHAT_LABEL_CLASSES
 from livestorm_app.record.evidence import CHAT, QUESTION, question_items
 from livestorm_app.record.inputs import RecordInputs
 from livestorm_app.record.roster import (
@@ -107,7 +108,8 @@ SOURCE_ROSTER = "roster"  # the people (record/roster.py)
 SOURCE_CHAT = "chat"
 SOURCE_QUESTIONS = "questions"
 SOURCE_TRANSCRIPT = "transcript"  # a Gladia transcript that parsed (record/transcript.py)
-SOURCES = (SOURCE_SESSION, SOURCE_ROSTER, SOURCE_CHAT, SOURCE_QUESTIONS, SOURCE_TRANSCRIPT)
+SOURCE_LABELS = "labels"  # the chat's labels, made from this chat (`RecordInputs.chat_labels`)
+SOURCES = (SOURCE_SESSION, SOURCE_ROSTER, SOURCE_CHAT, SOURCE_QUESTIONS, SOURCE_TRANSCRIPT, SOURCE_LABELS)
 
 AUDIENCE_ONLY = "team, guest speakers"
 
@@ -116,8 +118,8 @@ AUDIENCE_ONLY = "team, guest speakers"
 # and in tests/test_measures.py. The pin also covers each measure's unit,
 # sources, exclusions and gates, so editing one without a new version fails
 # the test. Stored numbers are keyed by it.
-METRICS_VERSION = 5
-REGISTRY_PIN = "75c8565904ab4520049f3e65e4b13435bea2610c28359ea32600dfd0dafe9653"
+METRICS_VERSION = 6
+REGISTRY_PIN = "fbfbe6c5d1229ec88dd204df14a21e474fe3bd7d01fe7b25b869e6fb5c630a74"
 
 # Gate thresholds. Provisional: they move with a version bump.
 WROTE_RATE_MIN_ATTENDEES = 10
@@ -133,6 +135,7 @@ SEGMENT_MIN_SHOWN = 2  # values a field needs at or above the minimum
 LEAD_TIME_MIN_REGISTRANTS = 100
 LEAD_BUCKET_MIN_REGISTRANTS = 20  # per bucket; smaller ones merge with a neighbour
 REPLAY_MIN_NO_SHOWS = 10
+CHAT_THEMES_MIN_MESSAGES = 30  # the chat themes' shares; below it, counts only
 
 # Other rules of the grouped measures.
 STAYED_MIN_SHARE = 0.75  # the room map's "stayed": at least this share of the session
@@ -404,6 +407,8 @@ def available_sources(inputs: RecordInputs) -> FrozenSet[str]:
         found.add(SOURCE_QUESTIONS)
     if inputs.transcript is not None:
         found.add(SOURCE_TRANSCRIPT)
+    if inputs.chat_labels is not None:
+        found.add(SOURCE_LABELS)
     return frozenset(found)
 
 
@@ -543,6 +548,74 @@ def _questions_qa(facts: _Facts) -> _Draft:
             {"key": "marked", "questions": marked},
             {"key": "open", "questions": unanswered},
         ],
+    )
+
+
+def _audience_chat(facts: _Facts) -> Tuple[List[Dict[str, Any]], int]:
+    """The chat messages the label measures count, with their labels, and
+    how many team messages they left out. A team message is one Livestorm
+    flags as the team's or a guest speaker's; on an internal session every
+    message counts, as everyone is audience there."""
+    events = facts.inputs.events
+    chat = events[events["kind"] == CHAT] if not events.empty else events
+    labels = facts.inputs.chat_labels or {}
+    counted, team = [], 0
+    for row in chat.to_dict("records") if not chat.empty else []:
+        if row.get("is_team") and not facts.internal:
+            team += 1
+            continue
+        label = labels.get(str(row["eid"]))
+        if label is not None:
+            counted.append({"eid": str(row["eid"]), **label})
+    return counted, team
+
+
+def _questions_total(facts: _Facts) -> _Draft:
+    """Q&A questions plus the chat messages labelled as questions about the
+    content, always split; questions about the session's logistics (a
+    replay, the slides) are counted on their own row, outside the total."""
+    messages, team = _audience_chat(facts)
+    qa = len(facts.questions)
+    chat_content = sum(1 for m in messages if m["class"] == "question" and m["question"] == "content")
+    chat_logistics = sum(1 for m in messages if m["class"] == "question" and m["question"] == "logistics")
+    return _Draft(
+        value=qa + chat_content,
+        coverage={"chatMessages": len(messages), "teamMessages": team, "labels": "model"},
+        rows=[
+            {"key": "qa", "questions": qa},
+            {"key": "chat", "questions": chat_content},
+            {"key": "chatLogistics", "questions": chat_logistics},
+        ],
+    )
+
+
+def _chat_themes(facts: _Facts) -> _Draft:
+    """One row per label class over the audience's chat messages: the count,
+    the share (shown from `CHAT_THEMES_MIN_MESSAGES` messages), the languages,
+    and the messages' `C` ids, so each row opens its messages."""
+    messages, team = _audience_chat(facts)
+    total = len(messages)
+    rows = []
+    for label_class in CHAT_LABEL_CLASSES:
+        group = [m for m in messages if m["class"] == label_class]
+        languages: Dict[str, int] = {}
+        for m in group:
+            languages[m["language"] or ""] = languages.get(m["language"] or "", 0) + 1
+        rows.append({
+            "key": label_class,
+            "messages": len(group),
+            "share": _ratio(len(group), total),
+            "languages": [
+                {"language": code or None, "messages": count}
+                for code, count in sorted(languages.items(), key=lambda item: (-item[1], item[0]))
+            ],
+            "ids": [m["eid"] for m in group],
+        })
+    return _Draft(
+        den=total,
+        coverage={"chatMessages": total, "teamMessages": team, "labels": "model"},
+        rows=rows,
+        row_values=("share",),
     )
 
 
@@ -1207,6 +1280,17 @@ _DEFINITIONS = (
     MeasureDef(
         "m.clock_alignment", 1, "ratio", (SOURCE_SESSION, SOURCE_TRANSCRIPT), "", (Gate("den", 1), Gate("aligned", 1)),
         "clock-alignment", _clock_alignment,
+    ),
+    # The measures that read the chat's labels: unavailable until the session
+    # analysis labelled this chat. They leave out the team's messages, not
+    # people, and say how many in `coverage.teamMessages`.
+    MeasureDef(
+        "m.questions_total", 1, "count", (SOURCE_QUESTIONS, SOURCE_CHAT, SOURCE_LABELS), "", (),
+        "questions", _questions_total,
+    ),
+    MeasureDef(
+        "m.chat_themes", 1, "rows", (SOURCE_CHAT, SOURCE_LABELS), "",
+        (Gate("den", CHAT_THEMES_MIN_MESSAGES),), "chat-themes", _chat_themes,
     ),
 )
 REGISTRY: Mapping[str, MeasureDef] = MappingProxyType({definition.id: definition for definition in _DEFINITIONS})

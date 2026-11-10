@@ -582,7 +582,7 @@ v1 Report (behind `?ui=v1`). No page shows them yet; the record route sends them
 | Term | Rule |
 |---|---|
 | Measure | One number with how it was got: `value`, `num` and `den` (a ratio's numerator and denominator; for a median, `den` is how many values it is over), `state`, `coverage`, `excluded`, `livestorm` (Livestorm's own figure) and `rows` (a breakdown). Its id never changes meaning; its version goes up when its formula, exclusions or gates change |
-| Metrics version | The version of the whole set (`METRICS_VERSION`, 5). It goes up whenever a measure's version changes, or a measure is added or removed |
+| Metrics version | The version of the whole set (`METRICS_VERSION`, 6). It goes up whenever a measure's version changes, or a measure is added or removed |
 | State | The first that applies. **Unavailable**: a source wasn't fetched (the session, its people, the chat, the questions, or a Gladia transcript); nothing is computed. **Unresolved**: the measure needs to know who wrote, and a source it reads has items of which not one author resolved ([Authors](#authors-v1-report)); each measure says which sources. The value, the numerator and the denominator are hidden: a count of the resolved part would read as complete. The coverage fields say what is missing. **Insufficient**: a gate isn't met; the value is hidden, the counts are shown. **Approximation**: the method itself is approximate. **Partial**: computed over incomplete inputs: the roster is partial, someone's attendance is unknown, or an author didn't resolve. **Ok** |
 | Gate | The minimum a measure needs before it shows a value. Gates are provisional; changing one bumps the measure's version |
 | Coverage | What the measure read and how complete it was. Every measure that reads people carries the roster's coverage, its people count and Livestorm's count of the list. The include list reads partial, so these measures read partial until StormIQ syncs the full list |
@@ -667,6 +667,14 @@ v1 Report (behind `?ui=v1`). No page shows them yet; the record route sends them
 #### Clock alignment
 
 `m.clock_alignment`. The [alignment probe](#alignment-probe-v1-report)'s anchors that agree ÷ the anchors found (`num` of `den`). Gate: at least 1 anchor; below it, insufficient, never 0. Its state follows the clock, through the gate: ok when it is verified, an approximation when it is assumed (offset 0 applied, not measured), and insufficient when it is misaligned (the share is hidden; the counts and the status stay). Unavailable without the session payload or a Gladia transcript. Coverage carries the probe's result: its status (`status`), where the offset comes from (`source`), the offset applied and its ± (`offsetS`, `plusminusS`), the reasons, the anchors found per kind (`link`, `wave`, `readAloud`, `mediaTime`) and the duration gap in seconds (`durationGapS`, session − recording). A session without `started_at` is insufficient, with the status `unavailable`.
+
+#### Questions
+
+`m.questions_total`. Every question the audience asked: the Q&A questions plus the audience's chat messages that the [chat labels](ai-outputs.md#chat-labels-v1) mark as a question about the content. Always shown split, in rows: `qa` (Q&A questions), `chat` (chat questions about the content) and `chatLogistics` (chat questions about the session itself, such as a replay or the slides), which are counted apart and are not in the value. A team message (one Livestorm flags as the team's or a guest speaker's) is left out, and `coverage.teamMessages` says how many; on an internal session every message counts. `coverage.chatMessages` counts the audience messages read. Unavailable until a session analysis has labelled this chat (`coverage.missing` is `labels`), or when the chat or the questions weren't fetched. The chat side is a model's reading, marked `coverage.labels: model`: each count opens its messages.
+
+#### Chat themes
+
+`m.chat_themes`. What the audience's chat was about. One row per label class, always in this order: `content`, `question`, `tech`, `logistics`, `social`, `laughter`, `off_topic`. Each row has its number of messages, its share of the audience's messages, its languages (each with its message count, the most frequent first; a message with no words has no language) and its messages' ids (`ids`), so the page can open them. `den` is the audience's messages. Gate: at least 30 messages; below it the shares are hidden and the counts shown. Team messages are left out as in [Questions](#questions). Unavailable until a session analysis has labelled this chat. The classes are a model's reading; laughter-only messages are labelled by a rule.
 
 ### Speaking burst detection
 

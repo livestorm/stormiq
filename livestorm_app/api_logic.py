@@ -18,6 +18,8 @@ from livestorm_app.db import (
     OrgScope,
     create_transcript_job,
     fetch_cached_session,
+    fetch_chat_labels,
+    fetch_chat_labels_stamp,
     fetch_roster_status,
     fetch_session_fields,
     fetch_session_roster,
@@ -445,16 +447,22 @@ _record_cache: "OrderedDict[Tuple[Any, ...], Dict[str, Any]]" = OrderedDict()
 _record_cache_lock = threading.Lock()
 
 
-def _record_input_versions(roster: Optional[Mapping[str, Any]]) -> Tuple[Any, Any]:
-    """(roster version, metrics fingerprint): what the record reads that
-    changes without bumping `session_cache.updated_at`.
+def _record_input_versions(
+    roster: Optional[Mapping[str, Any]], labels: Optional[Mapping[str, Any]] = None
+) -> Tuple[Any, Any, Any]:
+    """(roster version, labels stamp, metrics fingerprint): what the record
+    reads that changes without bumping `session_cache.updated_at`.
 
     `roster` is the stored roster's header (`db.fetch_roster_status`), or
     None while the people come from the session payload: its
-    `roster_version` grows with every people sync that saves a roster. The
-    fingerprint is None for now, because no measure is stored; stored
-    measures add theirs here."""
-    return (roster.get("roster_version") if roster else None), None
+    `roster_version` grows with every people sync that saves a roster.
+    `labels` is the stored chat labels' stamp (`db.fetch_chat_labels_stamp`):
+    a new analysis run writes a new `created_at`. The fingerprint is None
+    for now, because no measure is stored; stored measures add theirs here."""
+    label_stamp = (
+        (labels.get("label_version"), labels.get("chat_hash"), str(labels.get("created_at"))) if labels else None
+    )
+    return (roster.get("roster_version") if roster else None), label_stamp, None
 
 
 def _record_cache_key(
@@ -496,7 +504,9 @@ def get_session_record(session_id: str, *, organization_id: OrgScope) -> Dict[st
     latest people sync, with the same scope (`db.fetch_roster_status`, one
     small query): the header's version is part of the cache key, and the
     sync's state is added to the response's roster header, never cached
-    (`people_sync.roster_live_state`). A cache hit costs those two small
+    (`people_sync.roster_live_state`). The stored chat labels' stamp is read
+    too (`db.fetch_chat_labels_stamp`) and keys the block; a miss reads the
+    labels whole. A cache hit costs those small
     reads.
 
     A miss reads the base payloads, the transcript and its speaker labels
@@ -526,9 +536,12 @@ def get_session_record(session_id: str, *, organization_id: OrgScope) -> Dict[st
 
     roster_status = fetch_roster_status(session_id, organization_id) or {}
     roster_header = roster_status.get("roster")
+    label_stamp = fetch_chat_labels_stamp(session_id, organization_id)
     code_versions = (RECORD_VERSION, METRICS_VERSION, HEALTH_VERSION, ALIGNMENT_VERSION)
     block = _cached_record_block(
-        _record_cache_key(session_id, stamp.get("updated_at"), code_versions, _record_input_versions(roster_header))
+        _record_cache_key(
+            session_id, stamp.get("updated_at"), code_versions, _record_input_versions(roster_header, label_stamp)
+        )
     )
     if block is None:
         row = fetch_session_fields(session_id, list(RECORD_FIELDS), organization_id=organization_id)
@@ -539,13 +552,19 @@ def get_session_record(session_id: str, *, organization_id: OrgScope) -> Dict[st
         # since the header above, and the block is keyed by what it holds.
         stored = fetch_session_roster(session_id, organization_id) if roster_header is not None else None
         roster_header = stored["roster"] if stored is not None else None
+        # Read the labels whole, and key the block by what was read.
+        labels = fetch_chat_labels(session_id, organization_id) if label_stamp is not None else None
+        label_stamp = labels
         inputs = load_record_inputs(
             {**row, "session_id": session_id},
             roster_rows=stored_roster_rows(stored) if stored is not None else None,
+            stored_labels=labels,
         )
         block = _sanitize_json_value(assemble_record(inputs))
         _store_record_block(
-            _record_cache_key(session_id, row.get("updated_at"), code_versions, _record_input_versions(roster_header)),
+            _record_cache_key(
+                session_id, row.get("updated_at"), code_versions, _record_input_versions(roster_header, label_stamp)
+            ),
             block,
         )
     live = roster_live_state(roster_header, roster_status.get("sync"))
