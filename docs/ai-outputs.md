@@ -50,6 +50,15 @@ Four assets generated together as one JSON bundle, from the transcript only ([pr
 
 Stored as `content_repurpose_bundle: {English: {summary, blog, email, social_media}, French: {...}}`.
 
+## Chat labels (v1)
+
+One label per chat message, for the v1 Report: its class (content, question, tech, logistics, social, laughter, off-topic), what a question is about (content or logistics), and its language as an ISO 639 code ([prompt](../prompts/chat_labels.txt)). Nothing starts it yet: it will run in the analysis the user starts, never on its own.
+
+- **Made by** `ai/chat_labelling.label_chat`, on Haiku 5.5 (`ai.jobs`, kind `chat_labels`), in batches of 150 messages. Every batch sends the same instructions first, cached across the run's batches, and the same schema (`ChatLabelBatch`), since a different schema would miss the cache ([providers.md](providers.md#request-layouts-and-caching)).
+- **What the model sees:** each message's `C` id, whether the team wrote it, and its text on one line, cut at 600 characters. Never an author, a name, an email or a people id.
+- **Laughter.** A message that is only laughter ("haha", "lol", "mdr", "ptdr", "xD", laughing emoji) is labelled laughter whatever the model says.
+- **Complete or nothing.** A batch's answer must label exactly that batch's messages, with a kind on questions only; otherwise the run fails and returns no labels, and the stored labels stay as they were. They are stored whole in `session_chat_labels` ([data-model.md](data-model.md#session_chat_labels)).
+
 ## Languages
 
 - Overall Analysis, Deep Analysis and Content Repurposing come in English and French. English is generated from the sources; French is a translation of the saved English output, so it needs English first (the API returns 400 otherwise). A language already in the bundle is reused; only a missing one costs a model call.
