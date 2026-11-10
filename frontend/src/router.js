@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from "vue-router";
 import SessionsView from "./views/SessionsView.vue";
+import { LEGACY_OUTPUTS } from "./followup/outputs";
 import { renamedSessionsPath } from "./sessions/paths";
 import { useWorkspace } from "./store/workspace";
 
@@ -11,9 +12,7 @@ const CrossAnalysisView = () => import("./views/CrossAnalysisView.vue");
 const SessionOverviewView = () => import("./views/SessionOverviewView.vue");
 const SessionTranscriptView = () => import("./views/SessionTranscriptView.vue");
 const ChatQuestionsView = () => import("./views/ChatQuestionsView.vue");
-const AnalysisView = () => import("./views/AnalysisView.vue");
-const SmartRecapView = () => import("./views/SmartRecapView.vue");
-const ContentRepurposingView = () => import("./views/ContentRepurposingView.vue");
+const SessionFollowUpView = () => import("./views/SessionFollowUpView.vue");
 const AuthCallbackView = () => import("./views/AuthCallbackView.vue");
 const BetaNoticeView = () => import("./views/BetaNoticeView.vue");
 const AdminView = () => import("./views/AdminView.vue");
@@ -74,9 +73,12 @@ const routes = [
   { path: "/sessions/:sessionId/session-overview", component: SessionOverviewView, props: true },
   { path: "/sessions/:sessionId/transcript", component: SessionTranscriptView, props: true, meta: { v1Native: true } },
   { path: "/sessions/:sessionId/chat-questions", component: ChatQuestionsView, props: true },
-  { path: "/sessions/:sessionId/analysis", component: AnalysisView, props: true },
-  { path: "/sessions/:sessionId/smart-recap", component: SmartRecapView, props: true },
-  { path: "/sessions/:sessionId/content-repurposing", component: ContentRepurposingView, props: true },
+  { path: "/sessions/:sessionId/follow-up", component: SessionFollowUpView, props: true, meta: { v1Native: true } },
+  // The classic output views are now Follow-up's outputs.
+  ...Object.entries(LEGACY_OUTPUTS).map(([tab, output]) => ({
+    path: `/sessions/:sessionId/${tab}`,
+    redirect: (to) => ({ path: `/sessions/${encodeURIComponent(to.params.sessionId)}/follow-up`, query: { output, ...to.query } }),
+  })),
 
   // ── Legacy redirects ────────────────────────────────────────────────────
   // Old bookmarks land on the new equivalent. When there's no active

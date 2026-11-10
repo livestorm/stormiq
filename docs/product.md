@@ -195,9 +195,15 @@ A question is "answered" if it has a responder or was answered orally (live).
 
 ---
 
+### The Follow-up tab (v1)
+
+**Route:** `/sessions/:sessionId/follow-up` (`views/SessionFollowUpView.vue`), the session's third tab. `?output=` names the output on screen and `?lang=French` its language; the older `/analysis`, `/smart-recap` and `/content-repurposing` paths open the overall analysis, the professional recap and the summary there.
+
+Every AI output of sections 8 to 10 on one page: on the left, grouped (Analysis, Smart Recap, Repurposing), each marked Ready once written in the language shown (on a phone, a picker); on the right, the one on screen. An output is written only when you click its button ("Write the deep analysis"), with the progress shown while it runs; the summary, blog post, follow-up email and social posts are written together. English · Français switches the Analysis and Repurposing outputs; a French version is written from the English one, so it is offered once the English one exists. A written output shows "Copy" (the text as written), "PDF" and the reminder that AI wrote it, then its text; the model's Markdown is shown as headings, paragraphs and lists, never as HTML (`components/report/MarkdownBlocks.vue`, `src/followup/markdown.js`). Without a transcript, the tab points to the Transcript tab. Wording and the outputs' list: `src/followup/outputs.js`.
+
 ## 8. Analysis
 
-**Route:** `/analysis`
+**Shown on:** [Follow-up](#the-follow-up-tab-v1) (`?output=overall`, `?output=deep`). The deep analysis is shown as one document; the classic view's split into ten tabs and its score bars are gone.
 
 Two AI-generated reports, available in **English** or **French**, downloadable as PDF. Both depend on a completed transcript.
 
@@ -292,7 +298,7 @@ Where each component is min-max scaled within the session:
 
 ## 9. Smart Recap
 
-**Route:** `/smart-recap`
+**Shown on:** [Follow-up](#the-follow-up-tab-v1) (`?output=recap-professional`, `recap-hype`, `recap-surprise`).
 
 Short standalone recap (title + 2–4 paragraphs) generated from the transcript only. Three tones:
 
@@ -306,7 +312,7 @@ The recap does not reference the fact that it was generated from a transcript. E
 
 ## 10. Content Repurposing
 
-**Route:** `/content-repurposing`
+**Shown on:** [Follow-up](#the-follow-up-tab-v1) (`?output=summary`, `blog`, `email`, `social`).
 
 Four ready-to-publish asset types, English or French, all PDF-exportable. The transcript is the only input.
 

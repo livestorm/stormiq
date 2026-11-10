@@ -58,7 +58,7 @@ const state = reactive({
   //   { jobId, jobStatus, progress: { stage, percent, label } | null,
   //     language?, tone?, error? }
   // Cleared to null when the job lands in the cache. The `transcript` slot
-  // mirrors the AI flows so all loading-state UIs use <AiJobProgress>.
+  // mirrors the AI flows so every loading state can show its progress.
   aiJobs: emptyAiJobs(),
   error: "",
 });

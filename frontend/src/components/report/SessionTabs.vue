@@ -2,8 +2,8 @@
 import { computed } from "vue";
 import { RouterLink } from "vue-router";
 
-// A session's tabs: Report · Transcript · Follow-up. Shared by the Report and
-// the Transcript pages; Follow-up still opens the older Repurposing view.
+// A session's tabs: Report · Transcript · Follow-up. Shared by the Report,
+// Transcript and Follow-up pages.
 const props = defineProps({
   sessionId: { type: String, required: true },
   current: {
@@ -18,7 +18,7 @@ const tabs = computed(() => {
   return [
     { key: "report", label: "Report", to: `${base}/report` },
     { key: "transcript", label: "Transcript", to: `${base}/transcript` },
-    { key: "follow-up", label: "Follow-up", to: `${base}/content-repurposing` },
+    { key: "follow-up", label: "Follow-up", to: `${base}/follow-up` },
   ];
 });
 </script>
