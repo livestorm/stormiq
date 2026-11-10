@@ -42,7 +42,7 @@
     }
   },
   "record": {
-    "version": 6,
+    "version": 7,
     "roster": {
       "source": "session_include",
       "complete": null,
@@ -325,7 +325,13 @@
         "speakerShares": false
       }
     },
-    "metricsVersion": 5,
+    "chatLabels": {
+      "state": "none",
+      "model": null,
+      "labelledAt": null,
+      "messages": null
+    },
+    "metricsVersion": 6,
     "measuresSource": "live",
     "measures": {
       "m.roster_coverage": {
@@ -1069,6 +1075,38 @@
         "coverage": {
           "missing": [
             "transcript"
+          ]
+        },
+        "excluded": null,
+        "livestorm": null,
+        "rows": null
+      },
+      "m.questions_total": {
+        "id": "m.questions_total",
+        "version": 1,
+        "value": null,
+        "num": null,
+        "den": null,
+        "state": "unavailable",
+        "coverage": {
+          "missing": [
+            "labels"
+          ]
+        },
+        "excluded": null,
+        "livestorm": null,
+        "rows": null
+      },
+      "m.chat_themes": {
+        "id": "m.chat_themes",
+        "version": 1,
+        "value": null,
+        "num": null,
+        "den": null,
+        "state": "unavailable",
+        "coverage": {
+          "missing": [
+            "labels"
           ]
         },
         "excluded": null,

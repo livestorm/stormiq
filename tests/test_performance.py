@@ -486,17 +486,17 @@ def test_a_new_row_version_misses_the_record_cache(record_reads):
 
 def test_a_changed_roster_version_misses_the_record_cache(record_reads, monkeypatch):
     _read_record(record_reads)
-    monkeypatch.setattr(api_logic, "_record_input_versions", lambda roster: (2, None))
+    monkeypatch.setattr(api_logic, "_record_input_versions", lambda roster, labels=None: (2, None, None))
     _read_record(record_reads)
     assert record_reads["builds"] == {name: 2 for name in ONCE}
-    monkeypatch.setattr(api_logic, "_record_input_versions", lambda roster: (2, "fingerprint"))
+    monkeypatch.setattr(api_logic, "_record_input_versions", lambda roster, labels=None: (2, None, "fingerprint"))
     _read_record(record_reads)
     assert record_reads["builds"] == {name: 3 for name in ONCE}
 
 
 def test_the_record_cache_is_keyed_by_the_stored_rosters_version():
-    assert api_logic._record_input_versions(None) == (None, None), "no stored roster: the people come from the row"
-    assert api_logic._record_input_versions({"roster_version": 4, "people_count": 12}) == (4, None)
+    assert api_logic._record_input_versions(None) == (None, None, None), "no stored roster: the people come from the row"
+    assert api_logic._record_input_versions({"roster_version": 4, "people_count": 12}) == (4, None, None)
 
 
 def test_a_record_hit_reads_the_roster_header_and_never_the_people(record_reads, monkeypatch):
