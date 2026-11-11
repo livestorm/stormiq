@@ -281,6 +281,10 @@ function listPasted() {
             </UiButton>
           </div>
           <p v-if="sessionProblem" class="a-problem" role="alert">{{ sessionProblem }}</p>
+          <!-- A pasted session that couldn't be added says why (an upcoming one, another org's…). -->
+          <p v-else-if="failedId && failedId === idFromInput(sessionInput).id && state.error" class="a-problem" role="alert">
+            Couldn't add it: {{ state.error }}
+          </p>
         </form>
         <form class="a-paste-row" @submit.prevent="listPasted">
           <label class="a-label" for="a-event-input">Event link or ID</label>
