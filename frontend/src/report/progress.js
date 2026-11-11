@@ -24,6 +24,21 @@ export const TRANSCRIPT_STEPS = [
   { stage: "persisting", label: "Saving the transcript" },
 ];
 
+// An AI output, as the worker reports it (ANALYSIS_STAGE_FLOORS).
+export const AI_STEPS = [
+  { stage: "queued", label: "Waiting for a free worker" },
+  { stage: "loading_sources", label: "Reading the session" },
+  { stage: "building_prompt", label: "Preparing what the AI reads" },
+  { stage: "analyzing", label: "Writing with AI" },
+  { stage: "persisting", label: "Checking and saving" },
+];
+
+/** An AI output's steps from its job's stage ("" before the worker says:
+ * waiting for a free worker). */
+export function aiSteps(stage) {
+  return stepsAt(AI_STEPS, stage || "queued", stage === "analyzing" ? "The longest step: a minute or two." : "");
+}
+
 /** The transcript job's steps: `progress` is the job's `{stage, message}`
  * (the message, Gladia's own, goes on the current step). */
 export function transcriptSteps(progress) {

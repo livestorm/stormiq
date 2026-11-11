@@ -49,7 +49,7 @@ describe("the Follow-up outputs", () => {
     expect(canMake(outputs, decisions, "French")).toBe(false);
     expect(canMake(listed, decisions, "French")).toBe(true);
     const state = { loading: { decisions: true }, aiJobs: { decisions: { language: "English", progress: { percent: 30 } } } };
-    expect(making(state, decisions, "English")).toEqual({ busy: true, progress: 30 });
+    expect(making(state, decisions, "English")).toEqual({ busy: true, progress: 30, stage: "" });
     expect(pdfUrl(fakeApi, "s1", decisions, "English")).toBe("");
   });
 
@@ -62,8 +62,8 @@ describe("the Follow-up outputs", () => {
     expect(canMake(outputs, digest, "French")).toBe(false);
     expect(canMake(written, digest, "French")).toBe(true);
     const state = { loading: { teamDigest: true }, aiJobs: { team_digest: { language: "English", progress: { percent: 40 } } } };
-    expect(making(state, digest, "English")).toEqual({ busy: true, progress: 40 });
-    expect(making(state, digest, "French")).toEqual({ busy: false, progress: null });
+    expect(making(state, digest, "English")).toEqual({ busy: true, progress: 40, stage: "" });
+    expect(making(state, digest, "French")).toEqual({ busy: false, progress: null, stage: "" });
     expect(pdfUrl(fakeApi, "s1", digest, "English")).toBe("");
   });
 
@@ -79,8 +79,8 @@ describe("the Follow-up outputs", () => {
     expect(canMake(outputs, followup, "French")).toBe(false);
     expect(canMake(written, followup, "French")).toBe(true);
     const state = { loading: { attendeeFollowup: true }, aiJobs: { attendee_followup: { language: "French", progress: { percent: 55 } } } };
-    expect(making(state, followup, "French")).toEqual({ busy: true, progress: 55 });
-    expect(making(state, followup, "English")).toEqual({ busy: false, progress: null });
+    expect(making(state, followup, "French")).toEqual({ busy: true, progress: 55, stage: "" });
+    expect(making(state, followup, "English")).toEqual({ busy: false, progress: null, stage: "" });
     expect(pdfUrl(fakeApi, "s1", followup, "English")).toBe("");
   });
 
@@ -92,7 +92,7 @@ describe("the Follow-up outputs", () => {
     expect(canMake(outputs, faq, "French")).toBe(false);
     expect(canMake(withFaq, faq, "French")).toBe(true);
     const state = { loading: { faq: true }, aiJobs: { faq: { language: "English", progress: { percent: 10 } } } };
-    expect(making(state, faq, "English")).toEqual({ busy: true, progress: 10 });
+    expect(making(state, faq, "English")).toEqual({ busy: true, progress: 10, stage: "" });
     expect(pdfUrl(fakeApi, "s1", faq, "English")).toBe("");
   });
 
@@ -110,9 +110,9 @@ describe("the Follow-up outputs", () => {
 
   it("say an output is being written only for its own slot", () => {
     const state = { loading: { analysis: true }, aiJobs: { overall_analysis: { language: "French", progress: { percent: 42.6 } } } };
-    expect(making(state, outputFor("overall"), "French")).toEqual({ busy: true, progress: 43 });
-    expect(making(state, outputFor("overall"), "English")).toEqual({ busy: false, progress: null });
-    expect(making(state, outputFor("summary"), "French")).toEqual({ busy: false, progress: null });
+    expect(making(state, outputFor("overall"), "French")).toEqual({ busy: true, progress: 43, stage: "" });
+    expect(making(state, outputFor("overall"), "English")).toEqual({ busy: false, progress: null, stage: "" });
+    expect(making(state, outputFor("summary"), "French")).toEqual({ busy: false, progress: null, stage: "" });
     const recap = { loading: { smartRecap: true }, aiJobs: { smart_recap: { tone: "hype" } } };
     expect(making(recap, outputFor("recap-hype"), "English").busy).toBe(true);
     expect(making(recap, outputFor("recap-professional"), "English").busy).toBe(false);
@@ -258,5 +258,12 @@ describe("earlier outputs and earlier versions", () => {
     expect(listed.map((v) => [v.id, v.text, v.models])).toEqual([[3, "Before", "Claude Sonnet 5.5"]]);
     expect(listed[0].when).toMatch(/10 Nov 2026/);
     expect(earlierVersions(null, outputFor("blog"), "Now")).toEqual([]);
+  });
+});
+
+describe("an output being written", () => {
+  it("says which stage the worker is at", () => {
+    const state = { loading: { faq: true }, aiJobs: { faq: { language: "English", progress: { percent: 40, stage: "analyzing" } } } };
+    expect(making(state, outputFor("faq"), "English")).toEqual({ busy: true, progress: 40, stage: "analyzing" });
   });
 });

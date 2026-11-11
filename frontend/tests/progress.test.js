@@ -14,3 +14,13 @@ describe("the loader's steps", () => {
     expect(stepsAt(TRANSCRIPT_STEPS, "not-a-stage").map((step) => step.state)[0]).toBe("current");
   });
 });
+
+describe("an AI output's steps", () => {
+  it("follow the worker's stages, waiting until it says", async () => {
+    const { aiSteps } = await import("../src/report/progress");
+    expect(aiSteps("").map((step) => step.state)).toEqual(["current", "todo", "todo", "todo", "todo"]);
+    const writing = aiSteps("analyzing");
+    expect(writing.map((step) => step.state)).toEqual(["done", "done", "done", "current", "todo"]);
+    expect(writing[3]).toMatchObject({ label: "Writing with AI", detail: "The longest step: a minute or two." });
+  });
+});
