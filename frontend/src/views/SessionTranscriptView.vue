@@ -10,7 +10,7 @@ import UiButton from "../components/ui/UiButton.vue";
 import { api } from "../api";
 import { formatLength, formatSessionStart } from "../report/format";
 import { createSessionReport } from "../report/useSessionReport";
-import { VIEWS, authorsOf, speakersOf, subtitles, transcriptLines } from "../transcript/lines";
+import { ROOM_KINDS, VIEWS, authorsOf, speakersOf, subtitles, transcriptLines } from "../transcript/lines";
 import { createTranscriptView } from "../transcript/useTranscript";
 import { refreshOf } from "../report/sessionRefresh";
 
@@ -73,11 +73,18 @@ const view = ref("all");
 const speaker = ref(undefined);
 const author = ref(undefined); // one author of the room, or undefined
 const roomQuery = ref(""); // the chat column's own search
+const roomKind = ref("all"); // the room's chat, its questions, or both (ROOM_KINDS)
 
 const body = computed(() => state.body);
 const speakers = computed(() => speakersOf(body.value));
 const hasSpeech = computed(() => Boolean(body.value?.speech?.length));
 const authors = computed(() => authorsOf(body.value));
+const hasRoom = computed(() => Boolean(body.value?.room?.length));
+// Questions asked in the chat are found by the session analysis: until it
+// has read this chat, "Questions" shows the Q&A's only, and says so.
+const chatQuestionsUnknown = computed(
+  () => roomKind.value === "questions" && (body.value?.room || []).some((line) => line.kind === "chat") && !(body.value?.room || []).some((line) => line.asks),
+);
 const shown = computed(() =>
   transcriptLines(body.value, {
     view: view.value,
@@ -85,6 +92,7 @@ const shown = computed(() =>
     speaker: speaker.value,
     author: author.value,
     roomQuery: roomQuery.value,
+    roomKind: roomKind.value,
   }),
 );
 const nothingMatches = computed(
@@ -95,6 +103,7 @@ const filtered = computed(
     Boolean(query.value.trim()) ||
     Boolean(roomQuery.value.trim()) ||
     view.value !== "all" ||
+    roomKind.value !== "all" ||
     speaker.value !== undefined ||
     author.value !== undefined,
 );
@@ -116,6 +125,7 @@ function clearFilters() {
   query.value = "";
   roomQuery.value = "";
   view.value = "all";
+  roomKind.value = "all";
   speaker.value = undefined;
   author.value = undefined;
 }
@@ -145,8 +155,12 @@ const countLabel = computed(() => {
   const { speech, room } = shown.value.counts;
   const parts = [];
   if (view.value !== "room" && hasSpeech.value) parts.push(`${speech} ${speech === 1 ? "line" : "lines"} of speech`);
-  if (author.value !== undefined && view.value !== "speech") return `${room} from ${author.value}`;
-  if (view.value !== "speech" && speaker.value === undefined) parts.push(`${room} from the room`);
+  const what = { chat: ["chat message", "chat messages"], questions: ["question or answer", "questions and answers"] }[
+    roomKind.value
+  ];
+  const roomWords = what ? `${room} ${room === 1 ? what[0] : what[1]}` : `${room} from the room`;
+  if (author.value !== undefined && view.value !== "speech") return `${what ? roomWords : room} from ${author.value}`;
+  if (view.value !== "speech" && speaker.value === undefined) parts.push(roomWords);
   return parts.join(" · ");
 });
 
@@ -307,6 +321,19 @@ const jobBusy = computed(() => ["pending", "running", "starting", "checking"].in
               {{ item.name }}
             </button>
           </div>
+<div v-if="!split && hasRoom && view !== 'speech'" class="t-segmented t-kinds" role="group" aria-label="Chat or questions">
+            <button
+              v-for="option in ROOM_KINDS"
+              :key="option.value"
+              type="button"
+              class="t-seg siq-fx"
+              :class="{ 'is-on': roomKind === option.value }"
+              :aria-pressed="roomKind === option.value ? 'true' : 'false'"
+              @click="roomKind = option.value"
+            >
+              {{ option.label }}
+            </button>
+          </div>
           <label v-if="!split && authors.length && view !== 'speech'" class="t-field t-author">
             <span class="siq-sr-only">Who wrote</span>
             <select class="t-input t-select" :value="author ?? ''" @change="pickAuthor($event.target.value)">
@@ -346,6 +373,9 @@ const jobBusy = computed(() => ["pending", "running", "starting", "checking"].in
         <span v-if="refetchStatus === 'error'" role="alert">{{ report.state.refetch.error }}</span>
       </div>
 
+      <p v-if="chatQuestionsUnknown" class="t-muted t-kinds-note">
+        Questions from the Q&amp;A tab only: questions asked in the chat show here once the session is analysed.
+      </p>
       <p v-if="nothingMatches && !split" class="t-muted">Nothing matches.</p>
 
       <Card v-if="shown.interleaved && shown.lines.length" padding="flush">
@@ -370,6 +400,19 @@ const jobBusy = computed(() => ["pending", "running", "starting", "checking"].in
             <div class="t-room-head">
               <CardHeader icon="message-circle" title="Chat and questions" :level="2" />
               <div class="t-room-tools">
+                <div class="t-segmented t-kinds" role="group" aria-label="Chat or questions">
+                  <button
+                  v-for="option in ROOM_KINDS"
+                  :key="option.value"
+                  type="button"
+                  class="t-seg siq-fx"
+                  :class="{ 'is-on': roomKind === option.value }"
+                  :aria-pressed="roomKind === option.value ? 'true' : 'false'"
+                  @click="roomKind = option.value"
+                >
+                  {{ option.label }}
+                </button>
+              </div>
                 <label class="t-field t-search">
                   <span class="siq-sr-only">Search the chat</span>
                   <Icon name="search" :size="16" class="t-field-icon" />
@@ -583,6 +626,14 @@ const jobBusy = computed(() => ["pending", "running", "starting", "checking"].in
   display: flex;
   flex-wrap: wrap;
   gap: var(--siq-space-2);
+}
+
+.t-room-tools .t-kinds {
+  flex: 1 1 100%;
+}
+
+.t-kinds .t-seg {
+  flex: 1 1 0;
 }
 
 .t-room-tools .t-search,

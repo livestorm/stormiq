@@ -104,6 +104,21 @@ def test_the_room_has_every_message_question_and_answer_by_the_records_ids():
     assert all('"open"' not in json.dumps(line) for line in questions), "never says a question is open"
 
 
+def test_a_chat_message_labelled_a_question_says_so_only_with_current_labels():
+    inputs = load_record_inputs(synthetic.cached_row())
+    chats = [str(eid) for eid in inputs.events.loc[inputs.events["kind"] == "chat", "eid"]]
+    asked, logistics, other = chats[0], chats[1], chats[2]
+    labels = {
+        asked: {"class": "question", "question": "content"},
+        logistics: {"class": "question", "question": "logistics"},
+        other: {"class": "content"},
+    }
+    room = transcript_view(dataclasses.replace(inputs, chat_labels=labels))["room"]
+    flagged = {line["id"] for line in room if line.get("asks")}
+    assert flagged == {asked, logistics}
+    assert not any(line.get("asks") for line in transcript_view(inputs)["room"]), "no labels, no flag"
+
+
 def test_authors_are_short_names_from_the_roster_and_nothing_else():
     row = synthetic.cached_row()
     inputs = load_record_inputs(row)
