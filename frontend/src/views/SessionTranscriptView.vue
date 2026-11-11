@@ -6,9 +6,11 @@ import TranscriptLine from "../components/report/TranscriptLine.vue";
 import Card from "../components/ui/Card.vue";
 import CardHeader from "../components/ui/CardHeader.vue";
 import Icon from "../components/ui/Icon.vue";
+import ProgressSteps from "../components/ui/ProgressSteps.vue";
 import UiButton from "../components/ui/UiButton.vue";
 import { api } from "../api";
-import { formatLength, formatSessionStart } from "../report/format";
+import { elapsedLabel, formatLength, formatSessionStart } from "../report/format";
+import { transcriptSteps } from "../report/progress";
 import { createSessionReport } from "../report/useSessionReport";
 import { ROOM_KINDS, VIEWS, authorsOf, speakersOf, subtitles, transcriptLines } from "../transcript/lines";
 import { createTranscriptView } from "../transcript/useTranscript";
@@ -195,6 +197,26 @@ const rawUrl = computed(() => api.getTranscriptJsonUrl(props.sessionId));
 // ── Without a transcript ──
 const job = computed(() => state.job);
 const jobBusy = computed(() => ["pending", "running", "starting", "checking"].includes(job.value.status));
+// The loader's clock: from when this page first saw the transcript being made.
+const jobStarted = ref(null);
+const clockNow = ref(Date.now());
+let jobTicker = null;
+watch(
+  jobBusy,
+  (busy) => {
+    clearInterval(jobTicker);
+    jobTicker = null;
+    if (busy) {
+      if (jobStarted.value === null) jobStarted.value = Date.now();
+      jobTicker = setInterval(() => (clockNow.value = Date.now()), 1000);
+    } else {
+      jobStarted.value = null;
+    }
+  },
+  { immediate: true },
+);
+onBeforeUnmount(() => clearInterval(jobTicker));
+const jobElapsed = computed(() => (jobStarted.value === null ? "" : elapsedLabel(jobStarted.value, clockNow.value)));
 </script>
 
 <template>
@@ -226,9 +248,14 @@ const jobBusy = computed(() => ["pending", "running", "starting", "checking"].in
         <template v-if="job.status === 'pending' || job.status === 'running' || job.status === 'starting'">
           <CardHeader icon="refresh-cw" title="The transcript is being made" :level="2" />
           <p class="t-text" role="status">
-            {{ job.progress != null ? `${job.progress}% done.` : "It has started." }} A long recording takes a few minutes; this
-            page updates by itself. The chat and questions are below meanwhile.
+            A long recording takes a few minutes; this page updates by itself. The chat and questions are below meanwhile.
           </p>
+          <ProgressSteps
+            :steps="transcriptSteps({ stage: job.stage, message: job.message })"
+            :percent="job.progress ?? null"
+            label="Transcript progress"
+            :elapsed="jobElapsed"
+          />
         </template>
         <template v-else-if="job.status === 'error'">
           <CardHeader icon="info" title="The transcript could not be made" :level="2" />
