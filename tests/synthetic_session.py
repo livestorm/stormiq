@@ -63,6 +63,7 @@ RECORD_FIXTURE = REPO_ROOT / "frontend" / "tests" / "fixtures" / "record-v1.json
 RECORD_CROWD_FIXTURE = REPO_ROOT / "frontend" / "tests" / "fixtures" / "record-v1-crowd.json"
 TRANSCRIPT_FIXTURE = REPO_ROOT / "frontend" / "tests" / "fixtures" / "transcript-v1.json"
 QUESTIONS_FIXTURE = REPO_ROOT / "frontend" / "tests" / "fixtures" / "questions-v1.json"
+CHAPTERS_FIXTURE = REPO_ROOT / "frontend" / "tests" / "fixtures" / "chapters-v1.json"
 
 # How the synthetic chat is labelled for the question desk (`chat_labels`):
 # every message "social", except these (class, question kind).
@@ -697,11 +698,35 @@ def classic_workspace(row: Dict[str, Any]) -> Dict[str, Any]:
     return rounded(_get_json(row, f"/api/sessions/{row['session_id']}"))
 
 
+def with_understanding(row: Dict[str, Any]) -> ExitStack:
+    """The route's stored chat labels (`chat_labels`) and understanding
+    (`understanding`) for `row`, and no saved reply, patched in."""
+    from livestorm_app import api_logic
+
+    labels, stored = chat_labels(row), understanding(row)
+    stack = ExitStack()
+    stack.enter_context(mock.patch.object(api_logic, "fetch_chat_labels", lambda session_id, organization_id: labels))
+    stack.enter_context(mock.patch.object(api_logic, "fetch_understanding", lambda session_id, organization_id: stored))
+    stack.enter_context(mock.patch.object(api_logic, "fetch_question_replies", lambda session_id, organization_id: {}))
+    return stack
+
+
 def transcript_response(row: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """What `GET /api/sessions/{id}/record/transcript` sends for `row`
-    (default: `cached_row()`), through the real route."""
+    (default: `cached_row()`), its understanding stored, through the real
+    route."""
     row = cached_row() if row is None else row
-    return _get_json(row, f"/api/sessions/{row['session_id']}/record/transcript")
+    with with_understanding(row):
+        return _get_json(row, f"/api/sessions/{row['session_id']}/record/transcript")
+
+
+def chapters_response(row: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """What `GET /api/sessions/{id}/record/chapters` sends for `row`
+    (default: `cached_row()`), its understanding stored, through the real
+    route."""
+    row = cached_row() if row is None else row
+    with with_understanding(row):
+        return _get_json(row, f"/api/sessions/{row['session_id']}/record/chapters")
 
 
 def chat_labels(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -736,6 +761,16 @@ UNDERSTANDING_ANSWERS = (
 )
 
 
+# The synthetic talk's chapters, by first and last utterance (no model call).
+UNDERSTANDING_CHAPTERS = (
+    {"title": "Welcome and agenda", "kind": "opening", "first_utterance": "U0001", "last_utterance": "U0005"},
+    {"title": "The dashboard, view by view", "kind": "demo", "first_utterance": "U0006", "last_utterance": "U0027"},
+    {"title": "Pricing for larger teams", "kind": "content", "first_utterance": "U0028", "last_utterance": "U0073"},
+    {"title": "Exports and questions", "kind": "qa", "first_utterance": "U0074", "last_utterance": "U0165"},
+    {"title": "Goodbye", "kind": "close", "first_utterance": "U0166", "last_utterance": "U0166"},
+)
+
+
 def understanding(row: Dict[str, Any]) -> Dict[str, Any]:
     """A stored understanding for `row`, as `db.fetch_understanding` returns
     it, read from its dossier now (its chat labelled by `chat_labels`) and
@@ -749,7 +784,7 @@ def understanding(row: Dict[str, Any]) -> Dict[str, Any]:
         question = next(q for q in questions if q["text"].startswith(item["question_text"]))
         utterance = next(u for u in utterances if u["text"].startswith(item["utterance_text"]))
         answers.append({"question_id": question["id"], "utterance_ids": [utterance["id"]], "quote": item["quote"]})
-    answer = {"chapters": [], "answers": answers, "prompts": [], "figures": [], "groups": []}
+    answer = {"chapters": list(UNDERSTANDING_CHAPTERS), "answers": answers, "prompts": [], "figures": [], "groups": []}
     return {
         "version": UNDERSTANDING_VERSION,
         "dossier_hash": dossier.sha256,
@@ -764,15 +799,8 @@ def question_desk_response(row: Optional[Dict[str, Any]] = None) -> Dict[str, An
     (default: `cached_row()`), its chat labelled by `chat_labels`, its
     understanding stored (`understanding`) and no reply saved, through the
     real route."""
-    from livestorm_app import api_logic
-
     row = cached_row() if row is None else row
-    labels = chat_labels(row)
-    stored = understanding(row)
-    with ExitStack() as stack:
-        stack.enter_context(mock.patch.object(api_logic, "fetch_chat_labels", lambda session_id, organization_id: labels))
-        stack.enter_context(mock.patch.object(api_logic, "fetch_understanding", lambda session_id, organization_id: stored))
-        stack.enter_context(mock.patch.object(api_logic, "fetch_question_replies", lambda session_id, organization_id: {}))
+    with with_understanding(row):
         return _get_json(row, f"/api/sessions/{row['session_id']}/record/questions")
 
 
@@ -785,6 +813,8 @@ def write_record_fixture() -> None:
     print(f"wrote {TRANSCRIPT_FIXTURE.relative_to(REPO_ROOT)}")
     QUESTIONS_FIXTURE.write_text(dump(question_desk_response()), encoding="utf-8")
     print(f"wrote {QUESTIONS_FIXTURE.relative_to(REPO_ROOT)}")
+    CHAPTERS_FIXTURE.write_text(dump(chapters_response()), encoding="utf-8")
+    print(f"wrote {CHAPTERS_FIXTURE.relative_to(REPO_ROOT)}")
 
 
 def write_classic_snapshot() -> None:

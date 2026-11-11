@@ -342,24 +342,31 @@ STALE = "stale"
 NONE = "none"
 
 
-def located_answers(stored: Optional[Mapping[str, Any]], inputs: Any) -> Tuple[Dict[str, Dict[str, Any]], str]:
-    """The stored understanding's located answers, by question id, for the
-    question desk: `({question_id: {t, quote, utterances}}, state)`.
-
-    Question and utterance ids are the dossier's, which shift when the
-    session is fetched again or its chat labelled again, so the answers are
-    used only while the stored result was read from this session's dossier
-    now (same hash, same version): state `ready`. Otherwise `stale` (read
-    from another dossier) or `none` (never read, or no transcript), with no
-    answers."""
+def current_reading(stored: Optional[Mapping[str, Any]], inputs: Any) -> Tuple[Mapping[str, Any], str, List[Dict[str, Any]]]:
+    """`(result, state, utterances)`: the stored understanding's result while
+    it was read from this session's dossier as it is now (same hash, same
+    version): state `ready`. Question and utterance ids are the dossier's,
+    and they shift when the session is fetched again or its chat labelled
+    again, so a result read from another dossier is `stale`, and none (never
+    read, or no transcript) is `none`; both come with an empty result.
+    `utterances` are the dossier's rows (`build_dossier`), empty without a
+    transcript."""
     if not stored:
-        return {}, NONE
+        return {}, NONE, []
     dossier, utterances, _ = build_dossier(inputs)
     if not utterances:
-        return {}, NONE
+        return {}, NONE, []
     if stored.get("version") != UNDERSTANDING_VERSION or stored.get("dossier_hash") != dossier.sha256:
-        return {}, STALE
-    result = stored.get("result") if isinstance(stored.get("result"), Mapping) else {}
+        return {}, STALE, utterances
+    result = stored.get("result")
+    return (result if isinstance(result, Mapping) else {}), READY, utterances
+
+
+def located_answers(stored: Optional[Mapping[str, Any]], inputs: Any) -> Tuple[Dict[str, Dict[str, Any]], str]:
+    """The current reading's located answers, by question id, for the
+    question desk: `({question_id: {t, quote, utterances}}, state)`
+    (`current_reading`)."""
+    result, state, _ = current_reading(stored, inputs)
     answers: Dict[str, Dict[str, Any]] = {}
     for item in result.get("answers") or []:
         if not isinstance(item, Mapping):
@@ -367,4 +374,62 @@ def located_answers(stored: Optional[Mapping[str, Any]], inputs: Any) -> Tuple[D
         question, t, quote = str(item.get("question") or ""), _finite(item.get("t")), _one_line(item.get("quote"))
         if question and t is not None and quote and question not in answers:
             answers[question] = {"t": t, "quote": quote, "utterances": _ids(item.get("utterances"))}
-    return answers, READY
+    return answers, state
+
+
+def chapter_list(stored: Optional[Mapping[str, Any]], inputs: Any) -> Tuple[List[Dict[str, Any]], str]:
+    """The current reading's chapters, in order: `([{title, kind, first,
+    last, r, rEnd}], state)` (`current_reading`). `r` is the first
+    utterance's start and `rEnd` the last one's end, on the recording's own
+    clock (the replay's), so they need no alignment; a chapter whose ids
+    aren't in the transcript any more is left out."""
+    result, state, utterances = current_reading(stored, inputs)
+    by_id = {u["id"]: u for u in utterances}
+    order = {u["id"]: index for index, u in enumerate(utterances)}
+    chapters: List[Dict[str, Any]] = []
+    for item in result.get("chapters") or []:
+        if not isinstance(item, Mapping):
+            continue
+        first, last = str(item.get("first") or ""), str(item.get("last") or "")
+        title = _one_line(item.get("title"), MAX_TITLE_CHARS)
+        if first not in by_id or last not in by_id or order[first] > order[last] or not title:
+            continue
+        if chapters and order[first] <= order[chapters[-1]["last"]]:
+            continue
+        kind = item.get("kind") if item.get("kind") in CHAPTER_KINDS else "other"
+        chapters.append({"title": title, "kind": kind, "first": first, "last": last, "r": by_id[first]["r"], "rEnd": by_id[last]["rEnd"]})
+    return chapters, state
+
+
+# YouTube reads chapters from a description when there are at least three,
+# the first at 0:00, each at least ten seconds long.
+YOUTUBE_MIN_CHAPTERS = 3
+YOUTUBE_MIN_SECONDS = 10
+
+
+def _stamp(seconds: float, hours: bool) -> str:
+    total = max(0, int(seconds))
+    h, rest = divmod(total, 3600)
+    m, s = divmod(rest, 60)
+    return f"{h}:{m:02d}:{s:02d}" if hours else f"{m:02d}:{s:02d}"
+
+
+def show_notes(chapters: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+    """The chapters as show notes for the replay: `{text, youtube}`. One line
+    per chapter, "04:12 Title", on the recording's clock; the first one
+    starts at 00:00, as a video's chapters do (hours shown when the replay
+    runs past one). `youtube` says whether YouTube would read them as
+    chapters (`YOUTUBE_MIN_CHAPTERS`, each `YOUTUBE_MIN_SECONDS` long)."""
+    # The first chapter opens the replay; one without a start is left out.
+    timed = [
+        (0.0 if index == 0 else _finite(chapter.get("r")), chapter)
+        for index, chapter in enumerate(chapters)
+    ]
+    timed = [(start, chapter) for start, chapter in timed if start is not None]
+    if not timed:
+        return {"text": "", "youtube": False}
+    ends = [start for start, _ in timed[1:]] + [_finite(timed[-1][1].get("rEnd")) or timed[-1][0]]
+    hours = max(ends) >= 3600
+    text = "\n".join(f"{_stamp(start, hours)} {chapter['title']}" for start, chapter in timed)
+    long_enough = all(end - start >= YOUTUBE_MIN_SECONDS for (start, _), end in zip(timed, ends, strict=True))
+    return {"text": text, "youtube": len(timed) >= YOUTUBE_MIN_CHAPTERS and long_enough}

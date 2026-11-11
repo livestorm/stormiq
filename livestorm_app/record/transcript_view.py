@@ -22,6 +22,11 @@ is read on demand, when someone opens the tab.
 - **Unclear words**: each utterance lists the character spans of its words
   below `transcript_health.LOW_CONFIDENCE`, found in its text in order; a
   word that can't be found in the text is left out, never guessed.
+- **Chapters** come from the understanding job (`understanding.chapter_list`,
+  only while read from the session as it is now): a title and kind each,
+  starting at a speech line's id (`first`), with that line's `r` and `t`
+  (`t` only when speech is on the session clock). A chapter whose first
+  line isn't shown is left out.
 - **Questions** say whether they were answered in writing (an answer row
   replies to them). Nothing says a question is "open": an answer given out
   loud leaves no trace in the data.
@@ -184,9 +189,25 @@ def _room(inputs: Any) -> List[Dict[str, Any]]:
     return lines
 
 
-def transcript_view(inputs: Any, speaker_names: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
-    """`{version, clock, speakers, speech, room}` for one session's inputs
-    (`inputs.RecordInputs`) and the speaker names the user saved."""
+def _chapters(speech: Sequence[Mapping[str, Any]], chapters: Sequence[Mapping[str, Any]], state: str) -> Dict[str, Any]:
+    lines = {line["id"]: line for line in speech}
+    items = [
+        {"title": c["title"], "kind": c["kind"], "first": c["first"], "r": lines[c["first"]]["r"], "t": lines[c["first"]]["t"]}
+        for c in chapters
+        if c.get("first") in lines
+    ]
+    return {"state": str(state or "none"), "items": items}
+
+
+def transcript_view(
+    inputs: Any,
+    speaker_names: Optional[Mapping[str, Any]] = None,
+    chapters: Sequence[Mapping[str, Any]] = (),
+    chapters_state: str = "none",
+) -> Dict[str, Any]:
+    """`{version, clock, speakers, speech, room, chapters}` for one session's
+    inputs (`inputs.RecordInputs`), the speaker names the user saved and
+    the chapters (`understanding.chapter_list`)."""
     saved = {str(key): value for key, value in (speaker_names or {}).items()}
     interleave = inputs.transcript is not None and alignment_allows(inputs.alignment, SECONDS)
     offset = inputs.alignment.offset_s if interleave else None
@@ -197,4 +218,5 @@ def transcript_view(inputs: Any, speaker_names: Optional[Mapping[str, Any]] = No
         "speakers": speakers,
         "speech": speech,
         "room": _room(inputs),
+        "chapters": _chapters(speech, chapters, chapters_state),
     }

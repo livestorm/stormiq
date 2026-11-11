@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
-import body from "./fixtures/transcript-v1.json";
+import withChapters from "./fixtures/transcript-v1.json";
 import { speakersOf, subtitles, textParts, transcriptLines } from "../src/transcript/lines";
 
+// The lines' own rules, on the fixture without its chapters (tested below).
+const body = { ...withChapters, chapters: { state: "none", items: [] } };
 const apart = { ...body, clock: { interleave: false, offsetS: null }, speech: body.speech.map((line) => ({ ...line, t: null })) };
 
 describe("the Transcript tab's lines", () => {
@@ -101,5 +103,37 @@ describe("the subtitles", () => {
       ],
     });
     expect(srt).toBe("1\n00:00:01,000 --> 01:02:05,500\nSpeaker: one\n\n2\n01:02:05,500 --> 01:02:06,000\nSpeaker: two lines\n");
+  });
+});
+
+describe("the Transcript tab's chapters", () => {
+  const chapterTitles = (lines) => lines.filter((line) => line.kind === "chapter").map((line) => line.title);
+
+  it("head each chapter's first line, on the session clock when interleaved", () => {
+    const shown = transcriptLines(withChapters);
+    expect(chapterTitles(shown.lines)).toEqual(withChapters.chapters.items.map((c) => c.title));
+    expect(shown.counts).toEqual(transcriptLines(body).counts);
+    const at = shown.lines.findIndex((line) => line.id === "chapter-U0028");
+    expect(shown.lines[at]).toMatchObject({ kind: "chapter", title: "Pricing for larger teams", time: "5:07", timeIsRecording: false });
+    // Every line after a heading, up to the next, starts at or after it.
+    const next = shown.lines.findIndex((line, i) => i > at && line.kind === "chapter");
+    expect(shown.lines.slice(at + 1, next).every((line) => line.t >= 306.9)).toBe(true);
+    expect(shown.lines[at + 1].continued).toBeUndefined();
+  });
+
+  it("head the speech list on the recording's times when speech is apart", () => {
+    // As the server sends them: no session time when speech isn't on the clock.
+    const items = withChapters.chapters.items.map((chapter) => ({ ...chapter, t: null }));
+    const apartWith = { ...apart, chapters: { state: "ready", items } };
+    const shown = transcriptLines(apartWith);
+    expect(shown.speech[0]).toMatchObject({ id: "chapter-U0001", time: "0:03", timeIsRecording: true });
+    expect(chapterTitles(shown.room)).toEqual([]);
+  });
+
+  it("leave out a chapter with no line shown, and one whose line the server didn't send", () => {
+    const searched = transcriptLines(withChapters, { query: "pricing works per team" });
+    expect(chapterTitles(searched.lines)).toEqual(["Pricing for larger teams"]);
+    const ghost = { ...withChapters, chapters: { state: "ready", items: [{ title: "Ghost", first: "U9999", r: 1, t: 1 }] } };
+    expect(chapterTitles(transcriptLines(ghost).lines)).toEqual([]);
   });
 });

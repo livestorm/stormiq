@@ -1,0 +1,51 @@
+{
+  "sessionId": "synthetic-webinar",
+  "updatedAt": "2026-10-02T08:30:00Z",
+  "state": "ready",
+  "chapters": [
+    {
+      "title": "Welcome and agenda",
+      "kind": "opening",
+      "first": "U0001",
+      "last": "U0005",
+      "r": 3.0,
+      "rEnd": 51.55
+    },
+    {
+      "title": "The dashboard, view by view",
+      "kind": "demo",
+      "first": "U0006",
+      "last": "U0027",
+      "r": 60.0,
+      "rEnd": 281.55
+    },
+    {
+      "title": "Pricing for larger teams",
+      "kind": "content",
+      "first": "U0028",
+      "last": "U0073",
+      "r": 288.0,
+      "rEnd": 751.55
+    },
+    {
+      "title": "Exports and questions",
+      "kind": "qa",
+      "first": "U0074",
+      "last": "U0165",
+      "r": 760.0,
+      "rEnd": 1691.55
+    },
+    {
+      "title": "Goodbye",
+      "kind": "close",
+      "first": "U0166",
+      "last": "U0166",
+      "r": 1700.0,
+      "rEnd": 1703.05
+    }
+  ],
+  "showNotes": {
+    "text": "00:00 Welcome and agenda\n01:00 The dashboard, view by view\n04:48 Pricing for larger teams\n12:40 Exports and questions\n28:20 Goodbye",
+    "youtube": false
+  }
+}

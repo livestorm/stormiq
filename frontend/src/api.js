@@ -158,6 +158,10 @@ export const api = {
   getSessionQuestionDesk(sessionId, { signal } = {}) {
     return request(sessionPath(sessionId, "/record/questions"), { signal });
   },
+  // The chapters the session analysis found, with their show notes.
+  getSessionChapters(sessionId, { signal } = {}) {
+    return request(sessionPath(sessionId, "/record/chapters"), { signal });
+  },
   // Marks one desk question answered (or not), with an optional reply; returns the desk.
   saveSessionQuestion(sessionId, { questionId, answered, reply = "" }, { signal } = {}) {
     return request(sessionPath(sessionId, "/record/questions"), {

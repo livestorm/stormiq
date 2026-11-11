@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
+import ChapterNotes from "../components/report/ChapterNotes.vue";
 import MarkdownBlocks from "../components/report/MarkdownBlocks.vue";
 import QuestionDesk from "../components/report/QuestionDesk.vue";
 import SessionTabs from "../components/report/SessionTabs.vue";
@@ -23,6 +24,7 @@ import {
   pdfUrl,
 } from "../followup/outputs";
 import { filterCounts } from "../followup/desk";
+import { createChapters } from "../followup/useChapters";
 import { createQuestionDesk } from "../followup/useQuestionDesk";
 import { formatLength, formatSessionStart } from "../report/format";
 import { createSessionReport } from "../report/useSessionReport";
@@ -30,7 +32,8 @@ import { useWorkspace } from "../store/workspace";
 
 // The Follow-up tab. It opens on the question desk (every audience question,
 // marked answered here, the open ones as a CSV), which reads the record's
-// routes and needs no transcript. Then the session's AI outputs (Analysis,
+// routes and needs no transcript; next to it, the chapters and their show
+// notes, from what the session analysis stored. Then the session's AI outputs (Analysis,
 // Smart Recap, Repurposing, and Surprise me in its corner), each written only
 // when the user clicks. They live in the classic workspace, so the page loads
 // it through the store (`loadSessionById`) and makes them with the store's AI
@@ -47,12 +50,14 @@ const store = useWorkspace();
 const { state } = store;
 const report = createSessionReport();
 const desk = createQuestionDesk();
+const chapters = createChapters();
 
 watch(
   () => props.sessionId,
   (id) => {
     report.open(id);
     desk.open(id);
+    chapters.open(id);
     store.loadSessionById(id).catch(() => {});
   },
   { immediate: true },
@@ -60,10 +65,16 @@ watch(
 onBeforeUnmount(() => {
   report.close();
   desk.close();
+  chapters.close();
 });
 
 const DESK = "desk";
+const CHAPTERS = "chapters";
 const onDesk = computed(() => !route.query.output || route.query.output === DESK);
+const onChapters = computed(() => route.query.output === CHAPTERS);
+// One of the session's own views (the desk, the chapters), not an AI output.
+const onOwn = computed(() => onDesk.value || onChapters.value);
+const ownValue = computed(() => (onDesk.value ? DESK : onChapters.value ? CHAPTERS : ""));
 // Still open for the host: open, or covered in the talk but not confirmed.
 const openCount = computed(() => (desk.state.body ? filterCounts(desk.state.body.summary).open : null));
 const csvUrl = computed(() => api.getOpenQuestionsCsvUrl(props.sessionId));
@@ -86,7 +97,7 @@ const output = computed(() => outputFor(String(route.query.output || "")));
 const language = computed(() => (route.query.lang === "French" ? "French" : "English"));
 
 function show(key, lang = language.value) {
-  const french = key !== DESK && lang === "French";
+  const french = key !== DESK && key !== CHAPTERS && lang === "French";
   router.replace({ query: { ...route.query, output: key, lang: french ? "French" : undefined } });
 }
 
@@ -160,9 +171,10 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
       <nav class="f-nav" aria-label="Follow-up">
         <label class="f-pick">
           <span class="siq-sr-only">Show</span>
-          <select class="f-input f-select" :value="onDesk ? DESK : output.key" @change="show($event.target.value)">
-            <optgroup label="Questions">
+          <select class="f-input f-select" :value="ownValue || output.key" @change="show($event.target.value)">
+            <optgroup label="From the session">
               <option :value="DESK">Question desk{{ openCount ? ` · ${openCount} open` : "" }}</option>
+              <option :value="CHAPTERS">Chapters and show notes</option>
             </optgroup>
             <optgroup v-for="group in groups" :key="group.name" :label="group.name">
               <option v-for="item in group.items" :key="item.key" :value="item.key">
@@ -178,7 +190,7 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
           <Icon name="chevron-down" :size="16" class="f-select-icon" />
         </label>
         <div class="f-group">
-          <h2 class="f-group-name">Questions</h2>
+          <h2 class="f-group-name">From the session</h2>
           <ul class="f-items">
             <li>
               <button
@@ -192,6 +204,17 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
                 <span v-if="openCount" class="f-badge">{{ openCount }} open</span>
               </button>
             </li>
+            <li>
+              <button
+                type="button"
+                class="f-item siq-fx"
+                :class="{ 'is-current': onChapters }"
+                :aria-current="onChapters ? 'true' : undefined"
+                @click="show(CHAPTERS)"
+              >
+                <span>Chapters and show notes</span>
+              </button>
+            </li>
           </ul>
         </div>
         <div v-for="group in groups" :key="group.name" class="f-group">
@@ -201,8 +224,8 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
               <button
                 type="button"
                 class="f-item siq-fx"
-                :class="{ 'is-current': !onDesk && item.key === output.key }"
-                :aria-current="!onDesk && item.key === output.key ? 'true' : undefined"
+                :class="{ 'is-current': !onOwn && item.key === output.key }"
+                :aria-current="!onOwn && item.key === output.key ? 'true' : undefined"
                 @click="show(item.key)"
               >
                 <span>{{ item.label }}</span>
@@ -215,8 +238,8 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
           <button
             type="button"
             class="f-corner-button siq-fx"
-            :class="{ 'is-current': !onDesk && item.key === output.key }"
-            :aria-current="!onDesk && item.key === output.key ? 'true' : undefined"
+            :class="{ 'is-current': !onOwn && item.key === output.key }"
+            :aria-current="!onOwn && item.key === output.key ? 'true' : undefined"
             @click="show(item.key)"
           >
             <Icon name="star" :size="16" />
@@ -229,6 +252,8 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
       </nav>
 
       <QuestionDesk v-if="onDesk" :desk="desk" :csv-url="csvUrl" />
+
+      <ChapterNotes v-else-if="onChapters" :chapters="chapters" />
 
       <p v-else-if="loading" class="f-muted" role="status">Loading the session…</p>
 

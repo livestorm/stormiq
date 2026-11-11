@@ -91,7 +91,66 @@ function matches(line, needle) {
   return [line.text, line.who].some((value) => text(value).toLowerCase().includes(needle));
 }
 
+/** The chapters the server sent, in order, each with the index of its
+ * first speech line (`first`, an utterance id) in the server's speech
+ * order. A chapter whose first line the server didn't send is left out. */
+function chapterStarts(body) {
+  const index = new Map((body?.speech || []).map((line, i) => [line.id, i]));
+  return (body?.chapters?.items || [])
+    .filter((chapter) => index.has(chapter.first) && text(chapter.title))
+    .map((chapter) => ({ ...chapter, at: index.get(chapter.first) }))
+    .sort((a, b) => a.at - b.at);
+}
+
+/** A chapter heading line: `{id, kind: "chapter", title, time,
+ * timeIsRecording}`, on the session clock when the server placed it there. */
+function chapterLine(chapter) {
+  const onClock = typeof chapter.t === "number";
+  return {
+    id: `chapter-${chapter.first}`,
+    kind: "chapter",
+    title: text(chapter.title),
+    time: onClock ? clockLabel(chapter.t) : typeof chapter.r === "number" ? clockLabel(chapter.r) : "",
+    timeIsRecording: !onClock,
+  };
+}
+
+/** `lines` with a chapter heading before the first shown line of each
+ * chapter. A speech line belongs to the last chapter starting at or before
+ * it (by the server's speech order); an audience line, only in the
+ * interleaved list, to the last chapter starting at or before its session
+ * time. Lines before the first chapter get no heading, and a chapter with
+ * no line shown (a search, a filter) none either. */
+function withChapters(lines, body, speechOrder, { byTime }) {
+  const chapters = chapterStarts(body);
+  if (!chapters.length) return lines;
+  const chapterOf = (line) => {
+    let found = -1;
+    chapters.forEach((chapter, i) => {
+      if (line.kind === "speech" ? chapter.at <= speechOrder.get(line.id) : byTime && chapter.t != null && line.t != null && chapter.t <= line.t) {
+        found = i;
+      }
+    });
+    return found;
+  };
+  const out = [];
+  let current = -1;
+  for (const line of lines) {
+    const index = chapterOf(line);
+    if (index > current) {
+      out.push(chapterLine(chapters[index]));
+      current = index;
+    }
+    out.push(line);
+  }
+  return out;
+}
+
 /** What the page shows: `{interleaved, lines, speech, room, counts}`.
+ *
+ * Chapter headings (`kind: "chapter"`, from the server's `chapters`) sit
+ * among the speech lines, and among all lines when interleaved; `counts`
+ * leaves them out.
  *
  * - Interleaved (the server placed the speech on the session clock): one
  *   list, `lines`, in session time; a speech line comes before an audience
@@ -116,13 +175,16 @@ export function transcriptLines(body, { view = "all", query = "", speaker = unde
   const room = wantRoom ? (body?.room || []).map(roomLine).filter((line) => matches(line, needle)) : [];
   const interleaved = Boolean(body?.clock?.interleave);
   const counts = { speech: speech.length, room: room.length };
-  if (!interleaved) return { interleaved, lines: [], speech: continued(speech), room, counts };
+  const speechOrder = new Map((body?.speech || []).map((line, i) => [line.id, i]));
+  if (!interleaved) {
+    return { interleaved, lines: [], speech: continued(withChapters(speech, body, speechOrder, { byTime: false })), room, counts };
+  }
   const order = (line) => (line.t == null ? Number.POSITIVE_INFINITY : line.t);
   const lines = [...speech, ...room]
     .map((line, index) => ({ line, index, speechFirst: line.kind === "speech" ? 0 : 1 }))
     .sort((a, b) => order(a.line) - order(b.line) || a.speechFirst - b.speechFirst || a.index - b.index)
     .map((entry) => entry.line);
-  return { interleaved, lines: continued(lines), speech: [], room: [], counts };
+  return { interleaved, lines: continued(withChapters(lines, body, speechOrder, { byTime: true })), speech: [], room: [], counts };
 }
 
 /** Marks a speech line that follows the same speaker's (`continued`): the

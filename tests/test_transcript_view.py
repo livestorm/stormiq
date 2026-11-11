@@ -30,8 +30,9 @@ def _no_stored_roster():
 
 
 def _get(row, path=None):
+    """The route on `row`, its chat labels and understanding stored."""
     status, roster = _no_stored_roster()
-    with status, roster, synthetic.serving(row) as client:
+    with status, roster, synthetic.with_understanding(row), synthetic.serving(row) as client:
         return client.get(path or f"/api/sessions/{row['session_id']}/record/transcript")
 
 
@@ -142,7 +143,7 @@ def test_the_route_serves_the_view_with_the_callers_scope():
     response = _get(row)
     assert response.status_code == 200, response.text
     body = response.json()
-    assert list(body) == ["sessionId", "updatedAt", "version", "clock", "speakers", "speech", "room"]
+    assert list(body) == ["sessionId", "updatedAt", "version", "clock", "speakers", "speech", "room", "chapters"]
     assert body["sessionId"] == row["session_id"]
     assert body["clock"]["interleave"] is True
     missing = _get(row, "/api/sessions/no-such-session/record/transcript")
@@ -160,7 +161,7 @@ def test_the_route_needs_a_caller():
 def test_a_bug_in_the_view_returns_500_without_its_detail(monkeypatch):
     from livestorm_app.record import transcript_view as module
 
-    def broken(inputs, speaker_names=None):
+    def broken(*args, **kwargs):
         raise RuntimeError("synthetic failure with internal detail")
 
     monkeypatch.setattr(module, "transcript_view", broken)
