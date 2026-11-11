@@ -5,7 +5,8 @@ import StatusWord from "../ui/StatusWord.vue";
 // of speech, full width, or a chat, Q&A or answer line, indented with a rule
 // in its series colour (chat `s1`, Q&A `s2`). `flat` drops the indent, for
 // the room's own list. An unclear word is underlined, dotted, and says so to
-// screen readers. Text is rendered as text, never as HTML.
+// screen readers. A chapter line (`kind: "chapter"`) is a heading across the
+// list. Text is rendered as text, never as HTML.
 defineProps({
   line: { type: Object, required: true },
   flat: { type: Boolean, default: false },
@@ -13,7 +14,14 @@ defineProps({
 </script>
 
 <template>
+  <li v-if="line.kind === 'chapter'" class="tl tl-chapter">
+    <span class="tl-time">
+      {{ line.time }}<span v-if="line.timeIsRecording && line.time" class="siq-sr-only"> into the recording</span>
+    </span>
+    <h3 class="tl-chapter-title"><span class="siq-sr-only">Chapter: </span>{{ line.title }}</h3>
+  </li>
   <li
+    v-else
     class="tl"
     :class="[line.kind === 'speech' ? 'tl-speech' : 'tl-room', `tl-${line.kind}`, { 'tl-flat': flat, 'tl-team': line.team }]"
   >
@@ -42,6 +50,27 @@ defineProps({
   grid-template-columns: 4.5rem minmax(0, 1fr);
   gap: var(--siq-space-3);
   padding: var(--siq-space-2) var(--siq-space-6);
+}
+
+.tl-chapter {
+  margin-top: var(--siq-space-2);
+  padding-top: var(--siq-space-4);
+  padding-bottom: var(--siq-space-2);
+  box-shadow: inset 0 1px 0 var(--siq-hairline);
+}
+
+.tl-chapter:first-child {
+  margin-top: 0;
+  box-shadow: none;
+}
+
+.tl-chapter-title {
+  margin: 0;
+  font-size: var(--siq-text-ui);
+  line-height: var(--siq-text-ui-lh);
+  font-weight: var(--siq-weight-semibold);
+  color: var(--siq-ink);
+  overflow-wrap: anywhere;
 }
 
 .tl-time {
@@ -142,6 +171,9 @@ defineProps({
 @media (forced-colors: active) {
   .tl-room .tl-body {
     border-left: 2px solid CanvasText;
+  }
+  .tl-chapter {
+    border-top: 1px solid CanvasText;
   }
 }
 

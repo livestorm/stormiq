@@ -1795,5 +1795,45 @@
       "author": "Lena H.",
       "team": false
     }
-  ]
+  ],
+  "chapters": {
+    "state": "ready",
+    "items": [
+      {
+        "title": "Welcome and agenda",
+        "kind": "opening",
+        "first": "U0001",
+        "r": 3,
+        "t": 21.9
+      },
+      {
+        "title": "The dashboard, view by view",
+        "kind": "demo",
+        "first": "U0006",
+        "r": 60,
+        "t": 78.9
+      },
+      {
+        "title": "Pricing for larger teams",
+        "kind": "content",
+        "first": "U0028",
+        "r": 288,
+        "t": 306.9
+      },
+      {
+        "title": "Exports and questions",
+        "kind": "qa",
+        "first": "U0074",
+        "r": 760,
+        "t": 778.9
+      },
+      {
+        "title": "Goodbye",
+        "kind": "close",
+        "first": "U0166",
+        "r": 1700,
+        "t": 1718.9
+      }
+    ]
+  }
 }

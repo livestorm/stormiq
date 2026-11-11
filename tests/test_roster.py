@@ -1024,6 +1024,8 @@ RECORD_ENTRY_POINTS = {
         "_question_desk_inputs", "get_session_question_desk", "save_session_question_reply", "get_session_open_questions_csv",
         # The desk's located answers (`record.understanding.located_answers`) and the host's decision on one.
         "_located_answers", "decide_session_located_answer",
+        # The Transcript tab's inputs, and the chapters (`record.understanding.chapter_list`, `show_notes`).
+        "_transcript_inputs", "_chapter_list", "get_session_chapters",
         # The analysis's second step: the dossier, its checks and the result's version.
         "_read_understanding",
     },

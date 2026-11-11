@@ -27,6 +27,7 @@ Every route is a FastAPI handler in [`livestorm_app/routes/`](../livestorm_app/r
 | `/api/sessions/{id}/cached` | GET | caller | Same, but 204 instead of 404 when missing |
 | `/api/sessions/{id}/record` | GET | caller | v1 Report only: the session clock and the recording's alignment, the roster header, the Pulse, the transcript's health and the measures ([below](#the-v1-record)). 404 if not cached |
 | `/api/sessions/{id}/record/chat` | GET | caller | v1 Report only: the chat's text by evidence id (`C0001`), with each message's session time and team flag, for the counts that open their messages ([below](#the-v1-record)). No author. 404 if not cached |
+| `/api/sessions/{id}/record/chapters` | GET | caller | The chapters the session analysis found and their show notes ([below](#chapters)). No model call. 404 if not cached |
 | `/api/sessions/{id}/record/transcript` | GET | caller | The Transcript tab's room view: the speech, the chat, the questions and the written answers as text by id, with speakers' names and authors' short names ([below](#the-v1-record)). 404 if not cached |
 | `/api/sessions/{id}/record/questions` | GET | caller | The Follow-up tab's question desk: every audience question with its status and what the host saved ([below](#the-question-desk)). 404 if not cached |
 | `/api/sessions/{id}/record/questions` | PUT | caller | Mark one desk question answered (or not), with an optional reply: `{questionId, answered, reply}` (`questionId` like `Q001` or `C0001`, `reply` up to 4,000 characters). Returns the desk. 404 if not cached or not a desk question, 409 if the question has no Livestorm id, 422 for a malformed body |
@@ -86,11 +87,24 @@ The record carries no message text: a count of chat messages lists their evidenc
 - `clock`: `interleave` is true only when the alignment allows findings to the second (`alignment_allows(…, "seconds")`); then `offsetS` is the offset applied. Otherwise speech has no session time and the page shows speech and the room apart.
 - `speakers`: `{key, name, named}` in order of first appearance. `name` is the one saved with "Confirm names", else "Speaker 1", "Speaker 2"…; `named` says whether it was saved.
 - `speech`: one line per utterance, `{id, r, rEnd, t, speaker, text, unclear}`. `id` is the utterance's `U` id, `r` and `rEnd` are seconds into the recording, and `t` is `r + offsetS` on the session clock or null. `unclear` lists the character spans of the words below 0.6 confidence, found in the text in order (a word not found is left out).
+- `chapters`: `{state, items: [{title, kind, first, r, t}]}`, the chapters the session analysis found ([below](#chapters)), each starting at a speech line (`first`, a `U` id) with that line's `r` and `t` (`t` null when speech is off the clock). A chapter whose first line isn't in `speech` is left out.
 - `room`: the chat, the questions and the written answers in session-time order, `{id, kind, t, text, author, team}`, plus `answered` on a question (a written answer replies to it) and `replyTo` on an answer. `author` is a short name, "Priya S.", only through `roster.display_people`, which fails closed: an internal session or an author who doesn't resolve gets "Team" (the message's own team or guest-speaker flag) or "Attendee". Never an email address, a people id or a `P-` ref. Nothing says a question is open: an answer given out loud leaves no trace.
 
 ```
 {sessionId, updatedAt, messages: [{id: "C0001", t: 125.5, text, team}]}
 ```
+
+### Chapters
+
+`GET /api/sessions/{id}/record/chapters` (`api_logic.get_session_chapters`) reads the chapters the understanding job stored (`record.understanding.chapter_list`), read on demand and not cached:
+
+```
+{sessionId, updatedAt, state, chapters: [{title, kind, first, last, r, rEnd}], showNotes: {text, youtube}}
+```
+
+- `state`: `ready`, `none` (never read, or no transcript) or `stale` (read from the session as it was: no chapters). Chapters are used only while the stored reading came from the session's dossier as it is now, as the question desk's located answers are ([ai-outputs.md](ai-outputs.md#the-understanding-v1)).
+- `chapters` in order, without overlap: `kind` is `opening`, `content`, `demo`, `qa`, `close` or `other`; `r` is the first utterance's start and `rEnd` the last one's end, in seconds on the recording's clock (the replay's), so they need no alignment.
+- `showNotes` (`record.understanding.show_notes`): `text` has one line per chapter, "04:12 Title", on the recording's clock, the first at 00:00, hours shown when the replay runs past one; `youtube` is true when YouTube would read them as chapters (at least three, each at least ten seconds long).
 
 ### The question desk
 

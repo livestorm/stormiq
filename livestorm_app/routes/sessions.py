@@ -19,6 +19,7 @@ from livestorm_app.api_logic import (
     QuestionNotFoundError,
     QuestionNotSavableError,
     decide_session_located_answer,
+    get_session_chapters,
     get_session_chat_messages,
     get_session_open_questions_csv,
     get_session_question_desk,
@@ -129,6 +130,22 @@ def read_session_chat_messages(session_id: SessionId, caller: Caller = Depends(g
         raise HTTPException(
             status_code=500,
             detail={"resource": "Session chat", "message": "The session's chat could not be read."},
+        ) from exc
+
+
+@router.get("/api/sessions/{session_id}/record/chapters")
+def read_session_chapters(session_id: SessionId, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
+    """The session's chapters and their show notes, from what the session
+    analysis stored (`api_logic.get_session_chapters`). No model call."""
+    try:
+        return get_session_chapters(session_id, organization_id=caller.read_scope)
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail={"resource": "Session chapters", "message": str(exc)}) from exc
+    except Exception as exc:
+        logger.exception("Session chapters failed for session_id=%s", session_id)
+        raise HTTPException(
+            status_code=500,
+            detail={"resource": "Session chapters", "message": "The session's chapters could not be read."},
         ) from exc
 
 
