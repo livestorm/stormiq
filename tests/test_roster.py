@@ -1037,6 +1037,8 @@ RECORD_ENTRY_POINTS = {
         "get_session_findings",
         # The Report's "Who spoke up" (`record.voices`).
         "get_session_voices",
+        # The Pulse's key moments, told (`record.moments`).
+        "get_session_moments",
         # The Follow-up's Session analysis: its brief (`record.session_brief`) from the record, the understanding and the desk.
         "_write_session_analysis",
         # The Follow-up's FAQ: its brief (`record.faq_brief`) from the question desk.

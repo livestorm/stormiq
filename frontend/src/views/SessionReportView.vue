@@ -18,7 +18,9 @@ import UiButton from "../components/ui/UiButton.vue";
 import { analysisSummary, elapsedLabel, formatLength, formatSessionStart, preparationView } from "../report/format";
 import { createSessionReport } from "../report/useSessionReport";
 import { createChapters } from "../followup/useChapters";
-import { createFindings, createVoices } from "../report/useFindings";
+import { createFindings, createMoments, createVoices } from "../report/useFindings";
+import { momentPins } from "../report/moments";
+import KeyMoments from "../components/report/KeyMoments.vue";
 import { createQuestionDesk } from "../followup/useQuestionDesk";
 import { pulseMarks } from "../report/findings";
 import FindingsSection from "../components/report/FindingsSection.vue";
@@ -42,6 +44,8 @@ const findings = createFindings();
 // and "Who spoke up" (`GET /record/voices`).
 const desk = createQuestionDesk();
 const voices = createVoices();
+// The Pulse's key moments, told (`GET /record/moments`).
+const moments = createMoments();
 
 const route = useRoute();
 const router = useRouter();
@@ -55,6 +59,7 @@ watch(
     findings.open(id);
     desk.open(id);
     voices.open(id);
+    moments.open(id);
   },
   { immediate: true },
 );
@@ -64,6 +69,7 @@ onBeforeUnmount(() => {
   findings.close();
   desk.close();
   voices.close();
+  moments.close();
 });
 
 // Printing: a closed card prints only its header, so every closed section
@@ -135,6 +141,7 @@ watch(
       findings.reload();
       desk.reload();
       voices.reload();
+      moments.reload();
     }
   },
 );
@@ -148,6 +155,7 @@ watch(
     findings.reload();
     desk.reload();
     voices.reload();
+    moments.reload();
   },
 );
 
@@ -182,6 +190,7 @@ watch(
       findings.reload();
       desk.reload();
       voices.reload();
+      moments.reload();
     }
   },
 );
@@ -331,8 +340,9 @@ const short = computed(() => inShort(record.value?.measures || {}));
         <PulseChart
           :pulse="record.pulse"
           :alignment="clock.alignment || null"
-          :marks="pulseMarks(findings.state.body, record.pulse?.minutes?.length || 0)"
+          :marks="pulseMarks(findings.state.body, record.pulse?.minutes?.length || 0, moments.state.body ? momentPins(moments.state.body) : null)"
         />
+        <KeyMoments :moments="moments.state" @retry="moments.reload()" />
       </Card>
 
       <RoomSection :measures="record.measures || {}" :chat="state.chat" @load-chat="report.loadChat()" />

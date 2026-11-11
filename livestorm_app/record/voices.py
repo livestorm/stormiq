@@ -36,7 +36,7 @@ VOICES_LIMIT = 8
 _ALL_PEOPLE = 1_000_000
 
 
-def _people(inputs: Any) -> Dict[str, Dict[str, Optional[str]]]:
+def named_people(inputs: Any) -> Dict[str, Dict[str, Optional[str]]]:
     """`{ref: {name, company}}` for the people the page may name."""
     profile = INTERNAL_PROFILE if inputs.roster.meta.internal else PUBLIC_PROFILE
     people: Dict[str, Dict[str, Optional[str]]] = {}
@@ -105,7 +105,7 @@ def chat_voices(inputs: Any, *, limit: int = VOICES_LIMIT) -> Dict[str, Any]:
         by_author.values(), key=lambda e: (-(e["messages"] + e["questions"]), -e["questions"], e["ref"] or "~")
     )
     written = sum(e["messages"] + e["questions"] for e in ranked)
-    people = _people(inputs) if ranked else {}
+    people = named_people(inputs) if ranked else {}
     shown: List[Dict[str, Any]] = []
     for entry in ranked[:limit]:
         person = people.get(entry["ref"]) if entry["ref"] else None
