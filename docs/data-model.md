@@ -30,6 +30,7 @@ session_cache (
   faq_bundle               JSONB,           -- { English: "...", French: "..." }: the Follow-up's FAQ
   decisions_bundle         JSONB,           -- { English: "...", French: "..." }: the Follow-up's decisions and commitments
   team_digest_bundle       JSONB,           -- { English: "...", French: "..." }: the Follow-up's team digest
+  attendee_followup_bundle JSONB,           -- { English: "...", French: "..." }: the Follow-up's attendee follow-up
   content_repurpose_bundle JSONB,           -- { English: {summary, blog, email, social_media}, French: {...} }
   smart_recap_bundle       JSONB,           -- { professional, hype, surprise }
   created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),

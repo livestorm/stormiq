@@ -48,6 +48,10 @@ SESSION_ANALYSIS_PROMPT_PATH = PROMPTS_DIR / "session_analysis.txt"  # v1: ai/se
 FAQ_PROMPT_PATH = PROMPTS_DIR / "faq.txt"  # v1: ai/faq.py
 DECISIONS_PROMPT_PATH = PROMPTS_DIR / "decisions.txt"  # v1: ai/decisions.py
 TEAM_DIGEST_PROMPT_PATH = PROMPTS_DIR / "team_digest.txt"  # v1: ai/team_digest.py
+# v1.1 public formats (`ai/public_formats.py`): `prompts/<kind>.txt`.
+PUBLIC_FORMAT_PROMPT_PATHS = {
+    "attendee_followup": PROMPTS_DIR / "attendee_followup.txt",
+}
 
 ENV_PATH = Path(".env")
 

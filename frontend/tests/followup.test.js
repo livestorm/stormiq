@@ -67,6 +67,23 @@ describe("the Follow-up outputs", () => {
     expect(pdfUrl(fakeApi, "s1", digest, "English")).toBe("");
   });
 
+  it("read, make and follow the attendee follow-up by language, for the audience, with no PDF", () => {
+    const followup = outputFor("attendee-followup");
+    const email = "Subject: Thanks for joining\n\nHi there,\n\nWatch the replay at {{replay_link}}.";
+    const written = { ...outputs, attendeeFollowupBundle: { English: email } };
+    expect(followup.flow).toBe("attendeeFollowup");
+    expect(followup.group).toBe("For the audience");
+    expect(followup.label).toBe("Attendee follow-up");
+    expect(outputText(written, followup, "English")).toBe(email);
+    expect(outputText(outputs, followup, "English")).toBe("");
+    expect(canMake(outputs, followup, "French")).toBe(false);
+    expect(canMake(written, followup, "French")).toBe(true);
+    const state = { loading: { attendeeFollowup: true }, aiJobs: { attendee_followup: { language: "French", progress: { percent: 55 } } } };
+    expect(making(state, followup, "French")).toEqual({ busy: true, progress: 55 });
+    expect(making(state, followup, "English")).toEqual({ busy: false, progress: null });
+    expect(pdfUrl(fakeApi, "s1", followup, "English")).toBe("");
+  });
+
   it("read, make and follow the FAQ by language, with no PDF", () => {
     const faq = outputFor("faq");
     const withFaq = { ...outputs, faqBundle: { English: "## Questions and answers\n### Is there an API?\nYes." } };
@@ -110,7 +127,7 @@ describe("the Follow-up outputs", () => {
 
   it("list every output in its group, the recap's two tones as one item", () => {
     const groups = outputGroups(outputs, "English");
-    expect(groups.map((group) => group.name)).toEqual(["Analysis", "Repurposing"]);
+    expect(groups.map((group) => group.name)).toEqual(["Analysis", "Repurposing", "For the audience"]);
     // Surprise me sits in its own corner, not in a group.
     expect(CORNER_OUTPUTS.map((output) => output.key)).toEqual(["recap-surprise"]);
     expect(groups.flatMap((group) => group.items).some((item) => item.key === "recap-surprise")).toBe(false);
@@ -121,6 +138,9 @@ describe("the Follow-up outputs", () => {
       { key: "recap-professional", label: "Smart Recap", ready: true, keys: ["recap-professional", "recap-hype"], toggle: "recap" },
     ]);
     expect(groups[1].items.map((item) => item.label)).toEqual(["Summary", "Blog post", "Follow-up email", "Social posts", "FAQ"]);
+    expect(groups[2].items).toEqual([
+      { key: "attendee-followup", label: "Attendee follow-up", ready: false, keys: ["attendee-followup"], toggle: "" },
+    ]);
   });
 
   it("switch the recap between Formal and Hype, and keep the Deep analysis read-only", () => {
@@ -212,6 +232,7 @@ describe("earlier outputs and earlier versions", () => {
     expect(versionsQuery(outputFor("recap-hype"), "French")).toEqual({ kind: "smart_recap", tone: "hype" });
     expect(versionsQuery(outputFor("blog"), "English")).toEqual({ kind: "content", language: "English" });
     expect(versionsQuery(outputFor("team-digest"), "English")).toEqual({ kind: "team_digest", language: "English" });
+    expect(versionsQuery(outputFor("attendee-followup"), "French")).toEqual({ kind: "attendee_followup", language: "French" });
     expect(versionsQuery(outputFor("deep"), "English")).toEqual({ kind: "deep", language: "English" });
   });
 

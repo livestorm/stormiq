@@ -102,6 +102,7 @@ STAGE_TABLE: Dict[str, Dict[str, int]] = {
     "faq": ANALYSIS_STAGE_FLOORS,
     "decisions": ANALYSIS_STAGE_FLOORS,
     "team_digest": ANALYSIS_STAGE_FLOORS,
+    "attendee_followup": ANALYSIS_STAGE_FLOORS,
     "deep_analysis": ANALYSIS_STAGE_FLOORS,
     "smart_recap": ANALYSIS_STAGE_FLOORS,
     "content_repurposing": ANALYSIS_STAGE_FLOORS,
