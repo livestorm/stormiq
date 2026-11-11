@@ -7,7 +7,7 @@ import Collapsible from "../components/ui/Collapsible.vue";
 import Icon from "../components/ui/Icon.vue";
 import StatusWord from "../components/ui/StatusWord.vue";
 import UiButton from "../components/ui/UiButton.vue";
-import { EVENT_STATUSES, addedSessionIds, eventRow, finishedLine, idFromInput, sessionChoice } from "../sessions/add";
+import { EVENT_STATUSES, addedSessionIds, eventRow, idFromInput, sessionChoice, sessionListParts } from "../sessions/add";
 import { useWorkspace } from "../store/workspace";
 
 // Add session: pick a finished session from one of the organization's
@@ -87,6 +87,9 @@ const sessionsReady = computed(
 const sessions = computed(() =>
   sessionsReady.value ? (state.eventSessions || []).map((option) => sessionChoice(option, added.value)) : [],
 );
+// What the open event shows: loading, none, or the count line above the list.
+const parts = (event) =>
+  sessionListParts({ ready: sessionsReady.value, sessions: sessions.value, total: state.eventSessionsTotal, all: event.count });
 
 // ── Adding ──
 const addingId = ref("");
@@ -209,14 +212,14 @@ function listPasted() {
           </button>
 
           <div v-if="openEventId === event.id" :id="`a-sessions-${event.id}`" class="a-sessions">
-            <p v-if="!sessionsReady" class="a-muted" role="status">Loading the event's sessions…</p>
-            <p v-else-if="!sessions.length" class="a-muted">
+            <p v-if="parts(event).loading" class="a-muted" role="status">Loading the event's sessions…</p>
+            <p v-else-if="parts(event).empty" class="a-muted">
               This event has no finished session yet{{ event.count ? `: its ${event.sessions} are still to come, never started, cancelled or drafts` : "" }}.
             </p>
-            <p v-else-if="finishedLine(state.eventSessionsTotal, event.count)" class="a-muted a-count">
-              {{ finishedLine(state.eventSessionsTotal, event.count) }}
-            </p>
-            <ul v-else class="a-session-list" :aria-label="`Finished sessions of ${event.title}`">
+            <!-- The count line sits above the list, never instead of it (`sessionListParts`). -->
+            <template v-else>
+              <p v-if="parts(event).countLine" class="a-muted a-count">{{ parts(event).countLine }}</p>
+              <ul class="a-session-list" :aria-label="`Finished sessions of ${event.title}`">
               <li v-for="session in sessions" :key="session.id" class="a-session">
                 <span class="a-session-day">{{ session.day || "—" }}</span>
                 <span class="a-session-text">
@@ -253,7 +256,8 @@ function listPasted() {
                   </UiButton>
                 </span>
               </li>
-            </ul>
+              </ul>
+            </template>
             <div v-if="sessionsReady && state.eventSessionsNext" class="a-more">
               <UiButton variant="secondary" small :disabled="state.loading.eventSessionsMore" @click="loadMoreEventSessions().catch(() => {})">
                 {{ state.loading.eventSessionsMore ? "Loading…" : `Show more (${sessions.length} of ${state.eventSessionsTotal ?? "?"})` }}
