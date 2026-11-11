@@ -312,6 +312,7 @@ def test_route_inventory_covers_every_session_route():
     ids = {param.id for param in SESSION_ROUTES}
     assert "GET /api/sessions/{session_id}/record" in ids
     assert {"GET /api/sessions/{session_id}/roster-status", "POST /api/sessions/{session_id}/roster-sync"} <= ids
+    assert {"POST /api/sessions/{session_id}/no-show-followup", "GET /api/sessions/{session_id}/no-show-followup/job"} <= ids
 
 
 @pytest.mark.parametrize("method,path", SESSION_ROUTES)

@@ -6,12 +6,15 @@ import {
   canMake,
   cleanRecap,
   earlierVersions,
+  listKeyFor,
   making,
   modelLabel,
   outputFor,
   outputGroups,
   outputText,
   pdfUrl,
+  tabItems,
+  tabOptions,
   toggleOptions,
   versionText,
   versionsQuery,
@@ -67,13 +70,13 @@ describe("the Follow-up outputs", () => {
     expect(pdfUrl(fakeApi, "s1", digest, "English")).toBe("");
   });
 
-  it("read, make and follow the attendee follow-up by language, for the audience, with no PDF", () => {
+  it("read, make and follow the attendee follow-up (the email's Attended tab) by language, with no PDF", () => {
     const followup = outputFor("attendee-followup");
     const email = "Subject: Thanks for joining\n\nHi there,\n\nWatch the replay at {{replay_link}}.";
     const written = { ...outputs, attendeeFollowupBundle: { English: email } };
     expect(followup.flow).toBe("attendeeFollowup");
-    expect(followup.group).toBe("For the audience");
-    expect(followup.label).toBe("Attendee follow-up");
+    expect(followup.group).toBe("Repurposing");
+    expect([followup.label, followup.tabLabel]).toEqual(["Follow-up email", "Attended"]);
     expect(outputText(written, followup, "English")).toBe(email);
     expect(outputText(outputs, followup, "English")).toBe("");
     expect(canMake(outputs, followup, "French")).toBe(false);
@@ -82,6 +85,58 @@ describe("the Follow-up outputs", () => {
     expect(making(state, followup, "French")).toEqual({ busy: true, progress: 55, stage: "" });
     expect(making(state, followup, "English")).toEqual({ busy: false, progress: null, stage: "" });
     expect(pdfUrl(fakeApi, "s1", followup, "English")).toBe("");
+  });
+
+  it("read, make and follow the no-show email (the Not attended tab) by language, with no PDF", () => {
+    const noShow = outputFor("no-show-followup");
+    const email = "Subject: The replay is ready\n\nHi there,\n\nWatch it at {{replay_link}}.";
+    const written = { ...outputs, noShowFollowupBundle: { English: email } };
+    expect([noShow.flow, noShow.group, noShow.label, noShow.tabLabel]).toEqual(["noShowFollowup", "Repurposing", "Follow-up email", "Not attended"]);
+    expect(outputText(written, noShow, "English")).toBe(email);
+    expect(outputText(outputs, noShow, "English")).toBe("");
+    expect(canMake(outputs, noShow, "French")).toBe(false);
+    expect(canMake(written, noShow, "French")).toBe(true);
+    const state = { loading: { noShowFollowup: true }, aiJobs: { no_show_followup: { language: "English", progress: { percent: 30 } } } };
+    expect(making(state, noShow, "English")).toEqual({ busy: true, progress: 30, stage: "" });
+    expect(making(state, outputFor("attendee-followup"), "English").busy).toBe(false);
+    expect(making(state, noShow, "French").busy).toBe(false);
+    expect(pdfUrl(fakeApi, "s1", noShow, "English")).toBe("");
+    expect(versionsQuery(noShow, "French")).toEqual({ kind: "no_show_followup", language: "French" });
+  });
+
+  it("show the Follow-up email as three tabs, each with its purpose, button and URL key", () => {
+    const tabs = tabOptions(outputFor("email"));
+    expect(tabs.map((tab) => [tab.key, tab.tabLabel])).toEqual([
+      ["attendee-followup", "Attended"],
+      ["no-show-followup", "Not attended"],
+      ["email", "Generic"],
+    ]);
+    // Old links keep their tab: the attendee follow-up's and the repurposed email's keys.
+    expect(outputFor("attendee-followup").tabLabel).toBe("Attended");
+    expect(outputFor("email").tabLabel).toBe("Generic");
+    expect(outputFor("email").item).toBe("email");
+    for (const tab of tabs) {
+      expect(tab.label).toBe("Follow-up email");
+      expect(tab.purpose).toMatch(/^(For the people who came|For the people who registered and didn't come|Works for both)/);
+      expect(listKeyFor(tab)).toBe("attendee-followup");
+    }
+    expect(outputFor("attendee-followup").makeLabel).toBe("Write the email for attendees");
+    expect(outputFor("no-show-followup").makeLabel).toBe("Write the email for people who didn't attend");
+    expect(outputFor("email").makeLabel).toBeUndefined();
+    expect(outputFor("no-show-followup").notYet).toContain("never named");
+    expect(tabOptions(outputFor("overall"))).toEqual([]);
+    expect(toggleOptions(outputFor("email"))).toEqual([], "tabs are not the recap's toggle");
+    expect(listKeyFor(outputFor("recap-hype"))).toBe("recap-professional");
+    expect(listKeyFor(outputFor("faq"))).toBe("faq");
+
+    const written = { ...outputs, noShowFollowupBundle: { English: "Subject: Hi" } };
+    const state = { loading: { attendeeFollowup: true }, aiJobs: { attendee_followup: { language: "English" } } };
+    expect(tabItems(outputFor("no-show-followup"), written, state, "English")).toEqual([
+      { key: "attendee-followup", label: "Attended", purpose: tabs[0].purpose, current: false, ready: false, writing: true },
+      { key: "no-show-followup", label: "Not attended", purpose: tabs[1].purpose, current: true, ready: true, writing: false },
+      { key: "email", label: "Generic", purpose: tabs[2].purpose, current: false, ready: true, writing: false },
+    ]);
+    expect(tabItems(outputFor("overall"), written, state, "English")).toEqual([]);
   });
 
   it("read, make and follow the FAQ by language, with no PDF", () => {
@@ -125,10 +180,11 @@ describe("the Follow-up outputs", () => {
     expect(pdfUrl(fakeApi, "", outputFor("overall"), "English")).toBe("");
   });
 
-  it("list every output in its group, the recap's two tones as one item", () => {
+  it("list every output in its group, the recap's two tones and the email's three tabs as one item each", () => {
     const groups = outputGroups(outputs, "English");
     // The FAQ is filed with the desk ("From the session"); the view puts that group first.
-    expect(groups.map((group) => group.name)).toEqual(["Analysis", "Repurposing", "From the session", "For the audience"]);
+    expect(groups.map((group) => group.name)).toEqual(["Analysis", "Repurposing", "From the session"]);
+    expect(OUTPUTS.some((output) => output.group === "For the audience")).toBe(false);
     // Surprise me sits in its own corner, not in a group.
     expect(CORNER_OUTPUTS.map((output) => output.key)).toEqual(["recap-surprise"]);
     expect(groups.flatMap((group) => group.items).some((item) => item.key === "recap-surprise")).toBe(false);
@@ -139,10 +195,14 @@ describe("the Follow-up outputs", () => {
       { key: "recap-professional", label: "Smart Recap", ready: true, keys: ["recap-professional", "recap-hype"], toggle: "recap" },
     ]);
     expect(groups[1].items.map((item) => item.label)).toEqual(["Summary", "Blog post", "Follow-up email", "Social posts"]);
+    expect(groups[1].items[2]).toEqual({
+      key: "attendee-followup",
+      label: "Follow-up email",
+      ready: true,
+      keys: ["attendee-followup", "no-show-followup", "email"],
+      toggle: "email",
+    });
     expect(groups[2].items.map((item) => item.key)).toEqual(["faq"]);
-    expect(groups[3].items).toEqual([
-      { key: "attendee-followup", label: "Attendee follow-up", ready: false, keys: ["attendee-followup"], toggle: "" },
-    ]);
   });
 
   it("switch the recap between Formal and Hype, and keep the Deep analysis read-only", () => {

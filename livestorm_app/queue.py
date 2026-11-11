@@ -332,6 +332,7 @@ AI_JOB_KINDS = frozenset({
     "decisions",
     "team_digest",
     "attendee_followup",
+    "no_show_followup",
     "deep_analysis",
     "smart_recap",
     "content_repurposing",

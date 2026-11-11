@@ -9,6 +9,7 @@ function emptyAiJobs() {
     decisions: null,
     team_digest: null,
     attendee_followup: null,
+    no_show_followup: null,
     deep_analysis: null,
     smart_recap: null,
     content_repurposing: null,
@@ -64,6 +65,7 @@ const state = reactive({
     decisions: false,
     teamDigest: false,
     attendeeFollowup: false,
+    noShowFollowup: false,
     deepAnalysis: false,
     smartRecap: false,
     contentRepurposing: false,
@@ -855,6 +857,17 @@ async function runAttendeeFollowup(outputLanguage = state.outputLanguage) {
   });
 }
 
+async function runNoShowFollowup(outputLanguage = state.outputLanguage) {
+  await runAiFlow({
+    flag: "noShowFollowup",
+    jobKind: "no_show_followup",
+    flow: "no-show-followup",
+    start: (id, signal) => api.runNoShowFollowup(id, { apiKey: state.apiKey, outputLanguage }, { signal }),
+    query: { language: outputLanguage },
+    slot: { language: outputLanguage },
+  });
+}
+
 async function runDeepAnalysis(outputLanguage = state.outputLanguage) {
   await runAiFlow({
     flag: "deepAnalysis",
@@ -911,6 +924,7 @@ export function useWorkspace() {
     runDecisions,
     runTeamDigest,
     runAttendeeFollowup,
+    runNoShowFollowup,
     runDeepAnalysis,
     runSmartRecap,
     runContentRepurposing,

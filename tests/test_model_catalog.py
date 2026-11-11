@@ -19,7 +19,7 @@ from livestorm_app.ai import jobs, models
 ROOT = Path(__file__).resolve().parents[1]
 CLASSIC_KINDS = {"deep_analysis", "smart_recap", "content_repurposing", "translation"}
 # The Session analysis keeps the kind `overall_analysis` (its queue, bundle and PDF) but is a v1 job.
-V1_KINDS = {"profile", "chat_labels", "understanding", "verify_meaning", "overall_analysis", "faq", "decisions", "team_digest", "attendee_followup", "surprise_storyboard", "surprise_performance"}
+V1_KINDS = {"profile", "chat_labels", "understanding", "verify_meaning", "overall_analysis", "faq", "decisions", "team_digest", "attendee_followup", "no_show_followup", "surprise_storyboard", "surprise_performance"}
 
 # Every Claude id Admin offered or the config defaulted to before the catalog existed.
 IDS_IN_USE_BEFORE_THE_CATALOG = ["claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-8"]

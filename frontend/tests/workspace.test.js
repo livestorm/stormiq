@@ -148,6 +148,23 @@ describe("AI jobs", () => {
     expect(api.getAiJobStatus.mock.calls[0].slice(0, 3)).toEqual(["A", "analysis", { language: "English" }]);
   });
 
+  it("write the no-show email on its own route, job slot and loading flag", async () => {
+    await store.loadSessionById("A");
+    api.runNoShowFollowup = vi.fn(async () => ({ jobId: "no_show_followup:A:English", jobStatus: "pending" }));
+    api.getAiJobStatus.mockResolvedValueOnce({ sessionId: "A", outputsOnly: true, outputs: { noShowFollowupBundle: { English: "Subject: Hi" } } });
+
+    const run = store.runNoShowFollowup("English");
+    expect(store.state.loading.noShowFollowup).toBe(true);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await run;
+
+    expect(api.runNoShowFollowup.mock.calls[0].slice(0, 2)).toEqual(["A", { apiKey: "", outputLanguage: "English" }]);
+    expect(api.getAiJobStatus.mock.calls[0].slice(0, 3)).toEqual(["A", "no-show-followup", { language: "English" }]);
+    expect(store.state.aiJobs).toHaveProperty("no_show_followup", null);
+    expect(store.state.loading.noShowFollowup).toBe(false);
+    expect(store.state.workspace.outputs.noShowFollowupBundle.English).toBe("Subject: Hi");
+  });
+
   it("merge an outputs-only result into the workspace on screen", async () => {
     await store.loadSessionById("A");
     const tables = store.state.workspace.tables;

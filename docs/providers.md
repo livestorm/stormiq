@@ -40,6 +40,7 @@ The OpenAI text models (gpt-4o-mini, gpt-4o, gpt-4.1-mini, gpt-4.1, gpt-5.4-mini
 | `decisions` | v1: decisions and commitments, over the session's dossier | `claude-sonnet-5-5` | medium | 8,000 |
 | `team_digest` | v1: the team digest, over the digest's brief | `claude-haiku-5-5` | low | 1,000 |
 | `attendee_followup` | v1.1: the attendee follow-up, over its brief (`record/format_briefs.py`) | `claude-sonnet-5-5` | medium | 6,000 |
+| `no_show_followup` | v1.1: the no-show follow-up, over its brief (`record/format_briefs.py`) | `claude-sonnet-5-5` | medium | 6,000 |
 | `surprise_storyboard` | v1: Surprise me's storyboard, in the show job (`ai/surprise_story.py`) | `claude-haiku-5-5` | low | 3,000 |
 | `surprise_performance` | v1: Surprise me's performance script, the take rewritten for the ear, in the show job (`ai/surprise_performance.py`) | `claude-sonnet-5-5` | medium | 4,000 |
 | `deep_analysis` | Deep Analysis | `claude-haiku-4-5-20251001` | medium | 5,000 |
