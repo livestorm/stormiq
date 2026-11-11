@@ -5,6 +5,7 @@ import BeforeYouShare from "../components/report/BeforeYouShare.vue";
 import ChapterNotes from "../components/report/ChapterNotes.vue";
 import MarkdownBlocks from "../components/report/MarkdownBlocks.vue";
 import QuestionDesk from "../components/report/QuestionDesk.vue";
+import SurprisePlayer from "../components/report/SurprisePlayer.vue";
 import SessionTabs from "../components/report/SessionTabs.vue";
 import Card from "../components/ui/Card.vue";
 import Collapsible from "../components/ui/Collapsible.vue";
@@ -132,6 +133,11 @@ const body = computed(() => outputText(outputs.value, output.value, language.val
 const busy = computed(() => making(state, output.value, language.value));
 const allowed = computed(() => canMake(outputs.value, output.value, language.value));
 const pdf = computed(() => (body.value ? pdfUrl(api, props.sessionId, output.value, language.value) : ""));
+// Surprise me, played (`SurprisePlayer`): opened from its "Play it", closed
+// when another output is shown. Its key words come from the chapters' titles.
+const playOpen = ref(false);
+watch(() => output.value.key, () => (playOpen.value = false));
+const chapterTitles = computed(() => (chapters.state.body?.chapters || []).map((chapter) => chapter.title).filter(Boolean));
 const anyBusy = computed(() => OUTPUTS.some((item) => item.flow && state.loading[item.flow]));
 
 // ── Earlier versions: what was saved before the output on screen ──
@@ -350,11 +356,22 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
               {{ copied === "all" ? "Copied" : sections.length > 1 ? "Copy all" : "Copy" }}
             </UiButton>
             <UiButton v-if="pdf" variant="ghost" small icon="download" :href="pdf">PDF</UiButton>
+            <UiButton
+              v-if="output.corner"
+              variant="ghost"
+              small
+              :icon="playOpen ? 'x' : 'play'"
+              :aria-expanded="playOpen ? 'true' : 'false'"
+              @click="playOpen = !playOpen"
+            >
+              {{ playOpen ? "Close the player" : "Play it" }}
+            </UiButton>
             <span class="f-muted f-ai">Written by AI from this session. Check it before you share it.</span>
             <span v-if="uncheckedNote(figures.state.body)" class="f-unchecked">
               <Icon name="shield" :size="14" /> {{ uncheckedNote(figures.state.body) }}
             </span>
           </div>
+          <SurprisePlayer v-if="output.corner && playOpen" :take="body" :chapter-titles="chapterTitles" />
           <div v-if="sections.length > 1" class="f-sections">
             <section v-for="(section, index) in sections" :key="index" class="f-section">
               <div class="f-section-head">
