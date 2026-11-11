@@ -21,6 +21,8 @@ import json
 import re
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
+from livestorm_app.video.keys import FPS, HEIGHT, WIDTH
+
 W, H = 1920, 1080  # the frame the design is drawn in; the page scales it to 1280x720
 NAVY, NAVY2, TEAL, INK = "#0A1430", "#0F1E46", "#2EE6C9", "#F4F7FF"
 SHAKE = [(14, -9), (-12, 7), (9, 10), (-7, -6), (5, 4), (-3, 2), (0, 0)]
@@ -468,7 +470,7 @@ class Film:
 <script src="assets/gsap.min.js"></script>
 <style>{css}</style></head>
 <body>
-<div id="root" data-composition-id="main" data-start="0" data-duration="{total:.3f}" data-width="1280" data-height="720" data-fps="30">
+<div id="root" data-composition-id="main" data-start="0" data-duration="{total:.3f}" data-width="{WIDTH}" data-height="{HEIGHT}" data-fps="{FPS}">
 <div id="film">
   <div id="bg"><div id="glow"></div><div id="grid"></div></div>
   <div id="camera">
