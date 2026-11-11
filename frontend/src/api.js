@@ -212,6 +212,10 @@ export const api = {
   getSessionChapters(sessionId, { signal } = {}) {
     return request(sessionPath(sessionId, "/record/chapters"), { signal });
   },
+  // The saved decisions and commitments in one language, speakers named as saved now.
+  getSessionDecisions(sessionId, language, { signal } = {}) {
+    return request(`${sessionPath(sessionId, "/decisions")}?language=${encodeURIComponent(language)}`, { signal });
+  },
   // The Report's findings: what stood out, what was checked, what couldn't be.
   getSessionFindings(sessionId, { signal } = {}) {
     return request(sessionPath(sessionId, "/record/findings"), { signal });

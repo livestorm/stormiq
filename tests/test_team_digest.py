@@ -1,6 +1,6 @@
 """The Follow-up's "Team digest": its brief (`record/digest_brief.py`), the
 code checks on the model's answer (`check_digest`), the decisions read back
-from their Markdown (`record.decisions.decision_lines`), the job and its
+as saved (`record.decisions.decision_lines`: items, or the Markdown of before), the job and its
 prompt (`ai/team_digest.py`) and the runner (`api_logic.run_team_digest`:
 English written from the brief and checked, French a translation of it),
 on the synthetic webinar."""
@@ -17,7 +17,8 @@ from livestorm_app import api_logic
 from livestorm_app.ai import jobs
 from livestorm_app.ai import team_digest as ai_digest
 from livestorm_app.llm_client import LLMInvalidOutput
-from livestorm_app.record.decisions import NONE_STATED, check_decisions, decision_lines, decisions_markdown
+from livestorm_app.ai.decisions_entry import WORDS, entry_markdown
+from livestorm_app.record.decisions import check_decisions, decision_lines, saved_entry
 from livestorm_app.record.digest_brief import (
     INTERNAL_MARKER,
     MAX_WORDS,
@@ -41,8 +42,11 @@ NAMES = (
 )
 
 
-def _decisions_md():
-    """The decisions list as `run_decisions` saves it: speakers named as saved."""
+NONE_STATED = WORDS["English"]["none"]
+
+
+def _decisions_entry():
+    """The decisions list as `run_decisions` saves it: items, speakers as refs."""
     _, utterances, _ = build_dossier(load_record_inputs(synthetic.cached_row()))
     u = utterances[3]
     items = check_decisions(
@@ -54,7 +58,12 @@ def _decisions_md():
         ],
         utterances,
     )
-    return decisions_markdown(items, utterances, SAVED_NAMES, on_clock=True)
+    return saved_entry(items, utterances, on_clock=True)
+
+
+def _decisions_md():
+    """The decisions list as Markdown, as it was saved before November 2026: speakers named."""
+    return entry_markdown(_decisions_entry(), SAVED_NAMES)
 
 
 def _row(**extra):
@@ -68,7 +77,7 @@ def _run(*, language="English", answer=None, row=None, seen=None):
     """`run_team_digest` on the synthetic webinar, its chat labelled and its
     understanding stored, the model's answer `answer` (a function of the
     brief's text, or a text). What happened goes in `seen`."""
-    row = row or _row(decisions_bundle={"English": _decisions_md()})
+    row = row or _row(decisions_bundle={"English": _decisions_entry()})
     labels, stored = synthetic.chat_labels(row), synthetic.understanding(row)
     seen = {} if seen is None else seen
     seen.update(saved=[], briefs=[])
@@ -213,6 +222,17 @@ def test_the_decisions_are_read_back_without_who():
     ]
     assert lines[0]["due"] and lines[1]["due"] is None
     assert decision_lines(NONE_STATED) == []
+
+
+def test_saved_items_are_read_back_without_who_in_the_talks_order():
+    lines = decision_lines(_decisions_entry())
+    assert [(line["kind"], line["text"]) for line in lines] == [
+        ("commitment", "Send the slides to everyone."),
+        ("decision", "Exports to CSV stay free."),
+    ]
+    assert lines[1]["due"] and lines[0]["due"] is None
+    assert set(lines[0]) == {"kind", "text", "due"}, "never an owner, a speaker or a quote"
+    assert decision_lines({**_decisions_entry(), "items": []}) == []
 
 
 # ── The checks ──

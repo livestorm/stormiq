@@ -51,6 +51,7 @@ from livestorm_app.record.alignment import SECONDS, alignment_allows
 from livestorm_app.record.evidence import ANSWER, CHAT, QUESTION
 from livestorm_app.record.roster import INTERNAL_PROFILE, PUBLIC_PROFILE, display_people
 from livestorm_app.record.transcript_health import LOW_CONFIDENCE
+from livestorm_app.speakers import speaker_name  # re-exported: `record.moments` and the tests read it here
 
 VIEW_VERSION = 1
 
@@ -83,15 +84,6 @@ def short_name(name: Any) -> Optional[str]:
     if len(words) == 1:
         return words[0]
     return f"{words[0]} {words[-1][0].upper()}."
-
-
-def speaker_name(key: Optional[str], saved: Mapping[str, Any], order: int) -> str:
-    """The name the user saved for a speaker, else "Speaker n" (n from 1, in
-    order of first appearance)."""
-    label = saved.get(key) if key is not None else None
-    if isinstance(label, str) and label.strip():
-        return label.strip()
-    return f"Speaker {order}"
 
 
 def unclear_spans(text: str, words: Sequence[Tuple[str, float]]) -> List[List[int]]:

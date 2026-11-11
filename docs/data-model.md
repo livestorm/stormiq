@@ -28,7 +28,7 @@ session_cache (
   deep_analysis_md         TEXT,            -- legacy: English deep analysis only
   deep_analysis_bundle     JSONB,           -- { English: "...", French: "..." }
   faq_bundle               JSONB,           -- { English: "...", French: "..." }: the Follow-up's FAQ
-  decisions_bundle         JSONB,           -- { English: "...", French: "..." }: the Follow-up's decisions and commitments
+  decisions_bundle         JSONB,           -- { English: {format: "decisions/2", clock, speakers, items}, French: {…} }: the Follow-up's decisions and commitments, speakers as refs (S0), named when read (ai-outputs.md); a Markdown string for a list saved before November 2026
   team_digest_bundle       JSONB,           -- { English: "...", French: "..." }: the Follow-up's team digest
   attendee_followup_bundle JSONB,           -- { English: "...", French: "..." }: the Follow-up email's Attended tab
   no_show_followup_bundle  JSONB,           -- { English: "...", French: "..." }: the Follow-up email's Not attended tab
