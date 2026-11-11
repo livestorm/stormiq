@@ -173,6 +173,10 @@ export const api = {
     const params = new URLSearchParams(Object.entries(query).filter(([, value]) => value != null && value !== ""));
     return request(`${sessionPath(sessionId, "/output-versions")}?${params}`, { signal });
   },
+  // The Sessions library: one session's row (sparkline, numbers, still open, lead finding).
+  getSessionLibraryRow(sessionId, { signal } = {}) {
+    return request(sessionPath(sessionId, "/record/library"), { signal });
+  },
   // Before you share: the figures said on stage to check, with the host's answers.
   getFigureChecks(sessionId, { signal } = {}) {
     return request(sessionPath(sessionId, "/record/figures"), { signal });

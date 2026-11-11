@@ -1,18 +1,24 @@
 <script setup>
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
+import SessionSparkline from "../components/report/SessionSparkline.vue";
 import Card from "../components/ui/Card.vue";
 import Icon from "../components/ui/Icon.vue";
 import StatCard from "../components/ui/StatCard.vue";
 import StatusWord from "../components/ui/StatusWord.vue";
 import UiButton from "../components/ui/UiButton.vue";
+import { libraryCells } from "../sessions/library";
 import { SORTS, eventOptions, sessionCounts, sessionRow, visibleSessions } from "../sessions/list";
+import { createLibraryRows } from "../sessions/useLibraryRows";
 import { useWorkspace } from "../store/workspace";
 
 // The v1 Sessions page: every session the organization has fetched, as one
 // index table. The list comes from the store (`loadWorkspaceSessions`,
 // `GET /api/workspace-sessions`); `sessions/list.js` filters, sorts and
-// words it. A row opens the session's Report.
+// words it. A row opens the session's Report. Each row's shape, audience
+// numbers and lead finding come from the session's own record
+// (`GET /record/library`), asked only for the rows that come on screen
+// (`sessions/useLibraryRows.js`), a few at a time.
 
 const { state, loadWorkspaceSessions } = useWorkspace();
 
@@ -43,6 +49,32 @@ const shownLabel = computed(() => {
   const total = counts.value.sessions;
   const noun = total === 1 ? "session" : "sessions";
   return filtered.value ? `${rows.value.length} of ${total} ${noun}` : `${total} ${noun}`;
+});
+
+// ── The library's cells, for the rows on screen ──
+const library = createLibraryRows();
+const cells = computed(() => {
+  const out = {};
+  for (const [id, entry] of Object.entries(library.state.rows)) out[id] = { loading: entry.loading, ...(libraryCells(entry.body, id) || {}) };
+  return out;
+});
+// Made at setup, before the rows' refs run: a row is asked for once it comes
+// within 200px of the screen. Without IntersectionObserver, every row is.
+const observer =
+  typeof IntersectionObserver === "undefined"
+    ? null
+    : new IntersectionObserver(
+        (entries) => entries.forEach((entry) => entry.isIntersecting && library.want(entry.target.dataset.sessionId)),
+        { rootMargin: "200px 0px" },
+      );
+function watchRow(element) {
+  if (!element) return;
+  if (observer) observer.observe(element);
+  else library.want(element.dataset.sessionId);
+}
+onBeforeUnmount(() => {
+  observer?.disconnect();
+  library.close();
 });
 
 function clearFilters() {
@@ -104,13 +136,16 @@ function clearFilters() {
             <tr>
               <th scope="col">Date</th>
               <th scope="col">Session</th>
+              <th scope="col"><span class="siq-sr-only">Shape: </span>Audience chat</th>
               <th scope="col" class="s-num">Attendees</th>
+              <th scope="col" class="s-figure">Wrote</th>
+              <th scope="col" class="s-figure">Questions</th>
               <th scope="col">Transcript</th>
               <th scope="col">Added by</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="row in rows" :key="row.id" class="s-row">
+            <tr v-for="row in rows" :key="row.id" :ref="watchRow" class="s-row" :data-session-id="row.id">
               <td class="s-date">{{ row.day }}</td>
               <td class="s-session">
                 <!-- The title's link covers the whole row (::after). -->
@@ -120,10 +155,28 @@ function clearFilters() {
                   <span v-if="row.subtitle && row.length" aria-hidden="true"> · </span>
                   <span v-if="row.length">{{ row.length }}</span>
                 </span>
+                <span v-if="cells[row.id]?.lead" class="s-lead">{{ cells[row.id].lead }}</span>
+              </td>
+              <td class="s-spark">
+                <SessionSparkline
+                  v-if="cells[row.id] && !cells[row.id].loading"
+                  :points="cells[row.id].sparkline"
+                  :label="cells[row.id].sparkLabel"
+                />
               </td>
               <td class="s-num">
                 <span class="s-attendees">{{ row.attendees }}</span>
                 <span v-if="row.registrants" class="s-meta">{{ row.registrants }}</span>
+              </td>
+              <td class="s-figure s-wrote">
+                <template v-if="cells[row.id] && !cells[row.id].loading">
+                  {{ cells[row.id].wrote }}<span v-if="cells[row.id].wroteEstimated" class="s-meta" title="Estimated, as on the Report"> est.</span>
+                </template>
+              </td>
+              <td class="s-figure s-questions">
+                <template v-if="cells[row.id] && !cells[row.id].loading">
+                  {{ cells[row.id].questions }}<span v-if="cells[row.id].open" class="s-meta"> · {{ cells[row.id].open }}</span>
+                </template>
               </td>
               <td class="s-transcript">
                 <StatusWord v-if="row.transcript === 'ready'" status="measured" label="Ready" />
@@ -138,7 +191,11 @@ function clearFilters() {
           <UiButton variant="ghost" icon="x" @click="clearFilters">Clear the search</UiButton>
         </div>
       </Card>
-      <p class="s-note">Attendees and registrants are Livestorm's counts, your team included. Each session's Report counts the audience alone.</p>
+      <p class="s-note">
+        Attendees and registrants are Livestorm's counts, your team included. Audience chat, wrote and questions are the
+        audience's alone, as on each session's Report ("est." marks an estimate), and the line under a title is what
+        stood out most.
+      </p>
     </template>
   </div>
 </template>
@@ -402,6 +459,25 @@ function clearFilters() {
   color: var(--siq-ink-2);
 }
 
+.s-lead {
+  display: block;
+  margin-top: var(--siq-space-1);
+  max-width: 48ch;
+  font-size: var(--siq-text-small);
+  line-height: var(--siq-text-small-lh);
+  color: var(--siq-ink-2);
+}
+
+.s-spark {
+  width: 96px;
+}
+
+.s-table .s-figure {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
 .s-none {
   display: flex;
   flex-direction: column;
@@ -453,7 +529,7 @@ function clearFilters() {
     display: grid;
     grid-template-columns: auto auto 1fr;
     grid-template-areas:
-      "session session session"
+      "session session spark"
       "date num transcript";
     align-items: baseline;
     gap: var(--siq-space-1) var(--siq-space-3);
@@ -480,7 +556,13 @@ function clearFilters() {
   .s-transcript {
     grid-area: transcript;
   }
-  .s-added {
+  .s-spark {
+    grid-area: spark;
+    justify-self: end;
+    width: auto;
+  }
+  .s-added,
+  .s-table .s-figure {
     display: none;
   }
 }

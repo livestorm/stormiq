@@ -1033,8 +1033,8 @@ RECORD_ENTRY_POINTS = {
         "_located_answers", "decide_session_located_answer",
         # The Transcript tab's inputs, and the chapters (`record.understanding.chapter_list`, `show_notes`).
         "_transcript_inputs", "_chapter_list", "get_session_chapters",
-        # The Report's findings (`record.findings`).
-        "get_session_findings",
+        # The Report's findings (`record.findings`), with the desk they read, and the Sessions library's row (`record.library`).
+        "_findings_and_desk", "get_session_library_row",
         # The Report's "Who spoke up" (`record.voices`).
         "get_session_voices",
         # The Pulse's key moments, told (`record.moments`).
