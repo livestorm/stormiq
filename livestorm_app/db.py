@@ -3748,3 +3748,91 @@ def admin_delete_session(session_id: str) -> bool:
     except Exception:
         logger.exception("Failed to delete session session_id=%s", session_id)
         return False
+
+
+# ── Reset of AI outputs (scripts/reset_ai_outputs.py) ─────────────────────
+#
+# Everything a model wrote, or that was derived from what a model wrote, so
+# users regenerate it with the current models and formats. What sessions
+# were fetched with (details, chat, questions, people), their transcripts,
+# the host's own answers (desk replies, figure checks), sign-ins, settings
+# and `llm_usage` are kept.
+
+AI_OUTPUT_COLUMNS = (
+    "analysis_bundle",
+    "deep_analysis_bundle",
+    "content_repurpose_bundle",
+    "smart_recap_bundle",
+    "faq_bundle",
+    "decisions_bundle",
+    "team_digest_bundle",
+    "attendee_followup_bundle",
+)
+# Whole tables of AI-derived rows (each references `session_cache`).
+AI_OUTPUT_TABLES = (
+    "output_versions",
+    "session_chat_labels",
+    "session_understanding",
+    "session_faq",
+    "surprise_storyboards",
+    "surprise_scripts",
+    "surprise_voice_clips",
+)
+
+
+def count_ai_outputs(*, include_covers: bool = False) -> Dict[str, int]:
+    """How many rows the reset would touch, by what: one count per bundle
+    column (sessions holding it), per table, the desk's decisions on located
+    answers and, with `include_covers`, the cover images. Raises when the
+    database can't be read."""
+    if not database_enabled():
+        raise RuntimeError("Database is not configured.")
+    counts: Dict[str, int] = {}
+    with get_db_connection() as connection:
+        for column in AI_OUTPUT_COLUMNS:
+            row = connection.execute(f"SELECT COUNT(*) AS n FROM session_cache WHERE {column} IS NOT NULL").fetchone()
+            counts[f"session_cache.{column}"] = int(row["n"])
+        if include_covers:
+            row = connection.execute("SELECT COUNT(*) AS n FROM session_cache WHERE cover_image_bytes IS NOT NULL").fetchone()
+            counts["session_cache.cover_image"] = int(row["n"])
+        for table in AI_OUTPUT_TABLES:
+            counts[table] = int(connection.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()["n"])
+        row = connection.execute("SELECT COUNT(*) AS n FROM session_question_replies WHERE located IS NOT NULL").fetchone()
+        counts["session_question_replies.located"] = int(row["n"])
+    return counts
+
+
+def reset_ai_outputs(*, include_covers: bool = False) -> Dict[str, int]:
+    """Remove every AI output in one transaction (all or nothing): the
+    bundle columns set to NULL, the AI-derived tables emptied, the desk's
+    decisions on located answers cleared (the host's replies stay) and, with
+    `include_covers`, the cover images. `updated_at` is left alone, so the
+    session library keeps its order. Returns the rows touched, by what.
+    Raises RuntimeError when the write fails (nothing is changed then)."""
+    if not database_enabled():
+        raise RuntimeError("Database is not configured.")
+    done: Dict[str, int] = {}
+    try:
+        with get_db_connection() as connection:
+            for column in AI_OUTPUT_COLUMNS:
+                done[f"session_cache.{column}"] = connection.execute(
+                    f"UPDATE session_cache SET {column} = NULL WHERE {column} IS NOT NULL"
+                ).rowcount
+            if include_covers:
+                done["session_cache.cover_image"] = connection.execute(
+                    """
+                    UPDATE session_cache
+                    SET cover_image_bytes = NULL, cover_image_mime = NULL, cover_image_generated_at = NULL
+                    WHERE cover_image_bytes IS NOT NULL
+                    """
+                ).rowcount
+            for table in AI_OUTPUT_TABLES:
+                done[table] = connection.execute(f"DELETE FROM {table}").rowcount
+            done["session_question_replies.located"] = connection.execute(
+                "UPDATE session_question_replies SET located = NULL WHERE located IS NOT NULL"
+            ).rowcount
+            connection.commit()
+    except Exception as exc:
+        logger.error("Failed to reset the AI outputs (%s)", _error_label(exc))
+        raise RuntimeError("Could not reset the AI outputs; nothing was changed.") from exc
+    return {key: int(value or 0) for key, value in done.items()}
