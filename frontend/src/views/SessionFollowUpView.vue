@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from "vue";
-import { RouterLink, useRoute, useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import BeforeYouShare from "../components/report/BeforeYouShare.vue";
 import ChapterNotes from "../components/report/ChapterNotes.vue";
 import MarkdownBlocks from "../components/report/MarkdownBlocks.vue";
@@ -162,15 +162,7 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
 
 <template>
   <div class="f-page">
-    <nav class="f-crumbs" aria-label="Breadcrumb">
-      <RouterLink class="f-crumb siq-fx" to="/sessions">Sessions</RouterLink>
-      <Icon name="chevron-right" :size="14" />
-      <RouterLink class="f-crumb siq-fx" :to="`/sessions/${encodeURIComponent(sessionId)}/report`">
-        {{ title || "Session" }}
-      </RouterLink>
-      <Icon name="chevron-right" :size="14" />
-      <span aria-current="page">Follow-up</span>
-    </nav>
+    <SessionTabs :session-id="sessionId" current="follow-up" :title="title || ''" />
 
     <header class="f-head">
       <h1 class="f-title">{{ title || "Follow-up" }}</h1>
@@ -180,7 +172,6 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
       </p>
     </header>
 
-    <SessionTabs :session-id="sessionId" current="follow-up" />
 
     <BeforeYouShare :figures="figures" />
 
@@ -398,25 +389,8 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
   gap: var(--siq-space-6);
 }
 
-.f-crumbs {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--siq-space-2);
-  font-size: var(--siq-text-small);
-  line-height: var(--siq-text-small-lh);
-  color: var(--siq-muted);
-}
 
-.f-crumb {
-  color: var(--siq-accent);
-  text-decoration: none;
-  border-radius: var(--siq-radius-inline);
-}
 
-.f-crumb:hover {
-  color: var(--siq-accent-hover);
-}
 
 .f-head {
   display: flex;
@@ -726,7 +700,6 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
 
 @media print {
   .f-nav,
-  .f-crumbs,
   .f-actions {
     display: none !important;
   }

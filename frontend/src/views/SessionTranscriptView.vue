@@ -1,6 +1,5 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { RouterLink } from "vue-router";
 import SessionTabs from "../components/report/SessionTabs.vue";
 import SpeakingStats from "../components/report/SpeakingStats.vue";
 import TranscriptLine from "../components/report/TranscriptLine.vue";
@@ -186,15 +185,7 @@ const jobBusy = computed(() => ["pending", "running", "starting", "checking"].in
 
 <template>
   <div ref="page" class="t-page">
-    <nav class="t-crumbs" aria-label="Breadcrumb">
-      <RouterLink class="t-crumb siq-fx" to="/sessions">Sessions</RouterLink>
-      <Icon name="chevron-right" :size="14" />
-      <RouterLink class="t-crumb siq-fx" :to="`/sessions/${encodeURIComponent(sessionId)}/report`">
-        {{ title || "Session" }}
-      </RouterLink>
-      <Icon name="chevron-right" :size="14" />
-      <span aria-current="page">Transcript</span>
-    </nav>
+    <SessionTabs :session-id="sessionId" current="transcript" :title="title || ''" />
 
     <header class="t-head">
       <h1 class="t-title">{{ title || "Transcript" }}</h1>
@@ -204,7 +195,6 @@ const jobBusy = computed(() => ["pending", "running", "starting", "checking"].in
       </p>
     </header>
 
-    <SessionTabs :session-id="sessionId" current="transcript" />
 
     <p v-if="state.loading && !body" class="t-muted" role="status">Loading the transcript…</p>
 
@@ -443,25 +433,8 @@ const jobBusy = computed(() => ["pending", "running", "starting", "checking"].in
   gap: var(--siq-space-6);
 }
 
-.t-crumbs {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--siq-space-2);
-  font-size: var(--siq-text-small);
-  line-height: var(--siq-text-small-lh);
-  color: var(--siq-muted);
-}
 
-.t-crumb {
-  color: var(--siq-accent);
-  text-decoration: none;
-  border-radius: var(--siq-radius-inline);
-}
 
-.t-crumb:hover {
-  color: var(--siq-accent-hover);
-}
 
 .t-head {
   display: flex;
@@ -843,8 +816,7 @@ const jobBusy = computed(() => ["pending", "running", "starting", "checking"].in
 @media print {
   .t-tools,
   .t-actions,
-  .t-room-tools,
-  .t-crumbs {
+  .t-room-tools {
     display: none !important;
   }
 }

@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { RouterLink, useRoute, useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import Card from "../components/ui/Card.vue";
 import CardHeader from "../components/ui/CardHeader.vue";
 import Chip from "../components/ui/Chip.vue";
@@ -211,11 +211,7 @@ const points = computed(() =>
 
 <template>
   <div ref="page" class="r-page">
-    <nav class="r-crumbs" aria-label="Breadcrumb">
-      <RouterLink class="r-crumb siq-fx" to="/sessions">Sessions</RouterLink>
-      <Icon name="chevron-right" :size="14" />
-      <span aria-current="page">{{ body ? title : "Session" }}</span>
-    </nav>
+    <SessionTabs :session-id="sessionId" current="report" :title="body ? title : ''" />
 
     <p v-if="state.loading && !body" class="r-status" role="status">Loading the session…</p>
 
@@ -327,7 +323,6 @@ const points = computed(() =>
         </div>
       </Card>
 
-      <SessionTabs :session-id="sessionId" current="report" />
 
       <template v-if="!state.preparing">
       <Card v-if="short.sentence || short.chips.length || points.length" padding="hero">
@@ -376,24 +371,8 @@ const points = computed(() =>
   gap: var(--siq-space-6);
 }
 
-.r-crumbs {
-  display: flex;
-  align-items: center;
-  gap: var(--siq-space-2);
-  font-size: var(--siq-text-small);
-  line-height: var(--siq-text-small-lh);
-  color: var(--siq-muted);
-}
 
-.r-crumb {
-  color: var(--siq-accent);
-  text-decoration: none;
-  border-radius: var(--siq-radius-inline);
-}
 
-.r-crumb:hover {
-  color: var(--siq-accent-hover);
-}
 
 .r-head {
   display: flex;
