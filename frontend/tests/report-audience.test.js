@@ -10,6 +10,7 @@ import {
   channelLabel,
   channelTable,
   concentration,
+  emptyAudienceParts,
   formatMinutes,
   leadLabel,
   leadTable,
@@ -159,6 +160,25 @@ describe("lead time", () => {
     expect(table.rows.map((row) => row.registrants)).toEqual(["6", "1"]);
     expect(table.notes[0]).toMatch(/counts are shown/);
     expect(table.status).toBe("");
+  });
+});
+
+describe("emptyAudienceParts", () => {
+  it("lists the parts with no table, with the reason Method shows", () => {
+    expect(emptyAudienceParts(smallMeasures)).toEqual([]);
+    const measures = {
+      ...smallMeasures,
+      "m.channel_quality": { ...smallMeasures["m.channel_quality"], rows: [], coverage: { withSource: 0 } },
+      "m.lead_time_show_up": { ...smallMeasures["m.lead_time_show_up"], rows: [] },
+    };
+    expect(emptyAudienceParts(measures)).toEqual([
+      {
+        id: "channels",
+        label: "Where they came from",
+        why: "No registrant has a source (a UTM, a referrer or a registration type), so there are no channels.",
+      },
+      { id: "lead", label: "When they registered", why: "No registrant has a registration time." },
+    ]);
   });
 });
 

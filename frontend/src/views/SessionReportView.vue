@@ -20,6 +20,7 @@ import { createSessionReport } from "../report/useSessionReport";
 import { createChapters } from "../followup/useChapters";
 import { createFindings, createMoments, createVoices } from "../report/useFindings";
 import { momentPins } from "../report/moments";
+import { shortPoints } from "../report/summary";
 import KeyMoments from "../components/report/KeyMoments.vue";
 import { createQuestionDesk } from "../followup/useQuestionDesk";
 import { pulseMarks } from "../report/findings";
@@ -200,6 +201,11 @@ onBeforeUnmount(() => clearInterval(prepTicker));
 // a failure; an analysed session shows none.
 const showAnalysis = computed(() => Boolean(summary.value.action) || summary.value.busy || summary.value.tone === "low");
 const short = computed(() => inShort(record.value?.measures || {}));
+// What the rest of the page found, said first: the strongest findings, the
+// moment the room reacted most and the questions still open.
+const points = computed(() =>
+  shortPoints({ findings: findings.state.body, moments: moments.state.body, desk: desk.state.body }),
+);
 
 </script>
 
@@ -324,10 +330,16 @@ const short = computed(() => inShort(record.value?.measures || {}));
       <SessionTabs :session-id="sessionId" current="report" />
 
       <template v-if="!state.preparing">
-      <Card v-if="short.sentence || short.chips.length" padding="hero">
+      <Card v-if="short.sentence || short.chips.length || points.length" padding="hero">
         <CardHeader icon="star" title="In short" :level="2" />
         <p v-if="short.sentence" class="r-lead">{{ short.sentence }}</p>
-        <div v-if="short.chips.length" class="r-row">
+        <ul v-if="points.length" class="r-points">
+          <li v-for="point in points" :key="point.text" class="r-point">
+            <Icon :name="point.icon" :size="18" />
+            <span>{{ point.text }}</span>
+          </li>
+        </ul>
+        <div v-else-if="short.chips.length" class="r-row">
           <Chip v-for="chip in short.chips" :key="chip.text" tone="accent" :icon="chip.icon">{{ chip.text }}</Chip>
         </div>
       </Card>
@@ -351,7 +363,7 @@ const short = computed(() => inShort(record.value?.measures || {}));
 
       <AudienceSection :measures="record.measures || {}" :voices="voices.state" @retry-voices="voices.reload()" />
 
-      <MethodSection :body="body" />
+      <MethodSection :body="body" :findings="findings.state.body" />
       </template>
     </template>
   </div>
@@ -451,6 +463,31 @@ const short = computed(() => inShort(record.value?.measures || {}));
   font-size: var(--siq-text-ui);
   line-height: var(--siq-text-ui-lh);
   color: var(--siq-ink-2);
+}
+
+.r-points {
+  display: flex;
+  flex-direction: column;
+  gap: var(--siq-space-2);
+  max-width: 760px;
+  margin: var(--siq-space-4) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.r-point {
+  display: flex;
+  gap: var(--siq-space-3);
+  align-items: flex-start;
+  font-size: var(--siq-text-ui);
+  line-height: var(--siq-text-ui-lh);
+  color: var(--siq-ink);
+}
+
+.r-point :deep(svg) {
+  flex: none;
+  margin-top: 3px;
+  color: var(--siq-accent);
 }
 
 .r-lead {

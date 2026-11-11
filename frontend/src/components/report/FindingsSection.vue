@@ -2,13 +2,14 @@
 import { computed, ref } from "vue";
 import Card from "../ui/Card.vue";
 import CardHeader from "../ui/CardHeader.vue";
-import Collapsible from "../ui/Collapsible.vue";
+import Icon from "../ui/Icon.vue";
 import StatusWord from "../ui/StatusWord.vue";
 import { findingsView } from "../../report/findings";
 
 // "What stood out": the Report's findings (`GET /record/findings`), the
 // strongest first, each worded by `report/findings.js`, then what was
-// checked and found nothing, and what couldn't be checked and why. The
+// checked and found nothing, as tiles. What couldn't be checked gets one
+// line here; its reasons are in "Method and data quality". The
 // chapter finding draws the room's own chat a minute per chapter against
 // the usual chapter (the dashed line). Renders text only.
 
@@ -24,7 +25,6 @@ const LANGS = [
 ];
 const lang = ref("en");
 const view = computed(() => findingsView(props.body, lang.value));
-const checkedCount = computed(() => view.value.nothing.length + view.value.notChecked.length);
 </script>
 
 <template>
@@ -88,17 +88,22 @@ const checkedCount = computed(() => view.value.nothing.length + view.value.notCh
       </p>
     </article>
 
-    <Collapsible v-if="checkedCount" variant="link" :title="`${view.labels.checked} (${view.nothing.length})`">
-      <ul class="fs-checked">
-        <li v-for="line in view.nothing" :key="line">{{ line }}</li>
+    <section v-if="view.nothing.length" class="fs-checks" :aria-label="view.labels.checked" :lang="lang">
+      <h3 class="fs-checks-title">
+        <Icon name="check" :size="16" />
+        <span>{{ view.labels.checked }}</span>
+      </h3>
+      <ul class="fs-tiles">
+        <li v-for="item in view.nothing" :key="item.line" class="fs-tile">
+          <span class="fs-tile-icon" aria-hidden="true"><Icon :name="item.icon" :size="16" /></span>
+          <span class="fs-tile-body">
+            <span v-if="item.topic" class="fs-tile-topic">{{ item.topic }}</span>
+            <span class="fs-tile-text">{{ item.text }}</span>
+          </span>
+        </li>
       </ul>
-      <template v-if="view.notChecked.length">
-        <p class="fs-checked-head">{{ view.labels.notChecked }}</p>
-        <ul class="fs-checked">
-          <li v-for="line in view.notChecked" :key="line">{{ line }}</li>
-        </ul>
-      </template>
-    </Collapsible>
+    </section>
+    <p v-if="view.notChecked.length" class="fs-unchecked" :lang="lang">{{ view.labels.notCheckedNote(view.notChecked.length) }}</p>
   </Card>
 </template>
 
@@ -136,11 +141,6 @@ const checkedCount = computed(() => view.value.nothing.length + view.value.notCh
 
 .fs-bars,
 .fs-rows,
-.fs-checked {
-  margin: var(--siq-space-3) 0 0;
-  padding: 0;
-  list-style: none;
-}
 
 .fs-chart {
   margin: var(--siq-space-4) 0 0;
@@ -244,13 +244,6 @@ const checkedCount = computed(() => view.value.nothing.length + view.value.notCh
 }
 
 .fs-rows li,
-.fs-checked li {
-  padding: var(--siq-space-1) 0;
-  font-size: var(--siq-text-small);
-  line-height: var(--siq-text-small-lh);
-  color: var(--siq-ink-2);
-  font-variant-numeric: tabular-nums;
-}
 
 .fs-segmented {
   display: inline-flex;
@@ -298,12 +291,6 @@ const checkedCount = computed(() => view.value.nothing.length + view.value.notCh
   font-weight: var(--siq-weight-semibold);
 }
 
-.fs-checked-head {
-  margin: var(--siq-space-3) 0 0;
-  font-size: var(--siq-text-caption);
-  line-height: var(--siq-text-caption-lh);
-  color: var(--siq-muted);
-}
 
 .fs :deep(.siq-collapsible) {
   margin-top: var(--siq-space-4);
@@ -328,6 +315,83 @@ const checkedCount = computed(() => view.value.nothing.length + view.value.notCh
   .fs-bar.is-high .fs-bar-fill,
   .fs-bar.is-low .fs-bar-fill {
     background: Highlight;
+  }
+}
+
+.fs-checks {
+  margin-top: var(--siq-space-4);
+  padding-top: var(--siq-space-4);
+  box-shadow: inset 0 1px 0 var(--siq-hairline-row);
+}
+
+.fs-checks-title {
+  display: flex;
+  align-items: center;
+  gap: var(--siq-space-2);
+  margin: 0 0 var(--siq-space-3);
+  font-size: var(--siq-text-ui);
+  line-height: var(--siq-text-ui-lh);
+  font-weight: var(--siq-weight-medium);
+  color: var(--siq-ink);
+}
+
+.fs-checks-title :deep(svg) {
+  color: var(--siq-good);
+}
+
+.fs-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr));
+  gap: var(--siq-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fs-tile {
+  display: flex;
+  gap: var(--siq-space-3);
+  padding: var(--siq-space-3) var(--siq-space-4);
+  border-radius: var(--siq-radius-control);
+  box-shadow: inset 0 0 0 1px var(--siq-hairline);
+}
+
+.fs-tile-icon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--siq-muted);
+}
+
+.fs-tile-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.fs-tile-topic {
+  font-size: var(--siq-text-small);
+  line-height: var(--siq-text-small-lh);
+  font-weight: var(--siq-weight-medium);
+  color: var(--siq-ink);
+}
+
+.fs-tile-text {
+  font-size: var(--siq-text-small);
+  line-height: var(--siq-text-small-lh);
+  color: var(--siq-ink-2);
+}
+
+.fs-unchecked {
+  margin: var(--siq-space-3) 0 0;
+  font-size: var(--siq-text-small);
+  line-height: var(--siq-text-small-lh);
+  color: var(--siq-muted);
+}
+
+@media (forced-colors: active) {
+  .fs-tile {
+    border: 1px solid CanvasText;
   }
 }
 </style>

@@ -41,11 +41,11 @@ describe("the findings' words", () => {
   it("say what the route sent for the synthetic webinar: nothing found, and why chapters weren't checked", () => {
     const view = findingsView(body);
     expect(view.found).toEqual([]);
-    expect(view.nothing).toEqual([
+    expect(view.nothing.map((item) => item.line)).toEqual([
       "Production: no burst of sound or connection complaints, and no late start.",
       "Monologues: the longest stretch without bringing the room in was 5 min.",
     ]);
-    expect(view.notChecked).toEqual([
+    expect(view.notChecked.map((item) => item.line)).toEqual([
       "Chapters: too little unprompted chat to compare them.",
       "Prompts to the room: the analysis found none in the talk.",
       "Moments: fewer than 30 audience messages, too few to find a burst.",
@@ -153,12 +153,12 @@ describe("monologues and prompts", () => {
       ],
       notChecked: [{ id: "prompts", reason: "clock" }],
     });
-    expect(lines.nothing).toEqual([
+    expect(lines.nothing.map((item) => item.line)).toEqual([
       "Monologues: the longest stretch without bringing the room in was 5 min.",
       "Monologues: the longest stretch ran 12 min, and the chat held up.",
       "Prompts to the room: it had time to answer the one prompt.",
     ]);
-    expect(lines.notChecked).toEqual(["Prompts to the room: needs the recording's clock checked to the second."]);
+    expect(lines.notChecked.map((item) => item.line)).toEqual(["Prompts to the room: needs the recording's clock checked to the second."]);
   });
 
   it("mark the stretch and every prompt on the Pulse", () => {
@@ -213,7 +213,7 @@ describe("unprompted moments", () => {
       [1, 35],
       [2, 70],
     ]);
-    expect(checkedLines({ nothing: [{ id: "moments", values: { usualPerMinute: 2, replies: 1, waves: 2 } }] }).nothing).toEqual([
+    expect(checkedLines({ nothing: [{ id: "moments", values: { usualPerMinute: 2, replies: 1, waves: 2 } }] }).nothing.map((item) => item.line)).toEqual([
       "Moments: no burst beyond the room's usual 2 a minute, other than 1 reply to a prompt and 2 waves of greetings or logistics.",
     ]);
   });
@@ -236,11 +236,19 @@ describe("in French", () => {
   });
 
   it("say what was checked, and why not, in French", () => {
-    expect(findingsView(body, "fr").nothing[0]).toBe(
-      "Production : pas de vague de plaintes sur le son ou la connexion, et pas de retard au démarrage.",
-    );
+    expect(findingsView(body, "fr").nothing[0]).toMatchObject({
+      line: "Production : pas de vague de plaintes sur le son ou la connexion, et pas de retard au démarrage.",
+      topic: "Production",
+      text: "Pas de vague de plaintes sur le son ou la connexion, et pas de retard au démarrage.",
+      icon: "zap",
+    });
     expect(checkedLines({ notChecked: [{ id: "chapters", reason: "no_chapters" }] }, "fr").notChecked).toEqual([
-      "Chapitres : aucun pour l'instant. Lancez « Analyse session » pour les trouver.",
+      {
+        id: "chapters",
+        line: "Chapitres : aucun pour l'instant. Lancez « Analyse session » pour les trouver.",
+        topic: "Chapitres",
+        text: "Aucun pour l'instant. Lancez « Analyse session » pour les trouver.",
+      },
     ]);
   });
 });
