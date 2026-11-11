@@ -106,6 +106,9 @@ JOB_SPECS: Tuple[JobSpec, ...] = (
     # The Follow-up's "FAQ" (`ai/faq.py`): the audience's questions and their
     # answers, from the question desk (`record/faq_brief.py`).
     JobSpec("faq", "FAQ", "v1", "claude-haiku-5-5", "low", 4_000, layout="dossier"),
+    # The Follow-up's "Decisions and commitments" (`ai/decisions.py`): what was
+    # decided or promised on stage, from the understanding's dossier.
+    JobSpec("decisions", "Decisions and commitments", "v1", "claude-sonnet-5-5", "medium", 8_000, layout="dossier"),
     JobSpec("deep_analysis", "Deep Analysis", "legacy", "claude-haiku-4-5-20251001",
             "medium", 5_000, LEGACY_DEFAULT_SETTING, truncation_retry=True),
     JobSpec("smart_recap", "Smart Recap", "legacy", "claude-sonnet-4-6",

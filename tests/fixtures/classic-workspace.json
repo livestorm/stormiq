@@ -3838,7 +3838,8 @@
       "smartRecapBundle": {
         "professional": "# Recap\n\nA synthetic recap."
       },
-      "faqBundle": {}
+      "faqBundle": {},
+      "decisionsBundle": {}
     }
   }
 }

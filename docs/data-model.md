@@ -28,6 +28,7 @@ session_cache (
   deep_analysis_md         TEXT,            -- legacy: English deep analysis only
   deep_analysis_bundle     JSONB,           -- { English: "...", French: "..." }
   faq_bundle               JSONB,           -- { English: "...", French: "..." }: the Follow-up's FAQ
+  decisions_bundle         JSONB,           -- { English: "...", French: "..." }: the Follow-up's decisions and commitments
   content_repurpose_bundle JSONB,           -- { English: {summary, blog, email, social_media}, French: {...} }
   smart_recap_bundle       JSONB,           -- { professional, hype, surprise }
   created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),

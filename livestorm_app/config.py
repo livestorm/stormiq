@@ -46,6 +46,7 @@ CHAT_LABELS_PROMPT_PATH = PROMPTS_DIR / "chat_labels.txt"  # v1: ai/chat_labelli
 UNDERSTANDING_PROMPT_PATH = PROMPTS_DIR / "understanding.txt"  # v1: ai/understanding.py
 SESSION_ANALYSIS_PROMPT_PATH = PROMPTS_DIR / "session_analysis.txt"  # v1: ai/session_analysis.py
 FAQ_PROMPT_PATH = PROMPTS_DIR / "faq.txt"  # v1: ai/faq.py
+DECISIONS_PROMPT_PATH = PROMPTS_DIR / "decisions.txt"  # v1: ai/decisions.py
 
 ENV_PATH = Path(".env")
 

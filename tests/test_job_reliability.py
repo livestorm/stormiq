@@ -502,7 +502,7 @@ def test_every_job_kind_has_its_own_timeout_and_no_retries():
     }
     assert timeouts["run_transcription"] == 120 * 60
     assert timeouts["run_cover_image_job"] == 5 * 60
-    for name in ("run_overall_analysis_job", "run_faq_job", "run_deep_analysis_job", "run_smart_recap_job", "run_content_repurposing_job"):
+    for name in ("run_overall_analysis_job", "run_faq_job", "run_decisions_job", "run_deep_analysis_job", "run_smart_recap_job", "run_content_repurposing_job"):
         assert timeouts[name] == 15 * 60
     # The chat labels' batches, then the understanding call and its 10-minute stream deadline.
     assert timeouts["run_session_analysis_job"] == 25 * 60
