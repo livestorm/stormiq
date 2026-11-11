@@ -19,7 +19,7 @@ The Follow-up tab's "FAQ" (job kind `faq`): one Haiku 5.5 call at low effort (`a
 
 - **The brief** (`record.faq_brief.build_faq_brief`, built by `api_logic._write_faq`): the session's title and whether it is internal, then each question of the desk (`question_desk`) in its order, under an id of the brief's own (`q1`): where and when it was asked, its status, its text, and the answers StormIQ holds for it: Livestorm's written answer, the host's answer saved on the desk, and the passage of the talk that answers it with its time. A question marked answered aloud with no passage found says so. Never who asked, never the desk's ids.
 - **It needs "Analyse session" first**: the chat must be labelled (the desk lists the chat's questions from the labels) and, when there is a transcript, the session read as it is now (the talk's answers); otherwise the job fails with `SessionNotAnalysedError`. A session without a transcript gets a FAQ from its Q&A and chat alone. No question, no FAQ (`NoQuestionsError`).
-- **Two sections**, in the FAQ's language: Questions and answers (each answered question, reworded neutrally and merged with its duplicates, as a level-3 heading, its answer built only from the brief's answers, "(Answered at 5:19 in the replay.)" when it comes from the talk) and Still to answer (left out when nothing is open). The prompt has the model drop every name, greeting and off-topic question.
+- **Two sections**, in the FAQ's language: Questions and answers (each answered question, reworded neutrally and merged with its duplicates, as a level-3 heading, its answer built only from the brief's answers, "(Answered at 5:19 in the replay.)" when it comes from the talk) and Still to answer (left out when nothing is open). The prompt has the model drop every name, greeting and off-topic question; names, emails, phone numbers and links are already redacted in code ([public formats](#public-formats-what-attendees-wrote-redacted)).
 - The French version is a translation of the English one (the `translation` job), as for the Session analysis.
 
 Stored as `faq_bundle: {English: "...", French: "..."}`.
@@ -72,11 +72,11 @@ The frontend splits the markdown into sections with a regex parser (`parsedDeepS
 
 ## Smart Recap
 
-Markdown with `# Title` and `# Description`, in one of three tones: `professional`, `hype`, `surprise`. Input is the transcript only. Recaps are always written in English; there is no language selector. Stored as `smart_recap_bundle: {professional: "...", hype: "...", surprise: "..."}`. A Professional recap also triggers the session's cover image ([jobs.md](jobs.md#cover-images)).
+Markdown with `# Title` and `# Description`, in one of three tones: `professional`, `hype`, `surprise`. Input is the transcript only, redacted first ([public formats](#public-formats-what-attendees-wrote-redacted)). Recaps are always written in English; there is no language selector. Stored as `smart_recap_bundle: {professional: "...", hype: "...", surprise: "..."}`. A Professional recap also triggers the session's cover image ([jobs.md](jobs.md#cover-images)).
 
 ## Content Repurposing
 
-Four assets generated together as one JSON bundle, from the transcript only ([prompt](../prompts/content_repurpose_bundle_prompt.txt)), then split. The call is retried up to twice when the bundle is incomplete or in the wrong language. An empty transcript makes no model call: `generation.generate_content_repurpose_bundle_with_openai` raises, and the job fails. A section holding the old empty-transcript placeholder ("Transcript is empty.") counts as missing (`generation.missing_bundle_sections`), and stored bundles made of it are treated as absent (`api_logic._stored_content_bundles`), so they can be generated again.
+Four assets generated together as one JSON bundle, from the transcript only, redacted first ([public formats](#public-formats-what-attendees-wrote-redacted); [prompt](../prompts/content_repurpose_bundle_prompt.txt)), then split. The call is retried up to twice when the bundle is incomplete or in the wrong language. An empty transcript makes no model call: `generation.generate_content_repurpose_bundle_with_openai` raises, and the job fails. A section holding the old empty-transcript placeholder ("Transcript is empty.") counts as missing (`generation.missing_bundle_sections`), and stored bundles made of it are treated as absent (`api_logic._stored_content_bundles`), so they can be generated again.
 
 - `summary`: 500–700 words
 - `blog`: 1,000–1,500 words, a standalone article
@@ -84,6 +84,16 @@ Four assets generated together as one JSON bundle, from the transcript only ([pr
 - `social_media`: LinkedIn, Facebook and X posts with hashtags
 
 Stored as `content_repurpose_bundle: {English: {summary, blog, email, social_media}, French: {...}}`.
+
+## Public formats: what attendees wrote, redacted
+
+The FAQ, Smart Recap (every tone), the summary, blog post, follow-up email and social posts are made to be shared outside the team, so what identifies an attendee is taken out in code before the call, and the output is checked after (`record/redaction.py`, `api_logic._public_redactor`). The owner's decision (November 2026): people's names, emails, phone numbers and links go; companies and products stay, since a product question loses its point without them.
+
+- **What goes.** An email, a link and a phone number (8 digits or more; dates and grouped numbers stay) become `[email]`, `[link]` and `[phone]`. The audience's names, from the session's people (everyone's on an internal session), become `[name]`: a full name whatever its case, a single word of it (3 letters or more) when written with a capital, unless it starts a sentence and is also a common word ("Will it work?"). A name typed all in lower case is left to the prompt, which drops names.
+- **What stays.** The speakers' names saved on the Transcript tab, and the team's on a public session: a recap may say who presented. Companies and products.
+- **Where.** The FAQ's questions, written answers, host's answers and the talk's passages; the speech sent to Smart Recap and to content repurposing. The prompts say what the placeholders mean and that they are never written. Translations read the English output, which was checked.
+- **The check.** An output holding an email, a phone number, an attendee's full name or a placeholder fails the job with `PublicOutputLeak` ("The FAQ contained an attendee's name. Nothing was saved; please try again."), naming only the kinds found, never the text. Nothing is saved.
+- **Not covered yet.** The cover image reads the Professional recap, which was checked. Internal outputs (the session analysis, deep analysis, decisions, the team digest) are for the team and keep their own rules.
 
 ## Chat labels (v1)
 

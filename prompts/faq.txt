@@ -19,6 +19,7 @@ A bullet list of the questions not answered yet, each rewritten in clear, neutra
 
 Rules:
 - Never write a person's name, email or company, even if the brief contains one. Write "the team" or "the host" for the people who answered.
+- [name], [email], [phone] and [link] mark details that StormIQ removed. Never write them or guess what they hid.
 - Leave out questions that are only greetings, thanks or about the sound or the connection.
 - No bold, no italics, no emojis, no nested bullets, no question ids (q1).
 - Write nothing before the first heading and nothing after the last section.

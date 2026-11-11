@@ -6,7 +6,7 @@ import math
 import threading
 from collections import OrderedDict
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 
 import pandas as pd
 import requests
@@ -1911,6 +1911,42 @@ def _write_team_digest(api_key: str, session_id: str, cached: Mapping[str, Any],
         raise LLMInvalidOutput(f"The team digest {exc}. Nothing was saved.") from None
 
 
+class PublicOutputLeak(RuntimeError):
+    """A public output held a personal detail after redaction; nothing saved."""
+
+
+def _public_redactor(session_id: str, cached: Mapping[str, Any], roster: Any = None) -> Any:
+    """The session's `record.redaction.Redactor` for a public format: the
+    audience's names (everyone's on an internal session), never a speaker's
+    saved name, plus emails, phone numbers and links. `roster` when the
+    caller already loaded the record's inputs; else read here, from the same
+    people source as the record (the stored roster when there is one)."""
+    from livestorm_app.record.redaction import public_redactor, saved_speaker_names
+
+    if roster is None:
+        from livestorm_app.record.inputs import load_record_inputs
+        from livestorm_app.record.roster import stored_roster_rows
+
+        roster_status = fetch_roster_status(session_id, ALL_ORGS) or {}
+        stored_roster = fetch_session_roster(session_id, ALL_ORGS) if roster_status.get("roster") is not None else None
+        roster = load_record_inputs(
+            dict(cached),
+            roster_rows=stored_roster_rows(stored_roster) if stored_roster is not None else None,
+        ).roster
+    return public_redactor(roster, saved_speaker_names(cached))
+
+
+def _require_no_leak(redactor: Any, texts: Iterable[Any], what: str) -> None:
+    """Raises `PublicOutputLeak`, naming only the kinds found, when a public
+    output still holds an email, a phone number, an attendee's full name or
+    a placeholder."""
+    found: List[str] = []
+    for text in texts:
+        found += [kind for kind in redactor.leaks(text) if kind not in found]
+    if found:
+        raise PublicOutputLeak(f"The {what} contained {' and '.join(found)}. Nothing was saved; please try again.")
+
+
 class NoQuestionsError(RuntimeError):
     """The session has no audience question to make a FAQ from."""
 
@@ -1948,20 +1984,26 @@ def _write_faq(api_key: str, session_id: str, cached: Mapping[str, Any], output_
         raise SessionNotAnalysedError('Run "Analyse session" on the Report first: the FAQ uses the answers it finds in the talk.')
     desk = question_desk(inputs, fetch_question_replies(session_id, ALL_ORGS), located, located_state)
     # The desk's rows without their authors or ids: names never reach a model.
+    # What the audience wrote, the answers and the talk's passages are
+    # redacted first (`record.redaction`): the FAQ is a public format.
+    redactor = _public_redactor(session_id, cached, inputs.roster)
     questions = [
-        {"source": q["source"], "t": q["t"], "answered_as": q["status"], "text": q["text"],
-         "answer": q["answer"], "reply": q["reply"], "located": q["located"]}
+        {"source": q["source"], "t": q["t"], "answered_as": q["status"], "text": redactor.redact(q["text"]),
+         "answer": redactor.redact(q["answer"]) or q["answer"], "reply": redactor.redact(q["reply"]) or q["reply"],
+         "located": {**q["located"], "quote": redactor.redact(q["located"].get("quote"))} if q["located"] else q["located"]}
         for q in desk["questions"]
     ]
     if not questions:
         raise NoQuestionsError("This session has no audience question to make a FAQ from.")
     brief = build_faq_brief(title=session_meta(inputs)["title"], internal=bool(inputs.roster.meta.internal), questions=questions)
-    return write_faq(
+    markdown = write_faq(
         brief,
         output_language=OUTPUT_LANGUAGE_MAP.get(output_language, output_language),
         api_key=api_key,
         ctx=_llm_call_context("faq", "faq", session_id, output_language, cached),
     )
+    _require_no_leak(redactor, [markdown], "FAQ")
+    return markdown
 
 
 def run_deep_analysis(api_analysis_key: str, session_id: str, output_language: str) -> Dict[str, Any]:
@@ -2111,6 +2153,9 @@ def run_smart_recap(api_analysis_key: str, session_id: str, tone: str) -> Dict[s
     if not isinstance(transcript_payload, dict):
         raise RuntimeError("Smart recap requires a transcript payload.")
     smart_bundle = _normalize_smart_recap_bundle(cached.get("smart_recap_bundle"))
+    # A public format: the audience's names and contact details said on
+    # stage are redacted before the call, and the recap checked after.
+    redactor = _public_redactor(session_id, cached)
     markdown = analyze_with_openai(
         api_key=api_analysis_key,
         model=get_llm_model("smart_recap"),
@@ -2118,11 +2163,12 @@ def run_smart_recap(api_analysis_key: str, session_id: str, tone: str) -> Dict[s
         output_language="English",
         selected_sources=["transcript"],
         derived_stats={},
-        transcript_text=build_transcript_plain_text(transcript_payload),
+        transcript_text=redactor.redact(build_transcript_plain_text(transcript_payload)),
         max_tokens=900,
         ctx=_llm_call_context("smart_recap", "smart_recap", session_id, tone, cached),
     )
     markdown = _require_generated_text(markdown, "smart recap")
+    _require_no_leak(redactor, [markdown], "smart recap")
     merge_cached_bundle_entry(session_id, "smart_recap_bundle", tone, markdown, provenance=run_provenance())
     smart_bundle[tone] = markdown
     return {"markdown": markdown, "bundle": smart_bundle}
@@ -2193,13 +2239,18 @@ def run_content_repurposing(api_analysis_key: str, session_id: str, output_langu
             ctx=_llm_call_context("translation", "content_repurposing", session_id, output_language, cached),
         )
     else:
+        # Public formats: the audience's names and contact details said on
+        # stage are redacted before the call, and every part checked after.
+        redactor = _public_redactor(session_id, cached)
         bundle = generate_content_repurpose_bundle_with_openai(
             api_key=api_analysis_key,
             model=get_llm_model("content_repurposing"),
             output_language=OUTPUT_LANGUAGE_MAP.get(output_language, output_language),
-            transcript_text=build_transcript_plain_text(transcript_payload),
+            transcript_text=redactor.redact(build_transcript_plain_text(transcript_payload)),
             ctx=_llm_call_context("content_repurposing", "content_repurposing", session_id, output_language, cached),
         )
+        if isinstance(bundle, dict):
+            _require_no_leak(redactor, bundle.values(), "content")
     if not isinstance(bundle, dict) or not _bundle_has_all_sections(bundle):
         missing = missing_bundle_sections(bundle)
         raise RuntimeError(

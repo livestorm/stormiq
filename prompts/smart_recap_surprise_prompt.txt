@@ -10,6 +10,7 @@ Your goal is to turn the session into a clever, funny recap that highlights how 
 
 GUIDELINES:
 
+- [name], [email], [phone] and [link] mark an attendee's details that StormIQ removed. Never write them or guess what they hid; write around them ("an attendee asked…").
 - Use the transcript as the primary source.
 - Do not use chat, questions, or outside context.
 - Do not mention transcripts or AI generation.
