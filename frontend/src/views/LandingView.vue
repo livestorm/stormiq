@@ -109,7 +109,7 @@ const TRUST = [
          autoplayed. Its session is made up, and it shows some of what is
          still being built, so its caption says both. -->
     <section class="l-section" aria-labelledby="l-film">
-      <h2 id="l-film" class="l-section-title">See it in a minute</h2>
+      <h2 id="l-film" class="l-section-title">See it in two minutes</h2>
       <Card as="figure" padding="flush" class="l-film">
         <video
           class="l-film-video"
@@ -118,14 +118,14 @@ const TRUST = [
           preload="none"
           width="1920"
           height="1080"
-          poster="/media/stormiq-promo-poster.jpg"
+          poster="/media/stormiq-tour-poster.jpg"
           aria-describedby="l-film-caption"
         >
-          <source src="/media/stormiq-promo.mp4" type="video/mp4" />
-          <a href="/media/stormiq-promo.mp4">Download the StormIQ tour (MP4, 5 MB)</a>
+          <source src="/media/stormiq-tour.mp4" type="video/mp4" />
+          <a href="/media/stormiq-tour.mp4">Download the StormIQ tour (MP4, 10 MB)</a>
         </video>
         <figcaption id="l-film-caption" class="l-film-caption">
-          A one-minute tour of a made-up session. Some of what it shows is still being built.
+          A two-minute tour of a made-up session. Some of what it shows is still being built.
         </figcaption>
       </Card>
     </section>
