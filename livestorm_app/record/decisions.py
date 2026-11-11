@@ -1,6 +1,7 @@
 """The Follow-up tab's "Decisions and commitments": the model's answer
 (`ai.decisions.SessionDecisions`) checked against the dossier it was read
-from, then worded as Markdown by code.
+from, then saved as items (`saved_entry`, the shape in
+`ai.decisions_entry`), worded when read.
 
 - **What code keeps** (`check_decisions`). An item's utterance must be in the
   dossier and its quote in that utterance (or the one after it), word for
@@ -9,11 +10,13 @@ from, then worded as Markdown by code.
   its words are in the utterance; a due date when its words are. Anything
   else is dropped (an item) or left blank (an owner, a date), never shown.
   Repeats are kept once.
-- **Names.** The model sees speaker keys only (`S0`); the speaker's name is
-  the one the host saved on the Transcript tab, else "Speaker n"
-  (`transcript_view.speaker_name`), added here, after the call.
+- **Names.** The model sees speaker keys only (`S0`), and the saved entry
+  keeps them as refs: the speaker's name, the one the host saved on the
+  Transcript tab, else "Speaker n", is added when the list is read
+  (`ai.decisions_entry`), so a rename shows without a new call.
 - **Times.** On the session clock when the alignment allows minutes (the
-  dossier's own rule), else on the recording's clock, and the text says so.
+  dossier's own rule), else on the recording's clock, and the entry says
+  which.
 
 Pure functions: no database, network or web framework.
 """
@@ -24,16 +27,17 @@ import math
 import re
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
-from livestorm_app.record.transcript_view import speaker_name
+from livestorm_app.ai.decisions_entry import FORMAT as ENTRY_FORMAT
+from livestorm_app.ai.decisions_entry import KINDS, RECORDING_CLOCK, SESSION_CLOCK, entry_lines, is_entry
 from livestorm_app.record.understanding import _plain, _verbatim
 
-DECISIONS_VERSION = 1
+DECISIONS_VERSION = 2  # 2: saved as items with speaker refs (`ai.decisions_entry.FORMAT`)
 MAX_TEXT_CHARS = 240
 MAX_QUOTE_CHARS = 300
 MAX_OWNER_CHARS = 80
 SPEAKER_OWNER = "speaker"
-NONE_STATED = "No decisions or commitments were stated on stage."
 
+# The headings of the Markdown saved before November 2026 (`decision_lines`).
 KIND_TITLES = {"decision": "Decisions", "commitment": "Commitments"}
 
 
@@ -48,16 +52,6 @@ def _finite(value: Any) -> Optional[float]:
     except (TypeError, ValueError):
         return None
     return number if math.isfinite(number) else None
-
-
-def clock_text(seconds: Optional[float]) -> str:
-    """"4:05", "1:02:09" from seconds; "" when unknown."""
-    if seconds is None:
-        return ""
-    total = max(0, int(round(seconds)))
-    hours, rest = divmod(total, 3600)
-    minutes, secs = divmod(rest, 60)
-    return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
 
 
 def _speaker_key(utterance: Mapping[str, Any]) -> Optional[str]:
@@ -76,7 +70,7 @@ def check_decisions(items: Sequence[Mapping[str, Any]], utterances: Sequence[Map
     for item in items:
         kind = item.get("kind")
         uid = str(item.get("utterance_id") or "")
-        if kind not in KIND_TITLES or uid not in order:
+        if kind not in KINDS or uid not in order:
             continue
         index = order[uid]
         texts = [str(utterances[index]["text"])]
@@ -113,65 +107,63 @@ def check_decisions(items: Sequence[Mapping[str, Any]], utterances: Sequence[Map
 
 
 def _speaker_order(utterances: Sequence[Mapping[str, Any]]) -> Dict[str, int]:
-    """Each speaker key ("0") with its order of first appearance, from 1."""
+    """Each speaker ref ("S0") with its order of first appearance, from 1."""
     found: Dict[str, int] = {}
     for u in utterances:
         key = _speaker_key(u)
-        if key is not None and key not in found:
-            found[key] = len(found) + 1
+        if key is not None and f"S{key}" not in found:
+            found[f"S{key}"] = len(found) + 1
     return found
 
 
-def decisions_markdown(
-    items: Sequence[Mapping[str, Any]],
-    utterances: Sequence[Mapping[str, Any]],
-    saved_names: Mapping[str, Any],
-    *,
-    on_clock: bool,
-) -> str:
-    """The checked items as Markdown: a section per kind that has items,
-    each a bullet with what, who, when, and the words said with their
-    speaker and time. A session with none says so."""
-    if not items:
-        return NONE_STATED
-    order = _speaker_order(utterances)
-    saved = {str(key): value for key, value in (saved_names or {}).items()}
-
-    def name(key: Optional[str]) -> str:
-        return speaker_name(key, saved, order[key]) if key in order else "A speaker"
-
-    sections: List[str] = []
-    if not on_clock:
-        sections.append("_Times are on the recording's clock._")
-    for kind, title in KIND_TITLES.items():
-        bullets = []
-        for item in items:
-            if item["kind"] != kind:
-                continue
-            said_by = name(item.get("speaker"))
-            parts = [f"**{item['text'].rstrip('.')}.**"]
-            owner = said_by if item.get("ownerIsSpeaker") else item.get("owner")
-            if owner:
-                parts.append(f"Owner: {owner}.")
-            if item.get("due"):
-                parts.append(f"Due: {item['due']}.")
-            stamp = clock_text(item.get("t") if on_clock else item.get("r"))
-            parts.append(f"{said_by}{f' at {stamp}' if stamp else ''}: *“{item['quote']}”*")
-            bullets.append(f"- {' '.join(parts)}")
-        if bullets:
-            sections.append("\n".join([f"## {title}", "", *bullets]))
-    return "\n\n".join(sections)
+def saved_entry(items: Sequence[Mapping[str, Any]], utterances: Sequence[Mapping[str, Any]], *, on_clock: bool) -> Dict[str, Any]:
+    """The checked items in the form saved in `decisions_bundle`
+    (`ai.decisions_entry`): speakers and owners as refs ("S0"), never a
+    name, with each speaker's order of first appearance for "Speaker n"."""
+    saved_items = []
+    for item in items:
+        speaker = f"S{item['speaker']}" if item.get("speaker") is not None else None
+        if item.get("ownerIsSpeaker"):
+            owner: Optional[Dict[str, str]] = {"speaker": speaker} if speaker else None
+        elif item.get("owner"):
+            owner = {"words": str(item["owner"])}
+        else:
+            owner = None
+        saved_items.append(
+            {
+                "kind": item["kind"],
+                "text": item["text"],
+                "owner": owner,
+                "due": item.get("due"),
+                "quote": item["quote"],
+                "utterance": item["utterance"],
+                "speaker": speaker,
+                "t": item.get("t"),
+                "r": item.get("r"),
+            }
+        )
+    return {
+        "format": ENTRY_FORMAT,
+        "clock": SESSION_CLOCK if on_clock else RECORDING_CLOCK,
+        "speakers": _speaker_order(utterances),
+        "items": saved_items,
+    }
 
 
 _BULLET = re.compile(r"^- \*\*(?P<text>.+?)\*\*(?P<rest>.*)$")
 _DUE = re.compile(r"(?:^| )Due: (?P<due>.+?)\.(?= |$)")
 
 
-def decision_lines(markdown: str) -> List[Dict[str, Any]]:
-    """What `decisions_markdown` listed, without who: `[{kind, text, due}]`
-    in its order, `kind` "decision" or "commitment", `due` None when none
-    was said. The owner, the speaker and the quote are left out, for the
-    team digest's brief (`record.digest_brief`), which never names anyone."""
+def decision_lines(saved: Any) -> List[Dict[str, Any]]:
+    """What a saved list holds, without who: `[{kind, text, due}]` in its
+    order, `kind` "decision" or "commitment", `due` None when none was said.
+    The owner, the speaker and the quote are left out, for the team
+    digest's brief (`record.digest_brief`), which never names anyone. An
+    entry is read as saved (`ai.decisions_entry.entry_lines`); the Markdown
+    saved before November 2026 is parsed."""
+    if is_entry(saved):
+        return entry_lines(saved)
+    markdown = saved if isinstance(saved, str) else ""
     kinds = {f"## {title}": kind for kind, title in KIND_TITLES.items()}
     kind: Optional[str] = None
     found: List[Dict[str, Any]] = []
