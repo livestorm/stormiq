@@ -236,6 +236,7 @@ def test_finished_ai_job_poll_can_return_only_the_outputs(monkeypatch):
             "faqBundle": {},
             "decisionsBundle": {},
             "teamDigestBundle": {},
+            "attendeeFollowupBundle": {},
         },
     }
     with pytest.raises(api_logic.SessionNotFoundError):

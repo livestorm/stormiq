@@ -1051,6 +1051,9 @@ RECORD_ENTRY_POINTS = {
         "_write_decisions",
         # The Follow-up's team digest: its brief (`record.digest_brief`) from the record's measures, moments, chapters, desk and listed decisions.
         "_write_team_digest",
+        # The v1.1 public formats: the attendee follow-up's brief (`record.format_briefs`) from the
+        # placed chapters, the moments of content and the desk's answered questions, and its check.
+        "_placed_chapters", "_attendee_followup_brief", "_write_public_format", "run_public_format",
         # Before you share: the figure checks (`record.figure_checks`).
         "_figure_check_list", "get_session_figure_checks", "save_session_figure_check",
         # The analysis's second step: the dossier, its checks and the result's version.
