@@ -164,6 +164,7 @@ def ensure_database_schema() -> None:
                     faq_bundle JSONB,
                     decisions_bundle JSONB,
                     team_digest_bundle JSONB,
+                    attendee_followup_bundle JSONB,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     PRIMARY KEY (account_key_hash, session_id)
@@ -204,6 +205,12 @@ def ensure_database_schema() -> None:
                 """
                 ALTER TABLE session_cache
                 ADD COLUMN IF NOT EXISTS team_digest_bundle JSONB
+                """
+            )
+            cursor.execute(
+                """
+                ALTER TABLE session_cache
+                ADD COLUMN IF NOT EXISTS attendee_followup_bundle JSONB
                 """
             )
             cursor.execute(
@@ -823,6 +830,7 @@ def fetch_cached_session(
                         faq_bundle,
                         decisions_bundle,
                         team_digest_bundle,
+                        attendee_followup_bundle,
                         event_payload,
                         cover_image_bytes IS NOT NULL AS has_cover_image,
                         cover_image_mime,
@@ -867,6 +875,7 @@ _SESSION_FIELD_SQL = {
     "faq_bundle": "faq_bundle",
     "decisions_bundle": "decisions_bundle",
     "team_digest_bundle": "team_digest_bundle",
+    "attendee_followup_bundle": "attendee_followup_bundle",
     "updated_at": "updated_at",
     "organization_id": "organization_id",
 }
@@ -929,6 +938,7 @@ def upsert_cached_session(api_key: str, session_id: str, **fields: Any) -> None:
         "faq_bundle",
         "decisions_bundle",
         "team_digest_bundle",
+        "attendee_followup_bundle",
         "organization_id",
         "event_payload",
         "created_by_user_id",
@@ -996,7 +1006,7 @@ def upsert_cached_session(api_key: str, session_id: str, **fields: Any) -> None:
 # Bundle columns hold one entry per language (or per tone for Smart Recap).
 _BUNDLE_COLUMNS = {
     "analysis_bundle", "deep_analysis_bundle", "smart_recap_bundle", "content_repurpose_bundle", "faq_bundle", "decisions_bundle",
-    "team_digest_bundle",
+    "team_digest_bundle", "attendee_followup_bundle",
 }
 # Legacy single-language TEXT columns that may be written alongside a bundle entry.
 _LEGACY_TEXT_COLUMNS = {"analysis_md", "deep_analysis_md"}

@@ -112,6 +112,9 @@ JOB_SPECS: Tuple[JobSpec, ...] = (
     # The Follow-up's "Team digest" (`ai/team_digest.py`): about 100 words for
     # the team's channel, from the digest's brief (`record/digest_brief.py`).
     JobSpec("team_digest", "Team digest", "v1", "claude-haiku-5-5", "low", 1_000, layout="dossier"),
+    # The Follow-up's "Attendee follow-up" (`ai/public_formats.py`): the email
+    # the host sends attendees, from its brief (`record/format_briefs.py`).
+    JobSpec("attendee_followup", "Attendee follow-up", "v1", "claude-sonnet-5-5", "medium", 6_000, layout="dossier"),
     JobSpec("deep_analysis", "Deep Analysis", "legacy", "claude-haiku-4-5-20251001",
             "medium", 5_000, LEGACY_DEFAULT_SETTING, truncation_retry=True),
     JobSpec("smart_recap", "Smart Recap", "legacy", "claude-sonnet-4-6",

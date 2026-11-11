@@ -23,6 +23,7 @@ from livestorm_app.api_logic import (
     get_session_analysis_job,
     get_smart_recap_job_data,
     get_team_digest_job_data,
+    get_attendee_followup_job_data,
     start_content_repurposing,
     start_session_analysis,
     start_deep_analysis,
@@ -31,6 +32,7 @@ from livestorm_app.api_logic import (
     start_overall_analysis,
     start_smart_recap,
     start_team_digest,
+    start_attendee_followup,
 )
 from livestorm_app.auth import (
     Caller,
@@ -132,6 +134,25 @@ def team_digest_job(session_id: SessionId, caller: Caller = Depends(get_caller),
         return get_team_digest_job_data(session_id, jobId, language, organization_id=caller.read_scope, outputs_only=outputsOnly)
     except Exception as exc:
         raise_http_error("Team digest", exc)
+        raise
+
+
+@router.post("/api/sessions/{session_id}/attendee-followup")
+def attendee_followup(session_id: SessionId, request: AnalysisRequest, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
+    """Start an "Attendee follow-up" job. See `overall_analysis` for the contract; poll `/attendee-followup/job`."""
+    try:
+        return start_attendee_followup(session_id, request.output_language, organization_id=caller.read_scope)
+    except Exception as exc:
+        raise_http_error("Attendee follow-up", exc)
+        raise
+
+
+@router.get("/api/sessions/{session_id}/attendee-followup/job")
+def attendee_followup_job(session_id: SessionId, caller: Caller = Depends(get_caller), jobId: str = Query(""), language: str = Query("English"), outputsOnly: bool = Query(False)) -> Dict[str, Any]:
+    try:
+        return get_attendee_followup_job_data(session_id, jobId, language, organization_id=caller.read_scope, outputs_only=outputsOnly)
+    except Exception as exc:
+        raise_http_error("Attendee follow-up", exc)
         raise
 
 

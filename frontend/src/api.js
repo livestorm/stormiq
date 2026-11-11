@@ -129,6 +129,9 @@ export const api = {
   runTeamDigest(sessionId, payload, options) {
     return postJson(sessionPath(sessionId, "/team-digest"), payload, options);
   },
+  runAttendeeFollowup(sessionId, payload, options) {
+    return postJson(sessionPath(sessionId, "/attendee-followup"), payload, options);
+  },
   runDeepAnalysis(sessionId, payload, options) {
     return postJson(sessionPath(sessionId, "/deep-analysis"), payload, options);
   },

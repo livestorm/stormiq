@@ -265,7 +265,7 @@ def get_transcript_download(session_id: str, *, organization_id: OrgScope) -> Di
 _OUTPUT_FIELDS = [
     "analysis_bundle", "analysis_md", "deep_analysis_bundle", "deep_analysis_md",
     "content_repurpose_bundle", "smart_recap_bundle", "faq_bundle", "decisions_bundle",
-    "team_digest_bundle",
+    "team_digest_bundle", "attendee_followup_bundle",
 ]
 
 
@@ -279,6 +279,7 @@ def _serialize_outputs(cached_session: Dict[str, Any]) -> Dict[str, Any]:
         "faqBundle": _normalize_text_bundle(cached_session.get("faq_bundle"), ""),
         "decisionsBundle": _normalize_text_bundle(cached_session.get("decisions_bundle"), ""),
         "teamDigestBundle": _normalize_text_bundle(cached_session.get("team_digest_bundle"), ""),
+        "attendeeFollowupBundle": _normalize_text_bundle(cached_session.get("attendee_followup_bundle"), ""),
     }
 
 
@@ -901,6 +902,7 @@ OUTPUT_VERSION_KINDS: Dict[str, Tuple[str, str]] = {
     "faq": ("faq_bundle", "language"),
     "decisions": ("decisions_bundle", "language"),
     "team_digest": ("team_digest_bundle", "language"),
+    "attendee_followup": ("attendee_followup_bundle", "language"),
 }
 
 
@@ -2136,6 +2138,181 @@ def _check_surprise(markdown: str, sent: str) -> None:
         raise SurpriseCheckError(f"The surprise take {exc}. Nothing was saved; please try again.") from None
 
 
+# ── The v1.1 public formats (proposal §7) ──
+#
+# A format for the audience: its brief built from the record
+# (`record.format_briefs`), redacted (`_public_redactor`), written by one
+# model call (`ai.public_formats.write_format`), checked for a leak and by
+# `record.format_briefs.check_format`, then saved in its bundle column by
+# language. French is a translation of the English one. A new format adds
+# a `_PublicFormat` here, its job spec, its prompt and its wiring.
+
+
+class _PublicFormat:
+    """One public format: what it is called in messages, its bundle column,
+    its brief builder and what its check asks for."""
+
+    def __init__(
+        self,
+        label: str,
+        column: str,
+        brief: Callable[..., Any],
+        *,
+        max_words: int,
+        required_tokens: Tuple[str, ...] = (),
+        starts_with: Optional[str] = None,
+    ) -> None:
+        self.label = label
+        self.column = column
+        self.brief = brief
+        self.max_words = max_words
+        self.required_tokens = required_tokens
+        self.starts_with = starts_with
+
+
+def _placed_chapters(stored: Any, inputs: Any) -> List[Dict[str, Any]]:
+    """The understanding's chapters placed on the session clock, `{title, t}`,
+    or [] when they can't be placed."""
+    from livestorm_app.record.assemble import chapter_marks
+    from livestorm_app.record.understanding import chapter_list
+
+    chapters, _state = chapter_list(stored, inputs)
+    marks = chapter_marks(inputs, chapters)
+    if not marks["placed"]:
+        return []
+    return [{"title": chapter["title"], "t": mark["t"]} for chapter, mark in zip(chapters, marks["marks"], strict=True)]
+
+
+def _attendee_followup_brief(session_id: str, cached: Mapping[str, Any], inputs: Any, stored: Any, redactor: Any) -> Any:
+    """The attendee follow-up's brief (`record.format_briefs`): title, date
+    and length, the placed chapters, the moments of content with what was
+    being said, and two answered questions from the desk (the most upvoted
+    first) without who asked; redacted whole by `redactor`."""
+    from livestorm_app.record.assemble import clock_meta, session_meta
+    from livestorm_app.record.format_briefs import (
+        answered_questions,
+        build_attendee_followup_brief,
+        question_up_votes,
+        session_date,
+    )
+    from livestorm_app.record.moments import room_moments
+    from livestorm_app.record.question_desk import question_desk
+    from livestorm_app.record.understanding import current_reading, located_answers
+
+    result, _state, _utterances = current_reading(stored, inputs)
+    names = cached.get("transcript_speaker_names") if isinstance(cached.get("transcript_speaker_names"), dict) else {}
+    located, located_state = located_answers(stored, inputs)
+    desk = question_desk(inputs, fetch_question_replies(session_id, ALL_ORGS), located, located_state)
+    meta = clock_meta(inputs)
+    return build_attendee_followup_brief(
+        redact=redactor.redact,
+        title=session_meta(inputs)["title"],
+        date=session_date(meta.get("startedAtUnix"), meta.get("timezone")),
+        length_s=meta.get("endS"),
+        chapters=_placed_chapters(stored, inputs),
+        moments=room_moments(inputs, result or {}, names),
+        # The desk's words only: never who asked; its ids only to pick by upvotes.
+        questions=answered_questions(
+            [
+                {"id": q["id"], "text": q["text"], "answered_as": q["status"], "answer": q["answer"], "reply": q["reply"],
+                 "located": q["located"]}
+                for q in desk["questions"]
+            ],
+            question_up_votes(inputs.questions_payload, inputs.events),
+        ),
+    )
+
+
+PUBLIC_FORMATS: Dict[str, _PublicFormat] = {
+    "attendee_followup": _PublicFormat(
+        "attendee follow-up",
+        "attendee_followup_bundle",
+        _attendee_followup_brief,
+        max_words=300,
+        required_tokens=("{{replay_link}}",),
+        starts_with="Subject:",
+    ),
+}
+
+
+def _write_public_format(kind: str, api_key: str, session_id: str, cached: Mapping[str, Any], output_language: str) -> str:
+    """A public format in English: the record's inputs loaded once, the
+    brief built and redacted, one model call, then the leak check and the
+    format's check (`check_format`). A failed check raises `LLMInvalidOutput`
+    with the check's words, never the model's, and nothing is saved."""
+    from livestorm_app.ai.public_formats import write_format
+    from livestorm_app.llm_client import LLMInvalidOutput
+    from livestorm_app.record.format_briefs import FormatRejected, check_format
+    from livestorm_app.record.inputs import load_record_inputs
+    from livestorm_app.record.roster import stored_roster_rows
+
+    spec = PUBLIC_FORMATS[kind]
+    roster_status = fetch_roster_status(session_id, ALL_ORGS) or {}
+    stored_roster = fetch_session_roster(session_id, ALL_ORGS) if roster_status.get("roster") is not None else None
+    inputs = load_record_inputs(
+        dict(cached),
+        roster_rows=stored_roster_rows(stored_roster) if stored_roster is not None else None,
+        stored_labels=fetch_chat_labels(session_id, ALL_ORGS),
+    )
+    redactor = _public_redactor(session_id, cached, inputs.roster)
+    brief = spec.brief(session_id, cached, inputs, fetch_understanding(session_id, ALL_ORGS), redactor)
+    text = write_format(
+        kind,
+        brief,
+        api_key=api_key,
+        ctx=_llm_call_context(kind, kind, session_id, output_language, cached),
+    )
+    _require_no_leak(redactor, [text], spec.label)
+    try:
+        return check_format(
+            text, brief.text, max_words=spec.max_words, required_tokens=spec.required_tokens, starts_with=spec.starts_with,
+        )
+    except FormatRejected as exc:
+        # The check's own words, never the model's.
+        raise LLMInvalidOutput(f"The {spec.label} {exc}. Nothing was saved; please try again.") from None
+
+
+def run_public_format(kind: str, api_analysis_key: str, session_id: str, output_language: str) -> Dict[str, Any]:
+    """A public format in one language. English is written from its brief
+    and checked (`_write_public_format`); another language is a translation
+    of the English one, which must exist first, and keeps the format's
+    tokens (`check_tokens`). Saved in the format's bundle under the language."""
+    from livestorm_app.llm_client import LLMInvalidOutput
+    from livestorm_app.record.format_briefs import FormatRejected, check_tokens
+
+    spec = PUBLIC_FORMATS[kind]
+    cached = _require_cached_payloads(session_id, organization_id=ALL_ORGS)
+    bundle = _normalize_text_bundle(cached.get(spec.column), "")
+    if str(output_language or "").strip() not in ("", "English") and not bundle.get("English", "").strip():
+        raise RuntimeError(f"Generate the English {spec.label} first before translating.")
+    source_language, source_markdown = _get_alternate_language_text(bundle, output_language)
+    if source_markdown:
+        markdown = translate_markdown_with_openai(
+            api_key=api_analysis_key,
+            model=get_llm_model("translation"),
+            source_markdown=source_markdown,
+            source_language=OUTPUT_LANGUAGE_MAP.get(source_language, source_language),
+            target_language=OUTPUT_LANGUAGE_MAP.get(output_language, output_language),
+            ctx=_llm_call_context("translation", kind, session_id, output_language, cached),
+        )
+        try:
+            check_tokens(str(markdown or ""), spec.required_tokens)
+        except FormatRejected as exc:
+            raise LLMInvalidOutput(f"The {spec.label} {exc}. Nothing was saved; please try again.") from None
+    else:
+        markdown = _write_public_format(kind, api_analysis_key, session_id, cached, output_language)
+    markdown = _require_generated_text(markdown, spec.label)
+    merge_cached_bundle_entry(session_id, spec.column, output_language, markdown, provenance=run_provenance())
+    bundle[output_language] = markdown
+    return {"markdown": markdown, "bundle": bundle}
+
+
+def run_attendee_followup(api_analysis_key: str, session_id: str, output_language: str) -> Dict[str, Any]:
+    """The Follow-up's "Attendee follow-up" ("You asked, we answered") in one
+    language (`run_public_format`), saved in `attendee_followup_bundle`."""
+    return run_public_format("attendee_followup", api_analysis_key, session_id, output_language)
+
+
 class NoQuestionsError(RuntimeError):
     """The session has no audience question to make a FAQ from."""
 
@@ -2507,6 +2684,9 @@ def _extract_cached_ai_body(cached: Dict[str, Any], kind: str, language: str = "
     if kind == "team_digest":
         bundle = _normalize_text_bundle(cached.get("team_digest_bundle"), "")
         return bundle.get(language) if bundle.get(language) else None
+    if kind in PUBLIC_FORMATS:
+        bundle = _normalize_text_bundle(cached.get(PUBLIC_FORMATS[kind].column), "")
+        return bundle.get(language) if bundle.get(language) else None
     if kind == "smart_recap":
         bundle = _normalize_smart_recap_bundle(cached.get("smart_recap_bundle"))
         return bundle.get(tone) if bundle.get(tone) else None
@@ -2529,6 +2709,7 @@ _ARQ_JOB_FUNCTION_BY_KIND: Dict[str, str] = {
     "faq": "run_faq_job",
     "decisions": "run_decisions_job",
     "team_digest": "run_team_digest_job",
+    "attendee_followup": "run_attendee_followup_job",
 }
 
 # The columns `_extract_cached_ai_body` reads for each kind: job starts and
@@ -2541,6 +2722,7 @@ _AI_BODY_FIELDS: Dict[str, List[str]] = {
     "faq": ["faq_bundle"],
     "decisions": ["decisions_bundle"],
     "team_digest": ["team_digest_bundle"],
+    "attendee_followup": ["attendee_followup_bundle"],
 }
 
 
@@ -2590,7 +2772,7 @@ def _start_ai_job(
     # English-first enforcement: French (and any non-English variant) must be
     # a translation of the existing English version so outputs stay consistent.
     # Reject if English hasn't been generated yet.
-    if kind in ("overall_analysis", "deep_analysis", "content_repurposing", "faq", "decisions", "team_digest") and str(language or "").strip() not in ("", "English"):
+    if kind in ("overall_analysis", "deep_analysis", "content_repurposing", "faq", "decisions", "team_digest", "attendee_followup") and str(language or "").strip() not in ("", "English"):
         if not _extract_cached_ai_body(cached, kind, language="English"):
             raise RuntimeError("Generate the English version first before translating to another language.")
 
@@ -2871,6 +3053,14 @@ def start_team_digest(session_id: str, output_language: str, *, organization_id:
 
 def get_team_digest_job_data(session_id: str, job_id: str, language: str, *, organization_id: OrgScope, outputs_only: bool = False) -> Dict[str, Any]:
     return _get_ai_job_data("team_digest", session_id, job_id, language=language, organization_id=organization_id, outputs_only=outputs_only)
+
+
+def start_attendee_followup(session_id: str, output_language: str, *, organization_id: OrgScope) -> Dict[str, Any]:
+    return _start_ai_job("attendee_followup", session_id, language=output_language, organization_id=organization_id)
+
+
+def get_attendee_followup_job_data(session_id: str, job_id: str, language: str, *, organization_id: OrgScope, outputs_only: bool = False) -> Dict[str, Any]:
+    return _get_ai_job_data("attendee_followup", session_id, job_id, language=language, organization_id=organization_id, outputs_only=outputs_only)
 
 
 def start_deep_analysis(session_id: str, output_language: str, *, organization_id: OrgScope) -> Dict[str, Any]:

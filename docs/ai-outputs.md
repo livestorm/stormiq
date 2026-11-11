@@ -47,6 +47,19 @@ The Follow-up tab's "Team digest" (job kind `team_digest`): one Haiku 5.5 call a
 
 Stored as `team_digest_bundle: {English: "...", French: "..."}`, each save kept in `output_versions`.
 
+## Attendee follow-up
+
+The first v1.1 public format (proposal §7), on Follow-up under **For the audience** (job kind `attendee_followup`): "You asked, we answered", the email the host sends attendees after the session. One Sonnet 5.5 call at medium effort (`ai/public_formats.py` `write_format`, the `dossier` layout, 6,000 answer tokens) over its brief ([prompt](../prompts/attendee_followup.txt)), on a click on Follow-up only. Offered on every session, public and internal.
+
+- **What the model sees** (`record.format_briefs.build_attendee_followup_brief`), in this order: the session's title, its date (in the session's time zone) and its length, also in whole minutes; what was covered, the chapters placed on the session clock; the key moments of content (`record.moments.room_moments`, kinds `content` and `reply` only), with what was being said, never who wrote; and two answered questions from the question desk (status written, aloud, here or covered, with words that answer them: Livestorm's written answer, the host's reply, or the passage of the talk with its time), the most upvoted first (the Q&A's `up_votes_count`), then in the desk's order. Never who asked and never the desk's ids. No event-craft finding and no audience vital (show-up rate, who wrote): this goes to attendees. The whole brief is redacted before the call ([public formats](#public-formats-what-attendees-wrote-redacted)). It doesn't need "Analyse session": without it the brief has fewer parts. One call, so nothing is cached.
+- **What it writes**: Markdown, about 150 to 250 words, plain and warm: a `Subject:` line, a greeting, two or three sentences of what the session covered, **Three takeaways** (three bullets from the chapters and moments), **You asked, we answered** (the two questions, each with a short answer), a closing line holding `{{replay_link}}` exactly once (the host's email tool fills it in) and a sign-off. No emoji, no names of attendees.
+- **What code checks** before saving: the leak check (`_require_no_leak`), then `record.format_briefs.check_format`, shared by every public format: the first line starts with `Subject:`; at most 300 words; `{{replay_link}}` exactly once and no other `{{...}}` placeholder; every clock time, number and percentage is in the brief, written the same way (a count up to 10 without a "%" is free; the brief's `version` line doesn't count). A follow-up that fails raises `LLMInvalidOutput` ("The attendee follow-up gives a number that isn't in the session. Nothing was saved; please try again."), naming the kind of problem, never the model's words, and nothing is saved.
+- The French version is a translation of the checked English one (the `translation` job), and must keep `{{replay_link}}` exactly once (`check_tokens`), or nothing is saved.
+
+Stored as `attendee_followup_bundle: {English: "...", French: "..."}`, each save kept in `output_versions`.
+
+**For the next formats.** The no-show email, the LinkedIn post and the clip shortlist reuse the same pieces: a brief builder in `record/format_briefs.py`, a `_PublicFormat` entry in `api_logic.PUBLIC_FORMATS` (label, bundle column, brief, word cap, required tokens, first line), its prompt in `config.PUBLIC_FORMAT_PROMPT_PATHS`, a job spec, and the usual job and route wiring. `api_logic.run_public_format` loads the record's inputs once, redacts, writes, checks and saves.
+
 ## Deep Analysis
 
 The Follow-up tab no longer lists it (November 2026); its route, job and stored outputs stay. It reads the classic inputs below.
@@ -87,11 +100,11 @@ Stored as `content_repurpose_bundle: {English: {summary, blog, email, social_med
 
 ## Public formats: what attendees wrote, redacted
 
-The FAQ, Smart Recap (every tone), the summary, blog post, follow-up email and social posts are made to be shared outside the team, so what identifies an attendee is taken out in code before the call, and the output is checked after (`record/redaction.py`, `api_logic._public_redactor`). The owner's decision (November 2026): people's names, emails, phone numbers and links go; companies and products stay, since a product question loses its point without them.
+The FAQ, Smart Recap (every tone), the summary, blog post, follow-up email, social posts and the attendee follow-up are made to be shared outside the team, so what identifies an attendee is taken out in code before the call, and the output is checked after (`record/redaction.py`, `api_logic._public_redactor`). The owner's decision (November 2026): people's names, emails, phone numbers and links go; companies and products stay, since a product question loses its point without them.
 
 - **What goes.** An email, a link and a phone number (8 digits or more; dates and grouped numbers stay) become `[email]`, `[link]` and `[phone]`. The audience's names, from the session's people (everyone's on an internal session), become `[name]`: a full name whatever its case, a single word of it (3 letters or more) when written with a capital, unless it starts a sentence and is also a common word ("Will it work?"). A name typed all in lower case is left to the prompt, which drops names.
 - **What stays.** The speakers' names saved on the Transcript tab, and the team's on a public session: a recap may say who presented. Companies and products.
-- **Where.** The FAQ's questions, written answers, host's answers and the talk's passages; the speech sent to Smart Recap and to content repurposing. The prompts say what the placeholders mean and that they are never written. Translations read the English output, which was checked.
+- **Where.** The FAQ's questions, written answers, host's answers and the talk's passages; the attendee follow-up's whole brief; the speech sent to Smart Recap and to content repurposing. The prompts say what the placeholders mean and that they are never written. Translations read the English output, which was checked.
 - **The check.** An output holding an email, a phone number, an attendee's full name or a placeholder fails the job with `PublicOutputLeak` ("The FAQ contained an attendee's name. Nothing was saved; please try again."), naming only the kinds found, never the text. Nothing is saved.
 - **Not covered yet.** The cover image reads the Professional recap, which was checked. Internal outputs (the session analysis, deep analysis, decisions, the team digest) are for the team and keep their own rules.
 

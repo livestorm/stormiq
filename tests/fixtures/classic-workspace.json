@@ -3840,7 +3840,8 @@
       },
       "faqBundle": {},
       "decisionsBundle": {},
-      "teamDigestBundle": {}
+      "teamDigestBundle": {},
+      "attendeeFollowupBundle": {}
     }
   }
 }

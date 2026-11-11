@@ -136,6 +136,16 @@ export const OUTPUTS = [
     by: "language",
   },
   {
+    key: "attendee-followup",
+    group: "For the audience",
+    label: "Attendee follow-up",
+    about:
+      "\"You asked, we answered\": an email for the attendees with what the session covered, three takeaways and two of their questions answered, with a {{replay_link}} for your email tool to fill in. Who asked is never named.",
+    flow: "attendeeFollowup",
+    bundle: "attendeeFollowupBundle",
+    by: "language",
+  },
+  {
     key: "deep",
     group: "Earlier outputs",
     label: "Deep analysis",
@@ -155,6 +165,7 @@ const JOB_KIND = {
   faq: "faq",
   decisions: "decisions",
   teamDigest: "team_digest",
+  attendeeFollowup: "attendee_followup",
   smartRecap: "smart_recap",
   contentRepurposing: "content_repurposing",
 };
@@ -282,6 +293,7 @@ const VERSION_KIND = {
   faq: "faq",
   decisions: "decisions",
   teamDigest: "team_digest",
+  attendeeFollowup: "attendee_followup",
 };
 
 /** The query for an output's saved versions, or null for one without:
