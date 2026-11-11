@@ -15,6 +15,20 @@ const ICONS = {
   "activity": [
     ["path", {d:"M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"}],
   ],
+  "arrow-down": [
+    ["path", {d:"M12 5v14"}],
+    ["path", {d:"m19 12-7 7-7-7"}],
+  ],
+  "arrow-up": [
+    ["path", {d:"m5 12 7-7 7 7"}],
+    ["path", {d:"M12 19V5"}],
+  ],
+  "arrow-up-down": [
+    ["path", {d:"m21 16-4 4-4-4"}],
+    ["path", {d:"M17 20V4"}],
+    ["path", {d:"m3 8 4-4 4 4"}],
+    ["path", {d:"M7 4v16"}],
+  ],
   "calendar": [
     ["path", {d:"M8 2v4"}],
     ["path", {d:"M16 2v4"}],
@@ -78,6 +92,11 @@ const ICONS = {
     ["path", {d:"M8 12h13"}],
     ["path", {d:"M8 18h13"}],
     ["path", {d:"M8 6h13"}],
+  ],
+  "list-filter": [
+    ["path", {d:"M3 6h18"}],
+    ["path", {d:"M7 12h10"}],
+    ["path", {d:"M10 18h4"}],
   ],
   "lock": [
     ["rect", {width:"18",height:"11",x:"3",y:"11",rx:"2",ry:"2"}],
