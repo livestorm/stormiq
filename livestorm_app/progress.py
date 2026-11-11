@@ -81,9 +81,23 @@ ROSTER_STAGE_FLOORS: Dict[str, int] = {
 }
 
 
+# The v1 session analysis (`worker.run_session_analysis_job`, keyed by
+# session): label the chat (about a minute), then read the transcript (one
+# long model call, a few minutes on a long session), then save. A step with
+# nothing new to do is skipped, so a stage can be passed over.
+SESSION_ANALYSIS_STAGE_FLOORS: Dict[str, int] = {
+    "queued": 0,
+    "labelling": 5,
+    "reading": 25,
+    "saving": 95,
+    "done": 100,
+}
+
+
 STAGE_TABLE: Dict[str, Dict[str, int]] = {
     "transcript": TRANSCRIPT_STAGE_FLOORS,
     "roster": ROSTER_STAGE_FLOORS,
+    "session_analysis": SESSION_ANALYSIS_STAGE_FLOORS,
     "overall_analysis": ANALYSIS_STAGE_FLOORS,
     "deep_analysis": ANALYSIS_STAGE_FLOORS,
     "smart_recap": ANALYSIS_STAGE_FLOORS,

@@ -4,7 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import record from "./fixtures/record-v1.json";
 import { MAX_FAILURES, POLL_MS, createSessionReport } from "../src/report/useSessionReport";
-import { analysisSummary, formatLength, formatSessionStart } from "../src/report/format";
+import { analysisSteps, analysisSummary, elapsedLabel, formatLength, formatSessionStart } from "../src/report/format";
 
 function httpError(status, message = `HTTP ${status}`) {
   const error = new Error(message);
@@ -69,6 +69,16 @@ describe("createSessionReport", () => {
     expect(api.getSessionAnalysisJob).toHaveBeenCalledTimes(4);
   });
 
+  it("keeps the run's progress while it is in flight", async () => {
+    const progress = { kind: "session_analysis", stage: "reading", percent: 25, started_at_ms: 1000 };
+    const api = fakeApi({ getSessionAnalysisJob: vi.fn(async () => ({ jobStatus: "running", progress })) });
+    const report = createSessionReport({ api });
+    await report.open("sess-1");
+    expect(report.state.analysis).toEqual({ status: "running", error: "", progress });
+    await tick(POLL_MS);
+    expect(report.state.analysis.progress).toEqual(progress);
+  });
+
   it("ignores a second click while a run is in flight", async () => {
     const api = fakeApi({ getSessionAnalysisJob: vi.fn(async () => ({ jobStatus: "running" })) });
     const report = createSessionReport({ api });
@@ -86,7 +96,7 @@ describe("createSessionReport", () => {
     await report.open("sess-1");
     await report.startAnalysis();
     await tick(POLL_MS);
-    expect(report.state.analysis).toEqual({ status: "error", error: "The model declined this session." });
+    expect(report.state.analysis).toMatchObject({ status: "error", error: "The model declined this session." });
     await report.startAnalysis();
     expect(api.startSessionAnalysis).toHaveBeenCalledTimes(2);
   });
@@ -183,6 +193,32 @@ describe("format", () => {
     expect(analysisSummary({ state: "none" }, { status: "error", error: "Boom" })).toMatchObject({
       detail: "Boom", action: "Try again", tone: "low",
     });
+  });
+
+  it("shows a run's steps from the stage the server sent", () => {
+    const running = (progress) => analysisSummary({ state: "none" }, { status: "running", progress });
+    const reading = running({ stage: "reading", percent: 25, started_at_ms: 1000 });
+    expect(reading).toMatchObject({ percent: 25, startedAtMs: 1000 });
+    expect(reading.detail).toMatch(/^Reading the transcript/);
+    expect(reading.steps).toEqual([
+      { label: "Label the chat", state: "done" },
+      { label: "Read the transcript", state: "current" },
+    ]);
+    expect(running(null)).toMatchObject({ percent: null, startedAtMs: null, detail: "Labelling the chat. This takes about a minute." });
+    expect(running(null).steps.map((step) => step.state)).toEqual(["current", "todo"]);
+    // A queued run shows no stage: what the server holds may be the last run's.
+    const queued = analysisSummary({ state: "none" }, { status: "pending", progress: { stage: "done", percent: 100 } });
+    expect(queued).toMatchObject({ detail: "Waiting for a free worker.", percent: null });
+    expect(queued.steps.map((step) => step.state)).toEqual(["todo", "todo"]);
+    expect(analysisSteps("labelling", { transcript: false })).toEqual([{ label: "Label the chat", state: "current" }]);
+    expect(analysisSteps("done").map((step) => step.state)).toEqual(["done", "done"]);
+  });
+
+  it("words the time a run has taken", () => {
+    expect(elapsedLabel(1000, 66_000)).toBe("1:05");
+    expect(elapsedLabel(0, 3_725_000)).toBe("1:02:05");
+    expect(elapsedLabel(5000, 1000)).toBe("0:00");
+    expect(elapsedLabel(null, 1000)).toBe("");
   });
 });
 

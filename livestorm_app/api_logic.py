@@ -6,7 +6,7 @@ import math
 import threading
 from collections import OrderedDict
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 import pandas as pd
 import requests
@@ -2012,7 +2012,10 @@ def start_session_analysis(session_id: str, *, organization_id: OrgScope) -> Dic
 
 
 def get_session_analysis_job(session_id: str, job_id: str, *, organization_id: OrgScope) -> Dict[str, Any]:
-    """The analysis run's status: `{jobId, jobStatus, error?}`. A session has
+    """The analysis run's status: `{jobId, jobStatus, error?, progress}`.
+    `progress` is the run's latest stage from Redis (`{stage, percent,
+    started_at_ms, …}`, best effort, null when unknown); the page reads it
+    only while the run is in flight. A session has
     one run id, derived from the session; the `job_id` a client sends is
     ignored, so naming another session's job reads nothing of it (as the
     other job polls do)."""
@@ -2020,10 +2023,12 @@ def get_session_analysis_job(session_id: str, job_id: str, *, organization_id: O
     if not isinstance(fetch_session_fields(session_id, ("has_transcript",), organization_id=organization_id), dict):
         raise SessionNotFoundError()
     own = session_analysis_job_id(session_id)
-    return {"jobId": own, **read_job_status_sync(own)}
+    return {"jobId": own, **read_job_status_sync(own), "progress": read_progress(SESSION_ANALYSIS_KIND, session_id)}
 
 
-def run_session_analysis(api_key: str, session_id: str) -> Dict[str, Any]:
+def run_session_analysis(
+    api_key: str, session_id: str, report: Optional[Callable[[str], None]] = None
+) -> Dict[str, Any]:
     """The worker side of the analysis the user starts, in two steps:
 
     1. Label the chat and store the labels. Skips the model when the stored
@@ -2035,7 +2040,12 @@ def run_session_analysis(api_key: str, session_id: str) -> Dict[str, Any]:
     A failed step raises and stores nothing of its own; what earlier steps
     and runs stored is kept. Returns `{chatLabels: "labelled" | "up_to_date",
     messages, understanding: "read" | "up_to_date" | "no_transcript"}`.
+
+    `report(stage)`, when given, is told each stage as it starts
+    (`progress.SESSION_ANALYSIS_STAGE_FLOORS`: `labelling`, `reading`, only
+    when the model reads the session, `saving`, `done`).
     """
+    report = report or (lambda stage: None)
     # The record package is imported here, inside the worker's runner, so
     # loading api_logic never loads it (tests/test_roster.py).
     from livestorm_app.ai.chat_labelling import label_chat
@@ -2051,6 +2061,7 @@ def run_session_analysis(api_key: str, session_id: str) -> Dict[str, Any]:
         for row in chat.to_dict("records")
     ]
     current_hash = chat_hash(messages)
+    report("labelling")
     stored = fetch_chat_labels(session_id, ALL_ORGS)
     if stored and stored.get("chat_hash") == current_hash and stored.get("label_version") == LABEL_VERSION:
         labels, labels_state = stored, "up_to_date"
@@ -2065,11 +2076,18 @@ def run_session_analysis(api_key: str, session_id: str) -> Dict[str, Any]:
         replace_chat_labels(session_id, result.labels, chat_hash=result.chat_hash, model=result.model)
         labels = {"label_version": LABEL_VERSION, "chat_hash": result.chat_hash, "model": result.model, "labels": result.labels}
         labels_state = "labelled"
-    understanding = _read_understanding(api_key, session_id, cached, labels)
+    understanding = _read_understanding(api_key, session_id, cached, labels, report)
+    report("done")
     return {"chatLabels": labels_state, "messages": len(messages), "understanding": understanding}
 
 
-def _read_understanding(api_key: str, session_id: str, cached: Mapping[str, Any], labels: Optional[Mapping[str, Any]]) -> str:
+def _read_understanding(
+    api_key: str,
+    session_id: str,
+    cached: Mapping[str, Any],
+    labels: Optional[Mapping[str, Any]],
+    report: Callable[[str], None] = lambda stage: None,
+) -> str:
     """The understanding job's step of the analysis: build the session's
     dossier (`record.understanding.build_dossier`, with the chat labels just
     stored and the stored roster), skip the model when the stored result was
@@ -2104,7 +2122,9 @@ def _read_understanding(api_key: str, session_id: str, cached: Mapping[str, Any]
         job_id=session_analysis_job_id(session_id),
     )
     model = jobs.resolve_model(KIND).model_id
+    report("reading")
     answer = read_session(dossier, api_key=api_key, ctx=ctx)
+    report("saving")
     checked = check_understanding(answer.model_dump(), utterances, questions)
     replace_understanding(session_id, checked, dossier_hash=dossier.sha256, model=model)
     return "read"

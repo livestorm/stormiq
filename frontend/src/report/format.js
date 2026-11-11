@@ -20,6 +20,17 @@ export function formatSessionStart(startedAtUnix, timezone) {
   return { text: "", zone: "" };
 }
 
+/** "1:05" or "1:02:05", the time since `startedAtMs` at `nowMs`; "" when
+ * either is unknown. */
+export function elapsedLabel(startedAtMs, nowMs) {
+  if (typeof startedAtMs !== "number" || typeof nowMs !== "number") return "";
+  const total = Math.max(0, Math.floor((nowMs - startedAtMs) / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = String(total % 60).padStart(2, "0");
+  return h ? `${h}:${String(m).padStart(2, "0")}:${s}` : `${m}:${s}`;
+}
+
 /** "45 min" or "1 h 30 min" from the record's `meta.clock.endS`; "" when unknown. */
 export function formatLength(seconds) {
   if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds <= 0) return "";
@@ -30,18 +41,49 @@ export function formatLength(seconds) {
   return rest ? `${hours} h ${rest} min` : `${hours} h`;
 }
 
+// What each stage of a run says (`progress.SESSION_ANALYSIS_STAGE_FLOORS`).
+const STAGE_DETAIL = {
+  labelling: "Labelling the chat. This takes about a minute.",
+  reading: "Reading the transcript: the chapters, the answers given in the talk and the figures said. A few minutes on a long session.",
+  saving: "Checking what was read against the transcript, and saving it.",
+  done: "Finishing.",
+};
+// Which step each stage belongs to: 0 the chat, 1 the transcript.
+const STAGE_STEP = { labelling: 0, reading: 1, saving: 1, done: 2 };
+
+/** The run's steps for the panel: `[{label, state}]`, `state` `done`,
+ * `current` or `todo`, from the stage the server sent. Without a
+ * transcript there is one step. */
+export function analysisSteps(stage, { transcript = true } = {}) {
+  const at = stage in STAGE_STEP ? STAGE_STEP[stage] : -1;
+  const steps = [{ label: "Label the chat" }];
+  if (transcript) steps.push({ label: "Read the transcript" });
+  return steps.map((step, index) => ({ ...step, state: index < at ? "done" : index === at ? "current" : "todo" }));
+}
+
 /** What the analysis panel says, from the record's `chatLabels` and the run's
- * state. Returns `{ title, detail, action, busy, tone }`: `action` is the
- * button's label, or "" when there is nothing to run. */
-export function analysisSummary(chatLabels, analysis) {
+ * state. Returns `{ title, detail, action, busy, tone }`, and while a run is
+ * in flight `steps` (`analysisSteps`), `percent` (the stage's floor, from
+ * the server, or null) and `startedAtMs` (when the worker started it, or
+ * null): `action` is the button's label, or "" when there is nothing to
+ * run. `transcript` says whether the session has one (a step more). */
+export function analysisSummary(chatLabels, analysis, { transcript = true } = {}) {
   const status = analysis?.status || "idle";
   if (status === "starting" || status === "pending" || status === "running") {
+    // A queued run has no stage of its own yet: what Redis holds may be the last run's.
+    const progress = status === "running" ? analysis?.progress : null;
+    const stage = progress?.stage in STAGE_STEP ? progress.stage : status === "running" ? "labelling" : "";
+    const percent = typeof progress?.percent === "number" && Number.isFinite(progress.percent) ? progress.percent : null;
+    const started = progress?.started_at_ms;
     return {
       title: "Analysing the session",
-      detail: status === "running" ? "Labelling the chat. This takes about a minute." : "Waiting for a free worker.",
+      detail: stage ? STAGE_DETAIL[stage] : "Waiting for a free worker.",
       action: "Analysing…",
       busy: true,
       tone: "neutral",
+      steps: analysisSteps(stage, { transcript }),
+      percent,
+      startedAtMs: typeof started === "number" && Number.isFinite(started) ? started : null,
     };
   }
   if (status === "error") {

@@ -3,7 +3,8 @@ import { computed } from "vue";
 import { RouterLink } from "vue-router";
 
 // A session's tabs: Report · Transcript · Follow-up. Shared by the Report,
-// Transcript and Follow-up pages.
+// Transcript and Follow-up pages. Pinned to the top of the window once the
+// page scrolls past them, so another tab is one click away while reading.
 const props = defineProps({
   sessionId: { type: String, required: true },
   current: {
@@ -40,9 +41,13 @@ const tabs = computed(() => {
 
 <style scoped>
 .st-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 10;
   display: flex;
   gap: var(--siq-space-2);
   overflow-x: auto;
+  background: var(--siq-page);
   box-shadow: inset 0 -1px 0 var(--siq-hairline);
 }
 
