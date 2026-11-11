@@ -68,6 +68,13 @@
   --siq-s1: #0b54fe;
   --siq-s2: #de7835;
   --siq-s3: #0c7c59;
+  /* Speakers on the Transcript, one colour each in order (transcript/lines.js SPEAKER_TONES). */
+  --siq-speaker-1: #0f766e;
+  --siq-speaker-2: #7c3aed;
+  --siq-speaker-3: #b45309;
+  --siq-speaker-4: #be185d;
+  --siq-speaker-5: #0369a1;
+  --siq-speaker-6: #4d7c0f;
   --siq-other: #a4b5c1;
   --siq-ridge-fill: rgba(18, 38, 43, 0.07);
   --siq-img-outline: rgba(0, 0, 0, 0.1);
@@ -184,6 +191,12 @@
     --siq-s1: #447cfd;
     --siq-s2: #cb4a1a;
     --siq-s3: #0c7c59;
+    --siq-speaker-1: #2dd4bf;
+    --siq-speaker-2: #a78bfa;
+    --siq-speaker-3: #fbbf24;
+    --siq-speaker-4: #f472b6;
+    --siq-speaker-5: #38bdf8;
+    --siq-speaker-6: #a3e635;
     --siq-other: #8094a3;
     --siq-ridge-fill: rgba(255, 255, 255, 0.1);
     --siq-img-outline: rgba(255, 255, 255, 0.1);
@@ -240,6 +253,12 @@
     --siq-s1: #447cfd;
     --siq-s2: #cb4a1a;
     --siq-s3: #0c7c59;
+    --siq-speaker-1: #2dd4bf;
+    --siq-speaker-2: #a78bfa;
+    --siq-speaker-3: #fbbf24;
+    --siq-speaker-4: #f472b6;
+    --siq-speaker-5: #38bdf8;
+    --siq-speaker-6: #a3e635;
     --siq-other: #8094a3;
     --siq-ridge-fill: rgba(255, 255, 255, 0.1);
     --siq-img-outline: rgba(255, 255, 255, 0.1);

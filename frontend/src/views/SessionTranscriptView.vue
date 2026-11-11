@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
 import SessionTabs from "../components/report/SessionTabs.vue";
 import SpeakingStats from "../components/report/SpeakingStats.vue";
@@ -11,7 +11,7 @@ import UiButton from "../components/ui/UiButton.vue";
 import { api } from "../api";
 import { formatLength, formatSessionStart } from "../report/format";
 import { createSessionReport } from "../report/useSessionReport";
-import { VIEWS, speakersOf, subtitles, transcriptLines } from "../transcript/lines";
+import { VIEWS, authorsOf, speakersOf, subtitles, transcriptLines } from "../transcript/lines";
 import { createTranscriptView } from "../transcript/useTranscript";
 
 // The Transcript tab: what was said and what the room wrote, on one clock
@@ -20,6 +20,11 @@ import { createTranscriptView } from "../transcript/useTranscript";
 // the header reads the record, as the Report does. Wording and order:
 // `transcript/lines.js`. Chat and questions are attendees' text: rendered as
 // text, never as HTML.
+//
+// Layout: the tools (search, view, speakers, author) sit right above the
+// lines and stay pinned under the session's tabs. When speech and the room
+// are apart, the chat is a column beside the speech on a wide screen, with
+// its own scroll, search and author filter, so it is never far down the page.
 
 const props = defineProps({
   sessionId: { type: String, required: true },
@@ -53,31 +58,81 @@ const length = computed(() => formatLength(clock.value.endS));
 const query = ref("");
 const view = ref("all");
 const speaker = ref(undefined);
+const author = ref(undefined); // one author of the room, or undefined
+const roomQuery = ref(""); // the chat column's own search
 
 const body = computed(() => state.body);
 const speakers = computed(() => speakersOf(body.value));
 const hasSpeech = computed(() => Boolean(body.value?.speech?.length));
-const shown = computed(() => transcriptLines(body.value, { view: view.value, query: query.value, speaker: speaker.value }));
+const authors = computed(() => authorsOf(body.value));
+const shown = computed(() =>
+  transcriptLines(body.value, {
+    view: view.value,
+    query: query.value,
+    speaker: speaker.value,
+    author: author.value,
+    roomQuery: roomQuery.value,
+  }),
+);
 const nothingMatches = computed(
   () => Boolean(body.value) && !shown.value.lines.length && !shown.value.speech.length && !shown.value.room.length,
 );
-const filtered = computed(() => Boolean(query.value.trim()) || view.value !== "all" || speaker.value !== undefined);
+const filtered = computed(
+  () =>
+    Boolean(query.value.trim()) ||
+    Boolean(roomQuery.value.trim()) ||
+    view.value !== "all" ||
+    speaker.value !== undefined ||
+    author.value !== undefined,
+);
+// Speech and the room apart: the room gets its own column, with its own tools.
+const split = computed(() => hasSpeech.value && !shown.value.interleaved && view.value === "all");
 
 function pickSpeaker(key) {
   speaker.value = speaker.value === key ? undefined : key;
+  if (speaker.value !== undefined) author.value = undefined;
   if (speaker.value !== undefined && view.value === "room") view.value = "all";
+}
+
+function pickAuthor(name) {
+  author.value = name || undefined;
+  if (author.value !== undefined) speaker.value = undefined;
 }
 
 function clearFilters() {
   query.value = "";
+  roomQuery.value = "";
   view.value = "all";
   speaker.value = undefined;
+  author.value = undefined;
 }
+
+// The pinned tools' height, so the chat column pins right under them.
+const page = ref(null);
+const tools = ref(null);
+let resize = null;
+onMounted(() => {
+  if (typeof ResizeObserver === "undefined") return;
+  resize = new ResizeObserver(([entry]) => {
+    page.value?.style.setProperty("--t-tools-h", `${Math.ceil(entry.target.getBoundingClientRect().height)}px`);
+  });
+  watch(
+    tools,
+    async (el, old) => {
+      if (old) resize.unobserve(old);
+      await nextTick();
+      if (el) resize.observe(el);
+    },
+    { immediate: true },
+  );
+});
+onBeforeUnmount(() => resize?.disconnect());
 
 const countLabel = computed(() => {
   const { speech, room } = shown.value.counts;
   const parts = [];
   if (view.value !== "room" && hasSpeech.value) parts.push(`${speech} ${speech === 1 ? "line" : "lines"} of speech`);
+  if (author.value !== undefined && view.value !== "speech") return `${room} from ${author.value}`;
   if (view.value !== "speech" && speaker.value === undefined) parts.push(`${room} from the room`);
   return parts.join(" · ");
 });
@@ -116,7 +171,7 @@ const jobBusy = computed(() => ["pending", "running", "starting", "checking"].in
 </script>
 
 <template>
-  <div class="t-page">
+  <div ref="page" class="t-page">
     <nav class="t-crumbs" aria-label="Breadcrumb">
       <RouterLink class="t-crumb siq-fx" to="/sessions">Sessions</RouterLink>
       <Icon name="chevron-right" :size="14" />
@@ -178,8 +233,42 @@ const jobBusy = computed(() => ["pending", "running", "starting", "checking"].in
         </template>
       </Card>
 
-      <Card padding="flush" class="t-tools">
-        <div class="t-toolbar" role="search">
+      <!-- What you do once: name the speakers, take the subtitles or the raw file. -->
+      <div v-if="hasSpeech" class="t-actions">
+        <UiButton variant="ghost" small icon="pen-line" @click="naming ? (naming = false) : startNaming()">
+          {{ naming ? "Close" : speakers.some((s) => s.named) ? "Edit speaker names" : "Name speakers" }}
+        </UiButton>
+        <UiButton variant="ghost" small icon="download" @click="downloadSubtitles">Subtitles (SRT)</UiButton>
+        <UiButton variant="ghost" small icon="download" :href="rawUrl">Raw (JSON)</UiButton>
+      </div>
+
+      <Card v-if="naming">
+        <form class="t-naming" @submit.prevent="saveNames">
+          <p class="t-muted">Names show in this transcript, its subtitles and the analyses made after you save them.</p>
+          <div class="t-naming-grid">
+            <label v-for="(item, index) in speakers.filter((s) => s.key !== null)" :key="item.key" class="t-naming-row">
+              <span class="t-label">
+                <span class="t-dot" :style="{ background: `var(--siq-speaker-${item.tone})` }" aria-hidden="true" />
+                Speaker {{ index + 1 }}
+              </span>
+              <input v-model="draft[item.key]" type="text" class="t-input" :placeholder="`Speaker ${index + 1}`" maxlength="80" />
+            </label>
+          </div>
+          <p v-if="state.saveError" class="t-problem" role="alert">{{ state.saveError }}</p>
+          <div class="t-row">
+            <UiButton type="submit" variant="primary" icon="check" :disabled="state.saving">
+              {{ state.saving ? "Saving…" : "Save names" }}
+            </UiButton>
+            <UiButton variant="ghost" @click="naming = false">Cancel</UiButton>
+          </div>
+        </form>
+      </Card>
+
+      <SpeakingStats v-if="hasSpeech && record?.record?.measures" :measures="record.record.measures" :speakers="speakers" />
+
+      <!-- The tools, right above the lines, pinned under the tabs while reading. -->
+      <div ref="tools" class="t-tools" role="search">
+        <div class="t-toolbar">
           <label class="t-field t-search">
             <span class="siq-sr-only">Search the transcript</span>
             <Icon name="search" :size="16" class="t-field-icon" />
@@ -199,52 +288,34 @@ const jobBusy = computed(() => ["pending", "running", "starting", "checking"].in
             </button>
           </div>
         </div>
-
-        <div v-if="speakers.length" class="t-speakers">
-          <span class="t-muted">Speakers</span>
-          <button
-            v-for="(item, index) in speakers"
-            :key="item.key ?? `none-${index}`"
-            type="button"
-            class="t-chip siq-fx"
-            :class="{ 'is-on': speaker === item.key }"
-            :aria-pressed="speaker === item.key ? 'true' : 'false'"
-            @click="pickSpeaker(item.key)"
-          >
-            {{ item.name }}
-          </button>
-          <UiButton variant="ghost" small icon="pen-line" @click="naming ? (naming = false) : startNaming()">
-            {{ naming ? "Close" : speakers.some((s) => s.named) ? "Edit names" : "Name speakers" }}
-          </UiButton>
+        <div class="t-filters">
+          <div v-if="speakers.length && view !== 'room'" class="t-chips" role="group" aria-label="Speakers">
+            <button
+              v-for="(item, index) in speakers"
+              :key="item.key ?? `none-${index}`"
+              type="button"
+              class="t-chip siq-fx"
+              :class="{ 'is-on': speaker === item.key }"
+              :aria-pressed="speaker === item.key ? 'true' : 'false'"
+              @click="pickSpeaker(item.key)"
+            >
+              <span class="t-dot" :style="{ background: `var(--siq-speaker-${item.tone})` }" aria-hidden="true" />
+              {{ item.name }}
+            </button>
+          </div>
+          <label v-if="!split && authors.length && view !== 'speech'" class="t-field t-author">
+            <span class="siq-sr-only">Who wrote</span>
+            <select class="t-input t-select" :value="author ?? ''" @change="pickAuthor($event.target.value)">
+              <option value="">Everyone in the chat</option>
+              <option v-for="item in authors" :key="item.name" :value="item.name">{{ item.name }} · {{ item.count }}</option>
+            </select>
+            <Icon name="chevron-down" :size="16" class="t-select-icon" />
+          </label>
           <span class="t-spacer" />
-          <UiButton variant="secondary" small icon="download" @click="downloadSubtitles">Subtitles (SRT)</UiButton>
-          <UiButton variant="ghost" small icon="download" :href="rawUrl">Raw (JSON)</UiButton>
-        </div>
-
-        <form v-if="naming" class="t-naming" @submit.prevent="saveNames">
-          <p class="t-muted">Names show in this transcript, its subtitles and the analyses made after you save them.</p>
-          <div class="t-naming-grid">
-            <label v-for="(item, index) in speakers.filter((s) => s.key !== null)" :key="item.key" class="t-naming-row">
-              <span class="t-label">Speaker {{ index + 1 }}</span>
-              <input v-model="draft[item.key]" type="text" class="t-input" :placeholder="`Speaker ${index + 1}`" maxlength="80" />
-            </label>
-          </div>
-          <p v-if="state.saveError" class="t-problem" role="alert">{{ state.saveError }}</p>
-          <div class="t-row">
-            <UiButton type="submit" variant="primary" icon="check" :disabled="state.saving">
-              {{ state.saving ? "Saving…" : "Save names" }}
-            </UiButton>
-            <UiButton variant="ghost" @click="naming = false">Cancel</UiButton>
-          </div>
-        </form>
-
-        <p class="t-status">
-          <span role="status">{{ countLabel }}</span>
+          <span class="t-count" role="status">{{ countLabel }}</span>
           <UiButton v-if="filtered" variant="ghost" small icon="x" @click="clearFilters">Clear</UiButton>
-        </p>
-      </Card>
-
-      <SpeakingStats v-if="hasSpeech && record?.record?.measures" :measures="record.record.measures" :speakers="speakers" />
+        </div>
+      </div>
 
       <p v-if="hasSpeech && !shown.interleaved && !nothingMatches" class="t-note">
         <Icon name="info" :size="16" />
@@ -254,7 +325,7 @@ const jobBusy = computed(() => ["pending", "running", "starting", "checking"].in
         </span>
       </p>
 
-      <p v-if="nothingMatches" class="t-muted">Nothing matches.</p>
+      <p v-if="nothingMatches && !split" class="t-muted">Nothing matches.</p>
 
       <Card v-if="shown.interleaved && shown.lines.length" padding="flush">
         <h2 class="siq-sr-only">The session, line by line</h2>
@@ -262,6 +333,46 @@ const jobBusy = computed(() => ["pending", "running", "starting", "checking"].in
           <TranscriptLine v-for="line in shown.lines" :key="line.id" :line="line" />
         </ol>
       </Card>
+
+      <div v-else-if="split" class="t-split">
+        <Card padding="flush" class="t-speech-col">
+          <div class="t-section-head"><CardHeader icon="presentation" title="What was said" :level="2" /></div>
+          <ol v-if="shown.speech.length" class="t-lines">
+            <TranscriptLine v-for="line in shown.speech" :key="line.id" :line="line" />
+          </ol>
+          <p v-else class="t-muted t-empty">
+            {{ author !== undefined ? "An author is picked: their messages only." : "Nothing matches." }}
+          </p>
+        </Card>
+        <aside class="t-room-col" aria-label="Chat and questions">
+          <Card padding="flush" class="t-room-card">
+            <div class="t-room-head">
+              <CardHeader icon="message-circle" title="Chat and questions" :level="2" />
+              <div class="t-room-tools">
+                <label class="t-field t-search">
+                  <span class="siq-sr-only">Search the chat</span>
+                  <Icon name="search" :size="16" class="t-field-icon" />
+                  <input v-model="roomQuery" type="search" class="t-input" placeholder="Search the chat" />
+                </label>
+                <label v-if="authors.length" class="t-field t-author">
+                  <span class="siq-sr-only">Who wrote</span>
+                  <select class="t-input t-select" :value="author ?? ''" @change="pickAuthor($event.target.value)">
+                    <option value="">Everyone</option>
+                    <option v-for="item in authors" :key="item.name" :value="item.name">{{ item.name }} · {{ item.count }}</option>
+                  </select>
+                  <Icon name="chevron-down" :size="16" class="t-select-icon" />
+                </label>
+              </div>
+            </div>
+            <ol v-if="shown.room.length" class="t-lines t-room-lines">
+              <TranscriptLine v-for="line in shown.room" :key="line.id" :line="line" flat />
+            </ol>
+            <p v-else class="t-muted t-empty">
+              {{ speaker !== undefined ? "A speaker is picked: their speech only." : "Nothing matches." }}
+            </p>
+          </Card>
+        </aside>
+      </div>
 
       <template v-else>
         <Card v-if="shown.speech.length" padding="flush">
@@ -332,8 +443,7 @@ const jobBusy = computed(() => ["pending", "running", "starting", "checking"].in
   color: var(--siq-ink-2);
 }
 
-.t-muted,
-.t-status {
+.t-muted {
   margin: 0;
   font-size: var(--siq-text-small);
   line-height: var(--siq-text-small-lh);
@@ -347,40 +457,142 @@ const jobBusy = computed(() => ["pending", "running", "starting", "checking"].in
   margin-top: var(--siq-space-4);
 }
 
-/* ── Tools ── */
-.t-toolbar,
-.t-speakers,
-.t-naming,
-.t-status {
-  padding: var(--siq-space-3) var(--siq-space-6);
+/* ── Tools ──
+   Right above the lines, pinned under the session's tabs (which pin at the
+   top, --siq-target high) on a wide screen. */
+.t-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--siq-space-1) var(--siq-space-2);
+  margin-bottom: calc(var(--siq-space-3) * -1);
 }
 
-.t-toolbar {
+.t-tools {
+  display: flex;
+  flex-direction: column;
+  gap: var(--siq-space-3);
+  padding: var(--siq-space-3) 0;
+  background: var(--siq-page);
+  box-shadow: inset 0 -1px 0 var(--siq-hairline);
+}
+
+@media (min-width: 721px) {
+  .t-tools {
+    position: sticky;
+    top: var(--siq-target);
+    z-index: 9;
+  }
+}
+
+.t-toolbar,
+.t-filters {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--siq-space-3);
-  padding-top: var(--siq-space-4);
+  gap: var(--siq-space-2) var(--siq-space-3);
 }
 
-.t-speakers {
+.t-chips {
   display: flex;
   flex-wrap: wrap;
+  gap: var(--siq-space-2);
+}
+
+.t-dot {
+  display: inline-block;
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.t-chip {
+  display: inline-flex;
   align-items: center;
   gap: var(--siq-space-2);
-  box-shadow: inset 0 1px 0 var(--siq-hairline-row);
 }
 
 .t-spacer {
   flex: 1 1 auto;
 }
 
-.t-status {
+.t-count {
+  font-size: var(--siq-text-small);
+  line-height: var(--siq-text-small-lh);
+  color: var(--siq-muted);
+}
+
+.t-author {
+  flex: 0 1 16rem;
+  min-width: 11rem;
+}
+
+.t-select {
+  appearance: none;
+  padding-right: calc(var(--siq-space-3) + 20px);
+  cursor: pointer;
+}
+
+.t-select-icon {
+  position: absolute;
+  right: var(--siq-space-3);
+  color: var(--siq-muted);
+  pointer-events: none;
+}
+
+/* ── Speech and the room apart: two columns on a wide screen; the chat
+   column pins under the tools and scrolls on its own. ── */
+.t-split {
+  display: grid;
+  gap: var(--siq-space-4);
+  align-items: start;
+}
+
+.t-room-card {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.t-room-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--siq-space-3);
+  padding: var(--siq-space-5) var(--siq-space-5) var(--siq-space-3);
+  box-shadow: inset 0 -1px 0 var(--siq-hairline-row);
+}
+
+.t-room-tools {
+  display: flex;
+  flex-wrap: wrap;
   gap: var(--siq-space-2);
-  min-height: 48px;
-  box-shadow: inset 0 1px 0 var(--siq-hairline-row);
+}
+
+.t-room-tools .t-search,
+.t-room-tools .t-author {
+  flex: 1 1 10rem;
+}
+
+.t-empty {
+  margin: 0;
+  padding: var(--siq-space-4) var(--siq-space-6) var(--siq-space-6);
+}
+
+@media (min-width: 1024px) {
+  .t-split {
+    grid-template-columns: minmax(0, 1.65fr) minmax(300px, 1fr);
+  }
+  .t-room-col {
+    position: sticky;
+    top: calc(var(--siq-target) + var(--t-tools-h, 0px) + var(--siq-space-3));
+  }
+  .t-room-card {
+    max-height: calc(100vh - var(--siq-target) - var(--t-tools-h, 0px) - var(--siq-space-6));
+  }
+  .t-room-lines {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
 }
 
 .t-field {
@@ -494,7 +706,6 @@ const jobBusy = computed(() => ["pending", "running", "starting", "checking"].in
   display: flex;
   flex-direction: column;
   gap: var(--siq-space-3);
-  box-shadow: inset 0 1px 0 var(--siq-hairline-row);
 }
 
 .t-naming .t-row {
@@ -558,13 +769,6 @@ const jobBusy = computed(() => ["pending", "running", "starting", "checking"].in
     font-size: var(--siq-text-headline);
     line-height: var(--siq-text-headline-lh);
   }
-  .t-toolbar,
-  .t-speakers,
-  .t-naming,
-  .t-status {
-    padding-left: var(--siq-space-4);
-    padding-right: var(--siq-space-4);
-  }
   .t-segmented {
     width: 100%;
   }
@@ -594,6 +798,8 @@ const jobBusy = computed(() => ["pending", "running", "starting", "checking"].in
 
 @media print {
   .t-tools,
+  .t-actions,
+  .t-room-tools,
   .t-crumbs {
     display: none !important;
   }

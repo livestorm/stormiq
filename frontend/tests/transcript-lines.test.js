@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import withChapters from "./fixtures/transcript-v1.json";
-import { speakersOf, subtitles, textParts, transcriptLines } from "../src/transcript/lines";
+import { SPEAKER_TONES, authorsOf, speakersOf, subtitles, textParts, transcriptLines } from "../src/transcript/lines";
 
 // The lines' own rules, on the fixture without its chapters (tested below).
 const body = { ...withChapters, chapters: { state: "none", items: [] } };
@@ -78,10 +78,41 @@ describe("the Transcript tab's lines", () => {
 
   it("name the speakers as saved, then by order", () => {
     expect(speakersOf(body)).toEqual([
-      { key: "0", name: "Nora Vale", named: true },
-      { key: "1", name: "Rhea Stone", named: true },
-      { key: "2", name: "Speaker 3", named: false },
+      { key: "0", name: "Nora Vale", named: true, tone: 1 },
+      { key: "1", name: "Rhea Stone", named: true, tone: 2 },
+      { key: "2", name: "Speaker 3", named: false, tone: 3 },
     ]);
+  });
+
+  it("give each speaker's lines the speaker's colour, reusing them past the last", () => {
+    const shown = transcriptLines(apart);
+    const tones = Object.fromEntries(shown.speech.map((line) => [line.speaker, line.tone]));
+    expect(tones).toEqual({ 0: 1, 1: 2, 2: 3 });
+    const many = { speakers: Array.from({ length: SPEAKER_TONES + 1 }, (_, i) => ({ key: String(i), name: `S${i}` })) };
+    expect(speakersOf(many).map((s) => s.tone).slice(-2)).toEqual([SPEAKER_TONES, 1]);
+  });
+});
+
+describe("the room's authors", () => {
+  it("are listed by how much they wrote, the unnamed last", () => {
+    const authors = authorsOf(body);
+    expect(authors.reduce((sum, a) => sum + a.count, 0)).toBe(body.room.length);
+    const generic = authors.findIndex((a) => a.name === "Team" || a.name === "Attendee");
+    if (generic >= 0) expect(authors.slice(generic).every((a) => a.name === "Team" || a.name === "Attendee")).toBe(true);
+    expect(authors[0].count).toBeGreaterThanOrEqual(authors[authors.length - 1].count);
+  });
+
+  it("filter the room by one author, and search the room alone", () => {
+    const author = authorsOf(body)[0].name;
+    const byAuthor = transcriptLines(body, { author });
+    expect(byAuthor.lines.length).toBeGreaterThan(0);
+    expect(byAuthor.lines.every((line) => line.kind !== "speech" && line.who === author)).toBe(true);
+    const apartByAuthor = transcriptLines(apart, { author });
+    expect(apartByAuthor.speech).toEqual([], "an author's filter shows their messages");
+    const pricing = transcriptLines(apart, { roomQuery: "pricing" });
+    expect(pricing.room.length).toBeGreaterThan(0);
+    expect(pricing.room.every((line) => /pricing/i.test(line.text) || /pricing/i.test(line.who))).toBe(true);
+    expect(pricing.speech.length).toBe(transcriptLines(apart).speech.length, "the chat's search leaves the speech alone");
   });
 });
 
