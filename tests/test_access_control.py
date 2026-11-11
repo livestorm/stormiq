@@ -122,6 +122,12 @@ class FakeBackend:
         self.upserts.append((session_id, {"question_reply": fields}))
         return True
 
+    def save_located_decision(self, session_id, *, organization_id, **fields):
+        if session_id != SESSION_ID or not _visible(organization_id):
+            return False
+        self.upserts.append((session_id, {"located_decision": fields}))
+        return True
+
     def create_livestorm_sync(self, session_id, *, reason, connection_id="", **kwargs):
         self.sync_connections.append(connection_id)
         return {"sync_id": "sync-new", "status": "pending", "created": True}
@@ -157,6 +163,13 @@ def backend(monkeypatch):
     monkeypatch.setattr(api_logic, "upsert_cached_session", fake.upsert_cached_session)
     monkeypatch.setattr(api_logic, "save_question_reply", fake.save_question_reply)
     monkeypatch.setattr(api_logic, "fetch_question_replies", lambda session_id, organization_id: {})
+    monkeypatch.setattr(api_logic, "save_located_decision", fake.save_located_decision)
+    # `Q001` was found answered in the talk, so "Not this" has a passage to set aside.
+    monkeypatch.setattr(
+        api_logic,
+        "_located_answers",
+        lambda session_id, inputs, *, organization_id: ({"Q001": {"t": 10.0, "quote": "yes", "utterances": ["U0001"]}}, "ready"),
+    )
     monkeypatch.setattr(api_logic, "enqueue_unique_job_sync", fake.enqueue_unique_job_sync)
     monkeypatch.setattr(
         api_logic,
@@ -206,6 +219,7 @@ BODY = {
     "questionId": "Q001",
     "answered": True,
     "reply": "",
+    "decision": "reject",
 }
 
 

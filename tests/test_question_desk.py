@@ -1,5 +1,6 @@
 """The question desk (`record/question_desk.py`) and its routes,
-`GET`/`PUT /api/sessions/{id}/record/questions` and
+`GET`/`PUT /api/sessions/{id}/record/questions`,
+`PUT /api/sessions/{id}/record/questions/located` and
 `GET /api/sessions/{id}/record/questions.csv`, on the synthetic webinar."""
 
 from __future__ import annotations
@@ -18,15 +19,19 @@ from livestorm_app.record.evidence import CHAT
 from livestorm_app.record.inputs import load_record_inputs
 from livestorm_app.record.question_desk import (
     ALOUD,
+    CONFIRMED,
+    COVERED,
     CSV_COLUMNS,
     HERE,
     OPEN,
+    REJECTED,
     WRITTEN,
     find_question,
     open_questions_csv,
     question_desk,
 )
 from livestorm_app.record.transcript_view import ATTENDEE, TEAM
+from livestorm_app.record.understanding import NONE, READY, STALE, located_answers
 
 _stored_labels = synthetic.chat_labels  # the synthetic chat, labelled (`synthetic.CHAT_LABELS`)
 
@@ -107,7 +112,7 @@ def test_find_question_names_a_desk_row_with_its_livestorm_id():
     inputs = _inputs()
     rows = _by_text(question_desk(inputs, {}))
     api = rows["Is there an API?"]
-    assert find_question(inputs, api["id"]) == {"id": api["id"], "source": "qa", "livestormId": "qst-004", "status": OPEN}
+    assert find_question(inputs, api["id"]) == {"id": api["id"], "source": "qa", "livestormId": "qst-004", "status": OPEN, "located": None}
     assert find_question(inputs, rows["What about pricing?"]["id"])["source"] == "chat"
     events = inputs.events
     team_chat = events[(events["kind"] == CHAT) & events["is_team"]]["eid"].iloc[0]
@@ -122,6 +127,71 @@ def test_authors_are_short_names_and_an_internal_session_names_nobody():
     assert any(author not in (TEAM, ATTENDEE) for author in authors)
     internal = question_desk(_internal(inputs), {})
     assert all(q["author"] in (TEAM, ATTENDEE) for q in internal["questions"])
+
+
+# ── Answers located in the talk ──
+
+
+def _located(row=None):
+    row = row or synthetic.cached_row()
+    inputs = _inputs(row)
+    return inputs, located_answers(synthetic.understanding(row), inputs)
+
+
+def test_a_located_answer_makes_an_open_question_covered_and_shows_where_an_aloud_one_was():
+    inputs, (located, state) = _located()
+    assert state == READY
+    desk = question_desk(inputs, {}, located, state)
+    rows = _by_text(desk)
+    pricing = rows["What about pricing?"]
+    assert (pricing["status"], pricing["located"]) == (COVERED, {"t": 318.9, "quote": "Pricing works per team and scales with seats."})
+    aloud = rows["How does pricing work for larger teams with several hundred seats?"]
+    assert aloud["status"] == ALOUD and aloud["located"]["t"] == 318.9, "where in the talk"
+    assert rows["Is there an API?"]["status"] == OPEN and rows["Is there an API?"]["located"] is None
+    assert (desk["summary"]["covered"], desk["summary"]["open"], desk["summary"]["located"]) == (1, 1, READY)
+    assert question_desk(inputs, {})["summary"]["located"] == NONE
+
+
+def test_the_hosts_decision_on_a_located_answer():
+    inputs, (located, state) = _located()
+    pricing = find_question(inputs, _by_text(question_desk(inputs, {}, located, state))["What about pricing?"]["id"], {}, located)
+    aloud = find_question(inputs, "Q002", {}, located)
+    key, aloud_key = f"chat:{pricing['livestormId']}", f"qa:{aloud['livestormId']}"
+
+    def rows(saved):
+        return _by_text(question_desk(inputs, saved, located, state))
+
+    confirmed = rows({key: {"answered": True, "reply": None, "located": CONFIRMED}})["What about pricing?"]
+    assert confirmed["status"] == HERE and confirmed["located"]["t"] == 318.9, "answered here, the passage kept"
+    rejected = rows({key: {"answered": False, "reply": None, "located": REJECTED}, aloud_key: {"answered": False, "located": REJECTED}})
+    assert (rejected["What about pricing?"]["status"], rejected["What about pricing?"]["located"]) == (OPEN, None)
+    assert rejected["How does pricing work for larger teams with several hundred seats?"]["located"] is None
+    reopened = rows({key: {"answered": False, "reply": None, "located": CONFIRMED}})["What about pricing?"]
+    assert (reopened["status"], reopened["located"]) == (OPEN, None), "marked open again: never suggested again"
+
+
+def test_located_answers_are_used_only_while_read_from_the_session_as_it_is():
+    row = synthetic.cached_row()
+    stored = synthetic.understanding(row)
+    inputs = _inputs(row)
+    assert located_answers(None, inputs) == ({}, NONE)
+    assert located_answers({**stored, "dossier_hash": "0" * 64}, inputs) == ({}, STALE)
+    assert located_answers({**stored, "version": stored["version"] + 1}, inputs) == ({}, STALE)
+    unlabelled = _inputs(row, labelled=False)
+    assert located_answers(stored, unlabelled) == ({}, STALE), "the chat's questions changed: its ids may have"
+    without_transcript = _inputs({**row, "transcript_payload": None})
+    assert located_answers(stored, without_transcript) == ({}, NONE)
+
+
+def test_a_located_answer_never_changes_the_dossier_or_the_csv():
+    inputs, (located, state) = _located()
+    assert "What about pricing?" in open_questions_csv(inputs, {}), "not confirmed: still open"
+    pricing = find_question(inputs, "C0010", {}, located)
+    confirmed = {f"chat:{pricing['livestormId']}": {"answered": True, "reply": None, "located": CONFIRMED}}
+    assert "What about pricing?" not in open_questions_csv(inputs, confirmed)
+    from livestorm_app.record.question_desk import audience_questions
+
+    assert {q["answered_as"] for q in audience_questions(inputs)} <= {"written", "aloud", "open"}
 
 
 # ── The CSV ──
@@ -167,9 +237,9 @@ def test_csv_cells_that_look_like_formulas_are_neutralised():
 # ── The routes ──
 
 
-def _client(row, saved):
-    """The real app on `row`, with its labels stored and the saved replies
-    in memory; returns `(stack, client)`."""
+def _client(row, saved, stored_understanding=None):
+    """The real app on `row`, with its labels stored, the saved replies in
+    memory and `stored_understanding` (default none); returns `(stack, client)`."""
 
     def fetch(session_id, organization_id):
         return dict(saved) if session_id == row["session_id"] and organization_id == row["organization_id"] else {}
@@ -180,6 +250,23 @@ def _client(row, saved):
         saved[f"{source}:{livestorm_id}"] = {"answered": answered, "reply": reply, "evidence_id": evidence_id, "by": updated_by}
         return True
 
+    def decide(session_id, *, organization_id, source, livestorm_id, evidence_id, decision, updated_by):
+        if session_id != row["session_id"] or organization_id != row["organization_id"]:
+            return False
+        before = saved.get(f"{source}:{livestorm_id}", {"answered": False, "reply": None})
+        saved[f"{source}:{livestorm_id}"] = {
+            **before,
+            "answered": before["answered"] or decision == CONFIRMED,
+            "located": decision,
+            "evidence_id": evidence_id,
+            "by": updated_by,
+        }
+        return True
+
+    def understanding(session_id, organization_id):
+        ok = session_id == row["session_id"] and organization_id == row["organization_id"]
+        return stored_understanding if ok else None
+
     labels = _stored_labels(row)
     stack = ExitStack()
     for patch in (
@@ -188,6 +275,8 @@ def _client(row, saved):
         mock.patch.object(api_logic, "fetch_chat_labels", lambda session_id, organization_id: labels),
         mock.patch.object(api_logic, "fetch_question_replies", fetch),
         mock.patch.object(api_logic, "save_question_reply", save),
+        mock.patch.object(api_logic, "save_located_decision", decide),
+        mock.patch.object(api_logic, "fetch_understanding", understanding),
     ):
         stack.enter_context(patch)
     client = stack.enter_context(synthetic.serving(row))
@@ -263,3 +352,54 @@ def test_another_session_looks_missing_and_a_failure_hides_its_detail(monkeypatc
     assert missing.status_code == 404 and put_missing.status_code == 404
     assert broken.status_code == 500 and "secret internal detail" not in broken.text
     assert saved == {}
+
+
+def test_confirming_a_located_answer_marks_it_answered_and_not_this_sets_it_aside():
+    row, saved = synthetic.cached_row(), {}
+    stack, client = _client(row, saved, synthetic.understanding(row))
+    with stack:
+        path = f"/api/sessions/{row['session_id']}/record/questions/located"
+        desk = client.get(f"/api/sessions/{row['session_id']}/record/questions").json()
+        assert desk["summary"]["located"] == READY
+        pricing = _by_text(desk)["What about pricing?"]
+        confirmed = client.put(path, json={"questionId": pricing["id"], "decision": "confirm"})
+        aloud = client.put(path, json={"questionId": "Q002", "decision": "reject"})
+    assert confirmed.status_code == 200 and aloud.status_code == 200, (confirmed.text, aloud.text)
+    assert _by_text(confirmed.json())["What about pricing?"]["status"] == HERE
+    after = _by_text(aloud.json())["How does pricing work for larger teams with several hundred seats?"]
+    assert after["status"] == ALOUD and after["located"] is None
+    assert {key: (value["answered"], value["located"]) for key, value in saved.items()} == {
+        f"chat:{_livestorm_id(row, pricing['id'])}": (True, CONFIRMED),
+        "qa:qst-002": (False, REJECTED),
+    }
+
+
+def _livestorm_id(row, question_id):
+    return find_question(_inputs(row), question_id)["livestormId"]
+
+
+def test_a_decision_needs_a_located_answer_to_decide_on():
+    row, saved = synthetic.cached_row(), {}
+    stack, client = _client(row, saved, synthetic.understanding(row))
+    with stack:
+        path = f"/api/sessions/{row['session_id']}/record/questions/located"
+        nothing = client.put(path, json={"questionId": "Q004", "decision": "confirm"})
+        aloud = client.put(path, json={"questionId": "Q002", "decision": "confirm"})
+        unknown = client.put(path, json={"questionId": "Q999", "decision": "reject"})
+        malformed = client.put(path, json={"questionId": "Q004", "decision": "maybe"})
+        elsewhere = client.put("/api/sessions/someone-elses/record/questions/located", json={"questionId": "C0010", "decision": "confirm"})
+    assert (nothing.status_code, aloud.status_code) == (409, 409), "nothing located; already answered aloud"
+    assert (unknown.status_code, malformed.status_code, elsewhere.status_code) == (404, 422, 404)
+    assert saved == {}
+
+
+def test_a_stale_understanding_suggests_nothing():
+    row, saved = synthetic.cached_row(), {}
+    stale = {**synthetic.understanding(row), "dossier_hash": "0" * 64}
+    stack, client = _client(row, saved, stale)
+    with stack:
+        desk = client.get(f"/api/sessions/{row['session_id']}/record/questions").json()
+        refused = client.put(f"/api/sessions/{row['session_id']}/record/questions/located", json={"questionId": "C0010", "decision": "confirm"})
+    assert desk["summary"]["located"] == STALE and desk["summary"]["covered"] == 0
+    assert all(q["located"] is None for q in desk["questions"])
+    assert refused.status_code == 409 and saved == {}

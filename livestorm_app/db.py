@@ -641,7 +641,11 @@ def _ensure_question_replies_schema(cursor: Any) -> None:
     one row per question they marked or replied to, keyed by its source
     (`qa` or `chat`) and Livestorm id, with the evidence id it had when
     saved. References `session_cache` (deleted with it) and has no org
-    column: every read and write joins `session_cache` on its org."""
+    column: every read and write joins `session_cache` on its org.
+
+    `located` is what the host decided on a located answer (the
+    understanding job's passage that answers the question): `confirmed`,
+    `rejected`, or NULL when they haven't (`save_located_decision`)."""
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS session_question_replies (
@@ -655,6 +659,12 @@ def _ensure_question_replies_schema(cursor: Any) -> None:
             updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             PRIMARY KEY (session_id, source, livestorm_id)
         )
+        """
+    )
+    cursor.execute(
+        """
+        ALTER TABLE session_question_replies
+            ADD COLUMN IF NOT EXISTS located TEXT CHECK (located IN ('confirmed', 'rejected'))
         """
     )
 
@@ -2361,7 +2371,8 @@ def fetch_understanding(session_id: str, organization_id: OrgScope) -> Optional[
 
 def fetch_question_replies(session_id: str, organization_id: OrgScope) -> Dict[str, Dict[str, Any]]:
     """A session's saved replies by `question_desk.saved_key` ("qa:<id>",
-    "chat:<id>"): `{answered, reply, evidence_id, updated_at}`. Empty when
+    "chat:<id>"): `{answered, reply, located, evidence_id, updated_at}`
+    (`located`: `confirmed`, `rejected` or None). Empty when
     there are none, the session isn't in the scope, or the scope is blank
     (never queries). Raises when the database can't be read."""
     session_id_value = str(session_id or "").strip()
@@ -2376,7 +2387,7 @@ def fetch_question_replies(session_id: str, organization_id: OrgScope) -> Dict[s
     with get_db_connection() as connection:
         rows = connection.execute(
             f"""
-            SELECT r.source, r.livestorm_id, r.evidence_id, r.answered, r.reply, r.updated_at
+            SELECT r.source, r.livestorm_id, r.evidence_id, r.answered, r.reply, r.located, r.updated_at
             FROM session_question_replies r
             JOIN session_cache c ON c.session_id = r.session_id
             WHERE {where_clause}
@@ -2388,6 +2399,7 @@ def fetch_question_replies(session_id: str, organization_id: OrgScope) -> Dict[s
         f"{row['source']}:{row['livestorm_id']}": {
             "answered": bool(row["answered"]),
             "reply": row["reply"],
+            "located": row["located"],
             "evidence_id": row["evidence_id"],
             "updated_at": row["updated_at"],
         }
@@ -2459,6 +2471,74 @@ def save_question_reply(
     except Exception as exc:
         logger.error("Failed to save a question reply for session_id=%s (%s)", session_id_value, _error_label(exc))
         raise RuntimeError("Could not save the question's answer.") from exc
+    return row is not None
+
+
+def save_located_decision(
+    session_id: str,
+    *,
+    organization_id: OrgScope,
+    source: str,
+    livestorm_id: str,
+    evidence_id: str,
+    decision: str,
+    updated_by: Optional[str],
+) -> bool:
+    """Save what the host decided on a located answer: `confirmed` also
+    marks the question answered (a reply they wrote is kept); `rejected`
+    changes nothing else, so the question stays as it was and is never
+    suggested again. Scoped like `save_question_reply`: False when the
+    session isn't in the scope, or the scope is blank (never queries).
+    Raises RuntimeError when the write fails."""
+    session_id_value = str(session_id or "").strip()
+    livestorm_id_value = str(livestorm_id or "").strip()
+    if not session_id_value or not livestorm_id_value or not str(evidence_id or "").strip():
+        raise ValueError("save_located_decision requires a session id, a Livestorm id and an evidence id.")
+    if source not in ("qa", "chat"):
+        raise ValueError("source is 'qa' or 'chat'.")
+    if decision not in ("confirmed", "rejected"):
+        raise ValueError("decision is 'confirmed' or 'rejected'.")
+    try:
+        org_filter = _org_filter(organization_id)
+    except ScopeMatchesNothing:
+        return False
+    if not database_enabled():
+        raise RuntimeError("Database is not configured.")
+    scope_clause = " AND c.organization_id = %s" if org_filter is not None else ""
+    params = (
+        str(source),
+        livestorm_id_value,
+        str(evidence_id).strip(),
+        decision == "confirmed",
+        decision,
+        str(updated_by or "").strip() or None,
+        session_id_value,
+    ) + ((org_filter,) if org_filter is not None else ())
+    try:
+        with get_db_connection() as connection:
+            row = connection.execute(
+                f"""
+                INSERT INTO session_question_replies (
+                    session_id, source, livestorm_id, evidence_id, answered, located, updated_by, updated_at
+                )
+                SELECT c.session_id, %s, %s, %s, %s, %s, %s, NOW()
+                FROM session_cache c
+                WHERE c.session_id = %s{scope_clause}
+                LIMIT 1
+                ON CONFLICT (session_id, source, livestorm_id) DO UPDATE SET
+                    evidence_id = EXCLUDED.evidence_id,
+                    answered = session_question_replies.answered OR EXCLUDED.answered,
+                    located = EXCLUDED.located,
+                    updated_by = EXCLUDED.updated_by,
+                    updated_at = NOW()
+                RETURNING session_id
+                """,
+                params,
+            ).fetchone()
+            connection.commit()
+    except Exception as exc:
+        logger.error("Failed to save a located answer's decision for session_id=%s (%s)", session_id_value, _error_label(exc))
+        raise RuntimeError("Could not save the decision.") from exc
     return row is not None
 
 

@@ -166,6 +166,15 @@ export const api = {
       signal,
     });
   },
+  // The host's decision on an answer located in the talk ("confirm" or
+  // "reject"); returns the desk.
+  decideLocatedAnswer(sessionId, { questionId, decision }, { signal } = {}) {
+    return request(sessionPath(sessionId, "/record/questions/located"), {
+      method: "PUT",
+      body: JSON.stringify({ questionId, decision }),
+      signal,
+    });
+  },
   startSessionAnalysis(sessionId, { signal } = {}) {
     return request(sessionPath(sessionId, "/session-analysis"), { method: "POST", signal });
   },

@@ -1022,6 +1022,8 @@ RECORD_ENTRY_POINTS = {
         "get_session_record", "get_session_chat_messages", "get_session_transcript_view", "run_session_analysis",
         # The question desk: its inputs, rows, the question a write names, and the CSV.
         "_question_desk_inputs", "get_session_question_desk", "save_session_question_reply", "get_session_open_questions_csv",
+        # The desk's located answers (`record.understanding.located_answers`) and the host's decision on one.
+        "_located_answers", "decide_session_located_answer",
         # The analysis's second step: the dossier, its checks and the result's version.
         "_read_understanding",
     },

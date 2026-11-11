@@ -11,6 +11,9 @@ export const FILTERS = [
 ];
 
 const ANSWERED = new Set(["written", "aloud", "here"]);
+// Still open for the host: a passage of the talk that seems to answer a
+// "covered" question isn't an answer until they confirm it.
+const UNANSWERED = new Set(["covered", "open"]);
 
 function count(value) {
   return Number.isFinite(Number(value)) ? Number(value) : 0;
@@ -23,7 +26,7 @@ function plural(n, one, many) {
 /** The count each filter shows, from the server's summary. */
 export function filterCounts(summary = {}) {
   return {
-    open: count(summary.open),
+    open: count(summary.open) + count(summary.covered),
     answered: count(summary.written) + count(summary.aloud) + count(summary.here),
     all: count(summary.total),
   };
@@ -33,15 +36,16 @@ export function filterCounts(summary = {}) {
 export function filterQuestions(questions = [], filter = "open") {
   if (filter === "all") return questions;
   if (filter === "answered") return questions.filter((q) => ANSWERED.has(q.status));
-  return questions.filter((q) => q.status === "open");
+  return questions.filter((q) => UNANSWERED.has(q.status));
 }
 
-/** "5 questions: 2 still open · 2 answered in writing · 1 answered aloud". */
+/** "5 questions: 1 still open · 1 covered in the talk, not marked · 2 answered in writing · 1 answered aloud". */
 export function summaryLine(summary = {}) {
   const total = count(summary.total);
   if (!total) return "No audience questions in the Q&A or the chat.";
   const parts = [
     [count(summary.open), "still open"],
+    [count(summary.covered), "covered in the talk, not marked"],
     [count(summary.written), "answered in writing"],
     [count(summary.aloud), "answered aloud"],
     [count(summary.here), "answered here"],
@@ -65,10 +69,18 @@ export function chatNotice(state) {
   return "";
 }
 
+/** Why answers from the talk are missing, from their state, or "". Said
+ * only when the chat's own notice doesn't already say the same thing. */
+export function locatedNotice(summary = {}) {
+  if (summary.located !== "stale" || summary.chatQuestions === "stale") return "";
+  return "The session changed since it was analysed. Analyse it again on the Report to find the questions answered in the talk.";
+}
+
 const STATUS = {
   written: { status: "measured", label: "Answered in writing" },
   aloud: { status: "measured", label: "Answered aloud" },
   here: { status: "measured", label: "Answered here" },
+  covered: { status: "estimated", label: "Covered in the talk, not marked" },
   open: { status: "check", label: "Still open" },
 };
 
@@ -88,4 +100,23 @@ export function metaLine(question = {}) {
  * saved by its Livestorm id (`canSave`). Livestorm's own answers stay. */
 export function canMark(question = {}) {
   return Boolean(question.canSave) && (question.status === "open" || question.status === "here");
+}
+
+/** The located passage's heading: "Seems answered in the talk at 5:19"
+ * (not confirmed yet), "Answered in the talk at 5:19" (confirmed, or marked
+ * answered aloud in Livestorm), or "" without a passage. */
+export function locatedLabel(question = {}) {
+  const located = question.located;
+  if (!located) return "";
+  const t = located.t;
+  const time = typeof t === "number" && Number.isFinite(t) && t >= 0 ? ` at ${clockLabel(t)}` : "";
+  return question.status === "covered" ? `Seems answered in the talk${time}` : `Answered in the talk${time}`;
+}
+
+/** What the host can do with a located passage: confirm it (a "covered"
+ * question only) and set it aside ("Not this"); saved by Livestorm id. */
+export function locatedActions(question = {}) {
+  if (!question.canSave || !question.located) return { confirm: false, reject: false };
+  if (question.status === "covered") return { confirm: true, reject: true };
+  return { confirm: false, reject: question.status === "aloud" };
 }

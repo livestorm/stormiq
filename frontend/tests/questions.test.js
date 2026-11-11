@@ -6,6 +6,9 @@ import {
   chatNotice,
   filterCounts,
   filterQuestions,
+  locatedActions,
+  locatedLabel,
+  locatedNotice,
   logisticsLine,
   metaLine,
   statusOf,
@@ -19,13 +22,16 @@ describe("the question desk's words", () => {
   it("count each filter from the server's summary, and filter in its order", () => {
     expect(FILTERS.map((f) => f.key)).toEqual(["open", "answered", "all"]);
     expect(filterCounts(body.summary)).toEqual({ open: 2, answered: 3, all: 5 });
+    expect(body.summary).toMatchObject({ open: 1, covered: 1 });
     expect(filterQuestions(body.questions, "open").map((q) => q.text)).toEqual(["What about pricing?", "Is there an API?"]);
     expect(filterQuestions(body.questions, "answered")).toHaveLength(3);
     expect(filterQuestions(body.questions, "all")).toBe(body.questions);
   });
 
   it("sum the desk up, leaving out the statuses nobody has", () => {
-    expect(summaryLine(body.summary)).toBe("5 questions: 2 still open · 2 answered in writing · 1 answered aloud");
+    expect(summaryLine(body.summary)).toBe(
+      "5 questions: 1 still open · 1 covered in the talk, not marked · 2 answered in writing · 1 answered aloud",
+    );
     expect(summaryLine({ total: 1, open: 0, here: 1 })).toBe("1 question: 1 answered here");
     expect(summaryLine({ total: 0 })).toBe("No audience questions in the Q&A or the chat.");
     expect(logisticsLine(body.summary)).toBe("1 replay or slides request in the chat, counted apart.");
@@ -51,12 +57,34 @@ describe("the question desk's words", () => {
     expect(canMark({ status: "here", canSave: true })).toBe(true);
     expect(canMark({ status: "open", canSave: false })).toBe(false);
   });
+
+  it("show a passage of the talk that answers a question, and what the host can do with it", () => {
+    const pricing = byText["What about pricing?"];
+    const aloud = byText["How does pricing work for larger teams with several hundred seats?"];
+    expect(statusOf(pricing)).toEqual({ status: "estimated", label: "Covered in the talk, not marked" });
+    expect(pricing.located).toEqual({ t: 318.9, quote: "Pricing works per team and scales with seats." });
+    expect(locatedLabel(pricing)).toBe("Seems answered in the talk at 5:19");
+    expect(locatedLabel(aloud)).toBe("Answered in the talk at 5:19");
+    expect(locatedLabel(byText["Is there an API?"])).toBe("");
+    expect(locatedActions(pricing)).toEqual({ confirm: true, reject: true });
+    expect(locatedActions(aloud)).toEqual({ confirm: false, reject: true });
+    expect(locatedActions({ ...pricing, status: "here" })).toEqual({ confirm: false, reject: false });
+    expect(locatedActions({ ...pricing, canSave: false })).toEqual({ confirm: false, reject: false });
+  });
+
+  it("say when answers from the talk are out of date, once", () => {
+    expect(locatedNotice(body.summary)).toBe("");
+    expect(locatedNotice({ located: "stale", chatQuestions: "ready" })).toMatch(/Analyse it again/);
+    expect(locatedNotice({ located: "stale", chatQuestions: "stale" })).toBe("", "the chat's notice already says it");
+    expect(locatedNotice({ located: "none" })).toBe("");
+  });
 });
 
 function fakeApi(overrides = {}) {
   return {
     getSessionQuestionDesk: vi.fn(async () => body),
     saveSessionQuestion: vi.fn(async () => body),
+    decideLocatedAnswer: vi.fn(async () => body),
     ...overrides,
   };
 }
@@ -92,6 +120,21 @@ describe("the question desk's data", () => {
     );
     expect(desk.state.body).toBe(marked);
     expect(desk.state.saving).toBe("");
+  });
+
+  it("saves the host's decision on a located answer", async () => {
+    const confirmed = { ...body, summary: { ...body.summary, covered: 0, here: 1 } };
+    const api = fakeApi({ decideLocatedAnswer: vi.fn(async () => confirmed) });
+    const desk = createQuestionDesk({ api });
+    desk.open("s1");
+    await vi.waitFor(() => expect(desk.state.body).toBe(body));
+    expect(await desk.decide("C0010", "confirm")).toBe(true);
+    expect(api.decideLocatedAnswer).toHaveBeenCalledWith(
+      "s1",
+      { questionId: "C0010", decision: "confirm" },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(desk.state.body).toBe(confirmed);
   });
 
   it("keeps the desk and says why when a mark fails", async () => {

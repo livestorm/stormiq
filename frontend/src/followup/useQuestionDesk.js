@@ -8,6 +8,9 @@
 //   mark(questionId, {answered, reply})
 //                                saves one question, then shows the desk the
 //                                server sends back; resolves true when saved
+//   decide(questionId, "confirm" | "reject")
+//                                the host's decision on an answer located in
+//                                the talk; same contract as mark()
 //   close()                      cancels everything (the view calls it on unmount)
 //
 // Scope rules, as in the workspace store (frontend/CLAUDE.md): every request
@@ -75,17 +78,14 @@ export function createQuestionDesk({ api = defaultApi } = {}) {
     if (scope) load(scope);
   }
 
-  async function mark(questionId, { answered, reply = "" } = {}) {
+  // One write for one question: the server answers with the whole desk.
+  async function save(questionId, send) {
     const own = scope;
     if (!own || state.saving) return false;
     state.saving = questionId;
     state.saveError = { id: "", message: "" };
     try {
-      const body = await api.saveSessionQuestion(
-        own.sessionId,
-        { questionId, answered, reply },
-        { signal: own.controller.signal },
-      );
+      const body = await send(own);
       if (!isCurrent(own)) return false;
       setBody(body);
       return true;
@@ -98,5 +98,17 @@ export function createQuestionDesk({ api = defaultApi } = {}) {
     }
   }
 
-  return { state, open, reload, mark, close };
+  function mark(questionId, { answered, reply = "" } = {}) {
+    return save(questionId, (own) =>
+      api.saveSessionQuestion(own.sessionId, { questionId, answered, reply }, { signal: own.controller.signal }),
+    );
+  }
+
+  function decide(questionId, decision) {
+    return save(questionId, (own) =>
+      api.decideLocatedAnswer(own.sessionId, { questionId, decision }, { signal: own.controller.signal }),
+    );
+  }
+
+  return { state, open, reload, mark, decide, close };
 }
