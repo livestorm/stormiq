@@ -185,6 +185,7 @@ def backend(monkeypatch):
     monkeypatch.setattr(api_logic, "fetch_surprise_enabled", lambda org: True)
     monkeypatch.setattr(api_logic, "fetch_surprise_voice_clips", fake.fetch_surprise_voice_clips)
     monkeypatch.setattr(api_logic, "fetch_surprise_voice_clip", fake.fetch_surprise_voice_clip)
+    monkeypatch.setattr(api_logic, "fetch_surprise_storyboard", lambda sid, key, *, organization_id: None)
     monkeypatch.setattr(
         api_logic, "voice_settings", lambda: {"model": "gpt-4o-mini-tts", "voice": "marin", "instructions": "Warm."}
     )

@@ -95,12 +95,14 @@ SESSION_ANALYSIS_STAGE_FLOORS: Dict[str, int] = {
 
 
 # Surprise me, read aloud (`worker.run_surprise_voice_job`, keyed by
-# session): read the take, then one OpenAI clip per beat. While it speaks,
+# session): read the take, plan its scenes (the storyboard, Claude), then
+# one OpenAI clip per beat. While it speaks,
 # the payload also carries `done` and `total` (clips) and a `percent` that
 # moves with them.
 SURPRISE_VOICE_STAGE_FLOORS: Dict[str, int] = {
     "queued": 0,
     "reading": 5,
+    "storyboard": 7,
     "speaking": 10,
     "done": 100,
 }

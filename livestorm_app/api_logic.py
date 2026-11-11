@@ -28,6 +28,7 @@ from livestorm_app.db import (
     fetch_session_fields,
     fetch_session_roster,
     fetch_surprise_enabled,
+    fetch_surprise_storyboard,
     fetch_surprise_voice_clip,
     fetch_surprise_voice_clips,
     fetch_understanding,
@@ -40,6 +41,7 @@ from livestorm_app.db import (
     save_session_faq,
     save_located_decision,
     save_question_reply,
+    save_surprise_storyboard,
     save_surprise_voice_clip,
     update_transcript_job_status,
     upsert_cached_session,
@@ -55,6 +57,13 @@ from livestorm_app.queue import (
     transcription_job_id,
 )
 from livestorm_app.ai.cover_image import generate_cover_image_with_openai
+from livestorm_app.ai.surprise_story import (
+    STORYBOARD_VERSION,
+    check_storyboard,
+    story_key,
+    storyboard_payload,
+    write_storyboard,
+)
 from livestorm_app.ai.surprise_voice import (
     CLIP_MIME,
     MAX_BEAT_CHARS,
@@ -2232,16 +2241,22 @@ class SurpriseCheckError(RuntimeError):
     """A surprise take gave a figure the session doesn't have; nothing saved."""
 
 
-def _surprise_facts(session_id: str, cached: Mapping[str, Any]) -> Tuple[str, Any]:
+def _surprise_facts(session_id: str, cached: Mapping[str, Any]) -> Dict[str, Any]:
     """What StormIQ measured, for Surprise Me! (`record.surprise_brief`):
-    the vitals, the key moments with what was being said, and the placed
-    chapters, as text; and the session's roster, for the redaction. Read
-    from the same people source as the record. No model call."""
+    `{brief, redactor, room, vitals}`: the brief as text (the vitals, the
+    key moments with what was being said, the placed chapters and "From the
+    room", the audience's chat and questions redacted line by line); the
+    session's public redactor (`_public_redactor`, from the same people
+    source as the record); the room's lines (`room_lines`: ids, times and
+    redacted text); and the vitals' lines. No model call."""
     from livestorm_app.record.assemble import assemble_record, chapter_marks, clock_meta, session_meta
+    from livestorm_app.record.digest_brief import vital_lines
+    from livestorm_app.record.format_briefs import question_up_votes
     from livestorm_app.record.inputs import load_record_inputs
     from livestorm_app.record.moments import room_moments
+    from livestorm_app.record.question_desk import audience_questions
     from livestorm_app.record.roster import stored_roster_rows
-    from livestorm_app.record.surprise_brief import build_surprise_brief
+    from livestorm_app.record.surprise_brief import build_surprise_brief, room_lines
     from livestorm_app.record.understanding import chapter_list, current_reading
 
     roster_status = fetch_roster_status(session_id, ALL_ORGS) or {}
@@ -2251,6 +2266,7 @@ def _surprise_facts(session_id: str, cached: Mapping[str, Any]) -> Tuple[str, An
         roster_rows=stored_roster_rows(stored_roster) if stored_roster is not None else None,
         stored_labels=fetch_chat_labels(session_id, ALL_ORGS),
     )
+    redactor = _public_redactor(session_id, cached, inputs.roster)
     stored = fetch_understanding(session_id, ALL_ORGS)
     result, _state, _ = current_reading(stored, inputs)
     names = cached.get("transcript_speaker_names") if isinstance(cached.get("transcript_speaker_names"), dict) else {}
@@ -2260,14 +2276,24 @@ def _surprise_facts(session_id: str, cached: Mapping[str, Any]) -> Tuple[str, An
         [{"title": chapter["title"], "t": mark["t"]} for chapter, mark in zip(chapters, marks["marks"], strict=True)]
         if marks["placed"] else []
     )
+    measures = assemble_record(inputs)["record"].get("measures") or {}
+    moments = room_moments(inputs, result or {}, names)
+    # What the room wrote, redacted line by line: never who wrote it.
+    room = room_lines(
+        moments,
+        audience_questions(inputs),
+        question_up_votes(inputs.questions_payload, inputs.events),
+        redact=redactor.redact,
+    )
     brief = build_surprise_brief(
         title=session_meta(inputs)["title"],
         length_s=clock_meta(inputs).get("endS"),
-        measures=assemble_record(inputs)["record"].get("measures") or {},
-        moments=room_moments(inputs, result or {}, names),
+        measures=measures,
+        moments=moments,
         chapters=placed,
+        room=room,
     )
-    return brief, inputs.roster
+    return {"brief": brief, "redactor": redactor, "room": room, "vitals": vital_lines(measures, None)}
 
 
 def _surprise_refusal(markdown: str, sent: str) -> str:
@@ -2677,6 +2703,13 @@ def run_cover_image_generation(
 # clip is saved whole as it is made, keyed by `clip_key`, so a replay costs
 # nothing and a failed run is retried for the missing clips only. Only a
 # beat's text goes to OpenAI: the take was checked before it was saved.
+#
+# Before the clips, the same job makes the take's storyboard
+# (`ai/surprise_story.py`, Claude): a headline, a number or one of the
+# room's lines for each beat, checked in code, saved whole by `story_key`
+# and served with the beats (`beats[i].scene`). It never fails the Play: a
+# scene that fails the check is None, and a failed call saves nothing (the
+# player draws its own scenes; the next Play tries again).
 
 SURPRISE_VOICE_KIND = "surprise_voice"
 _SURPRISE_VOICE_FIELDS = ["organization_id", "smart_recap_bundle"]
@@ -2698,25 +2731,37 @@ def _surprise_voice_row(session_id: str, organization_id: OrgScope) -> Dict[str,
     return row
 
 
-def _surprise_voice_plan(row: Mapping[str, Any]) -> Tuple[List[Dict[str, Any]], Dict[str, str]]:
-    """The take's beats, `[{index, kind, text, clip}]`, and the voice they
-    are read with. `clip` is the beat's cache key."""
+def _surprise_voice_plan(row: Mapping[str, Any]) -> Tuple[List[Dict[str, Any]], Dict[str, str], str]:
+    """The take's beats, `[{index, kind, text, clip}]`, the voice they are
+    read with, and the storyboard's key. `clip` is the beat's cache key."""
     take = _normalize_smart_recap_bundle(row.get("smart_recap_bundle")).get("surprise", "")
     settings = voice_settings()
     beats = [
         {"index": index, "kind": beat["kind"], "text": beat["text"], "clip": clip_key(beat["text"], settings)}
         for index, beat in enumerate(surprise_beats(take))
     ]
-    return beats, settings
+    return beats, settings, story_key([beat["text"] for beat in beats])
 
 
 def _surprise_voice_status(
-    session_id: str, beats: List[Dict[str, Any]], settings: Mapping[str, str], *, organization_id: OrgScope
+    session_id: str,
+    beats: List[Dict[str, Any]],
+    settings: Mapping[str, str],
+    key: str,
+    *,
+    organization_id: OrgScope,
 ) -> Dict[str, Any]:
     have = fetch_surprise_voice_clips(session_id, [beat["clip"] for beat in beats], organization_id=organization_id)
+    storyboard = fetch_surprise_storyboard(session_id, key, organization_id=organization_id) if beats else None
+    scenes = list((storyboard or {}).get("scenes") or [])
     listed = [
-        {**beat, "ready": beat["clip"] in have, "durationS": (have.get(beat["clip"]) or {}).get("duration_s")}
-        for beat in beats
+        {
+            **beat,
+            "ready": beat["clip"] in have,
+            "durationS": (have.get(beat["clip"]) or {}).get("duration_s"),
+            "scene": scenes[i] if i < len(scenes) and isinstance(scenes[i], dict) else None,
+        }
+        for i, beat in enumerate(beats)
     ]
     ready = sum(1 for beat in listed if beat["ready"])
     body: Dict[str, Any] = {
@@ -2726,11 +2771,13 @@ def _surprise_voice_status(
         "beats": listed,
         "ready": ready,
         "total": len(listed),
+        "story": "ready" if storyboard is not None else "missing",
         "progress": None,
     }
+    clips_ready = bool(listed) and ready == len(listed)
     if not listed:
         body["state"] = "none"
-    elif ready == len(listed):
+    elif clips_ready and storyboard is not None:
         body["state"] = "ready"
     else:
         job = read_job_status_sync(surprise_voice_job_id(session_id))
@@ -2738,6 +2785,10 @@ def _surprise_voice_status(
         if status in ("pending", "running"):
             body["state"] = status
             body["progress"] = read_progress(SURPRISE_VOICE_KIND, session_id)
+        elif clips_ready:
+            # The voice is made but the storyboard isn't (its call failed):
+            # the player draws its own scenes.
+            body["state"] = "ready"
         elif status == "error":
             body["state"] = "error"
             body["error"] = str(job.get("error") or "The voice could not be made.")
@@ -2748,25 +2799,29 @@ def _surprise_voice_status(
 
 def get_surprise_voice(session_id: str, *, organization_id: OrgScope) -> Dict[str, Any]:
     """The voice of the session's take: `{sessionId, state, voice, model,
-    beats: [{index, kind, text, clip, ready, durationS}], ready, total,
-    progress, error?}`. `state`: `none` (no take), `missing` (not made yet),
-    `pending`, `running`, `ready` or `error`. Calls no provider."""
+    beats: [{index, kind, text, clip, ready, durationS, scene}], ready,
+    total, story, progress, error?}`. `state`: `none` (no take), `missing`
+    (not made yet), `pending`, `running`, `ready` or `error`. `story`:
+    `ready` when the storyboard was made for this take, else `missing`;
+    a beat's `scene` is its checked scene (`{effect, headline, number,
+    quote}`), or None. Calls no provider."""
     session_id = str(session_id or "").strip()
     row = _surprise_voice_row(session_id, organization_id)
-    beats, settings = _surprise_voice_plan(row)
-    return _surprise_voice_status(session_id, beats, settings, organization_id=organization_id)
+    beats, settings, key = _surprise_voice_plan(row)
+    return _surprise_voice_status(session_id, beats, settings, key, organization_id=organization_id)
 
 
 def start_surprise_voice(session_id: str, *, organization_id: OrgScope) -> Dict[str, Any]:
-    """The user clicked Play: queue the clips the take is missing (one job
-    per session, ids only), or return the voice when every clip is there."""
+    """The user clicked Play: queue the storyboard and the clips the take is
+    missing (one job per session, ids only), or return the voice when every
+    clip and the storyboard are there."""
     session_id = str(session_id or "").strip()
     row = _surprise_voice_row(session_id, organization_id)
-    beats, settings = _surprise_voice_plan(row)
+    beats, settings, key = _surprise_voice_plan(row)
     if not beats:
         raise SurpriseVoiceNoTakeError(NO_TAKE_MESSAGE)
-    status = _surprise_voice_status(session_id, beats, settings, organization_id=organization_id)
-    if status["state"] == "ready":
+    status = _surprise_voice_status(session_id, beats, settings, key, organization_id=organization_id)
+    if status["state"] == "ready" and status["story"] == "ready":
         return status
     job = enqueue_unique_job_sync("run_surprise_voice_job", surprise_voice_job_id(session_id), session_id)
     if not job:
@@ -2783,23 +2838,67 @@ def get_surprise_voice_clip(session_id: str, key: str, *, organization_id: OrgSc
     return fetch_surprise_voice_clip(session_id, key, organization_id=organization_id)
 
 
+def _make_surprise_storyboard(llm_key: str, session_id: str, row: Mapping[str, Any], beats: List[Dict[str, Any]], key: str) -> str:
+    """The take's storyboard (`ai/surprise_story.py`), made once per take:
+    `kept` (already there), `made`, or, without saving anything, `skipped`
+    (no Claude key) or `failed` (the facts or the call failed; logged by
+    the error's class only). A made one is checked before it is saved
+    (`check_storyboard`) and written whole; a failed write raises."""
+    if fetch_surprise_storyboard(session_id, key, organization_id=ALL_ORGS) is not None:
+        return "kept"
+    if not str(llm_key or "").strip():
+        logger.warning("[surprise storyboard] session_id=%s skipped: no Claude key on the worker", session_id)
+        return "skipped"
+    texts = [beat["text"] for beat in beats]
+    try:
+        cached = _require_cached_payloads(session_id, organization_id=ALL_ORGS)
+        facts = _surprise_facts(session_id, cached)
+        # A line with a placeholder left in it ("[name] said…") isn't offered as a bubble.
+        room = [line for line in facts["room"] if not facts["redactor"].leaks(line["text"])]
+        answer = write_storyboard(
+            storyboard_payload(beats, room, facts["vitals"]),
+            api_key=llm_key,
+            ctx=CallContext(
+                job_kind="surprise_storyboard",
+                session_id=session_id,
+                organization_id=str(row.get("organization_id") or "").strip(),
+                job_id=surprise_voice_job_id(session_id),
+            ),
+        )
+    except Exception as exc:  # never fails the Play: the player draws its own scenes
+        logger.warning(
+            "[surprise storyboard] session_id=%s not made (%s); the player draws its own scenes",
+            session_id, type(exc).__name__,
+        )
+        return "failed"
+    scenes = check_storyboard(texts, answer.model_dump(), room)
+    save_surprise_storyboard(session_id, key, {"version": STORYBOARD_VERSION, "source": "model", "scenes": scenes})
+    return "made"
+
+
 def run_surprise_voice(
     api_key: str,
     session_id: str,
     *,
     publish: Callable[[str, Dict[str, Any]], None] = lambda stage, extra: None,
+    llm_key: str = "",
 ) -> Dict[str, Any]:
-    """The worker's side: read the take as saved now, make each missing
-    clip (a few at a time), save each one whole, then drop the clips the
-    take no longer uses. Raises with a message the player can show."""
+    """The worker's side: read the take as saved now, make its storyboard
+    (`_make_surprise_storyboard`, with the Claude key `llm_key`), then each
+    missing clip (a few at a time, with the OpenAI key `api_key`), save each
+    one whole, then drop the clips the take no longer uses. Raises with a
+    message the player can show; a storyboard that can't be made never
+    fails it."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     row = _surprise_voice_row(session_id, ALL_ORGS)  # the switch, checked again
-    beats, settings = _surprise_voice_plan(row)
+    beats, settings, key = _surprise_voice_plan(row)
     if not beats:
         raise SurpriseVoiceNoTakeError(NO_TAKE_MESSAGE)
     if len(beats) > MAX_BEATS or any(len(beat["text"]) > MAX_BEAT_CHARS for beat in beats):
         raise SpeechFailed("The take is too long to read aloud.")
+    publish("storyboard", {})
+    story = _make_surprise_storyboard(llm_key, session_id, row, beats, key)
     keys = [beat["clip"] for beat in beats]
     have = fetch_surprise_voice_clips(session_id, keys, organization_id=ALL_ORGS)
     todo: "OrderedDict[str, str]" = OrderedDict((beat["clip"], beat["text"]) for beat in beats if beat["clip"] not in have)
@@ -2825,7 +2924,7 @@ def run_surprise_voice(
                     future.cancel()
                 raise
     prune_surprise_voice_clips(session_id, keys)
-    return {"status": "ok", "made": total, "beats": len(beats)}
+    return {"status": "ok", "made": total, "beats": len(beats), "story": story}
 
 
 def run_smart_recap(api_analysis_key: str, session_id: str, tone: str) -> Dict[str, Any]:
@@ -2842,9 +2941,9 @@ def run_smart_recap(api_analysis_key: str, session_id: str, tone: str) -> Dict[s
     if tone == "surprise":
         # Checked again in the worker: the switch may have changed since the click.
         _require_surprise_on(cached.get("organization_id"))
-        facts, roster = _surprise_facts(session_id, cached)
-        redactor = _public_redactor(session_id, cached, roster)
-        sent = redactor.redact(f"{facts}\n\n# Transcript\n\n{speech}")
+        facts = _surprise_facts(session_id, cached)
+        redactor = facts["redactor"]
+        sent = redactor.redact(f"{facts['brief']}\n\n# Transcript\n\n{speech}")
     else:
         redactor = _public_redactor(session_id, cached)
         sent = redactor.redact(speech)

@@ -212,9 +212,27 @@ const ANTHROPIC_TEXT_MODELS = [
 // sent as gpt-image-2 (cover_image.resolve_image_model), so show that.
 const IMAGE_MODELS = [{ value: "gpt-image-2", label: "gpt-image-2 (recommended)" }];
 // Surprise me's voice (OpenAI gpt-4o-mini-tts): the server refuses any other
-// (livestorm_app/ai/surprise_voice.py TTS_VOICES) and reads marin when unset.
+// (livestorm_app/ai/surprise_voice.py TTS_VOICES) and reads DEFAULT_TTS_VOICE
+// (cedar, a dry male voice) when unset; tests/test_surprise_voice.py checks both.
 const TTS_VOICES = ["alloy", "ash", "ballad", "cedar", "coral", "echo", "fable", "marin", "nova", "onyx", "sage", "shimmer", "verse"];
-const activeVoice = computed(() => (TTS_VOICES.includes(settings.value.tts_voice) ? settings.value.tts_voice : "marin"));
+const DEFAULT_TTS_VOICE = "cedar";
+// How each voice sounds, in a word or two, for the picker.
+const VOICE_LABELS = {
+  alloy: "neutral",
+  ash: "male, warm",
+  ballad: "male, soft",
+  cedar: "male, dry and natural",
+  coral: "female, bright",
+  echo: "male, calm",
+  fable: "male, storyteller",
+  marin: "female, natural",
+  nova: "female, upbeat",
+  onyx: "male, deep",
+  sage: "female, calm",
+  shimmer: "female, light",
+  verse: "male, expressive",
+};
+const activeVoice = computed(() => (TTS_VOICES.includes(settings.value.tts_voice) ? settings.value.tts_voice : DEFAULT_TTS_VOICE));
 const activeImageModel = computed(() => {
   const saved = settings.value.image_model;
   return IMAGE_MODELS.some((model) => model.value === saved) ? saved : "gpt-image-2";
@@ -544,7 +562,7 @@ onMounted(() => {
           </Card>
 
           <Card>
-            <CardHeader icon="play" title="Surprise me voice" subtitle="OpenAI's gpt-4o-mini-tts reads the take aloud. A new voice records again on the next play." :level="2" />
+            <CardHeader icon="play" title="Surprise me voice" subtitle="OpenAI's gpt-4o-mini-tts reads the take aloud, dry and wry. A new voice records again on the next play." :level="2" />
             <label class="adm-field adm-select-field">
               <span class="siq-sr-only">Surprise me voice</span>
               <select
@@ -553,7 +571,9 @@ onMounted(() => {
                 :disabled="savingKey !== null"
                 @change="saveSetting('tts_voice', $event.target.value)"
               >
-                <option v-for="name in TTS_VOICES" :key="name" :value="name">{{ name }}{{ name === "marin" ? " (default)" : "" }}</option>
+                <option v-for="name in TTS_VOICES" :key="name" :value="name">
+                  {{ name }} · {{ VOICE_LABELS[name] }}{{ name === DEFAULT_TTS_VOICE ? " (default)" : "" }}
+                </option>
               </select>
               <Icon name="chevron-down" :size="16" class="adm-select-icon" />
             </label>

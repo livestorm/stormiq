@@ -727,9 +727,11 @@ async def run_cover_image_job(
 # ── Surprise me's voice job ────────────────────────────────────────────────
 #
 # Reads the session's Surprise me take aloud with OpenAI's speech API, one
-# clip per beat (`api_logic.run_surprise_voice`). Queued only when a user
-# clicks Play (`api_logic.start_surprise_voice`), with the session id as its
-# only argument; the key comes from the worker's own environment.
+# clip per beat (`api_logic.run_surprise_voice`), after its storyboard
+# (Claude, `ai/surprise_story.py`). Queued only when a user clicks Play
+# (`api_logic.start_surprise_voice`), with the session id as its only
+# argument; both keys come from the worker's own environment. Without a
+# Claude key the voice is still made, and the player draws its own scenes.
 
 
 async def run_surprise_voice_job(ctx: Dict[str, Any], session_id: str) -> Dict[str, Any]:
@@ -746,10 +748,14 @@ async def run_surprise_voice_job(ctx: Dict[str, Any], session_id: str) -> Dict[s
         def publish(stage: str, extra: Dict[str, Any]) -> None:
             publish_progress_sync(SURPRISE_VOICE_KIND, session_id, stage, extra=extra)
 
-        result = await asyncio.to_thread(run_surprise_voice, key, session_id, publish=publish)
+        try:
+            llm_key = _read_llm_key_or_raise()
+        except RuntimeError:
+            llm_key = ""
+        result = await asyncio.to_thread(run_surprise_voice, key, session_id, publish=publish, llm_key=llm_key)
         logger.info(
-            "[run_surprise_voice_job] session_id=%s done made=%s beats=%s",
-            session_id, result.get("made"), result.get("beats"),
+            "[run_surprise_voice_job] session_id=%s done made=%s beats=%s story=%s",
+            session_id, result.get("made"), result.get("beats"), result.get("story"),
         )
         return result
     except Exception:

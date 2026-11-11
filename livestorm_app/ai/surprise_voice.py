@@ -9,7 +9,7 @@ clip (mp3) per beat.
   their beats; both sides are tested against it, so a server clip and a
   beat on screen are the same sentence.
 - **The voice** (`voice_settings`): `TTS_MODEL` (gpt-4o-mini-tts), the
-  `tts_voice` setting (or `TTS_VOICE`, marin) and the delivery notes in
+  `tts_voice` setting (or `TTS_VOICE`, cedar) and the delivery notes in
   `prompts/surprise_voice.txt`. Only a beat's text is sent: the take was
   already checked before it was saved (no attendee named, every figure the
   session's), and nothing else goes with it.
@@ -47,8 +47,11 @@ SURPRISE_VOICE_VERSION = 1
 TTS_VOICES = (
     "alloy", "ash", "ballad", "cedar", "coral", "echo", "fable", "marin", "nova", "onyx", "sage", "shimmer", "verse",
 )
-DEFAULT_TTS_VOICE = "marin"
-DEFAULT_INSTRUCTIONS = "Warm, upbeat presenter; lively but clear."
+# cedar: a male voice, one of the two newest and most natural OpenAI voices
+# (with marin), and the one that follows delivery notes best: dry and wry
+# without sounding like an announcer.
+DEFAULT_TTS_VOICE = "cedar"
+DEFAULT_INSTRUCTIONS = "Dry, wry and warm: a witty friend narrating, deadpan before the punchline, never mocking anyone."
 
 # OpenAI's limit on one speech input, and a bound on one take's beats (a
 # take is about 900 tokens: a few dozen sentences).
@@ -140,7 +143,7 @@ def surprise_beats(take: Any) -> List[Dict[str, str]]:
 
 
 def resolve_voice(saved: Any) -> str:
-    """The voice to send: a saved one gpt-4o-mini-tts offers, else marin."""
+    """The voice to send: a saved one gpt-4o-mini-tts offers, else cedar."""
     name = str(saved or "").strip().lower()
     return name if name in TTS_VOICES else DEFAULT_TTS_VOICE
 

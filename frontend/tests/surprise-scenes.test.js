@@ -1,6 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
-import { surpriseBeats } from "../src/followup/surpriseBeats";
-import { beatMs, captionWords, clockSeconds, curveGeometry, revealedChars, sceneFor } from "../src/followup/surpriseScenes";
+import { beatsWithParts, surpriseBeats } from "../src/followup/surpriseBeats";
+import {
+  EFFECTS,
+  MAX_HEADLINE_WORDS,
+  beatMs,
+  clockLabel,
+  clockSeconds,
+  curveGeometry,
+  headlineWords,
+  percentValue,
+  ruleHeadline,
+  ruleScene,
+  storyScene,
+} from "../src/followup/surpriseScenes";
 import { createSurpriseVoice } from "../src/followup/useSurpriseVoice";
 import { voiceSteps } from "../src/report/progress";
 
@@ -11,45 +23,71 @@ function beat(text, kind = "line") {
   return { ...surpriseBeats(text)[0], kind };
 }
 
-describe("a scene for each beat, from the session's own data", () => {
-  it("draws the chat curve and lights up the minute a time names", () => {
-    expect(sceneFor(beat("At 23:00 the room finally relaxed."), { minutes: MINUTES })).toEqual({
-      type: "curve",
+function inBeat(headline, text) {
+  const words = (value) => value.toLowerCase().split(/\s+/).map((w) => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}%]+$/gu, "")).filter(Boolean);
+  const head = words(headline);
+  const all = words(text);
+  return all.some((_, start) => head.every((word, i) => all[start + i] === word));
+}
+
+describe("the page's own scenes, when the server sent none", () => {
+  it("draws the chat curve to the minute a time names, or the busiest one for a peak", () => {
+    expect(ruleScene(beat("At 23:00 the room finally relaxed."), { minutes: MINUTES })).toMatchObject({
+      effect: "pulse",
       minute: 23,
       label: "23:00",
-      punch: false,
     });
-  });
-
-  it("lights up the busiest minute for a peak, without a number of its own", () => {
-    expect(sceneFor(beat("Then the chat peaked, hard."), { minutes: MINUTES })).toEqual({ type: "curve", minute: 23, label: null, punch: false });
-    expect(sceneFor(beat("C'était le pic de la session."), { minutes: MINUTES }).type).toBe("curve");
+    expect(ruleScene(beat("Then the chat peaked, hard."), { minutes: MINUTES })).toMatchObject({ effect: "pulse", minute: 23, label: null });
+    expect(ruleScene(beat("C'était le pic de la session."), { minutes: MINUTES }).effect).toBe("pulse");
   });
 
   it("never draws a curve the session doesn't have", () => {
     const quiet = MINUTES.map((row) => ({ ...row, audienceChat: 0 }));
-    expect(sceneFor(beat("At 23:00 nothing moved."), { minutes: quiet }).type).toBe("words");
-    expect(sceneFor(beat("At 45:00 it was over."), { minutes: MINUTES }).type, "a time after the last minute").toBe("words");
-    expect(sceneFor(beat("At 23:00 it began."), { minutes: [] }).type).toBe("words");
+    expect(ruleScene(beat("At 23:00 nothing moved."), { minutes: quiet }).effect).toBe("pop");
+    expect(ruleScene(beat("At 45:00 it was over."), { minutes: MINUTES }).effect, "a time after the last minute").toBe("pop");
+    expect(ruleScene(beat("At 23:00 it began."), { minutes: [] }).effect).toBe("pop");
   });
 
-  it("fills a ring to a percentage said, and counts a number up", () => {
-    expect(sceneFor(beat("56% stayed for pricing."), { minutes: MINUTES })).toEqual({ type: "ring", value: 56, label: "56%", punch: false });
-    expect(sceneFor(beat("The chat sent 1,200 messages."), { minutes: MINUTES })).toEqual({ type: "count", label: "1,200", punch: false });
-    expect(sceneFor(beat("Only 1 person asked."), { minutes: MINUTES }).type, "a count of one doesn't count up").toBe("words");
+  it("counts up a number the beat says, with a ring for a percentage", () => {
+    expect(ruleScene(beat("56% stayed for pricing."), { minutes: MINUTES })).toMatchObject({ effect: "count", number: "56%" });
+    expect(ruleScene(beat("The chat sent 1,200 messages."), { minutes: MINUTES })).toMatchObject({ effect: "count", number: "1,200" });
+    expect(ruleScene(beat("Only 1 person asked."), { minutes: MINUTES }).effect, "a count of one doesn't count up").toBe("pop");
+    expect(percentValue("56%")).toBe(56);
+    expect(percentValue("140%")).toBe(null);
+    expect(percentValue("56")).toBe(null);
   });
 
-  it("gives a punchline its card and anything else its words", () => {
-    expect(sceneFor(beat("Nobody believed it.", "punch"), { minutes: MINUTES })).toEqual({ type: "punch", punch: true });
-    expect(sceneFor(beat("A quiet room.", "title"), { minutes: MINUTES })).toEqual({ type: "words", title: true, punch: false });
-    expect(sceneFor(beat("99% of it worked.", "punch"), { minutes: MINUTES })).toMatchObject({ type: "ring", punch: true });
+  it("slams the title in, flashes or stamps a punchline, and pops the rest", () => {
+    expect(ruleScene(beat("A quiet room", "title")).effect).toBe("slam");
+    expect(ruleScene(beat("Nobody believed it.", "punch"), { index: 2 })).toMatchObject({ effect: "flash", punch: true });
+    expect(ruleScene(beat("Nobody believed it.", "punch"), { index: 3 }).effect).toBe("stamp");
+    expect(ruleScene(beat("The host opened the slides.")).effect).toBe("pop");
   });
 
-  it("reads clock times on the session clock", () => {
+  it("lifts a short headline word for word from the beat, never the whole sentence", () => {
+    const sentences = [
+      "Amara clicked connect, then clicked it again, just to be sure the SSO really worked.",
+      "The host said one more slide, and then said it again, and again, with feeling.",
+      "Nobody believed it.",
+    ];
+    for (const text of sentences) {
+      const item = beatsWithParts([{ kind: "line", text }], ["Single sign-on and SSO"])[0];
+      const headline = ruleHeadline(item);
+      expect(headlineWords(headline).length).toBeLessThanOrEqual(MAX_HEADLINE_WORDS);
+      expect(headline.length).toBeGreaterThan(0);
+      expect(inBeat(headline, text), `${headline} is in "${text}"`).toBe(true);
+    }
+    expect(ruleHeadline(beat("Nobody believed it."))).toBe("Nobody believed it");
+    const sso = beatsWithParts([{ kind: "line", text: sentences[0] }], ["Single sign-on and SSO"])[0];
+    expect(ruleHeadline(sso)).toContain("SSO");
+  });
+
+  it("reads clock times on the session clock and writes them back", () => {
     expect(clockSeconds("23:00")).toBe(1380);
     expect(clockSeconds("1:02:05")).toBe(3725);
     expect(clockSeconds("23:75")).toBe(null);
     expect(clockSeconds("56%")).toBe(null);
+    expect([clockLabel(1385), clockLabel(3725), clockLabel(null)]).toEqual(["23:05", "1:02:05", ""]);
   });
 
   it("places the minute on the curve", () => {
@@ -62,21 +100,35 @@ describe("a scene for each beat, from the session's own data", () => {
   });
 });
 
-describe("captions in step with the clip", () => {
-  it("keeps every word in its place, so the words make the beat", () => {
-    const { text, parts } = beat("At 23:00 the room relaxed.");
-    const words = captionWords(parts);
-    expect(words.map((word) => word.text).join("")).toBe(text);
-    expect(words.find((word) => word.kind === "number")).toMatchObject({ text: "23:00", start: 3, end: 8 });
+describe("the server's storyboard", () => {
+  const quote = { id: "R2", kind: "question", t: 1500, text: "Is SSO included?" };
+
+  it("plays the server's checked scene for a beat", () => {
+    const item = { ...beat("The chat sent 50 messages in three minutes!"), scene: { effect: "count", headline: "50 messages", number: "50", quote: null } };
+    expect(storyScene(item, { minutes: MINUTES })).toEqual({ effect: "count", headline: "50 messages", number: "50", quote: null, minute: null, label: null, punch: false });
+    const chat = { ...beat("Then someone asked the only question that mattered.", "punch"), scene: { effect: "chat", headline: "", number: null, quote } };
+    expect(storyScene(chat)).toMatchObject({ effect: "chat", quote: { kind: "question", t: 1500, text: "Is SSO included?" }, punch: true });
   });
 
-  it("reveals the text at the clip's pace", () => {
-    expect(revealedChars(40, 0)).toBe(0);
-    expect(revealedChars(40, 0.5)).toBe(20);
-    expect(revealedChars(40, 2)).toBe(40);
-    expect(revealedChars(40, Number.NaN)).toBe(0);
+  it("draws a pulse on the session's curve, and slams it in when there is none", () => {
+    const item = { ...beat("The chat woke up."), scene: { effect: "pulse", headline: "The chat woke up", number: null, quote: null } };
+    expect(storyScene(item, { minutes: MINUTES })).toMatchObject({ effect: "pulse", minute: 23 });
+    expect(storyScene(item, { minutes: [] })).toMatchObject({ effect: "slam", headline: "The chat woke up" });
   });
 
+  it("falls back to the page's own scene when the server's is missing or broken", () => {
+    const text = "56% stayed for pricing.";
+    for (const scene of [null, { effect: "wobble", headline: "x" }, { effect: "chat", headline: "", quote: null }, { effect: "count", headline: "", number: null }, { effect: "pop", headline: " " }]) {
+      expect(storyScene({ ...beat(text), scene }, { minutes: MINUTES }), JSON.stringify(scene)).toEqual(ruleScene(beat(text), { minutes: MINUTES }));
+    }
+  });
+
+  it("knows the server's effects", () => {
+    expect(EFFECTS).toEqual(["slam", "stamp", "pop", "count", "chat", "pulse", "flash"]);
+  });
+});
+
+describe("timing without the voice", () => {
   it("times a beat by its clip, or a reading pace without one", () => {
     expect(beatMs({ text: "x", durationS: 2.5 })).toBe(2500);
     expect(beatMs({ text: "one two three" })).toBe(1800);
@@ -85,10 +137,11 @@ describe("captions in step with the clip", () => {
 });
 
 describe("the voice loader's steps", () => {
-  it("says how many sentences are recorded", () => {
+  it("plans the scenes, then says how many sentences are recorded", () => {
+    expect(voiceSteps({ stage: "storyboard" }).map((step) => step.state)).toEqual(["done", "done", "current", "todo"]);
     const steps = voiceSteps({ stage: "speaking", done: 3, total: 12 });
-    expect(steps.map((step) => step.state)).toEqual(["done", "done", "current"]);
-    expect(steps[2].detail).toBe("3 of 12 sentences");
+    expect(steps.map((step) => step.state)).toEqual(["done", "done", "done", "current"]);
+    expect(steps[3].detail).toBe("3 of 12 sentences");
     expect(voiceSteps(null)[0].state).toBe("current");
   });
 });
