@@ -145,6 +145,10 @@ const NOTHING = {
     const count = (values?.prompts || []).length;
     return `Questions à la salle : elle a eu le temps de répondre ${count === 1 ? "à la seule question" : `aux ${count} questions`}.`;
   },
+  demand: (values) =>
+    (values?.topics || []).length
+      ? "Ce que la salle a demandé : chaque sujet sur lequel plusieurs personnes ont posé des questions a eu ses réponses."
+      : "Ce que la salle a demandé : aucun sujet n'a réuni 3 questions ou plus.",
 };
 
 const NOT_CHECKED = {
@@ -173,10 +177,41 @@ const NOT_CHECKED = {
     clock: "Questions à la salle : nécessite l'horloge de l'enregistrement vérifiée à la seconde.",
     no_prompts: "Questions à la salle : l'analyse n'en a trouvé aucune dans l'intervention.",
   },
+  demand: {
+    no_reading: "Ce que la salle a demandé : nécessite « Analyse session » sur la session telle qu'elle est, pour regrouper les questions.",
+  },
 };
 
+function talkLine(topic) {
+  if (!topic.talkS) return "aucune réponse trouvée dans l'intervention";
+  const where = topic.chapter ? ` dans ${quoted(topic.chapter)}` : "";
+  return `${topic.talkS < 60 ? `${Math.round(topic.talkS)} s` : `${minutes(topic.talkS)} min`} de l'intervention y ont répondu${where}`;
+}
+
+function demand(values) {
+  const topics = values.topics || [];
+  const unmet = topics.filter((topic) => (values.unmet || []).includes(topic.label));
+  const top = unmet[0];
+  return {
+    headline:
+      unmet.length === 1
+        ? top.people > 1
+          ? `${top.people} personnes ont posé des questions sur ${quoted(top.label)}, la plupart sans réponse`
+          : `${top.asked} questions portaient sur ${quoted(top.label)}, la plupart sans réponse`
+        : `${unmet.length} sujets sur lesquels la salle revenait ont reçu peu de réponses`,
+    lines: [
+      "L'analyse a regroupé les questions qui demandent la même chose. Un sujet ressort quand la moitié de ses questions ou plus n'ont pas de réponse : ni écrite, ni marquée comme répondue, ni confirmée dans l'intervention.",
+    ],
+    chart: null,
+    rows: topics.map(
+      (topic) =>
+        `${quoted(topic.label)} · ${plural(topic.asked, "question", "questions")}${fromPeople(topic.people)} · ${topic.unmet} sans réponse · ${talkLine(topic)}`,
+    ),
+  };
+}
+
 export const FR = {
-  found: { chapters, friction, monologue, prompts, moments },
+  found: { chapters, friction, monologue, prompts, moments, demand },
   nothing: NOTHING,
   notChecked: NOT_CHECKED,
   labels: { title: "Ce qui ressort", quiet: "Rien ne ressort du rythme habituel de la session.", checked: "Vérifié, rien d'inhabituel", notChecked: "Non vérifié", notCheckedNote: (n) => `${n === 1 ? "1 vérification n'a" : `${n} vérifications n'ont`} pas pu être faite${n === 1 ? "" : "s"} : la raison est dans « Method and data quality ».`, next: "La prochaine fois", measured: "Mesuré", estimated: "Estimé" },

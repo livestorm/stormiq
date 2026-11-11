@@ -24,6 +24,15 @@
         "end": 920.4,
         "seconds": 297.5
       }
+    },
+    {
+      "id": "demand",
+      "confidence": "estimated",
+      "state": "nothing",
+      "values": {
+        "topics": [],
+        "groups": 0
+      }
     }
   ],
   "notChecked": [

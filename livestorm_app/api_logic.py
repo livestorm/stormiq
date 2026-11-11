@@ -632,17 +632,28 @@ def get_session_chapters(session_id: str, *, organization_id: OrgScope) -> Dict[
 def get_session_findings(session_id: str, *, organization_id: OrgScope) -> Dict[str, Any]:
     """The Report's findings: `{sessionId, updatedAt, state, version, found,
     nothing, notChecked}` (`record.findings.findings`), from the session's
-    payloads, its chat labels and the stored understanding (`state`: its
+    payloads, its chat labels, the question desk's statuses and the stored
+    understanding (`state`: its
     reading's, `ready`, `stale` or `none`). No model call; read on demand
     with the caller's scope and not cached."""
     inputs, row = _transcript_inputs(session_id, organization_id=organization_id)
     from livestorm_app.record.findings import findings
     from livestorm_app.record.understanding import chapter_list, current_reading
 
+    from livestorm_app.record.question_desk import question_desk
+    from livestorm_app.record.understanding import located_answers
+
     stored = fetch_understanding(session_id, organization_id)
     result, state, _ = current_reading(stored, inputs)
     chapters, _ = chapter_list(stored, inputs)
-    body = {"state": state, **findings(inputs, chapters, result)}
+    # Each question's status, as the desk shows it (#5 compares what was
+    # asked with what was answered), only while the reading is current.
+    statuses = None
+    if state == "ready":
+        located, located_state = located_answers(stored, inputs)
+        desk = question_desk(inputs, fetch_question_replies(session_id, organization_id), located, located_state)
+        statuses = {str(q["id"]): str(q["status"]) for q in desk["questions"]}
+    body = {"state": state, **findings(inputs, chapters, result, statuses)}
     return {"sessionId": session_id, "updatedAt": row.get("updated_at"), **_sanitize_json_value(body)}
 
 
