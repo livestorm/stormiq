@@ -1,9 +1,13 @@
 // The words of the Report's findings (`GET /record/findings`,
-// `record/findings.py`): every sentence comes from a template here, filled
-// with the server's values. Nothing is computed but a time label and a
-// multiple of 100 for the index.
+// `record/findings.py`): every sentence comes from a template here (English)
+// or in `findingsFr.js` (French), filled with the server's values, and each
+// found finding gets a "Next time" line from the curated library
+// (`nextTime.js`). Nothing is computed but a time label and a multiple of
+// 100 for the index.
 
 import { clockLabel, secondsLeft } from "./chartGeometry";
+import { FR } from "./findingsFr";
+import { nextTime } from "./nextTime";
 
 const plural = (count, one, many) => `${count} ${count === 1 ? one : many}`;
 // "from 3 people", or nothing when the authors couldn't be told apart.
@@ -126,12 +130,6 @@ function momentsFinding(values) {
 
 const FOUND = { moments: momentsFinding, chapters: chaptersFinding, friction: frictionFinding, monologue: monologueFinding, prompts: promptsFinding };
 
-/** A found finding in words: `{id, headline, lines, chart, rows, confidence}`. */
-export function foundFinding(finding) {
-  const words = FOUND[finding.id]?.(finding.values || {});
-  return words ? { id: finding.id, confidence: finding.confidence || "estimated", ...words } : null;
-}
-
 // ── Checked, nothing unusual · not checked ──
 
 const NOTHING = {
@@ -181,19 +179,41 @@ const NOT_CHECKED = {
   },
 };
 
+const EN = {
+  found: FOUND,
+  nothing: NOTHING,
+  notChecked: NOT_CHECKED,
+  labels: { title: "What stood out", quiet: "Nothing stood out from the session's own pattern.", checked: "Checked, nothing unusual", notChecked: "Not checked", next: "Next time", measured: "Measured", estimated: "Estimated" },
+};
+
+const WORDS = { en: EN, fr: FR };
+const words = (lang) => WORDS[lang] || EN;
+
+/** A found finding in words, in `lang` ("en" or "fr"): `{id, headline,
+ * lines, chart, rows, confidence, next}`; `next` is the "Next time" line
+ * picked with `seed` (the session's id). */
+export function foundFinding(finding, lang = "en", seed = "") {
+  const made = words(lang).found[finding.id]?.(finding.values || {});
+  if (!made) return null;
+  return { id: finding.id, confidence: finding.confidence || "estimated", ...made, next: nextTime(finding, lang, seed) };
+}
+
 /** The collapsed list: what was checked and found nothing, then what
  * couldn't be checked and why. */
-export function checkedLines(body) {
-  const nothing = (body?.nothing || []).map((item) => NOTHING[item.id]?.(item.values)).filter(Boolean);
-  const notChecked = (body?.notChecked || []).map((item) => NOT_CHECKED[item.id]?.[item.reason]).filter(Boolean);
+export function checkedLines(body, lang = "en") {
+  const { nothing: said, notChecked: why } = words(lang);
+  const nothing = (body?.nothing || []).map((item) => said[item.id]?.(item.values)).filter(Boolean);
+  const notChecked = (body?.notChecked || []).map((item) => why[item.id]?.[item.reason]).filter(Boolean);
   return { nothing, notChecked };
 }
 
-/** Everything the section shows, from `GET /record/findings` (or null). */
-export function findingsView(body) {
-  const found = (body?.found || []).map(foundFinding).filter(Boolean);
-  const { nothing, notChecked } = checkedLines(body);
-  return { found, nothing, notChecked, empty: !found.length && !nothing.length && !notChecked.length };
+/** Everything the section shows, from `GET /record/findings` (or null), in
+ * `lang`, with the section's own labels. */
+export function findingsView(body, lang = "en") {
+  const seed = String(body?.sessionId || "");
+  const found = (body?.found || []).map((finding) => foundFinding(finding, lang, seed)).filter(Boolean);
+  const { nothing, notChecked } = checkedLines(body, lang);
+  return { found, nothing, notChecked, labels: words(lang).labels, empty: !found.length && !nothing.length && !notChecked.length };
 }
 
 /** What the findings mark on the Pulse, in percent of an axis of `count`

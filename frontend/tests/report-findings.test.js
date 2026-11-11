@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import body from "./fixtures/findings-v1.json";
 import { checkedLines, findingsView, foundFinding, pulseMarks } from "../src/report/findings";
 import { createFindings } from "../src/report/useFindings";
+import { LINES, SITUATIONS, nextTime, situation } from "../src/report/nextTime";
 
 const chapters = {
   id: "chapters",
@@ -215,6 +216,59 @@ describe("unprompted moments", () => {
     expect(checkedLines({ nothing: [{ id: "moments", values: { usualPerMinute: 2, replies: 1, waves: 2 } }] }).nothing).toEqual([
       "Moments: no burst beyond the room's usual 2 a minute, other than 1 reply to a prompt and 2 waves of greetings or logistics.",
     ]);
+  });
+});
+
+describe("in French", () => {
+  it("word every finding in French, with decimal commas and guillemets", () => {
+    const view = findingsView({ sessionId: "s1", found: [chapters, friction, monologue, prompts, moments], nothing: [], notChecked: [] }, "fr");
+    expect(view.labels.title).toBe("Ce qui ressort");
+    const [first, second, third, fourth, fifth] = view.found;
+    expect(first.headline).toBe("« Pricing for larger teams » a fait réagir la salle");
+    expect(first.lines[0]).toBe("3,9 messages par minute de 7 personnes, 3,5× le chapitre habituel (1,1 par minute).");
+    expect(first.chart.rows[3].value).toBe("Q&R · 6 questions");
+    expect(second.headline).toBe("3 personnes ont signalé un problème de son ou de connexion à 12:40");
+    expect(third.headline).toBe("18 minutes sans faire participer la salle, et le chat a baissé");
+    expect(fourth.rows[0]).toMatch(/^5:07 « Any questions so far\? » · attente de 6 s/);
+    expect(fifth.headline).toBe("La salle s'est animée d'elle-même 2 fois");
+    const text = view.found.flatMap((item) => [item.headline, ...item.lines, ...item.rows, item.next]).join(" ");
+    expect(text).not.toMatch(/ from | the room|because/);
+  });
+
+  it("say what was checked, and why not, in French", () => {
+    expect(findingsView(body, "fr").nothing[0]).toBe(
+      "Production : pas de vague de plaintes sur le son ou la connexion, et pas de retard au démarrage.",
+    );
+    expect(checkedLines({ notChecked: [{ id: "chapters", reason: "no_chapters" }] }, "fr").notChecked).toEqual([
+      "Chapitres : aucun pour l'instant. Lancez « Analyse session » pour les trouver.",
+    ]);
+  });
+});
+
+describe("Next time", () => {
+  it("has the same number of lines in each language for every situation, none of them a cause or a strategy", () => {
+    expect(SITUATIONS.length).toBe(7);
+    for (const key of SITUATIONS) {
+      expect(LINES[key].fr.length).toBe(LINES[key].en.length);
+      expect(LINES[key].en.length).toBeGreaterThanOrEqual(3);
+      for (const line of [...LINES[key].en, ...LINES[key].fr]) {
+        expect(line.length).toBeLessThan(200);
+        expect(line).not.toMatch(/because|parce que|revenue|pricing strategy/i);
+      }
+    }
+  });
+
+  it("picks one line by situation, the same each time for a session", () => {
+    expect(situation(chapters)).toBe("chapters.high");
+    expect(situation({ id: "chapters", values: { low: "x" } })).toBe("chapters.low");
+    expect(situation(friction)).toBe("friction.incident");
+    expect(situation({ id: "friction", values: { incidents: [], lateStart: { lateS: 300 } } })).toBe("friction.late");
+    const line = nextTime(prompts, "en", "s1");
+    expect(LINES.prompts.en).toContain(line);
+    expect(nextTime(prompts, "en", "s1")).toBe(line);
+    expect(LINES.prompts.fr.indexOf(nextTime(prompts, "fr", "s1"))).toBe(LINES.prompts.en.indexOf(line));
+    expect(nextTime({ id: "unknown" }, "en", "s1")).toBe("");
+    expect(foundFinding(prompts, "en", "s1").next).toBe(line);
   });
 });
 

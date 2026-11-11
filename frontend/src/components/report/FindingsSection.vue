@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import Card from "../ui/Card.vue";
 import CardHeader from "../ui/CardHeader.vue";
 import Collapsible from "../ui/Collapsible.vue";
@@ -17,19 +17,45 @@ const props = defineProps({
   body: { type: Object, default: null },
 });
 
-const view = computed(() => findingsView(props.body));
+// English or French: the words to paste into a report or an email.
+const LANGS = [
+  { value: "en", label: "English" },
+  { value: "fr", label: "Français" },
+];
+const lang = ref("en");
+const view = computed(() => findingsView(props.body, lang.value));
 const checkedCount = computed(() => view.value.nothing.length + view.value.notChecked.length);
 </script>
 
 <template>
   <Card v-if="body && !view.empty" class="fs">
-    <CardHeader icon="target" title="What stood out" :level="2" />
-    <p v-if="!view.found.length" class="fs-quiet">Nothing stood out from the session's own pattern.</p>
+    <CardHeader icon="target" :title="view.labels.title" :level="2">
+      <template #right>
+        <div class="fs-segmented" role="group" aria-label="Language of the findings">
+          <button
+            v-for="option in LANGS"
+            :key="option.value"
+            type="button"
+            class="fs-seg siq-fx"
+            :class="{ 'is-on': lang === option.value }"
+            :aria-pressed="lang === option.value ? 'true' : 'false'"
+            :lang="option.value"
+            @click="lang = option.value"
+          >
+            {{ option.label }}
+          </button>
+        </div>
+      </template>
+    </CardHeader>
+    <p v-if="!view.found.length" class="fs-quiet">{{ view.labels.quiet }}</p>
 
-    <article v-for="finding in view.found" :key="finding.id" class="fs-finding">
+    <article v-for="finding in view.found" :key="finding.id" class="fs-finding" :lang="lang">
       <div class="fs-head">
         <h3 class="fs-headline">{{ finding.headline }}</h3>
-        <StatusWord :status="finding.confidence === 'measured' ? 'measured' : 'estimated'" />
+        <StatusWord
+          :status="finding.confidence === 'measured' ? 'measured' : 'estimated'"
+          :label="finding.confidence === 'measured' ? view.labels.measured : view.labels.estimated"
+        />
       </div>
       <p v-for="line in finding.lines" :key="line" class="fs-line">{{ line }}</p>
 
@@ -56,14 +82,18 @@ const checkedCount = computed(() => view.value.nothing.length + view.value.notCh
       <ul v-if="finding.rows.length" class="fs-rows">
         <li v-for="row in finding.rows" :key="row">{{ row }}</li>
       </ul>
+      <p v-if="finding.next" class="fs-next">
+        <span class="fs-next-label">{{ view.labels.next }}</span>
+        <span>{{ finding.next }}</span>
+      </p>
     </article>
 
-    <Collapsible v-if="checkedCount" variant="link" :title="`Checked, nothing unusual (${view.nothing.length})`">
+    <Collapsible v-if="checkedCount" variant="link" :title="`${view.labels.checked} (${view.nothing.length})`">
       <ul class="fs-checked">
         <li v-for="line in view.nothing" :key="line">{{ line }}</li>
       </ul>
       <template v-if="view.notChecked.length">
-        <p class="fs-checked-head">Not checked</p>
+        <p class="fs-checked-head">{{ view.labels.notChecked }}</p>
         <ul class="fs-checked">
           <li v-for="line in view.notChecked" :key="line">{{ line }}</li>
         </ul>
@@ -220,6 +250,52 @@ const checkedCount = computed(() => view.value.nothing.length + view.value.notCh
   line-height: var(--siq-text-small-lh);
   color: var(--siq-ink-2);
   font-variant-numeric: tabular-nums;
+}
+
+.fs-segmented {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--siq-border);
+  border-radius: var(--siq-radius-control);
+  background: var(--siq-input);
+}
+
+.fs-seg {
+  min-height: calc(var(--siq-target) - 6px);
+  margin: 0;
+  padding: 0 var(--siq-space-3);
+  border: 0;
+  border-radius: calc(var(--siq-radius-control) - 2px);
+  background: transparent;
+  color: var(--siq-ink-2);
+  font: inherit;
+  font-size: var(--siq-text-small);
+  line-height: var(--siq-text-small-lh);
+  font-weight: var(--siq-weight-medium);
+  cursor: pointer;
+}
+
+.fs-seg.is-on {
+  background: var(--siq-selected-bg);
+  color: var(--siq-selected-ink);
+}
+
+.fs-next {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--siq-space-1) var(--siq-space-2);
+  max-width: 80ch;
+  margin: var(--siq-space-3) 0 0;
+  padding: var(--siq-space-3);
+  border-radius: var(--siq-radius-tile);
+  background: var(--siq-surface-2);
+  font-size: var(--siq-text-small);
+  line-height: var(--siq-text-small-lh);
+  color: var(--siq-ink);
+}
+
+.fs-next-label {
+  font-weight: var(--siq-weight-semibold);
 }
 
 .fs-checked-head {
