@@ -5,6 +5,7 @@ import CardHeader from "../components/ui/CardHeader.vue";
 import Chip from "../components/ui/Chip.vue";
 import Collapsible from "../components/ui/Collapsible.vue";
 import Icon, { ICON_NAMES } from "../components/ui/Icon.vue";
+import ProgressSteps from "../components/ui/ProgressSteps.vue";
 import StatCard from "../components/ui/StatCard.vue";
 import StatusWord from "../components/ui/StatusWord.vue";
 import ForLivestorm from "../components/ui/ForLivestorm.vue";
@@ -272,6 +273,25 @@ watch(theme, async () => {
     </section>
 
     <!-- Icons -->
+    <section class="g-section" aria-labelledby="g-progress">
+      <h2 id="g-progress" class="g-section-title">Progress (every job a user waits on)</h2>
+      <Card>
+        <CardHeader icon="refresh-cw" title="The transcript is being made" :level="3" />
+        <ProgressSteps
+          :steps="[
+            { label: 'Downloading the recording', state: 'done', detail: '' },
+            { label: 'Sending it to Gladia', state: 'done', detail: '' },
+            { label: 'Transcribing', state: 'current', detail: 'Transcribing with Gladia: 40%' },
+            { label: 'Telling the speakers apart', state: 'todo', detail: '' },
+            { label: 'Saving the transcript', state: 'todo', detail: '' },
+          ]"
+          :percent="45"
+          label="Transcript progress"
+          elapsed="1:05"
+        />
+      </Card>
+    </section>
+
     <section class="g-section" aria-labelledby="g-icons">
       <h2 id="g-icons" class="g-section-title">Icons (Lucide)</h2>
       <Card>

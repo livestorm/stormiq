@@ -5,6 +5,7 @@ import Card from "../components/ui/Card.vue";
 import CardHeader from "../components/ui/CardHeader.vue";
 import Chip from "../components/ui/Chip.vue";
 import Icon from "../components/ui/Icon.vue";
+import ProgressSteps from "../components/ui/ProgressSteps.vue";
 import AudienceSection from "../components/report/AudienceSection.vue";
 import MethodSection from "../components/report/MethodSection.vue";
 import PulseChart from "../components/report/PulseChart.vue";
@@ -233,7 +234,14 @@ const points = computed(() =>
   <div ref="page" class="r-page">
     <SessionTabs :session-id="sessionId" current="report" :title="body ? title : ''" />
 
-    <p v-if="state.loading && !body" class="r-status" role="status">Loading the session…</p>
+    <!-- Just added: the loader shows at once, before the session is saved and its record read. -->
+    <Card v-if="state.preparing && !body" class="r-prepare" aria-busy="true">
+      <CardHeader icon="zap" :title="preparation.title" :level="2" />
+      <p class="r-text" role="status">{{ preparation.detail }}</p>
+      <ProgressSteps :steps="preparation.steps" :percent="preparation.percent" label="Preparing the report" :elapsed="prepElapsed" />
+    </Card>
+
+    <p v-else-if="state.loading && !body" class="r-status" role="status">Loading the session…</p>
 
     <Card v-else-if="state.error && !body" tone="fair">
       <CardHeader icon="info" title="This session could not be loaded" :level="1" />
@@ -287,30 +295,7 @@ const points = computed(() =>
       <Card v-if="state.preparing" class="r-prepare" aria-busy="true">
         <CardHeader icon="zap" :title="preparation.title" :level="2" />
         <p class="r-text" role="status">{{ preparation.detail }}</p>
-        <ol class="r-prep-steps" aria-label="Steps">
-          <li v-for="step in preparation.steps" :key="step.label" class="r-prep-step" :class="`is-${step.state}`">
-            <span class="r-step-mark" aria-hidden="true">
-              <Icon v-if="step.state === 'done'" name="check" :size="14" />
-              <span v-else-if="step.state === 'current'" class="r-prep-spinner" />
-            </span>
-            <span class="r-prep-text">
-              <span class="r-prep-label">{{ step.label }}</span>
-              <span v-if="step.detail" class="r-muted r-small">{{ step.detail }}</span>
-            </span>
-            <span class="siq-sr-only">{{ { done: ": done", current: ": in progress", todo: ": next", skipped: ": skipped" }[step.state] }}</span>
-          </li>
-        </ol>
-        <div
-          class="r-bar"
-          role="progressbar"
-          aria-label="Preparing the report"
-          :aria-valuenow="preparation.percent"
-          aria-valuemin="0"
-          aria-valuemax="100"
-        >
-          <span class="r-bar-fill" :style="{ width: `${preparation.percent}%` }" />
-        </div>
-        <p v-if="prepElapsed" class="r-muted r-small">Running for {{ prepElapsed }}.</p>
+        <ProgressSteps :steps="preparation.steps" :percent="preparation.percent" label="Preparing the report" :elapsed="prepElapsed" />
       </Card>
 
       <Card v-else-if="showAnalysis" class="r-analysis" :aria-busy="summary.busy ? 'true' : 'false'">
@@ -323,29 +308,7 @@ const points = computed(() =>
         </CardHeader>
         <p class="r-text" :role="summary.tone === 'low' ? 'alert' : 'status'">{{ summary.detail }}</p>
         <template v-if="summary.busy">
-          <ol class="r-steps" aria-label="Steps">
-            <li v-for="step in summary.steps" :key="step.label" class="r-step" :class="`is-${step.state}`">
-              <span class="r-step-mark" aria-hidden="true">
-                <Icon v-if="step.state === 'done'" name="check" :size="14" />
-              </span>
-              <span>{{ step.label }}</span>
-              <span class="siq-sr-only">{{ { done: ": done", current: ": in progress", todo: ": next" }[step.state] }}</span>
-            </li>
-          </ol>
-          <div
-            class="r-bar"
-            :class="{ 'is-waiting': summary.percent === null }"
-            role="progressbar"
-            aria-label="Analysis progress"
-            :aria-valuenow="summary.percent ?? undefined"
-            aria-valuemin="0"
-            aria-valuemax="100"
-          >
-            <span class="r-bar-fill" :style="{ width: `${summary.percent ?? 0}%` }" />
-          </div>
-          <p class="r-muted r-small">
-            <span v-if="elapsed">Running for {{ elapsed }}. </span>It keeps going if you leave this page.
-          </p>
+          <ProgressSteps :steps="summary.steps" :percent="summary.percent" label="Analysis progress" :elapsed="elapsed" />
         </template>
         <div v-if="summary.action" class="r-row">
           <UiButton
@@ -358,7 +321,6 @@ const points = computed(() =>
           </UiButton>
         </div>
       </Card>
-
 
       <template v-if="!state.preparing">
       <Card v-if="short.sentence || short.chips.length || points.length" padding="hero">
@@ -406,9 +368,6 @@ const points = computed(() =>
   flex-direction: column;
   gap: var(--siq-space-6);
 }
-
-
-
 
 .r-head {
   display: flex;
@@ -531,206 +490,12 @@ const points = computed(() =>
   line-height: var(--siq-text-small-lh);
 }
 
-/* The run's steps: done (a tick), current (a pulsing dot), next (an empty ring). */
-.r-steps {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--siq-space-2) var(--siq-space-5);
-  margin: var(--siq-space-4) 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.r-step {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--siq-space-2);
-  font-size: var(--siq-text-small);
-  line-height: var(--siq-text-small-lh);
-  color: var(--siq-muted);
-}
-
-.r-step.is-current,
-.r-step.is-done {
-  color: var(--siq-ink);
-}
-
-.r-step-mark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  box-shadow: inset 0 0 0 1.5px var(--siq-border);
-}
-
-.r-prep-step .r-step-mark {
-  flex: none;
-  margin-top: 2px;
-}
-
-.r-prep-step.is-done .r-step-mark,
-.r-step.is-done .r-step-mark {
-  background: var(--siq-accent);
-  box-shadow: none;
-  color: var(--siq-surface);
-}
-
-.r-step.is-current .r-step-mark {
-  box-shadow: inset 0 0 0 1.5px var(--siq-accent);
-}
-
-.r-step.is-current .r-step-mark::after {
-  content: "";
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--siq-accent);
-  animation: r-pulse 1.4s ease-in-out infinite;
-}
-
-/* The bar: the stage's floor from the server, eased; a moving sheen says it's alive. */
-.r-bar {
-  position: relative;
-  height: 6px;
-  margin-top: var(--siq-space-4);
-  overflow: hidden;
-  border-radius: 999px;
-  background: var(--siq-surface-2);
-}
-
-.r-bar-fill {
-  position: absolute;
-  inset: 0 auto 0 0;
-  min-width: 6px;
-  border-radius: inherit;
-  background: var(--siq-accent);
-  transition-property: width;
-  transition-duration: 1.2s;
-  transition-timing-function: var(--siq-ease);
-}
-
-.r-bar::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  width: 30%;
-  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--siq-surface) 45%, transparent), transparent);
-  animation: r-sheen 1.8s linear infinite;
-}
-
-.r-bar.is-waiting .r-bar-fill {
-  width: 0 !important;
-}
-
-.r-prep-steps {
-  display: flex;
-  flex-direction: column;
-  gap: var(--siq-space-3);
-  margin: var(--siq-space-4) 0;
-  padding: 0;
-  list-style: none;
-}
-
-.r-prep-step {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--siq-space-3);
-  color: var(--siq-muted);
-}
-
-.r-prep-step.is-done,
-.r-prep-step.is-current {
-  color: var(--siq-ink);
-}
-
-.r-prep-step.is-skipped .r-prep-label {
-  text-decoration: line-through;
-}
-
-.r-prep-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.r-prep-label {
-  font-weight: var(--siq-weight-medium);
-}
-
-.r-prep-spinner {
-  display: block;
-  width: 10px;
-  height: 10px;
-  border: 2px solid var(--siq-accent);
-  border-right-color: transparent;
-  border-radius: 50%;
-  animation: r-spin 0.9s linear infinite;
-}
-
-@keyframes r-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .r-prep-spinner {
-    animation: none;
-  }
-}
-
-@keyframes r-pulse {
-  0%,
-  100% {
-    opacity: 0.35;
-    transform: scale(0.8);
-  }
-  50% {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-@keyframes r-sheen {
-  from {
-    transform: translateX(-100%);
-  }
-  to {
-    transform: translateX(340%);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .r-step.is-current .r-step-mark::after,
-  .r-bar::after {
-    animation: none;
-  }
-  .r-bar-fill {
-    transition: none;
-  }
-}
-
-@media (forced-colors: active) {
-  .r-step-mark,
-  .r-bar {
-    border: 1px solid CanvasText;
-  }
-}
-
-
-
-
-
-
 @media (max-width: 640px) {
   .r-title {
     font-size: var(--siq-text-headline);
     line-height: var(--siq-text-headline-lh);
   }
 }
-
 
 /* The printed Report: the computed page, on paper. Print is always light
    (tokens.css). Controls that only work on screen go: the tabs, the

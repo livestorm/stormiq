@@ -6,11 +6,13 @@ import ChapterNotes from "../components/report/ChapterNotes.vue";
 import FaqEditor from "../components/report/FaqEditor.vue";
 import MarkdownBlocks from "../components/report/MarkdownBlocks.vue";
 import QuestionDesk from "../components/report/QuestionDesk.vue";
+import SurprisePlayer from "../components/report/SurprisePlayer.vue";
 import SessionTabs from "../components/report/SessionTabs.vue";
 import Card from "../components/ui/Card.vue";
 import Collapsible from "../components/ui/Collapsible.vue";
 import CardHeader from "../components/ui/CardHeader.vue";
 import Icon from "../components/ui/Icon.vue";
+import ProgressSteps from "../components/ui/ProgressSteps.vue";
 import StatusWord from "../components/ui/StatusWord.vue";
 import UiButton from "../components/ui/UiButton.vue";
 import { api } from "../api";
@@ -37,7 +39,8 @@ import { createFaq } from "../followup/useFaq";
 import { createFigureChecks } from "../followup/useFigureChecks";
 import { createOutputVersions } from "../followup/useOutputVersions";
 import { createQuestionDesk } from "../followup/useQuestionDesk";
-import { formatLength, formatSessionStart } from "../report/format";
+import { aiSteps } from "../report/progress";
+import { elapsedLabel, formatLength, formatSessionStart } from "../report/format";
 import { createSessionReport } from "../report/useSessionReport";
 import { useWorkspace } from "../store/workspace";
 
@@ -140,6 +143,31 @@ const body = computed(() => outputText(outputs.value, output.value, language.val
 const busy = computed(() => making(state, output.value, language.value));
 const allowed = computed(() => canMake(outputs.value, output.value, language.value));
 const pdf = computed(() => (body.value ? pdfUrl(api, props.sessionId, output.value, language.value) : ""));
+// The list's spinner: every output being written now, in the language shown.
+const writingKeys = computed(() => new Set(OUTPUTS.filter((item) => making(state, item, language.value).busy).map((item) => item.key)));
+const isWriting = (item) => (item.keys || [item.key]).some((key) => writingKeys.value.has(key));
+// The loader's clock, from when this page first saw the output being written.
+const busyStarted = ref(null);
+const busyNow = ref(Date.now());
+let busyTicker = null;
+watch(
+  () => busy.value.busy,
+  (on) => {
+    clearInterval(busyTicker);
+    busyTicker = null;
+    busyStarted.value = on ? busyStarted.value ?? Date.now() : null;
+    if (on) busyTicker = setInterval(() => (busyNow.value = Date.now()), 1000);
+  },
+  { immediate: true },
+);
+watch(() => output.value.key, () => (busyStarted.value = busy.value.busy ? Date.now() : null));
+onBeforeUnmount(() => clearInterval(busyTicker));
+const busyElapsed = computed(() => (busyStarted.value === null ? "" : elapsedLabel(busyStarted.value, busyNow.value)));
+// Surprise me, played (`SurprisePlayer`): opened from its "Play it", closed
+// when another output is shown. Its key words come from the chapters' titles.
+const playOpen = ref(false);
+watch(() => output.value.key, () => (playOpen.value = false));
+const chapterTitles = computed(() => (chapters.state.body?.chapters || []).map((chapter) => chapter.title).filter(Boolean));
 const anyBusy = computed(() => OUTPUTS.some((item) => item.flow && state.loading[item.flow]));
 
 // ── Earlier versions: what was saved before the output on screen ──
@@ -221,12 +249,12 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
             </optgroup>
             <optgroup v-for="group in groups" :key="group.name" :label="group.name">
               <option v-for="item in group.items" :key="item.key" :value="item.key">
-                {{ item.label }}{{ item.ready ? " · ready" : "" }}
+                {{ item.label }}{{ isWriting(item) ? " · writing" : item.ready ? " · ready" : "" }}
               </option>
             </optgroup>
             <optgroup v-if="corner.length" label="Just for fun">
               <option v-for="item in corner" :key="item.key" :value="item.key">
-                {{ item.label }}{{ item.ready ? " · ready" : "" }}
+                {{ item.label }}{{ isWriting(item) ? " · writing" : item.ready ? " · ready" : "" }}
               </option>
             </optgroup>
           </select>
@@ -272,7 +300,10 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
                 @click="show(item.key)"
               >
                 <span>{{ item.label }}</span>
-                <StatusWord v-if="item.ready" status="measured" label="Ready" class="f-ready" />
+                <span v-if="isWriting(item)" class="f-writing" role="status">
+                  <span class="f-spinner" aria-hidden="true" />Writing
+                </span>
+                <StatusWord v-else-if="item.ready" status="measured" label="Ready" class="f-ready" />
               </button>
             </li>
           </ul>
@@ -290,6 +321,7 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
               <span class="f-corner-title">{{ item.label }}</span>
               <span class="f-muted">An unexpected take on the session. Opt-in.</span>
             </span>
+            <span v-if="isWriting(item)" class="f-writing" role="status"><span class="f-spinner" aria-hidden="true" />Writing</span>
           </button>
         </div>
       </nav>
@@ -358,11 +390,22 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
               {{ copied === "all" ? "Copied" : sections.length > 1 ? "Copy all" : "Copy" }}
             </UiButton>
             <UiButton v-if="pdf" variant="ghost" small icon="download" :href="pdf">PDF</UiButton>
+            <UiButton
+              v-if="output.corner"
+              variant="ghost"
+              small
+              :icon="playOpen ? 'x' : 'play'"
+              :aria-expanded="playOpen ? 'true' : 'false'"
+              @click="playOpen = !playOpen"
+            >
+              {{ playOpen ? "Close the player" : "Play it" }}
+            </UiButton>
             <span class="f-muted f-ai">Written by AI from this session. Check it before you share it.</span>
             <span v-if="uncheckedNote(figures.state.body)" class="f-unchecked">
               <Icon name="shield" :size="14" /> {{ uncheckedNote(figures.state.body) }}
             </span>
           </div>
+          <SurprisePlayer v-if="output.corner && playOpen" :take="body" :chapter-titles="chapterTitles" />
           <div v-if="sections.length > 1" class="f-sections">
             <section v-for="(section, index) in sections" :key="index" class="f-section">
               <div class="f-section-head">
@@ -416,10 +459,7 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
         </template>
 
         <div v-else-if="busy.busy" class="f-empty" role="status">
-          <p class="f-text">
-            Writing{{ busy.progress != null ? `: ${busy.progress}%` : "…" }} This takes a minute or two; it keeps going if you
-            leave the page.
-          </p>
+          <ProgressSteps :steps="aiSteps(busy.stage)" :percent="busy.progress" :label="`Writing the ${output.label}`" :elapsed="busyElapsed" />
         </div>
 
         <div v-else-if="output.archived" class="f-empty">
@@ -598,6 +638,39 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
 .f-ready {
   flex: none;
   font-size: var(--siq-text-small);
+}
+
+/* An output being written: a small spinner in the list, in place of "Ready". */
+.f-writing {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--siq-space-1);
+  font-size: var(--siq-text-small);
+  line-height: var(--siq-text-small-lh);
+  color: var(--siq-accent);
+}
+
+.f-spinner {
+  display: block;
+  width: 10px;
+  height: 10px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: f-spin 0.9s linear infinite;
+}
+
+@keyframes f-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .f-spinner {
+    animation: none;
+  }
 }
 
 .f-badge {
