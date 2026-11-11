@@ -8,7 +8,7 @@
 //   state.entries     the entries on screen, edited in place by the editor
 //   dirty             true while they differ from what was loaded or saved
 //   setAnswer(i, a)   a new answer for entry i (its source follows: faq.js)
-//   add() / move(i, d) / remove(i)
+//   add() / move(i, d) / remove(i) → {entry, index} / restore(removed)
 //   pending           the desk updates "Add them" would merge
 //   addUpdates()      merges them (an entry with an answer is never changed)
 //   save()            saves the entries; true when saved
@@ -29,6 +29,7 @@ import {
   newEntry,
   pendingUpdates,
   removeEntry,
+  restoreEntry,
   withAnswer,
 } from "./faq";
 
@@ -113,8 +114,17 @@ export function createFaq({ api = defaultApi } = {}) {
     state.entries = moveEntry(state.entries, index, delta);
   }
 
+  // Returns what was removed, `{entry, index}`, for `restore` (the undo).
   function remove(index) {
+    const entry = state.entries[index];
+    if (!entry) return null;
     state.entries = removeEntry(state.entries, index);
+    return { entry, index };
+  }
+
+  function restore(removed) {
+    if (!removed?.entry) return;
+    state.entries = restoreEntry(state.entries, removed.entry, removed.index);
   }
 
   function addUpdates() {
@@ -150,5 +160,5 @@ export function createFaq({ api = defaultApi } = {}) {
     }
   }
 
-  return { state, dirty, pending, problems, open, reload, setAnswer, add, move, remove, addUpdates, discard, save, close };
+  return { state, dirty, pending, problems, open, reload, setAnswer, add, move, remove, restore, addUpdates, discard, save, close };
 }
