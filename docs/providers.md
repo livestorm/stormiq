@@ -11,7 +11,7 @@ The services StormIQ calls, how models are chosen, and the timeout and retry rul
 | **ElevenLabs text to speech** | Surprise me's main voice (`eleven_v3`, Finley by default), one clip per line of the performance script | [`ai/voice_elevenlabs.py`](../livestorm_app/ai/voice_elevenlabs.py) | `ELEVENLABS_API_KEY` (worker only) |
 | **OpenAI speech** | Surprise me's backup voice (`gpt-4o-mini-tts`, cedar), or its main one when Admin picks OpenAI | [`ai/surprise_voice.py`](../livestorm_app/ai/surprise_voice.py) | `OPENAI_API_KEY` (worker only) |
 | **OpenAI transcription** | Surprise me's video timing: each voice clip's word timestamps (`whisper-1`, `verbose_json`, word granularity) | [`ai/surprise_timing.py`](../livestorm_app/ai/surprise_timing.py) | `OPENAI_API_KEY` (worker only) |
-| **OpenAI Images** | Surprise me's video: at most three illustrations per show (`gpt-image-2`, medium, 1536x1024, scaled to a 1280 px JPEG) | [`ai/surprise_images.py`](../livestorm_app/ai/surprise_images.py) | `OPENAI_API_KEY` (worker only) |
+| **OpenAI Images** | Surprise me's video: four illustrations per show, one per punchline (`gpt-image-2`, medium, 1536x1024, scaled to a 1280 px JPEG); a show made before 2026-11-12 had at most three | [`ai/surprise_images.py`](../livestorm_app/ai/surprise_images.py) | `OPENAI_API_KEY` (worker only) |
 
 The render worker (`render_worker.py`) calls no provider: it reads what the show job saved and runs the pinned `hyperframes` CLI (headless Chrome) and ffmpeg on its own machine ([jobs.md](jobs.md#surprise-me-show)), with no network.
 
@@ -196,7 +196,7 @@ Every outbound call has a timeout. Retries are limited to failures that almost a
 | OpenAI speech (`surprise_voice.synthesize_speech`, one POST per line) | 10 s connect, 60 s read | 429, 500, 502, 503, 504 and connection errors (a connect timeout included); up to 3 attempts, `Retry-After` honoured (capped at 10 s) | a read timeout (the clip may be on its way, and paid for); other 4xx |
 | ElevenLabs text to speech (`voice_elevenlabs.synthesize`, one POST per line) | 10 s connect, 60 s read | the same as OpenAI speech | a read timeout; other 4xx. 401, 402, 403 and a quota or payment status are never retried: the show records with the backup voice |
 | OpenAI transcription (`surprise_timing.transcribe_words`, one POST per clip) | 10 s connect, 60 s read | 429, 500, 502, 503, 504 and connection errors; up to 3 attempts | a read timeout; other 4xx. A failure never fails the show: that clip is timed by estimate |
-| OpenAI Images (`surprise_images.generate_image`, one POST per picture) | 10 s connect, 240 s read | 429, 500, 502, 503, 504 and connection errors; up to 2 attempts | a read timeout (the picture may be paid for); other 4xx. A failure never fails the show: that shot becomes kinetic type |
+| OpenAI Images (`surprise_images.generate_image`, one POST per picture) | 10 s connect, 240 s read | 429, 500, 502, 503, 504 and connection errors; up to 2 attempts | a read timeout (the picture may be paid for); other 4xx. A failure never fails the show: that punchline gets the deadpan card (its caption on black) |
 | The render worker's tools (`video/render.py`: the `hyperframes` CLI, ffmpeg) | 16 min for the picture, 3 min for the mix, 20 min for the job | — | everything: a user retries from the page |
 
 The Livestorm HTTP session is shared by every user's requests, so it keeps no cookies.

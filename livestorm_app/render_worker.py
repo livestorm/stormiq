@@ -6,7 +6,7 @@ It takes jobs from `queue.RENDER_QUEUE` only, one at a time (`max_jobs=1`):
 `render_surprise_video(session_id)`, queued by the show job
 (`api_logic.run_surprise_show`) with the session id as its only argument
 under the id `surprise_video:{session_id}`. It reads what the show job saved
-(the timeline, the final shot list, the voice clips and the pictures),
+(the timeline, the final shot list, the voice clips and the punchlines' pictures),
 renders the video (`video/render.py`) and saves it whole
 (`db.save_surprise_video`). The video's intro and outro are the same on
 every show: the first render that needs one makes it and stores it
@@ -30,6 +30,7 @@ from typing import Any, Dict, Mapping
 
 from arq import func
 
+from livestorm_app.ai.surprise_timing import TIMING_VERSION
 from livestorm_app.config import load_env_file
 from livestorm_app.db import (
     ALL_ORGS,
@@ -55,9 +56,10 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 VIDEO_KIND = "surprise_video"
-# Above the picture step's ceiling (`render.PICTURE_TIMEOUT_MAX_S`), with
-# room for the bumpers on a first render, the join and the mix.
-RENDER_JOB_TIMEOUT_SECONDS = 45 * 60
+# Above every step's ceiling added up (`render.PICTURE_TIMEOUT_MAX_S`, the
+# punchlines, the probes, the join and its fallback, the mix), with room for
+# the bumpers on a first render.
+RENDER_JOB_TIMEOUT_SECONDS = 50 * 60
 
 
 class VideoFailed(RuntimeError):
@@ -74,11 +76,13 @@ def _load(session_id: str) -> Dict[str, Any]:
     timeline = fetch_surprise_timeline(session_id, None, organization_id=ALL_ORGS)
     shotlist = fetch_surprise_shotlist(session_id, None, organization_id=ALL_ORGS)
     if timeline is None or shotlist is None or shotlist["body"].get("stage") != "final" \
-            or shotlist["body"].get("timeline_key") != timeline["key"]:
+            or shotlist["body"].get("timeline_key") != timeline["key"] \
+            or timeline["body"].get("version") != TIMING_VERSION:
         raise VideoFailed("The show isn't ready for its video yet. Make the show again.")
     shots = list(shotlist["body"].get("shots") or [])
-    image_by_shot = {int(shot["id"]): str(shot["image"]) for shot in shots if shot.get("image")}
-    images = fetch_surprise_images(session_id, list(image_by_shot.values()), organization_id=ALL_ORGS)
+    # One picture per punchline that has one, by its number; the others get the deadpan card.
+    image_by_punch = {int(entry["n"]): str(entry["image"]) for entry in shotlist["body"].get("punches") or [] if entry.get("image")}
+    images = fetch_surprise_images(session_id, list(image_by_punch.values()), organization_id=ALL_ORGS)
     clips: Dict[str, bytes] = {}
     for placed in timeline["body"].get("voice") or []:
         key = str(placed["clip"])
@@ -92,8 +96,8 @@ def _load(session_id: str) -> Dict[str, Any]:
         "shots": shots,
         "pulse": list(shotlist["body"].get("pulse") or []),
         "clips": clips,
-        "images": {shot_id: images[key] for shot_id, key in image_by_shot.items() if key in images},
-        "video_key": video_key(timeline["key"], shotlist["key"], list(image_by_shot.values())),
+        "images": {n: images[key] for n, key in image_by_punch.items() if key in images},
+        "video_key": video_key(timeline["key"], shotlist["key"], list(image_by_punch.values())),
     }
 
 

@@ -1,5 +1,7 @@
-"""Surprise me's illustrations: at most three playful pictures per video, for
-the director's `image` shots (`ai/surprise_director.py`), by OpenAI Images.
+"""Surprise me's illustrations: one playful picture per punchline, four per
+video at most, from the director's prompts (`ai/surprise_director.py`,
+`check_pictures`), by OpenAI Images, drawn full screen behind the
+punchline's caption (`video/punch.py`).
 
 - **What is sent** (`image_request`): the director's prompt, already checked
   (`surprise_director.image_prompt_ok`: no name, company, product or contact
@@ -9,7 +11,7 @@ the director's `image` shots (`ai/surprise_director.py`), by OpenAI Images.
   `/v1/images/generations` (`IMAGE_MODEL`, `IMAGE_QUALITY`, `IMAGE_SIZE`)
   with a timeout, retried only for answers that mean nothing was made (429,
   5xx, a connection error), never after a read timeout. A failure raises
-  `ImageFailed`; the show job then turns that shot into kinetic type.
+  `ImageFailed`; that punchline then gets the deadpan card.
 - **The file** (`to_jpeg`): scaled to 1280 px wide, saved as a small JPEG,
   stored with the shot list (`surprise_show_images`), keyed by
   `image_key` (the model, quality, size, style and prompt).

@@ -6,18 +6,23 @@ places (`video/mix.py`). The design is the one the owner approved in the
 November 2026 rehearsals: a fixed intro (the IQ mark, "Surprise me!", "The
 session, unfiltered.") and outro ("See you next session.", then the end
 card), kinetic type on every clause, the held beat before a punchline
-frozen (grey, a slow push-in, then the punchline in condensed capitals on
-black with a low "dun": the deadpan freeze), subtle CC0 effects, no music.
+frozen (grey, a slow push-in), then the punchline's picture and caption
+with a low "dun" (owner's brief of 2026-11-12; drawn by `video/punch.py`,
+not here), subtle CC0 effects, no music.
 
-Three pages, rendered apart and joined by the renderer (`video/render.py`):
+The video is parts joined end to end by the renderer (`video/render.py`):
 the intro and the outro (`build_bumper`) hold nothing from a show, so each
-is rendered once and stored (`surprise_bumpers`); a show renders only its
-middle (`build_film`), from the intro's end to the end card, its times
-shifted to start at 0. The progress bar runs over the middle only and the
-background is one still picture (`templates/background.png`), so the joins
-can't be seen. The sound is still
+is rendered once and stored (`surprise_bumpers`); a show's middle, from the
+intro's end to the end card, is its kinetic parts (Chrome) and its
+punchline windows (Pillow and ffmpeg) in turn (`layout`). Chrome renders
+every kinetic part in one page (`build_film`), back to back, each starting
+on a multiple of `KEYFRAME_FRAMES` (where the renderer's encode puts a
+keyframe), so the renderer cuts them out by copy; the few frames between
+two parts are still and thrown away. The progress bar runs over the middle
+only (the windows draw it too) and the background is one still picture
+(`templates/background.png`), so the joins can't be seen. The sound is
 placed on the whole video's clock (`spans`): the effects `build_film`
-returns include the intro's and the outro's.
+returns include the intro's, the outro's and each punchline's "dun".
 
 No GPU on the render worker: every frame is drawn by the CPU. The blurred,
 turning glow behind everything cost two thirds of each frame, so the
@@ -37,7 +42,7 @@ import json
 import re
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from livestorm_app.video.keys import FPS, HEIGHT, WIDTH
+from livestorm_app.video.keys import FPS, HEIGHT, KEYFRAME_FRAMES, WIDTH
 
 W, H = 1920, 1080  # the frame the design is drawn in; the page scales it to 1280x720
 NAVY, NAVY2, TEAL, INK = "#0A1430", "#0F1E46", "#2EE6C9", "#F4F7FF"
@@ -48,6 +53,8 @@ SIGNOFF_S = 2.3  # the sign-off's time before the end card
 # The intro and outro jingle (`templates/audio/`, sources in its SOURCES.md).
 JINGLE = "bass-meant-jazz"
 JINGLE_GAIN = 0.9
+TYPES_DRAWN = ("kinetic", "count", "ring", "pulse", "emoji", "chat", "split", "stamp")
+DUN_GAIN = 0.55  # the low "dun" as a punchline's picture lands
 
 
 def jingle_files(name: str = JINGLE) -> Tuple[str, str]:
@@ -71,6 +78,40 @@ def spans(timeline: Mapping[str, Any]) -> Dict[str, float]:
     middle = frames(end_card - intro_s) / FPS
     outro = frames(outro_raw) / FPS
     return {"intro": intro, "middle": middle, "outro": outro, "join": intro + middle, "total": intro + middle + outro}
+
+
+def layout(timeline: Mapping[str, Any]) -> Dict[str, Any]:
+    """The middle's parts on whole frames: `{middle_frames, page_frames,
+    segments: [{kind, n?, start, end, f0, f1, frames, c0?}]}`. `f0`, `f1`:
+    the part's frames in the middle, end to end from 0 to `middle_frames`;
+    `c0` (kinetic parts): its first frame on the Chrome page, a multiple of
+    `KEYFRAME_FRAMES`; `page_frames`: the page's length."""
+    intro_s = float(timeline["intro_s"])
+    middle_frames = round(spans(timeline)["middle"] * FPS)
+    raw = list(timeline.get("segments") or []) or [
+        {"kind": "kinetic", "start": intro_s, "end": float(timeline["end_card"])}
+    ]
+    segments: List[Dict[str, Any]] = []
+    for index, seg in enumerate(raw):
+        f0 = 0 if index == 0 else round((float(seg["start"]) - intro_s) * FPS)
+        f1 = middle_frames if index == len(raw) - 1 else round((float(seg["end"]) - intro_s) * FPS)
+        f0, f1 = max(0, min(f0, middle_frames)), max(0, min(f1, middle_frames))
+        if segments:
+            f0 = segments[-1]["f1"]
+        if f1 <= f0:
+            continue
+        entry = {"kind": seg["kind"], "start": float(seg["start"]), "end": float(seg["end"]), "f0": f0, "f1": f1, "frames": f1 - f0}
+        if seg["kind"] == "punch":
+            entry["n"] = int(seg["n"])
+        segments.append(entry)
+    page = 0
+    page_frames = 0
+    for entry in segments:
+        if entry["kind"] == "kinetic":
+            entry["c0"] = page
+            page_frames = page + entry["frames"]
+            page = -(-page_frames // KEYFRAME_FRAMES) * KEYFRAME_FRAMES
+    return {"middle_frames": middle_frames, "page_frames": page_frames, "segments": segments}
 
 
 def esc(text: Any) -> str:
@@ -131,14 +172,30 @@ def parse_number(text: str) -> Optional[Dict[str, Any]]:
 
 class _Page:
     """A page's tweens. Times are given on the whole video's clock and
-    written on the page's own (`offset` earlier)."""
+    written on the page's own: `offset` earlier, or, with `parts` (`[(start
+    on the video's clock, start on the page, length)]`, in order), placed in
+    the part the time falls in (the last one starting at or before it, to
+    within half a frame: the parts start on whole frames), never before its
+    start nor past its end."""
 
-    def __init__(self, offset: float = 0.0) -> None:
+    def __init__(self, offset: float = 0.0, parts: Sequence[Tuple[float, float, float]] = ()) -> None:
         self.offset = float(offset)
+        self.parts = [(float(a), float(b), float(c)) for a, b, c in parts]
         self.js: List[str] = []
 
+    def page_time(self, t: float) -> float:
+        if not self.parts:
+            return t - self.offset
+        video, page, length = self.parts[0]
+        half = 0.5 / FPS
+        for start, on_page, span in self.parts:
+            if start <= t + half + 1e-6:
+                video, page, length = start, on_page, span
+        into = t - video
+        return page + (0.0 if into < half else min(into, length))
+
     def at(self, t: float) -> str:
-        return f"{t - self.offset:.3f}"
+        return f"{self.page_time(t):.3f}"
 
     def tw(self, sel: str, frm: Mapping[str, Any], to: Mapping[str, Any], at: float) -> None:
         self.js.append(f"tl.fromTo({_js(sel)},{_js(frm)},{_js(to)},{self.at(at)});")
@@ -184,11 +241,10 @@ window.__timelines["main"] = tl;
 
 
 class Film(_Page):
-    """One show's page: its middle, from the intro's end to the end card,
-    times shifted by the intro. `timeline`: the saved timeline; `shots`:
-    the saved shot list, one per timeline shot (same ids); `pulse`:
-    `[{m, chat}]`; `images`: shot id -> the image's file name under
-    `assets/`."""
+    """One show's kinetic parts on one page (`layout`): each part's times
+    shifted to its place on the page. `timeline`: the saved timeline;
+    `shots`: the saved shot list, one per timeline shot (same ids); `pulse`:
+    `[{m, chat}]`."""
 
     def __init__(
         self,
@@ -196,9 +252,16 @@ class Film(_Page):
         shots: Sequence[Mapping[str, Any]],
         *,
         pulse: Sequence[Mapping[str, Any]],
-        images: Mapping[int, str],
+        plan: Optional[Mapping[str, Any]] = None,
     ) -> None:
-        super().__init__(offset=float(timeline["intro_s"]))
+        self.plan = dict(plan or layout(timeline))
+        intro_s = float(timeline["intro_s"])
+        self.kinetic = [seg for seg in self.plan["segments"] if seg["kind"] == "kinetic"]
+        super().__init__(
+            offset=intro_s,
+            parts=[(intro_s + seg["f0"] / FPS, seg["c0"] / FPS, seg["frames"] / FPS) for seg in self.kinetic]
+            or [(intro_s, 0.0, 0.0)],
+        )
         self.tl = timeline
         clauses = list(timeline.get("shots") or [])
         if len(clauses) != len(shots) or any(int(c["id"]) != int(s["id"]) for c, s in zip(clauses, shots, strict=True)):
@@ -206,25 +269,20 @@ class Film(_Page):
         self.clauses = clauses
         self.shots = [dict(shot) for shot in shots]
         self.pulse = [row for row in pulse if isinstance(row, Mapping)]
-        self.images = dict(images)
         self.html: List[str] = []
         self.sfx: List[Dict[str, Any]] = []
         self.whoosh = 0
         self.pop = 0
         self._last_shake = -9.0
-        # The held punchlines (the clause after the voice's hold) get the
-        # deadpan freeze; the director's other punchlines a light snap.
-        self.held = {n for n, c in enumerate(clauses) if n and c.get("k") == 0 and c.get("tone") == "punchline"
-                     and clauses[n - 1].get("hold_after")}
+        # The real punchlines are the timeline's windows (`video/punch.py`):
+        # a clause the director called a punchline gets a light snap.
         self.light = set()
         for n, shot in enumerate(self.shots):
-            if n in self.held:
-                shot["emphasis"] = "punchline"
-            elif shot.get("emphasis") == "punchline":
+            if shot.get("emphasis") == "punchline":
                 shot["emphasis"] = "build"
                 self.light.add(n)
-            if shot.get("type") == "image" and n not in self.images:
-                shot["type"] = "kinetic"  # its picture failed: the words alone
+            if shot.get("type") not in TYPES_DRAWN:
+                shot["type"] = "kinetic"  # a type this page doesn't draw (an older image shot): the words alone
 
     # ---- helpers ----
     def ev(self, file: str, t: float, gain: float) -> None:
@@ -269,9 +327,6 @@ class Film(_Page):
         start, end = float(cl["start"]), float(cl["end"])
         dur = max(0.05, end - start)
         pid = f"s{n}"
-        if n in self.held:
-            self.deadpan(n, cl, sh)
-            return
         typ, emph, trans = sh.get("type") or "kinetic", sh.get("emphasis") or "build", sh.get("transition") or "cut"
         words = (sh.get("words") or cl.get("text") or "").split()
         if words:
@@ -317,9 +372,6 @@ class Film(_Page):
             inner = (f'<div class="cap top">{self.words_html(pid, words, sh.get("accent") or "", min(fit(chars), 88))}</div>'
                      f'<div id="{pid}-bub" class="bubble"><div class="who"><span class="av">?</span>{label}</div>'
                      f'<div class="msg" style="font-size:{size}px">{esc(text)}</div></div>')
-        elif typ == "image" and n in self.images:
-            inner = (f'<div class="imgwrap"><img id="{pid}-img" src="assets/{esc(self.images[n])}" alt=""/></div><div class="shade"></div>'
-                     f'<div class="cap low">{self.words_html(pid, words, sh.get("accent") or "", min(fit(chars), 120))}</div>')
         elif typ == "split" and sh.get("left") and sh.get("right"):
             left, right = str(sh["left"]).split(), str(sh["right"]).split()
             inner = (f'<div class="half l"><div>{self.words_html(pid + "L", left, "", min(fit(len(sh["left"])), 120))}</div></div>'
@@ -329,7 +381,8 @@ class Film(_Page):
             typ = "kinetic"
             inner = self.words_html(pid, words, sh.get("accent") or "", fit(chars))
 
-        self.html.append(f'<div id="{pid}" class="clip shot" data-start="{self.at(start)}" data-duration="{dur:.3f}" data-track-index="2">'
+        on_page = max(0.05, self.page_time(end) - self.page_time(start))
+        self.html.append(f'<div id="{pid}" class="clip shot" data-start="{self.at(start)}" data-duration="{on_page:.3f}" data-track-index="2">'
                          f'<div id="{pid}-stage" class="stage">{inner}</div></div>')
         st = f"#{pid}-stage"
         # Transform and opacity only: a blur is redrawn by the CPU on every frame.
@@ -410,9 +463,6 @@ class Film(_Page):
             self.tw(f"#{pid}-bub", {"scale": 0.5, "opacity": 0, "y": 80},
                     {"scale": 1, "opacity": 1, "y": 0, "duration": 0.45, "ease": "back.out(1.8)"}, start + 0.1)
             self.sound("pop", start + 0.1)
-        elif typ == "image":
-            self.tw(f"#{pid}-img", {"scale": 1.18}, {"scale": 1.0, "duration": dur, "ease": "power1.out"}, start)
-            self.reveal_words(pid, times, "rise")
         elif typ == "split":
             spoken = cl.get("spoken") or []
             lt = word_times(str(sh["left"]).split(), spoken, start, end)
@@ -428,34 +478,16 @@ class Film(_Page):
 
     def hold(self, st: str, cl: Mapping[str, Any], end: float) -> None:
         """The held beat before a punchline: the picture freezes grey and
-        pushes in slowly, the edges darken."""
+        pushes in slowly, the edges darken. At `end` the punchline's window
+        takes the screen: everything is set back at once, in the still
+        frames the renderer throws away, before the next part."""
         h0 = end - float(cl["hold_after"])
         self.tw("#camera", {"filter": "grayscale(0) brightness(1)"},
                 {"filter": "grayscale(1) brightness(0.8)", "duration": 0.3, "ease": "power2.out", "immediateRender": False}, h0)
         self.tw(st, {"scale": 1}, {"scale": 1.07, "duration": float(cl["hold_after"]), "ease": "power1.in", "immediateRender": False}, h0)
         self.tw("#hold", {"opacity": 0}, {"opacity": 0.45, "duration": 0.3, "immediateRender": False}, h0)
-        self.tw("#hold", {"opacity": 0.45}, {"opacity": 0, "duration": 0.05, "immediateRender": False}, end)
-
-    def deadpan(self, n: int, cl: Mapping[str, Any], sh: Mapping[str, Any]) -> None:
-        """The held punchline: its words in condensed capitals on black, a
-        hard cut in and a slow push, a low "dun"."""
-        start, end = float(cl["start"]), float(cl["end"])
-        dur = max(0.05, end - start)
-        pid = f"s{n}"
-        words = (sh.get("words") or cl.get("text") or "").split() or ["…"]
-        words[-1] = words[-1].rstrip(",;:—-") or words[-1]
-        text = " ".join(words).upper()
-        size = int(min(330, 1700 / (0.42 * max(len(text), 1)))) if len(text) < 16 else int(min(230, 2 * 1700 / (0.42 * len(text))))
-        self.html.append(f'<div id="{pid}" class="clip shot" data-start="{self.at(start)}" data-duration="{dur:.3f}" data-track-index="2">'
-                         f'<div class="black"></div><div id="{pid}-stage" class="stage"><div id="{pid}-big" class="deadpan" '
-                         f'style="font-size:{size}px">{esc(text)}</div></div></div>')
-        self.tw(f"#{pid}-big", {"scale": 1.45, "opacity": 0}, {"scale": 1, "opacity": 1, "duration": 0.11, "ease": "power4.in"}, start)
-        self.tw(f"#{pid}-stage", {"scale": 1}, {"scale": 1.04, "duration": dur, "ease": "none"}, start + 0.11)
-        self.tw("#camera", {"filter": "grayscale(1) brightness(0.8)"},
-                {"filter": "grayscale(0) brightness(1)", "duration": 0.05, "immediateRender": False}, end)
-        self.ev("dun.flac", start + 0.09, 0.55)
-        if cl.get("hold_after"):
-            self.hold(f"#{pid}-stage", cl, end)
+        self.set("#hold", {"opacity": 0}, end)
+        self.set("#camera", {"filter": "grayscale(0) brightness(1)"}, end)
 
     def count_js(self, pid: str, number: Mapping[str, Any], at: float, duration: float) -> str:
         if number["kind"] == "clock":
@@ -499,17 +531,30 @@ class Film(_Page):
         self.sound("whoosh", lead - 0.2)
         self.ev(jingle_out, join + SIGNOFF_S - 0.35, JINGLE_GAIN)
 
-    def build(self, css: str) -> str:
-        """The middle's page: from the intro's end (time 0 here) to the end card."""
+    def build(self, css: str) -> Optional[str]:
+        """The kinetic parts' page (None when the middle has none), its
+        sound effects in `sfx`, every punchline's "dun" included."""
         for n, (cl, sh) in enumerate(zip(self.clauses, self.shots, strict=True)):
             self.shot(n, cl, sh)
         parts = spans(self.tl)
         self.bumper_sounds(parts["intro"], parts["join"])
-        self.tw("#progress", {"scaleX": 0}, {"scaleX": 1, "duration": round(parts["middle"], 3), "ease": "none"}, self.offset)
+        middle = max(1, self.plan["middle_frames"])
+        for seg in self.plan["segments"]:
+            if seg["kind"] == "punch":
+                self.ev("dun.flac", parts["intro"] + seg["f0"] / FPS + 0.09, DUN_GAIN)
+        # The bar runs over the middle: here, in each part, from its share to the next.
+        for k, seg in enumerate(self.kinetic):
+            frm, to = seg["f0"] / middle, seg["f1"] / middle
+            self.js.append(
+                f'tl.fromTo("#progress",{{scaleX:{frm:.5f}}},{{scaleX:{to:.5f},duration:{seg["frames"] / FPS:.3f},'
+                f'ease:"none",immediateRender:{"true" if k == 0 else "false"}}},{seg["c0"] / FPS:.3f});'
+            )
         self.sfx.sort(key=lambda event: event["t"])
+        if not self.kinetic:
+            return None
         body = (f'<div id="camera">{"".join(self.html)}</div>'
                 '<div id="hold"></div><div id="flash"></div><div id="progress"></div>')
-        return self.page(css, parts["middle"], body)
+        return self.page(css, self.plan["page_frames"] / FPS, body)
 
 
 class Bumper(_Page):
@@ -585,12 +630,13 @@ def build_film(
     shots: Sequence[Mapping[str, Any]],
     *,
     pulse: Sequence[Mapping[str, Any]],
-    images: Mapping[int, str],
     css: str,
-) -> Tuple[str, List[Dict[str, Any]]]:
-    """The middle's page (`spans(timeline)["middle"]` long, starting at the
-    intro's end) and every sound effect of the whole video to mix
-    (`[{file, t, gain}]`, the intro's and the outro's included)."""
-    film = Film(timeline, shots, pulse=pulse, images=images)
+    plan: Optional[Mapping[str, Any]] = None,
+) -> Tuple[Optional[str], List[Dict[str, Any]]]:
+    """The kinetic parts' page (`layout(timeline)["page_frames"]` long; None
+    when the middle is only punchlines) and every sound effect of the whole
+    video to mix (`[{file, t, gain}]`, the intro's, the outro's and the
+    punchlines' included)."""
+    film = Film(timeline, shots, pulse=pulse, plan=plan)
     page = film.build(css)
     return page, film.sfx

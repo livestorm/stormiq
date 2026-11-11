@@ -206,8 +206,8 @@ SESSION_ANALYSIS_TIMEOUT_SECONDS = 60 * 25
 # two), then one speech call per line (a few dozen at most, four at a time,
 # each with a 60-second read timeout; again with the backup voice when
 # ElevenLabs refuses the account), one whisper-1 call per clip (four at a
-# time, 60 s), the director (one Claude call) and up to three pictures at
-# once (240 s each). The video is rendered by the render worker.
+# time, 60 s), the director (one Claude call) and up to four pictures, one
+# per punchline, at once (240 s each). The video is rendered by the render worker.
 SURPRISE_SHOW_JOB_TIMEOUT_SECONDS = 60 * 30
 
 # Transcriptions download the recording and run ffmpeg locally; more than a
@@ -690,8 +690,8 @@ async def run_content_repurposing_job(
 # One click, one job (`api_logic.run_surprise_show`): the take when there is
 # none (Claude, the Smart Recap's surprise tone), the performance script
 # (Claude), one clip per line (ElevenLabs, or OpenAI as the backup voice),
-# the timing (OpenAI whisper-1), the shot list (Claude) and up to three
-# pictures (OpenAI Images); then it queues the render on the render worker's
+# the timing (OpenAI whisper-1), the shot list (Claude) and one picture per
+# punchline (OpenAI Images, four at most); then it queues the render on the render worker's
 # queue (`render_worker.py`). Queued only when a user clicks "Make the show"
 # (`api_logic.start_surprise_show`), with the session id as its only
 # argument; every key comes from the worker's own environment, and none is
@@ -726,10 +726,10 @@ async def run_surprise_show_job(ctx: Dict[str, Any], session_id: str) -> Dict[st
         result = await asyncio.to_thread(_collecting, functools.partial(run_surprise_show, publish=publish), keys, session_id)
         logger.info(
             "[run_surprise_show_job] session_id=%s done take=%s script=%s lines=%s made=%s voice=%s fell_back=%s "
-            "timing=%s timed=%s director=%s pictures=%s video=%s",
+            "timing=%s timed=%s dropped=%s director=%s pictures=%s video=%s",
             session_id, result.get("take"), result.get("script"), result.get("lines"), result.get("made"),
             result.get("voice"), result.get("fellBack"), result.get("timing"), result.get("timed"),
-            result.get("director"), result.get("pictures"), result.get("video"),
+            result.get("dropped"), result.get("director"), result.get("pictures"), result.get("video"),
         )
         return result
     except Exception:

@@ -418,7 +418,7 @@ def test_the_show_records_each_line_once_saves_each_clip_whole_and_tidies_the_re
     assert clips.pruned == [(SESSION_ID, sorted(clip_key(line, ELEVEN) for line in SCRIPT))]
     assert result == {
         "status": "ok", "take": "kept", "script": "made", "lines": len(SCRIPT), "made": len(SCRIPT),
-        "voice": "elevenlabs", "fellBack": False, "timing": "made", "timed": len(SCRIPT), "director": "made",
+        "voice": "elevenlabs", "fellBack": False, "timing": "made", "timed": len(SCRIPT), "dropped": 0, "director": "made",
         "pictures": 0, "video": "queued",
     }
     stages = [stage for stage, _ in published]
