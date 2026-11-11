@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import withChapters from "./fixtures/transcript-v1.json";
-import { SPEAKER_TONES, authorsOf, speakersOf, subtitles, textParts, transcriptLines } from "../src/transcript/lines";
+import { ROOM_KINDS, SPEAKER_TONES, authorsOf, speakersOf, subtitles, textParts, transcriptLines } from "../src/transcript/lines";
 
 // The lines' own rules, on the fixture without its chapters (tested below).
 const body = { ...withChapters, chapters: { state: "none", items: [] } };
@@ -90,6 +90,35 @@ describe("the Transcript tab's lines", () => {
     expect(tones).toEqual({ 0: 1, 1: 2, 2: 3 });
     const many = { speakers: Array.from({ length: SPEAKER_TONES + 1 }, (_, i) => ({ key: String(i), name: `S${i}` })) };
     expect(speakersOf(many).map((s) => s.tone).slice(-2)).toEqual([SPEAKER_TONES, 1]);
+  });
+});
+
+describe("the room's chat, its questions, or both", () => {
+  const room = (roomKind, source = apart) => transcriptLines(source, { roomKind }).room;
+
+  it("offers both, the chat and the questions, both first", () => {
+    expect(ROOM_KINDS.map((kind) => kind.value)).toEqual(["all", "chat", "questions"]);
+  });
+
+  it("keeps only the chat, the questions asked in it included", () => {
+    const chat = room("chat");
+    expect(chat.length).toBe(body.room.filter((line) => line.kind === "chat").length);
+    expect(chat.every((line) => line.kind === "chat")).toBe(true);
+  });
+
+  it("keeps the Q&A's questions, their answers and the chat messages labelled questions", () => {
+    const questions = room("questions");
+    const expected = body.room.filter((line) => line.kind !== "chat" || line.asks).map((line) => line.id);
+    expect(questions.map((line) => line.id).sort()).toEqual([...expected].sort());
+    const asked = questions.filter((line) => line.kind === "chat");
+    expect(asked.length).toBeGreaterThan(0);
+    expect(asked.every((line) => line.asks && line.source === "Chat question")).toBe(true);
+  });
+
+  it("keeps everything with both, and on the shared clock too", () => {
+    expect(room("all")).toHaveLength(body.room.length);
+    const shared = transcriptLines(body, { roomKind: "questions" }).lines.filter((line) => line.kind !== "speech" && line.kind !== "chapter");
+    expect(shared.every((line) => line.kind !== "chat" || line.asks)).toBe(true);
   });
 });
 

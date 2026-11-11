@@ -24,7 +24,7 @@ defineProps({
   <li
     v-else
     class="tl"
-    :class="[line.kind === 'speech' ? 'tl-speech' : 'tl-room', `tl-${line.kind}`, { 'tl-flat': flat, 'tl-team': line.team }]"
+    :class="[line.kind === 'speech' ? 'tl-speech' : 'tl-room', `tl-${line.kind}`, { 'tl-flat': flat, 'tl-team': line.team, 'tl-asks': line.asks }]"
     :style="line.kind === 'speech' ? { '--tl-speaker': `var(--siq-speaker-${line.tone || 1})` } : undefined"
   >
     <span class="tl-time">
@@ -153,6 +153,7 @@ defineProps({
 }
 
 .tl-question .tl-body,
+.tl-asks .tl-body,
 .tl-answer .tl-body {
   box-shadow: inset 2px 0 0 var(--siq-s2);
 }
