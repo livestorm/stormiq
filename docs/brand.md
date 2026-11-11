@@ -109,7 +109,7 @@ Livestorm's icon font is proprietary and can't ship in this public repository, s
 | the room | `presentation` | Needs your check | `shield` |
 | view as table | `table` | | |
 
-Plus the UI basics: chevrons, `x`, `plus`, `search`, `lock`, `menu`, `refresh-cw`, `external-link`, `more-horizontal`, `log-in`, `log-out`, `sun`, `moon`.
+Plus the UI basics: chevrons, `x`, `plus`, `search`, `list-filter` (a column's filter), `arrow-up`, `arrow-down` and `arrow-up-down` (a column's sort), `lock`, `menu`, `refresh-cw`, `external-link`, `more-horizontal`, `log-in`, `log-out`, `sun`, `moon`.
 
 ### Light and dark mode
 

@@ -2,23 +2,47 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
 import SessionSparkline from "../components/report/SessionSparkline.vue";
+import ColumnFilter from "../components/sessions/ColumnFilter.vue";
+import EventPicker from "../components/sessions/EventPicker.vue";
+import FloatingPanel from "../components/sessions/FloatingPanel.vue";
+import SearchToggle from "../components/sessions/SearchToggle.vue";
 import Card from "../components/ui/Card.vue";
 import Icon from "../components/ui/Icon.vue";
 import StatCard from "../components/ui/StatCard.vue";
 import StatusWord from "../components/ui/StatusWord.vue";
 import UiButton from "../components/ui/UiButton.vue";
+import { safeStorage } from "../design/theme";
 import { libraryCells } from "../sessions/library";
-import { SORTS, eventOptions, sessionCounts, sessionRow, visibleSessions } from "../sessions/list";
+import {
+  COLUMNS,
+  DEFAULT_SORT,
+  activeFilters,
+  ariaSort,
+  clearFilter,
+  emptyFilters,
+  eventOptions,
+  isFiltered,
+  nextSort,
+  parseSort,
+  sessionCounts,
+  sessionRow,
+  shownLabel,
+  teammateOptions,
+  visibleSessions,
+} from "../sessions/list";
 import { createLibraryRows } from "../sessions/useLibraryRows";
 import { useWorkspace } from "../store/workspace";
 
 // The v1 Sessions page: every session the organization has fetched, as one
 // index table. The list comes from the store (`loadWorkspaceSessions`,
 // `GET /api/workspace-sessions`); `sessions/list.js` filters, sorts and
-// words it. A row opens the session's Report. Each row's shape, audience
-// numbers and lead finding come from the session's own record
-// (`GET /record/library`), asked only for the rows that come on screen
-// (`sessions/useLibraryRows.js`), a few at a time.
+// words it. A column's title sorts by it (a second click reverses), its
+// funnel opens that column's filter, and the filters that are on show as
+// chips in the toolbar. On a phone, where the table becomes blocks, the
+// same sorts and filters live in a "Sort & filter" sheet. A row opens the
+// session's Report. Each row's shape, audience numbers and lead finding
+// come from the session's own record (`GET /record/library`), asked only
+// for the rows that come on screen (`sessions/useLibraryRows.js`).
 
 const { state, loadWorkspaceSessions } = useWorkspace();
 
@@ -31,25 +55,104 @@ function load() {
 onMounted(load);
 watch(() => [state.auth.connectedUser, state.auth.allowLocalApiKeyFallback], load);
 
-const query = ref("");
-const event = ref("");
-const sort = ref("sessionDesc");
+// ── Sort (remembered in this browser) and filters (for this visit) ──
+const SORT_KEY = "stormiq:sessions-sort";
+const storage = safeStorage();
+function readSort() {
+  try {
+    return parseSort(storage?.getItem(SORT_KEY));
+  } catch {
+    return { ...DEFAULT_SORT };
+  }
+}
+const sort = ref(readSort());
+watch(sort, (value) => {
+  try {
+    storage?.setItem(SORT_KEY, JSON.stringify(value));
+  } catch {
+    // Storage full or blocked: the sort lasts for this visit.
+  }
+});
+function sortBy(key) {
+  sort.value = nextSort(sort.value, key);
+}
+
+const filters = ref(emptyFilters());
+function setFilter(key, value) {
+  filters.value = { ...filters.value, [key]: value };
+}
+const query = computed({ get: () => filters.value.query, set: (value) => setFilter("query", value) });
+const event = computed({ get: () => filters.value.event, set: (value) => setFilter("event", value) });
+const chips = computed(() => activeFilters(filters.value));
+const filtered = computed(() => isFiltered(filters.value));
+function removeChip(key) {
+  filters.value = clearFilter(filters.value, key);
+}
+function clearAll() {
+  filters.value = emptyFilters();
+}
+
+// The table's columns: which sort (`sort`) and which filter (`filter`).
+// The library's cells load row by row, so they neither sort nor filter.
+const HEAD = [
+  { key: "date", label: "Date", sort: "date", filter: "Session date", name: "date" },
+  { key: "session", label: "Session", sort: "session", filter: "Length", name: "length" },
+  { key: "shape", label: "Audience chat", srBefore: "Shape: " },
+  { key: "attendees", label: "Attendees", sort: "attendees", filter: "Attendees", name: "attendees", cls: "s-num" },
+  { key: "wrote", label: "Wrote", cls: "s-figure" },
+  { key: "questions", label: "Questions", cls: "s-figure" },
+  { key: "transcript", label: "Transcript", sort: "transcript", filter: "Transcript", name: "transcript", align: "end" },
+  { key: "added", label: "Added", sort: "added", filter: "Added by", name: "who added it", align: "end" },
+];
+const FILTERABLE = HEAD.filter((column) => column.filter);
+const SORT_OPTIONS = HEAD.filter((column) => column.sort).flatMap((column) =>
+  [COLUMNS[column.sort].first, COLUMNS[column.sort].first === "asc" ? "desc" : "asc"].map((dir) => ({
+    value: `${column.sort}:${dir}`,
+    label: `${column.label}, ${COLUMNS[column.sort][dir].toLowerCase()}`,
+  })),
+);
+const sortValue = computed({
+  get: () => `${sort.value.key}:${sort.value.dir}`,
+  set: (value) => {
+    const [key, dir] = String(value).split(":");
+    sort.value = parseSort({ key, dir });
+  },
+});
+
+function sortIcon(key) {
+  if (sort.value.key !== key) return "arrow-up-down";
+  return sort.value.dir === "asc" ? "arrow-up" : "arrow-down";
+}
+function filterChip(columnKey) {
+  return chips.value.find((chip) => chip.column === columnKey) || null;
+}
+function filterLabel(column) {
+  const chip = filterChip(column.key);
+  return chip ? `Filter by ${column.name}: ${chip.label}` : `Filter by ${column.name}`;
+}
+
+// One panel open at a time: a column's key, "sheet" (the phone's "Sort &
+// filter") or "".
+const panel = ref("");
+const filterButtons = {};
+const sheetButton = ref(null);
+const panelColumn = computed(() => FILTERABLE.find((column) => column.key === panel.value) || null);
+function togglePanel(key) {
+  panel.value = panel.value === key ? "" : key;
+}
+function closePanel() {
+  panel.value = "";
+}
 
 const sessions = computed(() => state.workspaceSessions || []);
 const loading = computed(() => state.loading.workspaceSessions && !sessions.value.length);
 const counts = computed(() => sessionCounts(sessions.value));
 const events = computed(() => eventOptions(sessions.value));
+const teammates = computed(() => teammateOptions(sessions.value));
 const rows = computed(() =>
-  visibleSessions(sessions.value, { query: query.value, event: event.value, sort: sort.value }).map((session) =>
-    sessionRow(session),
-  ),
+  visibleSessions(sessions.value, { filters: filters.value, sort: sort.value }).map((session) => sessionRow(session)),
 );
-const filtered = computed(() => Boolean(query.value.trim() || event.value));
-const shownLabel = computed(() => {
-  const total = counts.value.sessions;
-  const noun = total === 1 ? "session" : "sessions";
-  return filtered.value ? `${rows.value.length} of ${total} ${noun}` : `${total} ${noun}`;
-});
+const shown = computed(() => shownLabel(rows.value.length, counts.value.sessions, filtered.value));
 
 // ── The library's cells, for the rows on screen ──
 const library = createLibraryRows();
@@ -76,11 +179,6 @@ onBeforeUnmount(() => {
   observer?.disconnect();
   library.close();
 });
-
-function clearFilters() {
-  query.value = "";
-  event.value = "";
-}
 </script>
 
 <template>
@@ -106,89 +204,125 @@ function clearFilters() {
       </section>
 
       <Card padding="flush" class="s-index">
-        <div class="s-filters" role="search">
-          <label class="s-field s-search">
-            <span class="siq-sr-only">Search sessions</span>
-            <Icon name="search" :size="16" class="s-field-icon" />
-            <input v-model="query" type="search" class="s-input" placeholder="Search by title, event or teammate" />
-          </label>
-          <label v-if="events.length > 1" class="s-field">
-            <span class="siq-sr-only">Event</span>
-            <select v-model="event" class="s-input s-select">
-              <option value="">All events</option>
-              <option v-for="option in events" :key="option.value" :value="option.value">{{ option.label }}</option>
-            </select>
-            <Icon name="chevron-down" :size="16" class="s-select-icon" />
-          </label>
-          <label class="s-field">
-            <span class="siq-sr-only">Sort</span>
-            <select v-model="sort" class="s-input s-select">
-              <option v-for="option in SORTS" :key="option.value" :value="option.value">{{ option.label }}</option>
-            </select>
-            <Icon name="chevron-down" :size="16" class="s-select-icon" />
-          </label>
-          <p class="s-shown" role="status">{{ shownLabel }}</p>
+        <div class="s-toolbar" role="search" aria-label="Sessions">
+          <EventPicker v-if="events.length > 1" v-model="event" :events="events" />
+          <ul v-if="chips.length" class="s-chips" aria-label="Filters on">
+            <li v-for="chip in chips" :key="chip.key">
+              <button type="button" class="s-chip siq-fx" :aria-label="`Remove filter: ${chip.label}`" @click="removeChip(chip.key)">
+                <span class="s-chip-text">{{ chip.label }}</span>
+                <Icon name="x" :size="14" />
+              </button>
+            </li>
+          </ul>
+          <button v-if="filtered" type="button" class="s-clear siq-fx" @click="clearAll">Clear all</button>
+          <p class="s-shown" role="status">{{ shown }}</p>
+          <SearchToggle v-model="query" class="s-search" />
+          <button
+            ref="sheetButton"
+            type="button"
+            class="s-sheet-button siq-fx"
+            :class="{ 's-sheet-on': chips.length }"
+            aria-haspopup="dialog"
+            :aria-expanded="panel === 'sheet' ? 'true' : 'false'"
+            @click="togglePanel('sheet')"
+          >
+            <Icon name="list-filter" :size="16" />
+            <span>Sort &amp; filter</span>
+            <span v-if="chips.length" class="s-sheet-count">{{ chips.length }}</span>
+          </button>
         </div>
 
-        <table v-if="rows.length" class="s-table">
-          <caption class="siq-sr-only">Your organization's sessions</caption>
-          <thead>
-            <tr>
-              <th scope="col">Date</th>
-              <th scope="col">Session</th>
-              <th scope="col"><span class="siq-sr-only">Shape: </span>Audience chat</th>
-              <th scope="col" class="s-num">Attendees</th>
-              <th scope="col" class="s-figure">Wrote</th>
-              <th scope="col" class="s-figure">Questions</th>
-              <th scope="col">Transcript</th>
-              <th scope="col">Added by</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="row in rows" :key="row.id" :ref="watchRow" class="s-row" :data-session-id="row.id">
-              <td class="s-date">{{ row.day }}</td>
-              <td class="s-session">
-                <!-- The title's link covers the whole row (::after). -->
-                <RouterLink :to="row.href" class="s-link siq-fx">{{ row.title }}</RouterLink>
-                <span class="s-meta">
-                  <span v-if="row.subtitle">{{ row.subtitle }}</span>
-                  <span v-if="row.subtitle && row.length" aria-hidden="true"> · </span>
-                  <span v-if="row.length">{{ row.length }}</span>
-                </span>
-                <span v-if="cells[row.id]?.lead" class="s-lead">{{ cells[row.id].lead }}</span>
-              </td>
-              <td class="s-spark">
-                <SessionSparkline
-                  v-if="cells[row.id] && !cells[row.id].loading"
-                  :points="cells[row.id].sparkline"
-                  :label="cells[row.id].sparkLabel"
-                />
-              </td>
-              <td class="s-num">
-                <span class="s-attendees">{{ row.attendees }}</span>
-                <span v-if="row.registrants" class="s-meta">{{ row.registrants }}</span>
-              </td>
-              <td class="s-figure s-wrote">
-                <template v-if="cells[row.id] && !cells[row.id].loading">
-                  {{ cells[row.id].wrote }}<span v-if="cells[row.id].wroteEstimated" class="s-meta" title="Estimated, as on the Report"> est.</span>
-                </template>
-              </td>
-              <td class="s-figure s-questions">
-                <template v-if="cells[row.id] && !cells[row.id].loading">
-                  {{ cells[row.id].questions }}<span v-if="cells[row.id].open" class="s-meta"> · {{ cells[row.id].open }}</span>
-                </template>
-              </td>
-              <td class="s-transcript">
-                <StatusWord v-if="row.transcript === 'ready'" status="measured" label="Ready" />
-                <span v-else class="s-meta">Not yet</span>
-              </td>
-              <td class="s-added">{{ row.addedBy || "—" }}</td>
-            </tr>
-          </tbody>
-        </table>
+        <div v-if="rows.length" class="s-scroll">
+          <table class="s-table">
+            <caption class="siq-sr-only">Your organization's sessions</caption>
+            <thead>
+              <tr>
+                <th
+                  v-for="column in HEAD"
+                  :key="column.key"
+                  scope="col"
+                  :class="column.cls"
+                  :aria-sort="column.sort ? ariaSort(sort, column.sort) : undefined"
+                >
+                  <span class="s-th">
+                    <button
+                      v-if="column.sort"
+                      type="button"
+                      class="s-sort siq-fx"
+                      :class="{ 's-sort-on': sort.key === column.sort }"
+                      @click="sortBy(column.sort)"
+                    >
+                      <span>{{ column.label }}</span>
+                      <Icon :name="sortIcon(column.sort)" :size="14" class="s-sort-icon" />
+                    </button>
+                    <span v-else class="s-th-label"><span v-if="column.srBefore" class="siq-sr-only">{{ column.srBefore }}</span>{{ column.label }}</span>
+                    <button
+                      v-if="column.filter"
+                      :ref="(element) => (filterButtons[column.key] = element)"
+                      type="button"
+                      class="s-filter siq-fx"
+                      :class="{ 's-filter-on': filterChip(column.key) }"
+                      :aria-label="filterLabel(column)"
+                      aria-haspopup="dialog"
+                      :aria-expanded="panel === column.key ? 'true' : 'false'"
+                      @click="togglePanel(column.key)"
+                    >
+                      <Icon name="list-filter" :size="16" />
+                      <span v-if="filterChip(column.key)" class="s-filter-dot" aria-hidden="true" />
+                    </button>
+                  </span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in rows" :key="row.id" :ref="watchRow" class="s-row" :data-session-id="row.id">
+                <td class="s-date">{{ row.day }}</td>
+                <td class="s-session">
+                  <!-- The title's link covers the whole row (::after). -->
+                  <RouterLink :to="row.href" class="s-link siq-fx">{{ row.title }}</RouterLink>
+                  <span class="s-meta">
+                    <span v-if="row.subtitle">{{ row.subtitle }}</span>
+                    <span v-if="row.subtitle && row.length" aria-hidden="true"> · </span>
+                    <span v-if="row.length">{{ row.length }}</span>
+                  </span>
+                  <span v-if="cells[row.id]?.lead" class="s-lead">{{ cells[row.id].lead }}</span>
+                </td>
+                <td class="s-spark">
+                  <SessionSparkline
+                    v-if="cells[row.id] && !cells[row.id].loading"
+                    :points="cells[row.id].sparkline"
+                    :label="cells[row.id].sparkLabel"
+                  />
+                </td>
+                <td class="s-num">
+                  <span class="s-attendees">{{ row.attendees }}</span>
+                  <span v-if="row.registrants" class="s-meta">{{ row.registrants }}</span>
+                </td>
+                <td class="s-figure s-wrote">
+                  <template v-if="cells[row.id] && !cells[row.id].loading">
+                    {{ cells[row.id].wrote }}<span v-if="cells[row.id].wroteEstimated" class="s-meta" title="Estimated, as on the Report"> est.</span>
+                  </template>
+                </td>
+                <td class="s-figure s-questions">
+                  <template v-if="cells[row.id] && !cells[row.id].loading">
+                    {{ cells[row.id].questions }}<span v-if="cells[row.id].open" class="s-meta"> · {{ cells[row.id].open }}</span>
+                  </template>
+                </td>
+                <td class="s-transcript">
+                  <StatusWord v-if="row.transcript === 'ready'" status="measured" label="Ready" />
+                  <span v-else class="s-meta">Not yet</span>
+                </td>
+                <td class="s-added">
+                  <span class="s-added-name">{{ row.addedBy || "—" }}</span>
+                  <span v-if="row.addedDay" class="s-meta">{{ row.addedDay }}</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
         <div v-else class="s-none">
           <p class="s-empty-text">No session matches.</p>
-          <UiButton variant="ghost" icon="x" @click="clearFilters">Clear the search</UiButton>
+          <UiButton variant="ghost" icon="x" @click="clearAll">Clear all filters</UiButton>
         </div>
       </Card>
       <p class="s-note">
@@ -196,6 +330,49 @@ function clearFilters() {
         audience's alone, as on each session's Report ("est." marks an estimate), and the line under a title is what
         stood out most.
       </p>
+
+      <!-- A column's filter, under its funnel. -->
+      <FloatingPanel
+        :open="Boolean(panelColumn)"
+        :anchor="panelColumn ? filterButtons[panelColumn.key] : null"
+        :label="panelColumn ? `Filter by ${panelColumn.name}` : 'Filter'"
+        :align="panelColumn?.align || 'start'"
+        @close="closePanel"
+      >
+        <ColumnFilter
+          v-if="panelColumn"
+          :column="panelColumn.key"
+          :filters="filters"
+          :teammates="teammates"
+          @set="setFilter"
+          @done="closePanel"
+        />
+      </FloatingPanel>
+
+      <!-- The phone's "Sort & filter" sheet: the same sorts and filters. -->
+      <FloatingPanel :open="panel === 'sheet'" :anchor="sheetButton" label="Sort and filter" align="end" sheet @close="closePanel">
+        <div class="s-sheet">
+          <div class="s-sheet-head">
+            <h2 class="s-sheet-title">Sort &amp; filter</h2>
+            <UiButton variant="icon" icon="x" label="Close" @click="closePanel" />
+          </div>
+          <label class="s-sheet-label" for="s-sheet-sort">Sort by</label>
+          <span class="s-select-wrap">
+            <select id="s-sheet-sort" v-model="sortValue" class="s-select">
+              <option v-for="option in SORT_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
+            </select>
+            <Icon name="chevron-down" :size="16" class="s-select-icon" />
+          </span>
+          <section v-for="column in FILTERABLE" :key="column.key" class="s-sheet-part" :aria-label="column.filter">
+            <h3 class="s-sheet-label">{{ column.filter }}</h3>
+            <ColumnFilter :column="column.key" :filters="filters" :teammates="teammates" :autofocus="false" @set="setFilter" />
+          </section>
+          <div class="s-sheet-foot">
+            <UiButton variant="ghost" :disabled="!filtered" @click="clearAll">Clear all</UiButton>
+            <UiButton variant="primary" @click="closePanel">Show {{ shown }}</UiButton>
+          </div>
+        </div>
+      </FloatingPanel>
     </template>
   </div>
 </template>
@@ -262,30 +439,96 @@ function clearFilters() {
   gap: var(--siq-space-4);
 }
 
-/* ── Filters ── */
-.s-filters {
+/* ── The toolbar: event, filter chips, count, search ── */
+.s-toolbar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--siq-space-3);
-  padding: var(--siq-space-4) var(--siq-space-6);
+  gap: var(--siq-space-2);
+  padding: var(--siq-space-3) var(--siq-space-6);
   box-shadow: inset 0 -1px 0 var(--siq-hairline);
 }
 
-.s-field {
+.s-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--siq-space-2);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.s-chips li {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.s-chip {
   position: relative;
   display: inline-flex;
   align-items: center;
+  gap: var(--siq-space-1);
+  max-width: 100%;
+  min-height: var(--siq-target);
+  margin: 0;
+  padding: 0 var(--siq-space-2) 0 var(--siq-space-3);
+  border: 0;
+  border-radius: var(--siq-radius-pill);
+  background: var(--siq-selected-bg);
+  color: var(--siq-selected-ink);
+  font: inherit;
+  font-size: var(--siq-text-small);
+  line-height: var(--siq-text-small-lh);
+  font-weight: var(--siq-weight-medium);
+  cursor: pointer;
+  transition-property: background-color, box-shadow;
+  transition-duration: var(--siq-duration);
+  transition-timing-function: var(--siq-ease);
 }
 
-.s-search {
-  flex: 1 1 18rem;
+.s-chip:hover {
+  box-shadow: inset 0 0 0 1px var(--siq-accent);
 }
 
-/* v1 controls set their own font, colours, border and height: the classic
-   element styles still load under v1. */
-.s-input {
-  width: 100%;
+.s-chip-text {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.s-clear {
+  min-height: var(--siq-target);
+  margin: 0;
+  padding: 0 var(--siq-space-2);
+  border: 0;
+  border-radius: var(--siq-radius-control);
+  background: transparent;
+  color: var(--siq-accent);
+  font: inherit;
+  font-size: var(--siq-text-small);
+  font-weight: var(--siq-weight-medium);
+  cursor: pointer;
+}
+
+.s-clear:hover {
+  color: var(--siq-accent-hover);
+  text-decoration: underline;
+}
+
+.s-shown {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+/* Only on a phone, where the table's titles are hidden. */
+.s-sheet-button {
+  position: relative;
+  display: none;
+  align-items: center;
+  gap: var(--siq-space-2);
   height: var(--siq-target);
   margin: 0;
   padding: 0 var(--siq-space-3);
@@ -295,57 +538,33 @@ function clearFilters() {
   color: var(--siq-ink);
   font: inherit;
   font-size: var(--siq-text-ui);
-  line-height: var(--siq-text-ui-lh);
-  box-shadow: none;
-  transition-property: border-color, box-shadow;
-  transition-duration: var(--siq-duration);
-  transition-timing-function: var(--siq-ease);
-}
-
-.s-input:hover {
-  border-color: var(--siq-border-hover);
-}
-
-.s-input:focus-visible {
-  outline: 2px solid var(--siq-focus);
-  outline-offset: 1px;
-}
-
-.s-search .s-input {
-  padding-left: 36px;
-}
-
-.s-input::placeholder {
-  color: var(--siq-muted);
-}
-
-.s-field-icon,
-.s-select-icon {
-  position: absolute;
-  color: var(--siq-muted);
-  pointer-events: none;
-}
-
-.s-field-icon {
-  left: var(--siq-space-3);
-}
-
-.s-select {
-  appearance: none;
-  padding-right: 36px;
-  min-width: 12rem;
   cursor: pointer;
 }
 
-.s-select-icon {
-  right: var(--siq-space-3);
+.s-sheet-button.s-sheet-on {
+  border-color: var(--siq-accent);
 }
 
-.s-shown {
-  margin-left: auto;
+.s-sheet-count {
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: var(--siq-radius-pill);
+  background: var(--siq-selected-bg);
+  color: var(--siq-selected-ink);
+  font-size: var(--siq-text-caption);
+  line-height: 20px;
+  font-weight: var(--siq-weight-medium);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 
 /* ── The index ── */
+/* Scrolls sideways on a narrow desktop window rather than widening the page. */
+.s-scroll {
+  position: relative;
+  overflow-x: auto;
+}
+
 .s-table {
   width: 100%;
   border-collapse: collapse;
@@ -356,7 +575,7 @@ function clearFilters() {
 
 .s-table th,
 .s-table td {
-  padding: var(--siq-space-3) var(--siq-space-4);
+  padding: var(--siq-space-3);
   text-align: left;
   vertical-align: middle;
   box-shadow: inset 0 -1px 0 var(--siq-hairline-row);
@@ -373,11 +592,107 @@ function clearFilters() {
 }
 
 .s-table thead th {
+  padding-top: var(--siq-space-1);
+  padding-bottom: var(--siq-space-1);
   font-size: var(--siq-text-small);
   line-height: var(--siq-text-small-lh);
   font-weight: var(--siq-weight-medium);
   color: var(--siq-muted);
+  white-space: nowrap;
   box-shadow: inset 0 -1px 0 var(--siq-hairline-head);
+}
+
+/* A column's title (its sort) and its funnel (its filter). */
+.s-th {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--siq-target);
+}
+
+.s-table th.s-num .s-th {
+  justify-content: flex-end;
+}
+
+.s-sort,
+.s-filter {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  height: var(--siq-target);
+  margin: 0;
+  border: 0;
+  border-radius: var(--siq-radius-inline);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition-property: color, background-color;
+  transition-duration: var(--siq-duration);
+  transition-timing-function: var(--siq-ease);
+}
+
+.s-sort {
+  gap: var(--siq-space-1);
+  margin-left: calc(-1 * var(--siq-space-2));
+  padding: 0 var(--siq-space-2);
+}
+
+.s-sort:hover,
+.s-sort-on {
+  color: var(--siq-ink);
+}
+
+.s-sort-icon {
+  opacity: 0;
+  transition-property: opacity;
+  transition-duration: var(--siq-duration);
+  transition-timing-function: var(--siq-ease);
+}
+
+.s-sort:hover .s-sort-icon,
+.s-sort:focus-visible .s-sort-icon {
+  opacity: 0.6;
+}
+
+.s-sort-on .s-sort-icon,
+.s-sort-on:hover .s-sort-icon {
+  opacity: 1;
+  color: var(--siq-accent);
+}
+
+/* 32px drawn, 40px to hit: the ::before reaches into the cell's padding. */
+.s-filter {
+  justify-content: center;
+  width: 32px;
+  padding: 0;
+  color: var(--siq-muted);
+}
+
+.s-filter::before {
+  content: "";
+  position: absolute;
+  inset: 0 -4px;
+}
+
+.s-filter:hover,
+.s-filter[aria-expanded="true"] {
+  color: var(--siq-ink);
+  background: var(--siq-card-hover);
+}
+
+.s-filter-on {
+  color: var(--siq-accent);
+}
+
+.s-filter-dot {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--siq-radius-pill);
+  background: var(--siq-accent);
+  box-shadow: 0 0 0 2px var(--siq-card);
 }
 
 .s-table tbody tr:last-child td {
@@ -459,6 +774,15 @@ function clearFilters() {
   color: var(--siq-ink-2);
 }
 
+.s-added-name,
+.s-added .s-meta {
+  display: block;
+}
+
+.s-added .s-meta {
+  white-space: nowrap;
+}
+
 .s-lead {
   display: block;
   margin-top: var(--siq-space-1);
@@ -486,8 +810,89 @@ function clearFilters() {
   padding: var(--siq-space-6);
 }
 
+/* ── The phone's sheet ── */
+.s-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: var(--siq-space-2);
+}
+
+.s-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--siq-space-2);
+}
+
+.s-sheet-title {
+  margin: 0;
+  font-size: var(--siq-text-card-title);
+  line-height: var(--siq-text-card-title-lh);
+  font-weight: var(--siq-weight-medium);
+  color: var(--siq-ink);
+}
+
+.s-sheet-part {
+  padding-top: var(--siq-space-2);
+  box-shadow: inset 0 1px 0 var(--siq-hairline);
+}
+
+.s-sheet-label {
+  margin: 0;
+  padding: var(--siq-space-1) 0;
+  font-size: var(--siq-text-small);
+  line-height: var(--siq-text-small-lh);
+  font-weight: var(--siq-weight-medium);
+  color: var(--siq-muted);
+}
+
+.s-select-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.s-select {
+  width: 100%;
+  height: var(--siq-target);
+  margin: 0;
+  padding: 0 36px 0 var(--siq-space-3);
+  border: 1px solid var(--siq-border);
+  border-radius: var(--siq-radius-control);
+  background: var(--siq-input);
+  color: var(--siq-ink);
+  font: inherit;
+  appearance: none;
+  cursor: pointer;
+}
+
+.s-select:focus-visible {
+  outline: 2px solid var(--siq-focus);
+  outline-offset: 1px;
+}
+
+.s-select-icon {
+  position: absolute;
+  right: var(--siq-space-3);
+  color: var(--siq-muted);
+  pointer-events: none;
+}
+
+.s-sheet-foot {
+  position: sticky;
+  bottom: calc(-1 * var(--siq-space-4));
+  display: flex;
+  justify-content: space-between;
+  gap: var(--siq-space-2);
+  margin: var(--siq-space-2) calc(-1 * var(--siq-space-4)) calc(-1 * var(--siq-space-4));
+  padding: var(--siq-space-3) var(--siq-space-4);
+  background: var(--siq-card);
+  box-shadow: inset 0 1px 0 var(--siq-hairline);
+}
+
 /* On a phone each row becomes a small block: the title first, then the
-   date, attendees and transcript on one line. */
+   date, attendees and transcript on one line. The columns' titles are
+   hidden, so their sorts and filters move to the "Sort & filter" sheet. */
 @media (max-width: 720px) {
   .s-title {
     font-size: var(--siq-text-headline);
@@ -502,17 +907,40 @@ function clearFilters() {
   .s-counts :deep(.siq-stat-head .siq-tile) {
     display: none;
   }
-  .s-filters {
-    padding: var(--siq-space-4);
+  .s-toolbar {
+    padding: var(--siq-space-3) var(--siq-space-4);
   }
-  .s-field {
+  /* The event on its own row, then Sort & filter, the search (a row of
+     its own while open) and the chips, then the count. */
+  .s-toolbar :deep(.ep-button) {
     flex: 1 1 100%;
+    max-width: none;
   }
-  .s-select {
-    min-width: 0;
+  .s-toolbar :deep(.ep-button .ep-label) {
+    flex: 1 1 auto;
+    text-align: left;
+  }
+  .s-sheet-button {
+    display: inline-flex;
+    order: 1;
+  }
+  .s-search {
+    order: 2;
   }
   .s-shown {
+    order: 10;
+    flex: 1 1 100%;
     margin-left: 0;
+  }
+  .s-search.st-open {
+    order: 4;
+    flex: 1 1 100%;
+  }
+  .s-chips {
+    order: 5;
+  }
+  .s-clear {
+    order: 6;
   }
   .s-table thead {
     position: absolute;
@@ -570,14 +998,25 @@ function clearFilters() {
 @media (forced-colors: active) {
   .s-table th,
   .s-table td,
-  .s-filters {
+  .s-toolbar,
+  .s-sheet-part {
     border-bottom: 1px solid CanvasText;
+  }
+  .s-chip,
+  .s-filter-on {
+    border: 1px solid Highlight;
+  }
+  .s-filter-dot {
+    background: Highlight;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .s-row,
-  .s-input {
+  .s-chip,
+  .s-sort,
+  .s-sort-icon,
+  .s-filter {
     transition: none;
   }
 }
