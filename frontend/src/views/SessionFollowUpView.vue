@@ -158,6 +158,47 @@ const pdf = computed(() => (body.value ? pdfUrl(api, props.sessionId, output.val
 // The list's spinner: every output being written now, in the language shown.
 const writingKeys = computed(() => new Set(OUTPUTS.filter((item) => making(state, item, language.value).busy).map((item) => item.key)));
 const isWriting = (item) => (item.keys || [item.key]).some((key) => writingKeys.value.has(key));
+
+// ── The list: groups that fold, the one on screen open ──
+const navGroups = computed(() => [
+  {
+    id: "session",
+    name: "From the session",
+    items: [
+      { key: DESK, label: "Question desk" },
+      { key: CHAPTERS, label: "Chapters and show notes" },
+    ],
+  },
+  ...groups.value.map((group, index) => ({ ...group, id: `g${index}` })),
+].map((group) => {
+  const ready = group.items.filter((item) => item.ready).length;
+  const writing = group.items.some((item) => item.keys && isWriting(item));
+  const badge = group.id === "session" ? (openCount.value ? `${openCount.value} open` : "") : ready ? `${ready} ready` : "";
+  return { ...group, writing, badge };
+}));
+
+function isCurrent(item) {
+  if (item.key === DESK) return onDesk.value;
+  if (item.key === CHAPTERS) return onChapters.value;
+  return !onOwn.value && (item.keys || [item.key]).includes(output.value.key);
+}
+
+const currentGroup = computed(() => navGroups.value.find((group) => group.items.some(isCurrent))?.name || "");
+const openGroups = ref(new Set());
+watch(
+  currentGroup,
+  (name) => {
+    if (name && !openGroups.value.has(name)) openGroups.value = new Set([...openGroups.value, name]);
+  },
+  { immediate: true },
+);
+const isOpen = (group) => openGroups.value.has(group.name);
+function toggleGroup(group) {
+  const next = new Set(openGroups.value);
+  if (next.has(group.name)) next.delete(group.name);
+  else next.add(group.name);
+  openGroups.value = next;
+}
 // The loader's clock, from when this page first saw the output being written.
 const busyStarted = ref(null);
 const busyNow = ref(Date.now());
@@ -253,6 +294,24 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
 
     <BeforeYouShare :figures="figures" />
 
+    <button
+      v-for="item in corner"
+      :key="item.key"
+      type="button"
+      class="f-surprise siq-fx"
+      :class="{ 'is-current': !onOwn && item.key === output.key }"
+      :aria-current="!onOwn && item.key === output.key ? 'true' : undefined"
+      @click="show(item.key)"
+    >
+      <span class="f-surprise-icon" aria-hidden="true"><Icon name="star" :size="20" /></span>
+      <span class="f-corner-text">
+        <span class="f-corner-title">{{ item.label }}</span>
+        <span class="f-muted">The session as a short show: an unexpected take, told with its own numbers.</span>
+      </span>
+      <span v-if="isWriting(item)" class="f-writing" role="status"><span class="f-spinner" aria-hidden="true" />Making it</span>
+      <span v-else class="f-surprise-go">{{ item.ready ? "Watch" : "Open" }}<Icon name="chevron-right" :size="16" /></span>
+    </button>
+
     <div ref="layoutEl" class="f-layout">
       <nav class="f-nav" aria-label="Follow-up">
         <label class="f-pick">
@@ -275,69 +334,41 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
           </select>
           <Icon name="chevron-down" :size="16" class="f-select-icon" />
         </label>
-        <div class="f-group">
-          <h2 class="f-group-name">From the session</h2>
-          <ul class="f-items">
-            <li>
-              <button
-                type="button"
-                class="f-item siq-fx"
-                :class="{ 'is-current': onDesk }"
-                :aria-current="onDesk ? 'true' : undefined"
-                @click="show(DESK)"
-              >
-                <span>Question desk</span>
-                <span v-if="openCount" class="f-badge">{{ openCount }} open</span>
-              </button>
-            </li>
-            <li>
-              <button
-                type="button"
-                class="f-item siq-fx"
-                :class="{ 'is-current': onChapters }"
-                :aria-current="onChapters ? 'true' : undefined"
-                @click="show(CHAPTERS)"
-              >
-                <span>Chapters and show notes</span>
-              </button>
-            </li>
-          </ul>
-        </div>
-        <div v-for="group in groups" :key="group.name" class="f-group">
-          <h2 class="f-group-name">{{ group.name }}</h2>
-          <ul class="f-items">
+        <div v-for="group in navGroups" :key="group.name" class="f-group" :class="{ 'is-open': isOpen(group) }">
+          <h2 class="f-group-head">
+            <button
+              type="button"
+              class="f-group-toggle siq-fx"
+              :aria-expanded="isOpen(group) ? 'true' : 'false'"
+              :aria-controls="`f-group-${group.id}`"
+              @click="toggleGroup(group)"
+            >
+              <Icon name="chevron-down" :size="16" class="f-chevron" />
+              <span class="f-group-name">{{ group.name }}</span>
+              <template v-if="!isOpen(group)">
+                <span v-if="group.writing" class="f-writing" role="status"><span class="f-spinner" aria-hidden="true" />Writing</span>
+                <span v-else-if="group.badge" class="f-badge">{{ group.badge }}</span>
+              </template>
+            </button>
+          </h2>
+          <ul v-show="isOpen(group)" :id="`f-group-${group.id}`" class="f-items">
             <li v-for="item in group.items" :key="item.key">
               <button
                 type="button"
                 class="f-item siq-fx"
-                :class="{ 'is-current': !onOwn && item.keys.includes(output.key) }"
-                :aria-current="!onOwn && item.keys.includes(output.key) ? 'true' : undefined"
+                :class="{ 'is-current': isCurrent(item) }"
+                :aria-current="isCurrent(item) ? 'true' : undefined"
                 @click="show(item.key)"
               >
                 <span>{{ item.label }}</span>
-                <span v-if="isWriting(item)" class="f-writing" role="status">
+                <span v-if="item.key === DESK && openCount" class="f-badge">{{ openCount }} open</span>
+                <span v-else-if="isWriting(item)" class="f-writing" role="status">
                   <span class="f-spinner" aria-hidden="true" />Writing
                 </span>
                 <StatusWord v-else-if="item.ready" status="measured" label="Ready" class="f-ready" />
               </button>
             </li>
           </ul>
-        </div>
-        <div v-for="item in corner" :key="item.key" class="f-group f-corner">
-          <button
-            type="button"
-            class="f-corner-button siq-fx"
-            :class="{ 'is-current': !onOwn && item.key === output.key }"
-            :aria-current="!onOwn && item.key === output.key ? 'true' : undefined"
-            @click="show(item.key)"
-          >
-            <Icon name="star" :size="16" />
-            <span class="f-corner-text">
-              <span class="f-corner-title">{{ item.label }}</span>
-              <span class="f-muted">An unexpected take on the session. Opt-in.</span>
-            </span>
-            <span v-if="isWriting(item)" class="f-writing" role="status"><span class="f-spinner" aria-hidden="true" />Writing</span>
-          </button>
         </div>
       </nav>
 
@@ -592,7 +623,7 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
 .f-nav {
   display: flex;
   flex-direction: column;
-  gap: var(--siq-space-4);
+  gap: var(--siq-space-1);
   position: sticky;
   top: var(--siq-space-6);
   max-height: calc(100dvh - 2 * var(--siq-space-6));
@@ -607,21 +638,66 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
   align-items: center;
 }
 
-.f-group-name {
-  margin: 0 0 var(--siq-space-1);
+.f-group-head {
+  margin: 0;
+  font: inherit;
+}
+
+.f-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--siq-space-2);
+  width: 100%;
+  min-height: var(--siq-target);
+  margin: 0;
   padding: 0 var(--siq-space-3);
+  border: 0;
+  border-radius: var(--siq-radius-control);
+  background: transparent;
+  color: var(--siq-muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition-property: background-color, color;
+  transition-duration: var(--siq-duration);
+  transition-timing-function: var(--siq-ease);
+}
+
+.f-group-toggle:hover {
+  background: var(--siq-card-hover);
+  color: var(--siq-ink);
+}
+
+.f-group-toggle.siq-fx:focus-visible {
+  outline-offset: -3px;
+}
+
+.f-group-name {
+  flex: 1;
+  min-width: 0;
   font-size: var(--siq-text-small);
   line-height: var(--siq-text-small-lh);
   font-weight: var(--siq-weight-medium);
-  color: var(--siq-muted);
+}
+
+.f-chevron {
+  flex: none;
+  transform: rotate(-90deg);
+  transition-property: transform;
+  transition-duration: var(--siq-duration);
+  transition-timing-function: var(--siq-ease);
+}
+
+.f-group.is-open .f-chevron {
+  transform: none;
 }
 
 .f-items {
   display: flex;
   flex-direction: column;
   gap: var(--siq-space-1);
-  margin: 0;
-  padding: 0;
+  margin: 0 0 var(--siq-space-2);
+  padding: 0 0 0 var(--siq-space-4);
   list-style: none;
 }
 
@@ -713,21 +789,17 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
   font-variant-numeric: tabular-nums;
 }
 
-/* Surprise me: small and quiet, at the bottom of the list. */
-.f-corner {
-  margin-top: var(--siq-space-4);
-}
-
-.f-corner-button {
+/* Surprise me: its own card above the list and the output. */
+.f-surprise {
   display: flex;
-  gap: var(--siq-space-2);
-  align-items: flex-start;
+  align-items: center;
+  gap: var(--siq-space-3);
   width: 100%;
-  margin: 0;
-  padding: var(--siq-space-3);
-  border: 1px dashed var(--siq-border);
-  border-radius: var(--siq-radius-control);
-  background: transparent;
+  margin: 0 0 var(--siq-space-4);
+  padding: var(--siq-space-3) var(--siq-space-4);
+  border: 1px solid var(--siq-border);
+  border-radius: var(--siq-radius-card);
+  background: var(--siq-card);
   color: var(--siq-ink-2);
   font: inherit;
   text-align: left;
@@ -737,21 +809,41 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
   transition-timing-function: var(--siq-ease);
 }
 
-.f-corner-button :deep(svg) {
-  flex: none;
-  margin-top: 2px;
-  color: var(--siq-muted);
-}
-
-.f-corner-button:hover {
+.f-surprise:hover {
   background: var(--siq-card-hover);
   color: var(--siq-ink);
 }
 
-.f-corner-button.is-current {
-  border-style: solid;
+.f-surprise.is-current {
+  border-color: var(--siq-accent);
   background: var(--siq-selected-bg);
   color: var(--siq-selected-ink);
+}
+
+.f-surprise-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: var(--siq-target);
+  height: var(--siq-target);
+  border-radius: var(--siq-radius-control);
+  background: var(--siq-surface-2);
+  color: var(--siq-accent);
+}
+
+.f-surprise .f-corner-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.f-surprise-go {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--siq-space-1);
+  font-size: var(--siq-text-ui);
+  font-weight: var(--siq-weight-medium);
+  color: var(--siq-accent);
 }
 
 .f-corner-text {
@@ -875,7 +967,7 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
 
 @media (forced-colors: active) {
   .f-item.is-current,
-  .f-corner-button.is-current,
+  .f-surprise.is-current,
   .f-seg.is-on {
     outline: 2px solid CanvasText;
   }
@@ -883,13 +975,16 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
 
 @media (prefers-reduced-motion: reduce) {
   .f-item,
-  .f-corner-button {
+  .f-group-toggle,
+  .f-chevron,
+  .f-surprise {
     transition: none;
   }
 }
 
 @media print {
   .f-nav,
+  .f-surprise,
   .f-actions {
     display: none !important;
   }
