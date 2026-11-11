@@ -33,6 +33,23 @@ The detectors of this version:
   of `LATE_START_MIN_S` or more is reported with the audience's messages
   in the waiting room. Without chat labels, only the late start is looked
   at.
+- **monologue** (#6, monologue stretches): the longest stretch of one
+  speaker's utterances in a row, broken by a change of speaker, a prompt to
+  the room or an utterance that answers an audience question (the stored
+  understanding's answers). When it lasts `MONOLOGUE_MIN_S` or more, the
+  unprompted chat rate of its first third is compared with its last third;
+  it fires when the last is `MONOLOGUE_DROP` or less of the first, from at
+  least `MONOLOGUE_MIN_FIRST` messages in the first third. It needs speech
+  on the session clock (minutes) and the chat labelled.
+- **prompts** (#4, did the room have time to answer): for each prompt to
+  the room, the speaker's wait (the prompt's end to the next utterance's
+  start), the audience's messages in the `PROMPT_WINDOW_S` after it, the
+  number the session's live rate would give anyway (`expected`), and how
+  many came after the speaker spoke again. Replies aren't marked one by
+  one: the excess over the expected number stands for them, and the page
+  says so. It fires when a prompt drew `PROMPT_MIN_EXCESS` or more messages
+  over the expected, most of them (`PROMPT_LATE_SHARE`) after a wait under
+  `PROMPT_SHORT_WAIT_S`. Measured in seconds, so it needs a verified clock.
 
 Never a name or a message's text: counts, times and our own ids.
 
@@ -45,7 +62,7 @@ import math
 import statistics
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from livestorm_app.record.alignment import MINUTES, alignment_allows
+from livestorm_app.record.alignment import MINUTES, SECONDS, alignment_allows
 from livestorm_app.record.assemble import chapter_marks, pulse_events
 from livestorm_app.record.clock import LIVE, event_lane, phase
 
@@ -70,6 +87,15 @@ INCIDENT_GAP_S = 120.0
 DEAD_AIR_MIN_S = 5.0
 DEAD_AIR_MARGIN_S = 60.0
 LATE_START_MIN_S = 180.0
+
+MONOLOGUE_MIN_S = 480.0
+MONOLOGUE_DROP = 0.5
+MONOLOGUE_MIN_FIRST = 6
+
+PROMPT_WINDOW_S = 120.0
+PROMPT_MIN_EXCESS = 3
+PROMPT_LATE_SHARE = 0.5
+PROMPT_SHORT_WAIT_S = 10.0
 
 
 def _finite(value: Any) -> Optional[float]:
@@ -298,12 +324,156 @@ def detect_friction(inputs: Any) -> Dict[str, Any]:
     }
 
 
+# ── #6: monologue stretches ──
+
+
+def longest_stretch(
+    utterances: Sequence[Tuple[str, str, float, float]], breaks: Sequence[str]
+) -> Optional[Dict[str, Any]]:
+    """`utterances`: `(id, speaker, t_start, t_end)` in order. The longest run
+    of one speaker's utterances, a break (an id in `breaks`) ending the run
+    it is in, the next utterance starting a new one:
+    `{start, end, speaker}`, or None without utterances."""
+    stop = set(breaks)
+    best = None
+    run = None
+    for uid, speaker, start, end in utterances:
+        if run is None or speaker != run["speaker"]:
+            run = {"start": start, "end": end, "speaker": speaker}
+        else:
+            run["end"] = max(run["end"], end)
+        if best is None or run["end"] - run["start"] > best["end"] - best["start"]:
+            best = dict(run)
+        if uid in stop:
+            run = None
+    return best
+
+
+def _unprompted_times(inputs: Any, labels: Mapping[str, Mapping[str, Any]]) -> List[float]:
+    return [
+        e["t"]
+        for e in _audience(inputs)
+        if e["lane"] == "audience_chat" and str((labels.get(e["eid"]) or {}).get("class")) not in NOT_UNPROMPTED
+    ]
+
+
+def detect_monologue(inputs: Any, prompts: Sequence[Mapping[str, Any]], answers: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+    base = {"id": "monologue", "confidence": "estimated"}
+    offset = _offset(inputs)
+    labels = _labels(inputs)
+    if offset is None:
+        return {**base, "state": NOT_CHECKED, "reason": "clock"}
+    if labels is None:
+        return {**base, "state": NOT_CHECKED, "reason": "labels"}
+    frame = inputs.transcript.utterances
+    rows = []
+    for uid, speaker, start, end in frame[["uid", "speaker_key", "r_start", "r_end"]].itertuples(index=False, name=None):
+        start, end = _finite(start), _finite(end)
+        if start is not None and end is not None:
+            rows.append((str(uid), str(speaker), start + offset, max(end, start) + offset))
+    rows.sort(key=lambda row: row[2])
+    breaks = [str(p.get("utterance")) for p in prompts] + [str(u) for a in answers for u in (a.get("utterances") or [])]
+    stretch = longest_stretch(rows, breaks)
+    if stretch is None:
+        return {**base, "state": NOT_CHECKED, "reason": "no_speech"}
+    length = stretch["end"] - stretch["start"]
+    values: Dict[str, Any] = {"start": round(stretch["start"], 1), "end": round(stretch["end"], 1), "seconds": round(length, 1)}
+    if length < MONOLOGUE_MIN_S:
+        return {**base, "state": NOTHING, "values": values}
+    third = length / 3.0
+    times = _unprompted_times(inputs, labels)
+    first = sum(1 for t in times if stretch["start"] <= t < stretch["start"] + third)
+    last = sum(1 for t in times if stretch["end"] - third <= t <= stretch["end"])
+    minutes = third / 60.0
+    values.update({"firstPerMinute": round(first / minutes, 1), "lastPerMinute": round(last / minutes, 1), "first": first, "last": last})
+    if first < MONOLOGUE_MIN_FIRST or last > first * MONOLOGUE_DROP:
+        return {**base, "state": NOTHING, "values": values}
+    strength = min(0.3 + (length - MONOLOGUE_MIN_S) / 1800.0 + (1 - last / first) * 0.3, 1.0)
+    return {**base, "state": FOUND, "strength": round(strength, 2), "values": values}
+
+
+# ── #4: did the room have time to answer ──
+
+
+def prompt_rows(
+    prompts: Sequence[Tuple[str, float, float]],
+    starts: Sequence[float],
+    audience: Sequence[float],
+    rate_per_s: float,
+) -> List[Dict[str, Any]]:
+    """`prompts`: `(quote, t_start, t_end)`; `starts`: every utterance's
+    start; `audience`: the audience's live message times; `rate_per_s`: the
+    session's live rate. One row per prompt."""
+    rows = []
+    for quote, t, stop in prompts:
+        later = [start for start in starts if start > stop]
+        resumed = min(later) if later else None
+        window = [m for m in audience if stop <= m <= stop + PROMPT_WINDOW_S]
+        expected = rate_per_s * PROMPT_WINDOW_S
+        late = [m for m in window if resumed is not None and m > resumed]
+        delays = sorted(m - stop for m in window)
+        rows.append(
+            {
+                "t": round(t, 1),
+                "quote": quote,
+                "waitS": round(resumed - stop, 1) if resumed is not None else None,
+                "messages": len(window),
+                "expected": round(expected, 1),
+                "excess": max(0, round(len(window) - expected)),
+                "late": len(late),
+                "medianDelayS": round(statistics.median(delays), 1) if delays else None,
+            }
+        )
+    return rows
+
+
+def detect_prompts(inputs: Any, prompts: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+    base = {"id": "prompts", "confidence": "estimated"}
+    if inputs.transcript is None or not alignment_allows(inputs.alignment, SECONDS):
+        return {**base, "state": NOT_CHECKED, "reason": "clock"}
+    if not prompts:
+        return {**base, "state": NOT_CHECKED, "reason": "no_prompts"}
+    spans = _speech_spans(inputs, _finite(inputs.alignment.offset_s) or 0.0)
+    by_id = {uid: (start, end) for uid, start, end in spans}
+    asked = [
+        (str(p.get("quote") or ""), *by_id[str(p.get("utterance"))])
+        for p in prompts
+        if str(p.get("utterance")) in by_id
+    ]
+    if not asked:
+        return {**base, "state": NOT_CHECKED, "reason": "no_prompts"}
+    audience = [e["t"] for e in _audience(inputs)]
+    end = _finite(inputs.clock.end_s) or (max(audience) if audience else 0.0)
+    rate = len(audience) / end if end > 0 else 0.0
+    rows = prompt_rows(sorted(asked, key=lambda p: p[1]), [start for _, start, _ in spans], audience, rate)
+    values = {"prompts": rows}
+    missed = [
+        row
+        for row in rows
+        if row["excess"] >= PROMPT_MIN_EXCESS
+        and row["waitS"] is not None
+        and row["waitS"] < PROMPT_SHORT_WAIT_S
+        and row["late"] >= row["messages"] * PROMPT_LATE_SHARE
+    ]
+    if not missed:
+        return {**base, "state": NOTHING, "values": values}
+    top = max(missed, key=lambda row: row["late"])
+    strength = min(0.3 + 0.07 * top["late"] + 0.15 * (len(missed) - 1), 1.0)
+    return {**base, "state": FOUND, "strength": round(strength, 2), "values": {**values, "missed": [row["t"] for row in missed]}}
+
+
 def findings(inputs: Any, chapters: Sequence[Mapping[str, Any]], understanding: Mapping[str, Any]) -> Dict[str, Any]:
     """`{version, found, nothing, notChecked}`: every detector's answer, the
     found ones strongest first. `chapters` are `understanding.chapter_list`'s
     and `understanding` the current reading's result (its `prompts`)."""
     prompts = [p for p in (understanding.get("prompts") or []) if isinstance(p, Mapping)]
-    answers = [detect_chapters(inputs, chapters, prompts), detect_friction(inputs)]
+    answered = [a for a in (understanding.get("answers") or []) if isinstance(a, Mapping)]
+    answers = [
+        detect_chapters(inputs, chapters, prompts),
+        detect_friction(inputs),
+        detect_monologue(inputs, prompts, answered),
+        detect_prompts(inputs, prompts),
+    ]
     return {
         "version": FINDINGS_VERSION,
         "found": sorted((a for a in answers if a["state"] == FOUND), key=lambda a: -a["strength"]),

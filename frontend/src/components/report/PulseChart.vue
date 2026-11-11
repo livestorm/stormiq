@@ -16,6 +16,9 @@ import { barPercent, busiestMinute, clockLabel, countTicks } from "../../report/
 const props = defineProps({
   pulse: { type: Object, required: true },
   alignment: { type: Object, default: null },
+  // What the findings mark (`report/findings.js` `pulseMarks`): the
+  // monologue stretch found, and the prompts to the room.
+  marks: { type: Object, default: () => ({ bands: [], prompts: [] }) },
 });
 
 const showTable = ref(false);
@@ -105,8 +108,16 @@ const source = computed(() =>
         <span class="r-lane-title">Chat per minute</span>
         <span class="r-key"><span class="r-swatch r-s1" />Audience</span>
         <span class="r-key"><span class="r-swatch r-s3" />Your team</span>
+        <span v-if="marks.prompts.length" class="r-key"><span class="r-prompt-key" aria-hidden="true" />Prompt to the room</span>
       </div>
       <div class="r-lane r-lane-chat">
+        <span
+          v-for="band in marks.bands"
+          :key="`b${band.left}`"
+          class="r-band"
+          :style="{ left: `${band.left}%`, width: `${band.width}%` }"
+          :title="band.label"
+        ><span class="r-band-label">{{ band.label }}</span></span>
         <span
           v-for="tick in chatAxis.ticks"
           :key="`g${tick}`"
@@ -119,6 +130,17 @@ const source = computed(() =>
             <span class="r-bar r-bar-audience" :style="{ height: `${column.audience}%` }" />
           </div>
         </div>
+      </div>
+
+      <div v-if="marks.prompts.length" class="r-prompts">
+        <span
+          v-for="mark in marks.prompts"
+          :key="`p${mark.left}`"
+          class="r-prompt"
+          :class="{ 'is-missed': mark.missed }"
+          :style="{ left: `${mark.left}%` }"
+          :title="mark.title"
+        />
       </div>
 
       <div class="r-lane-head">
@@ -226,6 +248,57 @@ const source = computed(() =>
 
 .r-lane {
   position: relative;
+}
+
+.r-band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 0;
+  background: var(--siq-fair-tint);
+  box-shadow: inset 1px 0 0 var(--siq-fair), inset -1px 0 0 var(--siq-fair);
+  pointer-events: auto;
+}
+
+.r-band-label {
+  position: absolute;
+  top: var(--siq-space-1);
+  left: var(--siq-space-2);
+  right: var(--siq-space-2);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--siq-text-caption);
+  line-height: var(--siq-text-caption-lh);
+  color: var(--siq-ink-2);
+}
+
+.r-prompts {
+  position: relative;
+  height: 10px;
+}
+
+.r-prompt,
+.r-prompt-key {
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-bottom: 8px solid var(--siq-nontext);
+}
+
+.r-prompt {
+  position: absolute;
+  top: 1px;
+  transform: translateX(-50%);
+}
+
+.r-prompt.is-missed {
+  border-bottom-color: var(--siq-fair);
+}
+
+.r-prompt-key {
+  display: inline-block;
 }
 
 .r-lane-chat {

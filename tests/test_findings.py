@@ -17,8 +17,12 @@ from livestorm_app.record.findings import (
     dead_air,
     detect_chapters,
     detect_friction,
+    detect_monologue,
+    detect_prompts,
     findings,
     incidents,
+    longest_stretch,
+    prompt_rows,
 )
 from livestorm_app.record.inputs import load_record_inputs
 from livestorm_app.record.understanding import chapter_list, current_reading
@@ -137,6 +141,61 @@ def test_findings_rank_the_found_ones_strongest_first():
         f["strength"] for f in answer["found"] if f["id"] == i
     ))
     assert {f["id"] for f in answer["found"]} == {"chapters", "friction"}
+
+
+# ── #6: monologue stretches ──
+
+
+def test_the_longest_stretch_breaks_at_a_new_speaker_or_a_prompt():
+    rows = [("U1", "0", 0, 60), ("U2", "0", 61, 300), ("U3", "1", 301, 320), ("U4", "1", 321, 700), ("U5", "1", 701, 760)]
+    assert longest_stretch(rows, []) == {"start": 301, "end": 760, "speaker": "1"}
+    assert longest_stretch(rows, ["U3"]) == {"start": 321, "end": 760, "speaker": "1"}, "a prompt ends the run it is in"
+    assert longest_stretch([], []) is None
+
+
+def test_a_long_stretch_where_the_chat_fell_is_found(monkeypatch):
+    import livestorm_app.record.findings as module
+
+    inputs, _, result = _setup()
+    quiet = detect_monologue(inputs, [], result.get("answers") or [])
+    assert quiet["state"] == NOTHING and quiet["values"]["seconds"] == 297.5, "under 8 minutes"
+    monkeypatch.setattr(module, "MONOLOGUE_MIN_S", 200.0)
+    busy_start = _with_chat(inputs, [625 + 10 * i for i in range(9)])
+    answer = detect_monologue(busy_start, [], result.get("answers") or [])
+    assert answer["state"] == FOUND
+    assert (answer["values"]["first"], answer["values"]["last"]) == (9, 1)
+    even = _with_chat(inputs, [625 + 30 * i for i in range(10)])
+    assert detect_monologue(even, [], [])["state"] == NOTHING, "the chat kept up"
+    unlabelled, _, _ = _setup(labelled=False)
+    assert detect_monologue(unlabelled, [], [])["reason"] == "labels"
+
+
+# ── #4: did the room have time to answer ──
+
+
+def test_a_prompt_row_counts_the_wait_the_replies_over_the_usual_and_the_late_ones():
+    rows = prompt_rows([("Any questions?", 100.0, 105.0)], [0.0, 100.0, 108.0, 200.0], [106.0, 110.0, 115.0, 120.0, 400.0], 0.01)
+    assert rows == [
+        {"t": 100.0, "quote": "Any questions?", "waitS": 3.0, "messages": 4, "expected": 1.2, "excess": 3, "late": 3, "medianDelayS": 7.5}
+    ]
+
+
+def test_a_prompt_the_room_answered_after_the_speaker_moved_on_is_found():
+    inputs, _, _ = _setup()
+    prompt = [{"utterance": "U0028", "t": 306.9, "quote": "pricing works per team"}]
+    assert detect_prompts(inputs, [])["reason"] == "no_prompts"
+    assert detect_prompts(inputs, prompt)["state"] == NOTHING, "nobody answered"
+    answered = _with_chat(inputs, [330, 340, 355, 370, 390])
+    answer = detect_prompts(answered, prompt)
+    assert answer["state"] == FOUND and answer["values"]["missed"] == [306.9]
+    row = answer["values"]["prompts"][0]
+    assert row["waitS"] == 6.2 and row["late"] == 5 and row["excess"] >= 3
+
+
+def test_prompts_need_a_verified_clock():
+    inputs, _, _ = _setup()
+    assumed = dataclasses.replace(inputs, alignment=dataclasses.replace(inputs.alignment, status="assumed"))
+    assert detect_prompts(assumed, [{"utterance": "U0028"}])["reason"] == "clock"
 
 
 # ── The route ──

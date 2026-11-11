@@ -19,6 +19,7 @@ import { analysisSummary, elapsedLabel, formatLength, formatSessionStart } from 
 import { createSessionReport } from "../report/useSessionReport";
 import { createChapters } from "../followup/useChapters";
 import { createFindings } from "../report/useFindings";
+import { pulseMarks } from "../report/findings";
 import FindingsSection from "../components/report/FindingsSection.vue";
 
 // The Report: a session's page. It holds the session header, the analysis
@@ -253,7 +254,11 @@ const short = computed(() => inShort(record.value?.measures || {}));
       <FindingsSection :body="findings.state.body" />
 
       <Card>
-        <PulseChart :pulse="record.pulse" :alignment="clock.alignment || null" />
+        <PulseChart
+          :pulse="record.pulse"
+          :alignment="clock.alignment || null"
+          :marks="pulseMarks(findings.state.body, record.pulse?.minutes?.length || 0)"
+        />
       </Card>
 
       <RoomSection :measures="record.measures || {}" :chat="state.chat" @load-chat="report.loadChat()" />
