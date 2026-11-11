@@ -1,7 +1,6 @@
 """The LLM client for text generation: Anthropic's Messages API (Claude),
 with the worker's CLAUDE_API_KEY. Every text job runs on Claude since the
-owner's decision of 2026-11-11; the OpenAI text path is gone. Cover images
-still use the OpenAI Images API, in livestorm_app/ai/cover_image.py.
+owner's decision of 2026-11-11; the OpenAI text path is gone.
 See docs/providers.md.
 
 The adapter returns one `LLMResult`: the text, why the model stopped, the

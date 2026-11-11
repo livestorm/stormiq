@@ -5,8 +5,8 @@ Every text-model call that gets an answer (HTTP 200) is recorded once by
 `record_call`: one `llm_usage` row and one `llm_usage …` log line. A
 truncated, refused or retried call is recorded too, and so is a JSON answer
 that fails its schema. A call that fails in transport has no usage and is
-only in the log. The cover image call (`ai.cover_image`) doesn't go through
-`llm_client`, so it is neither recorded nor held to the budget.
+only in the log. Surprise me's voice calls (speech, not text) don't go
+through `llm_client`; a user starts them, so no budget applies.
 
 A row holds ids, the model, token counts, the estimated cost, the time taken
 and the stop reason. Never a prompt, an output, a name or a key.

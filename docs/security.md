@@ -32,7 +32,7 @@ Admins come from the `admin_users` table plus the `ADMIN_EMAILS` env var. `ADMIN
 
 ## Fail-closed rules
 
-- `db.fetch_cached_session`, `db.fetch_session_fields`, `db.fetch_cover_image`, `db.fetch_roster_status` and `db.list_session_people` require an explicit `organization_id` scope. A blank scope matches no rows and never queries. `ALL_ORGS` is a named sentinel that only admin, local-dev and worker code pass.
+- `db.fetch_cached_session`, `db.fetch_session_fields`, `db.fetch_roster_status` and `db.list_session_people` require an explicit `organization_id` scope. A blank scope matches no rows and never queries. `ALL_ORGS` is a named sentinel that only admin, local-dev and worker code pass.
 - A session outside the caller's scope looks exactly like a missing one: 404, or 204 on `/cached`.
 - Writes (`speaker-labels`), AI-job POSTs and `roster-sync` first check that the row is in the caller's scope.
 - A people sync starts only for a session of the caller's own org: an admin can read another org's session, but neither `POST /roster-sync` nor a fetch of it starts one, so an admin's Livestorm token is never used on another org's session ([below](#stored-people)). The automatic start after a fetch goes through the same guards as the explicit one (`people_sync.start_people_sync`).

@@ -70,7 +70,7 @@ Two paths are supported:
 
 Access is scoped to the user's Livestorm organization: teammates in the same organization share cached sessions and analyses, while sessions from other organizations are not visible at all, not even through a shared link. Without a Livestorm connection, no session data is accessible.
 
-Server-side secrets used by the backend (not exposed to the client) include the AI provider keys (for analysis, content generation and cover images) and the transcription provider key.
+Server-side secrets used by the backend (not exposed to the client) include the AI provider keys (for analysis and content generation, and the voices that read Surprise me's show aloud) and the transcription provider key.
 
 ---
 
