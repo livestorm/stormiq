@@ -17,12 +17,15 @@ from livestorm_app.record.findings import (
     dead_air,
     detect_chapters,
     detect_friction,
+    detect_moments,
     detect_monologue,
     detect_prompts,
     findings,
     incidents,
     longest_stretch,
     prompt_rows,
+    surge_threshold,
+    surges,
 )
 from livestorm_app.record.inputs import load_record_inputs
 from livestorm_app.record.understanding import chapter_list, current_reading
@@ -140,7 +143,7 @@ def test_findings_rank_the_found_ones_strongest_first():
     assert [f["id"] for f in answer["found"]] == sorted((f["id"] for f in answer["found"]), key=lambda i: -next(
         f["strength"] for f in answer["found"] if f["id"] == i
     ))
-    assert {f["id"] for f in answer["found"]} == {"chapters", "friction"}
+    assert {"chapters", "friction"} <= {f["id"] for f in answer["found"]}
 
 
 # ── #6: monologue stretches ──
@@ -196,6 +199,58 @@ def test_prompts_need_a_verified_clock():
     inputs, _, _ = _setup()
     assumed = dataclasses.replace(inputs, alignment=dataclasses.replace(inputs.alignment, status="assumed"))
     assert detect_prompts(assumed, [{"utterance": "U0028"}])["reason"] == "clock"
+
+
+# ── #2: where the room leaned in, unprompted ──
+
+
+def test_a_surge_is_well_over_the_rooms_usual_minute_and_adjacent_ones_merge():
+    assert surge_threshold([2, 2, 3, 2, 1, 2]) == 5.0, "never under 5"
+    assert surge_threshold([10, 12, 10, 11, 10]) == 20.0, "twice the median"
+    assert surges([1, 6, 7, 1, 9, 1], 5) == [(1, 2), (4, 4)]
+
+
+def _busy(inputs, extra=(), label="content"):
+    """A room writing two messages a minute, plus `extra`."""
+    return _with_chat(inputs, [30 + 30 * i for i in range(58)] + list(extra), label=label)
+
+
+def test_an_unprompted_surge_is_a_moment_with_the_words_being_said():
+    inputs, _, _ = _setup()
+    room = _busy(inputs, [605 + 4 * i for i in range(12)])
+    answer = detect_moments(room, [], 0.0)
+    assert answer["state"] == FOUND
+    (moment,) = answer["values"]["moments"]
+    assert (moment["start"], moment["end"], moment["n"]) == (600.0, 660.0, 1)
+    assert moment["messages"] >= 12 and moment["quote"] and moment["utterance"].startswith("U")
+    assert answer["values"]["quotes"] is True
+
+
+def test_a_reply_to_a_prompt_and_a_wave_of_greetings_are_not_moments():
+    inputs, _, _ = _setup()
+    reply = _busy(inputs, [320 + 3 * i for i in range(12)])
+    answer = detect_moments(reply, [{"utterance": "U0028"}], None)
+    assert answer["state"] == NOTHING and answer["values"]["replies"] == 1
+    wave = _with_chat(_busy(inputs), [605 + 4 * i for i in range(14)], label="social")
+    answer = detect_moments(wave, [], None)
+    assert answer["state"] == NOTHING and answer["values"]["waves"] == 2, "the webinar's opening greetings are a wave too"
+
+
+def test_a_small_room_has_no_moments_to_find():
+    inputs, _, _ = _setup()
+    assert detect_moments(inputs, [], None)["reason"] == "few_messages"
+    unlabelled, _, _ = _setup(labelled=False)
+    assert detect_moments(unlabelled, [], None)["reason"] == "labels"
+
+
+def test_authors_without_a_person_are_told_apart_by_their_livestorm_id():
+    inputs, _, _ = _setup()
+    noisy = _with_chat(inputs, [400, 430, 470], label="tech", author=lambda i: None)
+    noisy = dataclasses.replace(
+        noisy, events=noisy.events.assign(author_id=[a if a else f"ls-{i % 2}" for i, a in enumerate(noisy.events["author_id"])])
+    )
+    (incident,) = detect_friction(noisy)["values"]["incidents"]
+    assert incident["messages"] == 3 and incident["people"] == 2, "a chat saved before the people links still counts its authors"
 
 
 # ── The route ──

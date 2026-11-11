@@ -9,8 +9,8 @@ import { findingsView } from "../../report/findings";
 // "What stood out": the Report's findings (`GET /record/findings`), the
 // strongest first, each worded by `report/findings.js`, then what was
 // checked and found nothing, and what couldn't be checked and why. The
-// chapter finding draws a bar per chapter against the session's usual
-// chapter (the line at 100). Renders text only.
+// chapter finding draws the room's own chat a minute per chapter against
+// the usual chapter (the dashed line). Renders text only.
 
 const props = defineProps({
   // `GET /record/findings`, or null while loading or missing.
@@ -19,8 +19,6 @@ const props = defineProps({
 
 const view = computed(() => findingsView(props.body));
 const checkedCount = computed(() => view.value.nothing.length + view.value.notChecked.length);
-// The bars' scale: the highest index, at least twice the usual chapter.
-const barTop = (bars) => Math.max(200, ...bars.map((bar) => bar.index || 0));
 </script>
 
 <template>
@@ -35,26 +33,25 @@ const barTop = (bars) => Math.max(200, ...bars.map((bar) => bar.index || 0));
       </div>
       <p v-for="line in finding.lines" :key="line" class="fs-line">{{ line }}</p>
 
-      <ul v-if="finding.bars.length" class="fs-bars" aria-label="Unprompted chat per chapter, the usual chapter at 100">
-        <li v-for="bar in finding.bars" :key="bar.title + bar.start" class="fs-bar" :class="bar.tone && `is-${bar.tone}`">
-          <span class="fs-bar-name">
-            <span class="fs-bar-title">{{ bar.title }}</span>
-            <span class="fs-bar-when">{{ bar.start }} · {{ bar.length }}</span>
-          </span>
-          <span class="fs-bar-track" aria-hidden="true">
-            <span
-              v-if="bar.index !== null"
-              class="fs-bar-fill"
-              :style="{ width: `${Math.min((bar.index / barTop(finding.bars)) * 100, 100)}%` }"
-            />
-            <span class="fs-bar-usual" :style="{ left: `${(100 / barTop(finding.bars)) * 100}%` }" />
-          </span>
-          <span class="fs-bar-value">{{ bar.value }}</span>
-        </li>
-      </ul>
-      <p v-if="finding.bars.length" class="fs-key">
-        Unprompted chat per minute against the session's usual chapter (the dashed line, 100).
-      </p>
+      <figure v-if="finding.chart" class="fs-chart">
+        <figcaption class="fs-chart-head">
+          <span class="fs-chart-title">{{ finding.chart.title }}</span>
+          <span v-if="finding.chart.usual" class="fs-chart-key"><span class="fs-usual-key" aria-hidden="true" />{{ finding.chart.usual }}</span>
+        </figcaption>
+        <ul class="fs-bars">
+          <li v-for="row in finding.chart.rows" :key="row.title + row.when" class="fs-bar" :class="row.tone && `is-${row.tone}`">
+            <span class="fs-bar-name">
+              <span class="fs-bar-title">{{ row.title }}</span>
+              <span class="fs-bar-when">{{ row.when }}</span>
+            </span>
+            <span class="fs-bar-track" aria-hidden="true">
+              <span v-if="row.width" class="fs-bar-fill" :style="{ width: `${row.width}%` }" />
+              <span v-if="finding.chart.usualLeft !== null" class="fs-bar-usual" :style="{ left: `${finding.chart.usualLeft}%` }" />
+            </span>
+            <span class="fs-bar-value">{{ row.value }}</span>
+          </li>
+        </ul>
+      </figure>
 
       <ul v-if="finding.rows.length" class="fs-rows">
         <li v-for="row in finding.rows" :key="row">{{ row }}</li>
@@ -115,14 +112,47 @@ const barTop = (bars) => Math.max(200, ...bars.map((bar) => bar.index || 0));
   list-style: none;
 }
 
-.fs-bar {
-  display: grid;
-  grid-template-columns: minmax(0, 14rem) minmax(0, 1fr) 6rem;
-  align-items: center;
-  gap: var(--siq-space-3);
-  padding: var(--siq-space-1) 0;
+.fs-chart {
+  margin: var(--siq-space-4) 0 0;
+}
+
+.fs-chart-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--siq-space-1) var(--siq-space-4);
+  margin-bottom: var(--siq-space-2);
   font-size: var(--siq-text-small);
   line-height: var(--siq-text-small-lh);
+}
+
+.fs-chart-title {
+  font-weight: var(--siq-weight-semibold);
+  color: var(--siq-ink-2);
+}
+
+.fs-chart-key {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--siq-space-1);
+  color: var(--siq-muted);
+}
+
+.fs-usual-key {
+  height: 12px;
+  border-left: 1px dashed var(--siq-ink-2);
+}
+
+.fs-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) 7.5rem;
+  align-items: center;
+  gap: var(--siq-space-3);
+  padding: var(--siq-space-2) 0;
+  font-size: var(--siq-text-small);
+  line-height: var(--siq-text-small-lh);
+  box-shadow: inset 0 -1px 0 var(--siq-hairline-row);
 }
 
 .fs-bar-name {
@@ -132,10 +162,8 @@ const barTop = (bars) => Math.max(200, ...bars.map((bar) => bar.index || 0));
 }
 
 .fs-bar-title {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
   color: var(--siq-ink);
+  overflow-wrap: anywhere;
 }
 
 .fs-bar-when {
@@ -192,13 +220,6 @@ const barTop = (bars) => Math.max(200, ...bars.map((bar) => bar.index || 0));
   line-height: var(--siq-text-small-lh);
   color: var(--siq-ink-2);
   font-variant-numeric: tabular-nums;
-}
-
-.fs-key {
-  margin: var(--siq-space-2) 0 0;
-  font-size: var(--siq-text-caption);
-  line-height: var(--siq-text-caption-lh);
-  color: var(--siq-muted);
 }
 
 .fs-checked-head {

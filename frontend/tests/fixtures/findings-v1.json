@@ -41,6 +41,15 @@
       "confidence": "estimated",
       "state": "not_checked",
       "reason": "no_prompts"
+    },
+    {
+      "id": "moments",
+      "confidence": "estimated",
+      "state": "not_checked",
+      "reason": "few_messages",
+      "values": {
+        "messages": 14
+      }
     }
   ]
 }

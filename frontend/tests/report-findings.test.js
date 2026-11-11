@@ -14,6 +14,7 @@ const chapters = {
   values: {
     high: "Pricing for larger teams",
     low: null,
+    usualPerMinute: 1.1,
     chapters: [
       { title: "Welcome", t: 21.9, seconds: 57, qa: false, unprompted: 1, chatters: 1, questions: 0, perMinute: null, index: null },
       { title: "The dashboard", t: 78.9, seconds: 228, qa: false, unprompted: 4, chatters: 3, questions: 1, perMinute: 1.1, index: 100 },
@@ -46,21 +47,25 @@ describe("the findings' words", () => {
     expect(view.notChecked).toEqual([
       "Chapters: too little unprompted chat to compare them.",
       "Prompts to the room: the analysis found none in the talk.",
+      "Moments: fewer than 30 audience messages, too few to find a burst.",
     ]);
     expect(view.empty).toBe(false);
   });
 
-  it("word a chapter that drew the room in, with a bar per chapter", () => {
+  it("word a chapter that drew the room in, with a chart in messages a minute", () => {
     const words = foundFinding(chapters);
     expect(words.headline).toBe("“Pricing for larger teams” drew the room in");
-    expect(words.lines[0]).toBe("3.9 unprompted chat messages a minute from 7 people, 3.5× the session's usual chapter.");
-    expect(words.bars.map((bar) => [bar.value, bar.tone])).toEqual([
-      ["too short", ""],
-      ["100", ""],
-      ["355", "high"],
-      ["6 questions", ""],
+    expect(words.lines[0]).toBe("3.9 chat messages a minute from 7 people, 3.5× the usual chapter (1.1 a minute).");
+    expect(words.chart.title).toBe("The room's own chat, messages a minute, by chapter");
+    expect(words.chart.usual).toBe("usual: 1.1 a minute");
+    expect(words.chart.rows.map((row) => [row.value, row.tone])).toEqual([
+      ["under 2 min", ""],
+      ["1.1/min", ""],
+      ["3.9/min", "high"],
+      ["Q&A · 6 questions", ""],
     ]);
-    expect(words.bars[2]).toMatchObject({ start: "5:07", length: "8 min" });
+    expect(words.chart.rows[2]).toMatchObject({ when: "5:07 · 8 min", width: 100 });
+    expect(words.chart.usualLeft).toBeCloseTo((1.1 / 3.9) * 100);
   });
 
   it("word a quiet chapter on its own", () => {
@@ -69,6 +74,14 @@ describe("the findings' words", () => {
     const words = foundFinding(quiet);
     expect(words.headline).toBe("The room went quiet during “The dashboard”");
     expect(words.lines[0]).toBe("During “The dashboard” the chat fell to 0.4 a minute, 0.4× the usual.");
+  });
+
+  it("leave the people out when the chat's authors couldn't be told apart", () => {
+    const unknown = { ...friction, values: { ...friction.values, lateStart: null, incidents: [{ start: 75, end: 355, messages: 17, people: 0, deadAirS: 16 }] } };
+    const words = foundFinding(unknown);
+    expect(words.headline).toBe("17 messages about sound or connection from 1:15");
+    expect(words.rows).toEqual(["1:15–5:55 · 17 messages · 16 s of silence on stage"]);
+    expect(words.headline + words.rows.join(" ")).not.toMatch(/0 people/);
   });
 
   it("word an incident and a late start", () => {
@@ -156,7 +169,52 @@ describe("monologues and prompts", () => {
       [17, true],
       [50, false],
     ]);
-    expect(pulseMarks(null, 30)).toEqual({ bands: [], prompts: [] });
+    expect(pulseMarks(null, 30)).toEqual({ bands: [], prompts: [], pins: [] });
+  });
+});
+
+const moments = {
+  id: "moments",
+  state: "found",
+  confidence: "estimated",
+  strength: 0.6,
+  values: {
+    threshold: 5,
+    usualPerMinute: 2,
+    replies: 1,
+    waves: 1,
+    lagS: 15,
+    quotes: true,
+    moments: [
+      { n: 1, start: 600, end: 660, messages: 14, people: 9, peak: 14, quote: "and that's the price for a whole team", utterance: "U0060" },
+      { n: 2, start: 1200, end: 1320, messages: 20, people: 11, peak: 12, quote: null, utterance: null },
+    ],
+  },
+};
+
+describe("unprompted moments", () => {
+  it("word each moment with the words being said, never a cause", () => {
+    const words = foundFinding(moments);
+    expect(words.headline).toBe("The room leaned in 2 times, unprompted");
+    expect(words.rows).toEqual([
+      "1. 10:00–11:00 · 14 messages from 9 people · 7× the usual minute · while the speaker was saying “and that's the price for a whole team”",
+      "2. 20:00–22:00 · 20 messages from 11 people · 6× the usual minute",
+    ]);
+    expect(words.lines.join(" ")).not.toMatch(/because/);
+    const one = foundFinding({ ...moments, values: { ...moments.values, quotes: false, moments: [moments.values.moments[0]] } });
+    expect(one.headline).toBe("The room leaned in at 10:00, unprompted");
+    expect(one.lines[1]).toMatch(/isn't checked to the second/);
+  });
+
+  it("pin each moment on the Pulse, and say what else the bursts were", () => {
+    const { pins } = pulseMarks({ found: [moments] }, 30);
+    expect(pins.map((pin) => [pin.n, Math.round(pin.left * 10) / 10])).toEqual([
+      [1, 35],
+      [2, 70],
+    ]);
+    expect(checkedLines({ nothing: [{ id: "moments", values: { usualPerMinute: 2, replies: 1, waves: 2 } }] }).nothing).toEqual([
+      "Moments: no burst beyond the room's usual 2 a minute, other than 1 reply to a prompt and 2 waves of greetings or logistics.",
+    ]);
   });
 });
 
