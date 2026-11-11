@@ -50,6 +50,17 @@ The detectors of this version:
   says so. It fires when a prompt drew `PROMPT_MIN_EXCESS` or more messages
   over the expected, most of them (`PROMPT_LATE_SHARE`) after a wait under
   `PROMPT_SHORT_WAIT_S`. Measured in seconds, so it needs a verified clock.
+- **moments** (#2, where the room leaned in, unprompted): surge minutes,
+  where the audience's live messages (chat and questions) reach
+  `surge_threshold` (max(median + 3 × MAD, 2 × median, `SURGE_MIN`) over
+  the live minutes, MAD the median absolute deviation); adjacent ones
+  merge. A surge is a reply when a prompt ended in the `REPLY_WINDOW_S`
+  before its first minute or during it; a wave when half or more of its
+  chat is greetings, thanks or logistics; else an unprompted moment. Each moment carries
+  the words being said as it started, shifted back by the room's reaction
+  lag (the median delay of replies to prompts, else `DEFAULT_LAG_S`), only
+  on a verified clock. It needs `MOMENTS_MIN_MESSAGES` live audience
+  messages and the chat labelled.
 
 Never a name or a message's text: counts, times and our own ids.
 
@@ -96,6 +107,12 @@ PROMPT_WINDOW_S = 120.0
 PROMPT_MIN_EXCESS = 3
 PROMPT_LATE_SHARE = 0.5
 PROMPT_SHORT_WAIT_S = 10.0
+
+SURGE_MIN = 5
+MOMENTS_MIN_MESSAGES = 30
+DEFAULT_LAG_S = 15.0
+MAX_MOMENTS = 5
+MAX_QUOTE_CHARS = 200
 
 
 def _finite(value: Any) -> Optional[float]:
@@ -462,17 +479,130 @@ def detect_prompts(inputs: Any, prompts: Sequence[Mapping[str, Any]]) -> Dict[st
     return {**base, "state": FOUND, "strength": round(strength, 2), "values": {**values, "missed": [row["t"] for row in missed]}}
 
 
+# ── #2: where the room leaned in, unprompted ──
+
+
+def surge_threshold(counts: Sequence[int]) -> float:
+    """The messages a minute that make a surge: max(median + 3 × MAD,
+    2 × median, `SURGE_MIN`)."""
+    if not counts:
+        return float(SURGE_MIN)
+    median = statistics.median(counts)
+    mad = statistics.median(abs(c - median) for c in counts)
+    return max(median + 3 * mad, 2 * median, float(SURGE_MIN))
+
+
+def surges(counts: Sequence[int], threshold: float) -> List[Tuple[int, int]]:
+    """Runs of adjacent minutes at or over `threshold`: `(first, last)`."""
+    runs: List[Tuple[int, int]] = []
+    for minute, count in enumerate(counts):
+        if count < threshold:
+            continue
+        if runs and runs[-1][1] == minute - 1:
+            runs[-1] = (runs[-1][0], minute)
+        else:
+            runs.append((minute, minute))
+    return runs
+
+
+def _one_line(value: Any, limit: int) -> str:
+    text = " ".join(str(value or "").split())
+    return text[:limit].rstrip() + "…" if len(text) > limit else text
+
+
+def detect_moments(inputs: Any, prompts: Sequence[Mapping[str, Any]], lag: Optional[float]) -> Dict[str, Any]:
+    base = {"id": "moments", "confidence": "estimated"}
+    labels = _labels(inputs)
+    end = _finite(inputs.clock.end_s)
+    if labels is None:
+        return {**base, "state": NOT_CHECKED, "reason": "labels"}
+    if end is None or end <= 0:
+        return {**base, "state": NOT_CHECKED, "reason": "clock"}
+    audience = _audience(inputs)
+    if len(audience) < MOMENTS_MIN_MESSAGES:
+        return {**base, "state": NOT_CHECKED, "reason": "few_messages", "values": {"messages": len(audience)}}
+    count = max(1, math.ceil(end / 60.0))
+    counts = [0] * count
+    for e in audience:
+        counts[min(int(e["t"] // 60), count - 1)] += 1
+    threshold = surge_threshold(counts)
+    speech = _speech_spans(inputs, _offset(inputs))
+    ends = {uid: t_end for uid, _, t_end in speech}
+    prompt_ends = [ends.get(str(p.get("utterance"))) for p in prompts]
+    prompt_ends = [t for t in prompt_ends if t is not None]
+    seconds = alignment_allows(inputs.alignment, SECONDS) and inputs.transcript is not None
+    text = {}
+    if seconds:
+        frame = inputs.transcript.utterances
+        text = {str(uid): str(words or "") for uid, words in frame[["uid", "text"]].itertuples(index=False, name=None)}
+    shift = lag if lag is not None else DEFAULT_LAG_S
+    moments, replies, waves = [], 0, 0
+    for first, last in surges(counts, threshold):
+        lo, hi = first * 60.0, (last + 1) * 60.0
+        inside = [e for e in audience if lo <= e["t"] < hi]
+        start = min(e["t"] for e in inside)
+        # A prompt that ended in the minute before the surge, or during it:
+        # the surge is the room's reply.
+        chat = [e for e in inside if e["lane"] == "audience_chat"]
+        social = sum(1 for e in chat if str((labels.get(e["eid"]) or {}).get("class")) in NOT_UNPROMPTED)
+        if any(lo - REPLY_WINDOW_S <= stop < hi for stop in prompt_ends):
+            replies += 1
+            continue
+        if chat and social * 2 >= len(chat):
+            waves += 1
+            continue
+        said = None
+        if seconds:
+            at = start - shift
+            said = next((uid for uid, a, b in speech if a <= at <= b), None)
+            if said is None:
+                before = [uid for uid, a, _ in speech if a <= at]
+                said = before[-1] if before else None
+        moments.append(
+            {
+                "start": round(lo, 1),
+                "end": round(hi, 1),
+                "messages": len(inside),
+                "people": len({e["author"] for e in inside if e["author"]}),
+                "peak": max(counts[first : last + 1]),
+                "quote": _one_line(text.get(said), MAX_QUOTE_CHARS) if said else None,
+                "utterance": said,
+            }
+        )
+    median = statistics.median(counts)
+    values = {
+        "threshold": round(threshold, 1),
+        "usualPerMinute": round(median, 1),
+        "replies": replies,
+        "waves": waves,
+        "lagS": round(shift, 1),
+        "quotes": bool(seconds),
+    }
+    if not moments:
+        return {**base, "state": NOTHING, "values": values}
+    ranked = sorted(moments, key=lambda m: -m["messages"])[:MAX_MOMENTS]
+    ordered = sorted(ranked, key=lambda m: m["start"])
+    for number, moment in enumerate(ordered, start=1):
+        moment["n"] = number
+    strength = min(0.4 + 0.1 * len(ordered) + 0.05 * (max(m["peak"] for m in ordered) / threshold), 1.0)
+    return {**base, "state": FOUND, "strength": round(strength, 2), "values": {**values, "moments": ordered}}
+
+
 def findings(inputs: Any, chapters: Sequence[Mapping[str, Any]], understanding: Mapping[str, Any]) -> Dict[str, Any]:
     """`{version, found, nothing, notChecked}`: every detector's answer, the
     found ones strongest first. `chapters` are `understanding.chapter_list`'s
     and `understanding` the current reading's result (its `prompts`)."""
     prompts = [p for p in (understanding.get("prompts") or []) if isinstance(p, Mapping)]
     answered = [a for a in (understanding.get("answers") or []) if isinstance(a, Mapping)]
+    to_prompts = detect_prompts(inputs, prompts)
+    # The room's reaction lag: the median delay of replies to the prompts.
+    delays = [r["medianDelayS"] for r in (to_prompts.get("values") or {}).get("prompts", []) if r.get("medianDelayS") is not None]
     answers = [
         detect_chapters(inputs, chapters, prompts),
         detect_friction(inputs),
         detect_monologue(inputs, prompts, answered),
-        detect_prompts(inputs, prompts),
+        to_prompts,
+        detect_moments(inputs, prompts, statistics.median(delays) if delays else None),
     ]
     return {
         "version": FINDINGS_VERSION,

@@ -46,6 +46,7 @@ describe("the findings' words", () => {
     expect(view.notChecked).toEqual([
       "Chapters: too little unprompted chat to compare them.",
       "Prompts to the room: the analysis found none in the talk.",
+      "Moments: fewer than 30 audience messages, too few to find a burst.",
     ]);
     expect(view.empty).toBe(false);
   });
@@ -156,7 +157,52 @@ describe("monologues and prompts", () => {
       [17, true],
       [50, false],
     ]);
-    expect(pulseMarks(null, 30)).toEqual({ bands: [], prompts: [] });
+    expect(pulseMarks(null, 30)).toEqual({ bands: [], prompts: [], pins: [] });
+  });
+});
+
+const moments = {
+  id: "moments",
+  state: "found",
+  confidence: "estimated",
+  strength: 0.6,
+  values: {
+    threshold: 5,
+    usualPerMinute: 2,
+    replies: 1,
+    waves: 1,
+    lagS: 15,
+    quotes: true,
+    moments: [
+      { n: 1, start: 600, end: 660, messages: 14, people: 9, peak: 14, quote: "and that's the price for a whole team", utterance: "U0060" },
+      { n: 2, start: 1200, end: 1320, messages: 20, people: 11, peak: 12, quote: null, utterance: null },
+    ],
+  },
+};
+
+describe("unprompted moments", () => {
+  it("word each moment with the words being said, never a cause", () => {
+    const words = foundFinding(moments);
+    expect(words.headline).toBe("The room leaned in 2 times, unprompted");
+    expect(words.rows).toEqual([
+      "1. 10:00–11:00 · 14 messages from 9 people · 7× the usual minute · while the speaker was saying “and that's the price for a whole team”",
+      "2. 20:00–22:00 · 20 messages from 11 people · 6× the usual minute",
+    ]);
+    expect(words.lines.join(" ")).not.toMatch(/because/);
+    const one = foundFinding({ ...moments, values: { ...moments.values, quotes: false, moments: [moments.values.moments[0]] } });
+    expect(one.headline).toBe("The room leaned in at 10:00, unprompted");
+    expect(one.lines[1]).toMatch(/isn't checked to the second/);
+  });
+
+  it("pin each moment on the Pulse, and say what else the bursts were", () => {
+    const { pins } = pulseMarks({ found: [moments] }, 30);
+    expect(pins.map((pin) => [pin.n, Math.round(pin.left * 10) / 10])).toEqual([
+      [1, 35],
+      [2, 70],
+    ]);
+    expect(checkedLines({ nothing: [{ id: "moments", values: { usualPerMinute: 2, replies: 1, waves: 2 } }] }).nothing).toEqual([
+      "Moments: no burst beyond the room's usual 2 a minute, other than 1 reply to a prompt and 2 waves of greetings or logistics.",
+    ]);
   });
 });
 

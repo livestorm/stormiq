@@ -94,7 +94,31 @@ function promptsFinding(values) {
   };
 }
 
-const FOUND = { chapters: chaptersFinding, friction: frictionFinding, monologue: monologueFinding, prompts: promptsFinding };
+function momentRow(moment, usual) {
+  const parts = [`${plural(moment.messages, "message", "messages")} from ${plural(moment.people, "person", "people")}`];
+  if (usual > 0) parts.push(`${Math.round(moment.peak / usual)}× the usual minute`);
+  const head = `${moment.n}. ${clockLabel(moment.start)}–${clockLabel(moment.end)} · ${parts.join(" · ")}`;
+  return moment.quote ? `${head} · while the speaker was saying “${moment.quote}”` : head;
+}
+
+function momentsFinding(values) {
+  const moments = values.moments || [];
+  const lines = [
+    `Minutes where the room wrote far more than its usual ${values.usualPerMinute} a minute, on its own: not replies to a question from the stage, not greetings.`,
+  ];
+  if (!values.quotes) lines.push("The recording's clock isn't checked to the second, so the words being said aren't shown.");
+  return {
+    headline:
+      moments.length === 1
+        ? `The room leaned in at ${clockLabel(moments[0].start)}, unprompted`
+        : `The room leaned in ${moments.length} times, unprompted`,
+    lines,
+    bars: [],
+    rows: moments.map((moment) => momentRow(moment, values.usualPerMinute)),
+  };
+}
+
+const FOUND = { moments: momentsFinding, chapters: chaptersFinding, friction: frictionFinding, monologue: monologueFinding, prompts: promptsFinding };
 
 /** A found finding in words: `{id, headline, lines, bars, rows, confidence}`. */
 export function foundFinding(finding) {
@@ -111,6 +135,12 @@ const NOTHING = {
     values?.firstPerMinute === undefined
       ? `Monologues: the longest stretch without bringing the room in was ${minutes(values?.seconds || 0)} min.`
       : `Monologues: the longest stretch ran ${minutes(values.seconds)} min, and the chat held up.`,
+  moments: (values) => {
+    const others = [];
+    if (values?.replies) others.push(`${plural(values.replies, "reply", "replies")} to a prompt`);
+    if (values?.waves) others.push(`${plural(values.waves, "wave", "waves")} of greetings or logistics`);
+    return `Moments: no burst beyond the room's usual ${values?.usualPerMinute ?? 0} a minute${others.length ? `, other than ${others.join(" and ")}` : ""}.`;
+  },
   prompts: (values) => {
     const count = (values?.prompts || []).length;
     return `Prompts to the room: it had time to answer ${count === 1 ? "the one prompt" : `all ${count} prompts`}.`;
@@ -134,6 +164,11 @@ const NOT_CHECKED = {
     labels: "Monologues: needs “Analyse session”, to tell the room's own chat from greetings.",
     no_speech: "Monologues: the transcript has no timed speech.",
   },
+  moments: {
+    labels: "Moments: needs “Analyse session”, to tell the room's own bursts from greetings and replies.",
+    clock: "Moments: the session's length is unknown.",
+    few_messages: "Moments: fewer than 30 audience messages, too few to find a burst.",
+  },
   prompts: {
     clock: "Prompts to the room: needs the recording's clock checked to the second.",
     no_prompts: "Prompts to the room: the analysis found none in the talk.",
@@ -156,9 +191,10 @@ export function findingsView(body) {
 }
 
 /** What the findings mark on the Pulse, in percent of an axis of `count`
- * minutes: the monologue stretch that was found (`bands`) and every prompt
- * to the room that was checked (`prompts`, `missed` when the room answered
- * after the speaker moved on). */
+ * minutes: the monologue stretch that was found (`bands`), every prompt to
+ * the room that was checked (`prompts`, `missed` when the room answered
+ * after the speaker moved on), and the unprompted moments, numbered
+ * (`pins`). */
 export function pulseMarks(body, count) {
   const all = [...(body?.found || []), ...(body?.nothing || [])];
   const monologue = (body?.found || []).find((item) => item.id === "monologue");
@@ -178,5 +214,11 @@ export function pulseMarks(body, count) {
     missed: missed.has(row.t),
     title: `${clockLabel(row.t)} prompt to the room: “${row.quote}”`,
   }));
-  return { bands, prompts: marks };
+  const moments = (body?.found || []).find((item) => item.id === "moments");
+  const pins = (moments?.values?.moments || []).map((moment) => ({
+    n: moment.n,
+    left: (secondsLeft(moment.start, count) + secondsLeft(moment.end, count)) / 2,
+    title: `${moment.n}. ${clockLabel(moment.start)}: ${plural(moment.messages, "message", "messages")}${moment.quote ? ` while the speaker was saying “${moment.quote}”` : ""}`,
+  }));
+  return { bands, prompts: marks, pins };
 }

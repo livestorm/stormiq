@@ -18,7 +18,7 @@ const props = defineProps({
   alignment: { type: Object, default: null },
   // What the findings mark (`report/findings.js` `pulseMarks`): the
   // monologue stretch found, and the prompts to the room.
-  marks: { type: Object, default: () => ({ bands: [], prompts: [] }) },
+  marks: { type: Object, default: () => ({ bands: [], prompts: [], pins: [] }) },
 });
 
 const showTable = ref(false);
@@ -109,6 +109,12 @@ const source = computed(() =>
         <span class="r-key"><span class="r-swatch r-s1" />Audience</span>
         <span class="r-key"><span class="r-swatch r-s3" />Your team</span>
         <span v-if="marks.prompts.length" class="r-key"><span class="r-prompt-key" aria-hidden="true" />Prompt to the room</span>
+        <span v-if="marks.pins?.length" class="r-key"><span class="r-pin r-pin-key" aria-hidden="true">1</span>The room leaned in</span>
+      </div>
+      <div v-if="marks.pins?.length" class="r-pins" aria-hidden="true">
+        <span v-for="pin in marks.pins" :key="`n${pin.n}`" class="r-pin" :style="{ left: `${pin.left}%` }" :title="pin.title">
+          {{ pin.n }}
+        </span>
       </div>
       <div class="r-lane r-lane-chat">
         <span
@@ -271,6 +277,37 @@ const source = computed(() =>
   font-size: var(--siq-text-caption);
   line-height: var(--siq-text-caption-lh);
   color: var(--siq-ink-2);
+}
+
+.r-pins {
+  position: relative;
+  height: 22px;
+}
+
+.r-pin {
+  position: absolute;
+  top: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--siq-accent);
+  color: var(--siq-page);
+  font-size: var(--siq-text-caption);
+  line-height: 1;
+  font-weight: var(--siq-weight-semibold);
+  font-variant-numeric: tabular-nums;
+  transform: translateX(-50%);
+}
+
+.r-pin-key {
+  position: static;
+  width: 16px;
+  height: 16px;
+  font-size: 10px;
+  transform: none;
 }
 
 .r-prompts {
