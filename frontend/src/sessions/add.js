@@ -51,6 +51,15 @@ export function finishedLine(total, all) {
   return `${finished} of ${all}: the others are still to come, never started, cancelled or drafts, and can't be added.`;
 }
 
+/** What an open event shows under its title, in order: `{loading, empty,
+ * countLine, list}`. The count line ("337 finished sessions of 359…") sits
+ * above the list, never instead of it. */
+export function sessionListParts({ ready, sessions = [], total, all }) {
+  if (!ready) return { loading: true, empty: false, countLine: "", list: false };
+  if (!sessions.length) return { loading: false, empty: true, countLine: "", list: false };
+  return { loading: false, empty: false, countLine: finishedLine(total, all) || "", list: true };
+}
+
 export function eventRow(option) {
   const count = /^\d+$/.test(text(option?.sessions_count)) ? Number(option.sessions_count) : null;
   return {

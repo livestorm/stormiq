@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { EVENT_STATUSES, addedSessionIds, eventRow, finishedLine, idFromInput, sessionChoice, statusLabel } from "../src/sessions/add";
+import { EVENT_STATUSES, addedSessionIds, eventRow, finishedLine, idFromInput, sessionChoice, sessionListParts, statusLabel } from "../src/sessions/add";
 
 const ID = "3f2a1b4c-5d6e-4f70-8a9b-0c1d2e3f4a5b";
 const OTHER = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
@@ -83,5 +83,21 @@ describe("a pasted link or ID", () => {
     expect(idFromInput("")).toEqual({ id: "", problem: "empty" });
     expect(idFromInput("https://example.com/nothing")).toEqual({ id: "", problem: "empty" });
     expect(idFromInput("two words")).toEqual({ id: "", problem: "empty" });
+  });
+});
+
+describe("an open event's sessions", () => {
+  it("show the count line above the list, never instead of it", () => {
+    const sessions = [{ id: "s1" }, { id: "s2" }];
+    expect(sessionListParts({ ready: true, sessions, total: 337, all: 359 })).toEqual({
+      loading: false,
+      empty: false,
+      countLine: "337 finished sessions of 359: the others are still to come, never started, cancelled or drafts, and can't be added.",
+      list: true,
+    });
+    expect(sessionListParts({ ready: true, sessions, total: 2, all: 2 })).toMatchObject({ countLine: "2 finished sessions", list: true });
+    expect(sessionListParts({ ready: true, sessions, total: null, all: null })).toMatchObject({ list: true });
+    expect(sessionListParts({ ready: true, sessions: [], total: 0, all: 4 })).toMatchObject({ empty: true, list: false });
+    expect(sessionListParts({ ready: false, sessions })).toMatchObject({ loading: true, list: false });
   });
 });
