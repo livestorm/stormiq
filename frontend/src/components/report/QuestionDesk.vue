@@ -7,6 +7,7 @@ import StatusWord from "../ui/StatusWord.vue";
 import UiButton from "../ui/UiButton.vue";
 import {
   FILTERS,
+  SOURCES,
   canMark,
   chatNotice,
   csvChoices,
@@ -17,12 +18,15 @@ import {
   locatedNotice,
   logisticsLine,
   metaLine,
+  sourceCounts,
+  sourceOf,
   statusOf,
   summaryLine,
 } from "../../followup/desk";
 
 // The Follow-up tab's question desk: every audience question with its
-// status (decided by the server), a filter, and for an open one a reply and
+// status (decided by the server), filters by status and by source (the Q&A
+// tab or the chat, each with its colour), and for an open one a reply and
 // "Mark answered", saved on the server. A question the analysis found
 // answered in the talk shows that passage, with "Confirm" and "Not this".
 // The text is attendees' and the talk's: rendered as text, never as HTML.
@@ -39,6 +43,13 @@ const summary = computed(() => body.value?.summary || {});
 const counts = computed(() => filterCounts(summary.value));
 
 const filter = ref("open");
+const source = ref("all"); // "all", "qa" or "chat" (SOURCES)
+const questions = computed(() => body.value?.questions || []);
+// The status filter's counts follow the source picked; the CSV's stay the desk's.
+const shownCounts = computed(() => filterCounts(summary.value, { questions: questions.value, source: source.value }));
+const perSource = computed(() => sourceCounts(questions.value, filter.value));
+// The source switch shows only when the desk has questions from both.
+const mixed = computed(() => questions.value.some((q) => q.source === "chat") && questions.value.some((q) => q.source !== "chat"));
 
 // The download menu: a disclosure that closes on a choice or Escape.
 const downloadMenu = ref(null);
@@ -46,7 +57,7 @@ const choices = computed(() => csvChoices(counts.value));
 function closeMenu() {
   if (downloadMenu.value) downloadMenu.value.open = false;
 }
-const shown = computed(() => filterQuestions(body.value?.questions || [], filter.value));
+const shown = computed(() => filterQuestions(questions.value, filter.value, source.value));
 
 // The one question being answered: its id and the draft.
 const editing = ref("");
@@ -129,7 +140,8 @@ const EMPTY = {
         </p>
       </div>
 
-      <div v-if="counts.all" class="qd-filters" role="group" aria-label="Show">
+      <div v-if="counts.all" class="qd-filterbar">
+      <div class="qd-filters" role="group" aria-label="Show">
         <button
           v-for="option in FILTERS"
           :key="option.key"
@@ -139,20 +151,41 @@ const EMPTY = {
           :aria-pressed="filter === option.key ? 'true' : 'false'"
           @click="filter = option.key"
         >
-          {{ option.label }} <span class="qd-count">{{ counts[option.key] }}</span>
+          {{ option.label }} <span class="qd-count">{{ shownCounts[option.key] }}</span>
         </button>
+      </div>
+      <div
+        v-if="mixed"
+        class="qd-filters qd-sources"
+        role="group"
+        aria-label="Asked in"
+      >
+        <button
+          v-for="option in SOURCES"
+          :key="option.key"
+          type="button"
+          class="qd-seg siq-fx"
+          :class="[`qd-src-${option.key}`, { 'is-on': source === option.key }]"
+          :aria-pressed="source === option.key ? 'true' : 'false'"
+          @click="source = option.key"
+        >
+          <span v-if="option.key !== 'all'" class="qd-src-dot" aria-hidden="true" />
+          {{ option.label }} <span class="qd-count">{{ perSource[option.key] }}</span>
+        </button>
+      </div>
       </div>
 
       <p v-if="!shown.length" class="qd-muted qd-gap">{{ EMPTY[filter] }}</p>
 
       <ul v-else class="qd-list">
-        <li v-for="question in shown" :key="question.id" class="qd-item">
+        <li v-for="question in shown" :key="question.id" class="qd-item" :class="`qd-from-${sourceOf(question).key}`">
           <span class="qd-icon" aria-hidden="true">
-            <Icon :name="question.source === 'chat' ? 'message-circle' : 'help-circle'" :size="16" />
+            <Icon :name="sourceOf(question).icon" :size="16" />
           </span>
           <div class="qd-main">
             <p class="qd-question">{{ question.text }}</p>
             <p class="qd-meta">
+              <span class="qd-source"><Icon :name="sourceOf(question).icon" :size="12" />{{ sourceOf(question).label }}</span>
               <span>{{ metaLine(question) }}</span>
               <StatusWord :status="statusOf(question).status" :label="statusOf(question).label" />
             </p>
@@ -296,10 +329,16 @@ const EMPTY = {
 }
 
 /* ── The filter ── */
+.qd-filterbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--siq-space-2) var(--siq-space-3);
+  margin-top: var(--siq-space-4);
+}
+
 .qd-filters {
   display: inline-flex;
   flex-wrap: wrap;
-  margin-top: var(--siq-space-4);
   padding: 2px;
   border: 1px solid var(--siq-border);
   border-radius: var(--siq-radius-control);
@@ -350,6 +389,56 @@ const EMPTY = {
   box-shadow: inset 0 1px 0 var(--siq-hairline-row);
 }
 
+/* Each source has its colour: the Q&A tab's questions in the questions'
+   orange (as on the Transcript and the Report's charts), the chat's in the
+   chat's blue. Always with its word and icon, never colour alone. */
+.qd-from-qa,
+.qd-src-qa {
+  --qd-src: var(--siq-s2);
+}
+
+.qd-from-chat,
+.qd-src-chat {
+  --qd-src: var(--siq-s1);
+}
+
+.qd-src-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 4px;
+  border-radius: 50%;
+  background: var(--qd-src);
+}
+
+.qd-item {
+  position: relative;
+}
+
+.qd-item::before {
+  content: "";
+  position: absolute;
+  top: var(--siq-space-4);
+  bottom: var(--siq-space-4);
+  left: -12px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--qd-src);
+}
+
+.qd-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 var(--siq-space-2);
+  border-radius: var(--siq-radius-pill);
+  font-size: var(--siq-text-caption);
+  line-height: var(--siq-text-caption-lh);
+  font-weight: var(--siq-weight-semibold);
+  color: var(--qd-src);
+  box-shadow: inset 0 0 0 1px var(--qd-src);
+}
+
 .qd-icon {
   display: inline-flex;
   flex: none;
@@ -359,7 +448,7 @@ const EMPTY = {
   height: 28px;
   border-radius: var(--siq-radius-inline);
   background: var(--siq-surface-2);
-  color: var(--siq-ink-2);
+  color: var(--qd-src, var(--siq-ink-2));
 }
 
 .qd-main {
@@ -556,6 +645,12 @@ a.qd-download-item:hover {
   }
   .qd-item {
     border-top: 1px solid CanvasText;
+  }
+  .qd-source {
+    border: 1px solid CanvasText;
+  }
+  .qd-item::before {
+    background: CanvasText;
   }
   .qd-answer,
   .qd-located {

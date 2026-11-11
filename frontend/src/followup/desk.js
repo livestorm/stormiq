@@ -10,6 +10,19 @@ export const FILTERS = [
   { key: "all", label: "All" },
 ];
 
+// Where a question was asked: the Q&A tab, or the chat (a message the
+// session analysis labelled a question). Each has its colour on the desk.
+export const SOURCES = [
+  { key: "all", label: "Both" },
+  { key: "qa", label: "Q&A tab", icon: "help-circle" },
+  { key: "chat", label: "Chat", icon: "message-circle" },
+];
+
+/** `{key, label, icon}` for a question's source ("qa" unless the server says "chat"). */
+export function sourceOf(question = {}) {
+  return SOURCES.find((source) => source.key === (question.source === "chat" ? "chat" : "qa"));
+}
+
 const ANSWERED = new Set(["written", "aloud", "here"]);
 // Still open for the host: a passage of the talk that seems to answer a
 // "covered" question isn't an answer until they confirm it.
@@ -23,8 +36,21 @@ function plural(n, one, many) {
   return `${n} ${n === 1 ? one : many}`;
 }
 
-/** The count each filter shows, from the server's summary. */
-export function filterCounts(summary = {}) {
+function bySource(questions, source) {
+  return source === "qa" || source === "chat" ? questions.filter((q) => sourceOf(q).key === source) : questions;
+}
+
+/** The count each filter shows: the server's summary, or, with one source
+ * picked, that source's questions in the list. */
+export function filterCounts(summary = {}, { questions = [], source = "all" } = {}) {
+  if (source === "qa" || source === "chat") {
+    const kept = bySource(questions, source);
+    return {
+      open: kept.filter((q) => UNANSWERED.has(q.status)).length,
+      answered: kept.filter((q) => ANSWERED.has(q.status)).length,
+      all: kept.length,
+    };
+  }
   return {
     open: count(summary.open) + count(summary.covered),
     answered: count(summary.written) + count(summary.aloud) + count(summary.here),
@@ -32,11 +58,20 @@ export function filterCounts(summary = {}) {
   };
 }
 
-/** The questions a filter keeps, in the server's order. */
-export function filterQuestions(questions = [], filter = "open") {
-  if (filter === "all") return questions;
-  if (filter === "answered") return questions.filter((q) => ANSWERED.has(q.status));
-  return questions.filter((q) => UNANSWERED.has(q.status));
+/** The questions a filter keeps, from one source or both, in the server's order. */
+export function filterQuestions(questions = [], filter = "open", source = "all") {
+  const kept = bySource(questions, source);
+  if (filter === "all") return kept;
+  if (filter === "answered") return kept.filter((q) => ANSWERED.has(q.status));
+  return kept.filter((q) => UNANSWERED.has(q.status));
+}
+
+/** How many of the questions a status filter keeps come from each source:
+ * `{all, qa, chat}`, for the source switch. */
+export function sourceCounts(questions = [], filter = "open") {
+  const kept = filterQuestions(questions, filter);
+  const chat = kept.filter((q) => sourceOf(q).key === "chat").length;
+  return { all: kept.length, qa: kept.length - chat, chat };
 }
 
 /** "5 questions: 1 still open · 1 covered in the talk, not marked · 2 answered in writing · 1 answered aloud". */
@@ -89,11 +124,12 @@ export function statusOf(question) {
   return STATUS[question?.status] || STATUS.open;
 }
 
-/** "Theo P. · Q&A · 12:05" (a time before the start reads "Before"). */
+/** "Theo P. · 12:05" (a time before the start reads "Before"); the source
+ * is its own badge (`sourceOf`). */
 export function metaLine(question = {}) {
   const t = question.t;
   const time = typeof t === "number" && Number.isFinite(t) ? (t < 0 ? "Before" : clockLabel(t)) : "";
-  return [question.author, question.source === "chat" ? "Chat" : "Q&A", time].filter(Boolean).join(" · ");
+  return [question.author, time].filter(Boolean).join(" · ");
 }
 
 /** Whether the host can mark it here: open, or marked here before; and

@@ -17,6 +17,7 @@ import {
   locatedNotice,
   logisticsLine,
   metaLine,
+  sourceOf,
   statusOf,
 } from "../followup/desk";
 import { HIDDEN, formatSeconds, plural } from "./vitals";
@@ -35,7 +36,7 @@ export function questionItem(question = {}) {
     id: question.id,
     text: question.text || "",
     source: question.source === "chat" ? "chat" : "qa",
-    who: metaLine(question),
+    who: [question.author, sourceOf(question).label, metaLine({ t: question.t })].filter(Boolean).join(" · "),
     status: statusOf(question),
     answers,
   };
