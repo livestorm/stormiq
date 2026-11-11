@@ -14,6 +14,16 @@
         "lateStart": null,
         "speech": true
       }
+    },
+    {
+      "id": "monologue",
+      "confidence": "estimated",
+      "state": "nothing",
+      "values": {
+        "start": 622.9,
+        "end": 920.4,
+        "seconds": 297.5
+      }
     }
   ],
   "notChecked": [
@@ -25,6 +35,12 @@
       "values": {
         "messages": 2
       }
+    },
+    {
+      "id": "prompts",
+      "confidence": "estimated",
+      "state": "not_checked",
+      "reason": "no_prompts"
     }
   ]
 }

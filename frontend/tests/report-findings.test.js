@@ -3,7 +3,7 @@
 // them, and their loader (`src/report/useFindings.js`).
 import { describe, expect, it, vi } from "vitest";
 import body from "./fixtures/findings-v1.json";
-import { checkedLines, findingsView, foundFinding } from "../src/report/findings";
+import { checkedLines, findingsView, foundFinding, pulseMarks } from "../src/report/findings";
 import { createFindings } from "../src/report/useFindings";
 
 const chapters = {
@@ -39,8 +39,14 @@ describe("the findings' words", () => {
   it("say what the route sent for the synthetic webinar: nothing found, and why chapters weren't checked", () => {
     const view = findingsView(body);
     expect(view.found).toEqual([]);
-    expect(view.nothing).toEqual(["Production: no burst of sound or connection complaints, and no late start."]);
-    expect(view.notChecked).toEqual(["Chapters: too little unprompted chat to compare them."]);
+    expect(view.nothing).toEqual([
+      "Production: no burst of sound or connection complaints, and no late start.",
+      "Monologues: the longest stretch without bringing the room in was 5 min.",
+    ]);
+    expect(view.notChecked).toEqual([
+      "Chapters: too little unprompted chat to compare them.",
+      "Prompts to the room: the analysis found none in the talk.",
+    ]);
     expect(view.empty).toBe(false);
   });
 
@@ -83,6 +89,74 @@ describe("the findings' words", () => {
     expect(view.found.map((item) => item.id)).toEqual(["friction", "chapters"]);
     expect(checkedLines({ notChecked: [{ id: "chapters", reason: "nope" }] })).toEqual({ nothing: [], notChecked: [] });
     expect(findingsView(null).empty).toBe(true);
+  });
+});
+
+const monologue = {
+  id: "monologue",
+  state: "found",
+  confidence: "estimated",
+  strength: 0.5,
+  values: { start: 600, end: 1680, seconds: 1080, firstPerMinute: 2.1, lastPerMinute: 0.6, first: 13, last: 4 },
+};
+
+const prompts = {
+  id: "prompts",
+  state: "found",
+  confidence: "estimated",
+  strength: 0.65,
+  values: {
+    missed: [306.9],
+    prompts: [
+      { t: 306.9, quote: "Any questions so far?", waitS: 6.2, messages: 8, expected: 0.7, excess: 7, late: 6, medianDelayS: 24 },
+      { t: 900, quote: "Tell me in the chat", waitS: 25, messages: 5, expected: 0.7, excess: 4, late: 0, medianDelayS: 9 },
+    ],
+  },
+};
+
+describe("monologues and prompts", () => {
+  it("word a long stretch where the chat fell", () => {
+    const words = foundFinding(monologue);
+    expect(words.headline).toBe("18 minutes without bringing the room in, and the chat fell");
+    expect(words.lines[0]).toContain("From 10:00 to 28:00");
+    expect(words.lines[0]).toContain("from 2.1 to 0.6 messages a minute");
+  });
+
+  it("word the prompts the room answered too late, one row each", () => {
+    const words = foundFinding(prompts);
+    expect(words.headline).toBe("The room answered after the speaker had moved on");
+    expect(words.rows).toEqual([
+      "5:07 “Any questions so far?” · waited 6 s · 8 messages in the next 2 min (about 1 usual) · 6 after the speaker went on",
+    ]);
+  });
+
+  it("say what was checked when nothing stood out", () => {
+    const lines = checkedLines({
+      nothing: [
+        { id: "monologue", values: { start: 0, end: 300, seconds: 297.5 } },
+        { id: "monologue", values: { seconds: 700, firstPerMinute: 1, lastPerMinute: 1 } },
+        { id: "prompts", values: { prompts: [prompts.values.prompts[1]] } },
+      ],
+      notChecked: [{ id: "prompts", reason: "clock" }],
+    });
+    expect(lines.nothing).toEqual([
+      "Monologues: the longest stretch without bringing the room in was 5 min.",
+      "Monologues: the longest stretch ran 12 min, and the chat held up.",
+      "Prompts to the room: it had time to answer the one prompt.",
+    ]);
+    expect(lines.notChecked).toEqual(["Prompts to the room: needs the recording's clock checked to the second."]);
+  });
+
+  it("mark the stretch and every prompt on the Pulse", () => {
+    const marks = pulseMarks({ found: [monologue, prompts], nothing: [] }, 30);
+    expect(marks.bands).toEqual([
+      { left: (600 / 1800) * 100, width: (1080 / 1800) * 100, label: "18 min, no prompt · chat 2.1 → 0.6/min" },
+    ]);
+    expect(marks.prompts.map((mark) => [Math.round(mark.left * 10) / 10, mark.missed])).toEqual([
+      [17, true],
+      [50, false],
+    ]);
+    expect(pulseMarks(null, 30)).toEqual({ bands: [], prompts: [] });
   });
 });
 

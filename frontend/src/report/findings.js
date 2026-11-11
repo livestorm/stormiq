@@ -3,7 +3,7 @@
 // with the server's values. Nothing is computed but a time label and a
 // multiple of 100 for the index.
 
-import { clockLabel } from "./chartGeometry";
+import { clockLabel, secondsLeft } from "./chartGeometry";
 
 const plural = (count, one, many) => `${count} ${count === 1 ? one : many}`;
 const minutes = (seconds) => Math.max(1, Math.round(seconds / 60));
@@ -56,7 +56,45 @@ function frictionFinding(values) {
   return { headline, lines, bars: [], rows };
 }
 
-const FOUND = { chapters: chaptersFinding, friction: frictionFinding };
+function monologueFinding(values) {
+  const length = minutes(values.seconds);
+  return {
+    headline: `${length} minutes without bringing the room in, and the chat fell`,
+    lines: [
+      `From ${clockLabel(values.start)} to ${clockLabel(values.end)}, one speaker talked with no prompt to the room and no audience question taken. The room's own chat went from ${values.firstPerMinute} to ${values.lastPerMinute} messages a minute between the first and the last third.`,
+      "Chat stands in for attention here: a quiet room may still be listening.",
+    ],
+    bars: [],
+    rows: [],
+  };
+}
+
+function promptRow(row) {
+  const parts = [];
+  parts.push(row.waitS === null ? "no speech after it" : `waited ${Math.round(row.waitS)} s`);
+  parts.push(`${plural(row.messages, "message", "messages")} in the next 2 min (about ${Math.round(row.expected)} usual)`);
+  if (row.waitS !== null) parts.push(`${row.late} after the speaker went on`);
+  return `${clockLabel(row.t)} “${row.quote}” · ${parts.join(" · ")}`;
+}
+
+function promptsFinding(values) {
+  const missed = new Set(values.missed || []);
+  const rows = (values.prompts || []).filter((row) => missed.has(row.t));
+  return {
+    headline:
+      rows.length === 1
+        ? "The room answered after the speaker had moved on"
+        : `The room answered ${rows.length} prompts after the speaker had moved on`,
+    lines: [
+      "When the speaker asked the room something, most replies came after they started talking again. A few more seconds of silence would have let the room in.",
+      "Replies aren't marked one by one: the messages over the session's usual rate stand for them.",
+    ],
+    bars: [],
+    rows: rows.map(promptRow),
+  };
+}
+
+const FOUND = { chapters: chaptersFinding, friction: frictionFinding, monologue: monologueFinding, prompts: promptsFinding };
 
 /** A found finding in words: `{id, headline, lines, bars, rows, confidence}`. */
 export function foundFinding(finding) {
@@ -67,8 +105,16 @@ export function foundFinding(finding) {
 // ── Checked, nothing unusual · not checked ──
 
 const NOTHING = {
-  chapters: "Chapters: the room's own chat was even across them.",
-  friction: "Production: no burst of sound or connection complaints, and no late start.",
+  chapters: () => "Chapters: the room's own chat was even across them.",
+  friction: () => "Production: no burst of sound or connection complaints, and no late start.",
+  monologue: (values) =>
+    values?.firstPerMinute === undefined
+      ? `Monologues: the longest stretch without bringing the room in was ${minutes(values?.seconds || 0)} min.`
+      : `Monologues: the longest stretch ran ${minutes(values.seconds)} min, and the chat held up.`,
+  prompts: (values) => {
+    const count = (values?.prompts || []).length;
+    return `Prompts to the room: it had time to answer ${count === 1 ? "the one prompt" : `all ${count} prompts`}.`;
+  },
 };
 
 const NOT_CHECKED = {
@@ -83,12 +129,21 @@ const NOT_CHECKED = {
   friction: {
     labels: "Production: needs “Analyse session” to read the chat's sound and connection complaints. It started on time.",
   },
+  monologue: {
+    clock: "Monologues: needs the transcript placed on the session's clock.",
+    labels: "Monologues: needs “Analyse session”, to tell the room's own chat from greetings.",
+    no_speech: "Monologues: the transcript has no timed speech.",
+  },
+  prompts: {
+    clock: "Prompts to the room: needs the recording's clock checked to the second.",
+    no_prompts: "Prompts to the room: the analysis found none in the talk.",
+  },
 };
 
 /** The collapsed list: what was checked and found nothing, then what
  * couldn't be checked and why. */
 export function checkedLines(body) {
-  const nothing = (body?.nothing || []).map((item) => NOTHING[item.id]).filter(Boolean);
+  const nothing = (body?.nothing || []).map((item) => NOTHING[item.id]?.(item.values)).filter(Boolean);
   const notChecked = (body?.notChecked || []).map((item) => NOT_CHECKED[item.id]?.[item.reason]).filter(Boolean);
   return { nothing, notChecked };
 }
@@ -98,4 +153,30 @@ export function findingsView(body) {
   const found = (body?.found || []).map(foundFinding).filter(Boolean);
   const { nothing, notChecked } = checkedLines(body);
   return { found, nothing, notChecked, empty: !found.length && !nothing.length && !notChecked.length };
+}
+
+/** What the findings mark on the Pulse, in percent of an axis of `count`
+ * minutes: the monologue stretch that was found (`bands`) and every prompt
+ * to the room that was checked (`prompts`, `missed` when the room answered
+ * after the speaker moved on). */
+export function pulseMarks(body, count) {
+  const all = [...(body?.found || []), ...(body?.nothing || [])];
+  const monologue = (body?.found || []).find((item) => item.id === "monologue");
+  const prompts = all.find((item) => item.id === "prompts");
+  const missed = new Set(prompts?.values?.missed || []);
+  const bands = monologue
+    ? [
+        {
+          left: secondsLeft(monologue.values.start, count),
+          width: secondsLeft(monologue.values.end, count) - secondsLeft(monologue.values.start, count),
+          label: `${minutes(monologue.values.seconds)} min, no prompt · chat ${monologue.values.firstPerMinute} → ${monologue.values.lastPerMinute}/min`,
+        },
+      ]
+    : [];
+  const marks = (prompts?.values?.prompts || []).map((row) => ({
+    left: secondsLeft(row.t, count),
+    missed: missed.has(row.t),
+    title: `${clockLabel(row.t)} prompt to the room: “${row.quote}”`,
+  }));
+  return { bands, prompts: marks };
 }
