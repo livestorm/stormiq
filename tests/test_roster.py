@@ -1045,6 +1045,8 @@ RECORD_ENTRY_POINTS = {
         "_write_faq",
         # Public formats (FAQ, Smart Recap, content): the audience's names to redact (`record.redaction`).
         "_public_redactor",
+        # Surprise Me!: what StormIQ measured (`record.surprise_brief`), and the take checked against it.
+        "_surprise_facts", "_check_surprise",
         # The Follow-up's decisions and commitments: the understanding's dossier (`record.understanding.build_dossier`), checked by `record.decisions`.
         "_write_decisions",
         # The Follow-up's team digest: its brief (`record.digest_brief`) from the record's measures, moments, chapters, desk and listed decisions.
