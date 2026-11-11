@@ -280,7 +280,9 @@ def _flag(value: Any) -> bool:
     return value is True or str(value).strip().lower() == "true"
 
 
-def _event_lane(kind: Any, is_team: Any) -> Optional[str]:
+def event_lane(kind: Any, is_team: Any) -> Optional[str]:
+    """The Pulse lane of one audience event (`audience_chat`, `team_chat`,
+    `questions`, `answers`), or None for an event it doesn't count."""
     if kind == "chat":
         return "team_chat" if _flag(is_team) else "audience_chat"
     if kind == "question":
@@ -335,7 +337,7 @@ def minute_bins(
 
     if isinstance(audience_df, pd.DataFrame) and not audience_df.empty:
         for kind, is_team, t in audience_df[["kind", "is_team", "t"]].itertuples(index=False, name=None):
-            lane = _event_lane(kind, is_team)
+            lane = event_lane(kind, is_team)
             if lane is None:
                 continue
             value = _finite(t) if base.has_clock else None

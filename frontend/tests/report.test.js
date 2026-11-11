@@ -202,6 +202,14 @@ describe("format", () => {
 
   it("words the analysis panel from the labels' state and the run", () => {
     expect(analysisSummary({ state: "none" }, { status: "idle" })).toMatchObject({ action: "Analyse session", busy: false });
+    // The chat is labelled but the session was never read, or was read from a session that changed since.
+    expect(analysisSummary({ state: "ready", messages: 19 }, { status: "idle" }, { reading: "none" })).toMatchObject({
+      action: "Analyse session",
+      tone: "fair",
+    });
+    expect(analysisSummary({ state: "ready", messages: 19 }, { status: "idle" }, { reading: "stale" })).toMatchObject({ action: "Analyse again" });
+    expect(analysisSummary({ state: "ready" }, { status: "idle" }, { reading: "none", transcript: false })).toMatchObject({ action: "", tone: "good" });
+    expect(analysisSummary({ state: "ready" }, { status: "idle" }, { reading: "ready" })).toMatchObject({ action: "", tone: "good" });
     expect(analysisSummary({ state: "ready", messages: 19 }, { status: "idle" })).toMatchObject({
       title: "Analysed", detail: "19 chat messages labelled.", action: "", tone: "good",
     });

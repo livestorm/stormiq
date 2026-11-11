@@ -19,7 +19,20 @@ const emit = defineEmits(["connect"]);
 
 // A made-up session's audience chat per minute, for the example's ridge.
 const EXAMPLE_CHAT = [3, 6, 9, 8, 4, 3, 3, 3, 2, 2, 2, 2, 2, 2, 3, 3, 2, 2, 2, 3, 4, 5, 7, 19, 12, 6, 4, 3, 3, 4, 3, 2, 2, 3, 6, 11, 14, 12, 9, 8, 7, 5, 4, 3, 2];
-const exampleMinutes = EXAMPLE_CHAT.map((audienceChat, minute) => ({ minute, audienceChat }));
+const EXAMPLE_QUESTIONS = { 24: 2, 36: 3, 37: 2, 39: 1, 41: 1 };
+const exampleMinutes = EXAMPLE_CHAT.map((audienceChat, minute) => ({ minute, audienceChat, questions: EXAMPLE_QUESTIONS[minute] || 0 }));
+// Its chapters, as `GET /record/chapters` would send them.
+const exampleChapters = {
+  state: "ready",
+  placed: true,
+  chapters: [
+    { title: "Welcome", t: 0, chatPerMinute: 6.5, questions: 0 },
+    { title: "Product tour", t: 300, chatPerMinute: 2.4, questions: 0 },
+    { title: "Pricing", t: 1260, chatPerMinute: 8.2, questions: 2 },
+    { title: "Customer story", t: 1620, chatPerMinute: 3.1, questions: 0 },
+    { title: "Q&A", t: 1980, chatPerMinute: 6.9, questions: 7 },
+  ],
+};
 
 const FEATURES = [
   {
@@ -81,7 +94,7 @@ const TRUST = [
           <span class="l-example-tag">Example</span>
         </div>
         <div class="l-example-ridge" aria-hidden="true">
-          <SessionRidge :minutes="exampleMinutes" />
+          <SessionRidge :minutes="exampleMinutes" :chapters="exampleChapters" />
         </div>
         <div class="l-example-stats" aria-hidden="true">
           <StatCard icon="user-check" label="Show-up rate" value="41%" sub="246 of 600 registrants" :level="3" />

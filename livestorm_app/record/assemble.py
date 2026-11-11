@@ -19,6 +19,10 @@ computed part of the response:
   every measure of the registry (`record/measures.py`), through
   `measures_for_read`.
 
+`chapter_marks(inputs, chapters)` is not part of the record: it places the
+session analysis's chapters on the session clock, with the audience's chat
+and questions in each, for the Report's cover (`GET /record/chapters`).
+
 The caller (`api_logic.get_session_record`) does the scoped read, caches
 this block and adds `sessionId` and `updatedAt`. Bump `RECORD_VERSION`
 whenever the block's shape or rules change, or what the caller adds to
@@ -38,10 +42,10 @@ Pure functions: no database, network or web framework.
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from livestorm_app.record.alignment import MINUTES, alignment_allows
-from livestorm_app.record.clock import AFTER, BEFORE, MinuteSeries, minute_bins, speech_events
+from livestorm_app.record.clock import AFTER, BEFORE, LIVE, MinuteSeries, event_lane, minute_bins, phase, speech_events
 from livestorm_app.record.inputs import RecordInputs
 from livestorm_app.record.measures import METRICS_VERSION, compute_measures, validate_measures
 from livestorm_app.record.roster import Roster
@@ -215,3 +219,66 @@ def assemble_record(inputs: RecordInputs) -> Dict[str, Any]:
             **measures_for_read(inputs),
         },
     }
+
+
+# A chapter shorter than this has no chat rate on the Report's cover.
+CHAPTER_RATE_MIN_S = 120.0
+
+
+def chapter_marks(inputs: RecordInputs, chapters: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+    """The chapters on the session clock, for the Report's cover:
+    `{placed, marks: [{t, tEnd, audienceChat, questions, chatPerMinute}]}`,
+    one mark per chapter, in the chapters' order (`understanding.chapter_list`).
+
+    A chapter is placed (`t = r + offsetS`) only where the Pulse's speech is
+    (`speech_state`: a transcript, and an alignment that allows findings in
+    minutes); otherwise `placed` is false and there are no marks. A chapter
+    owns the live minutes from its start to the next chapter's start, the
+    last one to the session's end (or its own end when the end is unknown or
+    earlier). `audienceChat` and `questions` count the live events in that
+    span (`pulse_events`: on an internal session, everyone's chat), and
+    `chatPerMinute` is `audienceChat` over the span's minutes, to 0.1 (None
+    for a span shorter than `CHAPTER_RATE_MIN_S`: a few messages in a short
+    welcome would outrank the whole talk). `t` and `tEnd` are the chapter's own
+    spoken span, clamped to the live session."""
+    speech = speech_state(inputs)
+    base = inputs.clock
+    if not speech["shown"] or not chapters or not base.has_clock:
+        return {"placed": False, "marks": []}
+    offset = float(inputs.alignment.offset_s or 0.0)
+    end = base.end_s
+
+    def clamp(value: float) -> float:
+        value = max(value, 0.0)
+        return min(value, end) if end is not None else value
+
+    starts = [clamp(float(c["r"]) + offset) for c in chapters]
+    ends = [clamp(float(c["rEnd"]) + offset) for c in chapters]
+    owned_end = starts[1:] + [max(end, ends[-1]) if end is not None else ends[-1]]
+    counts = [{"audience_chat": 0, "questions": 0} for _ in chapters]
+    events = pulse_events(inputs)
+    if events is not None and not events.empty:
+        for kind, is_team, t in events[["kind", "is_team", "t"]].itertuples(index=False, name=None):
+            lane = event_lane(kind, is_team)
+            if lane not in ("audience_chat", "questions") or phase(t, base) != LIVE:
+                continue
+            value = float(t)
+            for index, start in enumerate(starts):
+                last = index == len(starts) - 1
+                if start <= value and (value < owned_end[index] or (last and value <= owned_end[index])):
+                    counts[index][lane] += 1
+                    break
+    marks: List[Dict[str, Any]] = []
+    for index in range(len(chapters)):
+        span = owned_end[index] - starts[index]
+        chat = counts[index]["audience_chat"]
+        marks.append(
+            {
+                "t": _number(starts[index]),
+                "tEnd": _number(max(ends[index], starts[index])),
+                "audienceChat": chat,
+                "questions": counts[index]["questions"],
+                "chatPerMinute": round(chat * 60.0 / span, 1) if span >= CHAPTER_RATE_MIN_S else None,
+            }
+        )
+    return {"placed": True, "marks": marks}

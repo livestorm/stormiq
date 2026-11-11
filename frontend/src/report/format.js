@@ -67,7 +67,7 @@ export function analysisSteps(stage, { transcript = true } = {}) {
  * the server, or null) and `startedAtMs` (when the worker started it, or
  * null): `action` is the button's label, or "" when there is nothing to
  * run. `transcript` says whether the session has one (a step more). */
-export function analysisSummary(chatLabels, analysis, { transcript = true } = {}) {
+export function analysisSummary(chatLabels, analysis, { transcript = true, reading = "" } = {}) {
   const status = analysis?.status || "idle";
   if (status === "starting" || status === "pending" || status === "running") {
     // A queued run has no stage of its own yet: what Redis holds may be the last run's.
@@ -96,6 +96,23 @@ export function analysisSummary(chatLabels, analysis, { transcript = true } = {}
     };
   }
   const state = chatLabels?.state || "none";
+  // The chat is labelled, but the session itself was never read (the
+  // analysis ran before the transcript existed), or was read from a session
+  // that has changed since: what builds on it (chapters, located answers,
+  // Before you share, the Session analysis) needs another run.
+  // `reading` is the state of `GET /record/chapters` ("" while unknown).
+  if (state === "ready" && transcript && (reading === "none" || reading === "stale")) {
+    return {
+      title: reading === "stale" ? "The session changed since it was read" : "The chat is labelled, the session isn't read yet",
+      detail:
+        reading === "stale"
+          ? "Run the analysis again to read the session as it is now: the chapters, the answers and the Session analysis build on it."
+          : "Run the analysis to read the transcript too: the chapters, the answers and the Session analysis build on it.",
+      action: reading === "stale" ? "Analyse again" : "Analyse session",
+      busy: false,
+      tone: "fair",
+    };
+  }
   if (state === "ready") {
     const count = typeof chatLabels.messages === "number" ? chatLabels.messages : null;
     return {

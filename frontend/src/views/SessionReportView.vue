@@ -17,6 +17,7 @@ import SessionTabs from "../components/report/SessionTabs.vue";
 import UiButton from "../components/ui/UiButton.vue";
 import { analysisSummary, elapsedLabel, formatLength, formatSessionStart } from "../report/format";
 import { createSessionReport } from "../report/useSessionReport";
+import { createChapters } from "../followup/useChapters";
 
 // The Report: a session's page. It holds the session header, the analysis
 // the user starts, the tabs, and the Report's sections.
@@ -28,13 +29,22 @@ const props = defineProps({
 
 const report = createSessionReport();
 const { state } = report;
+// The chapters (`GET /record/chapters`): the cover chart draws them, and
+// their state says whether the session itself has been read.
+const chapters = createChapters();
 
 watch(
   () => props.sessionId,
-  (id) => report.open(id),
+  (id) => {
+    report.open(id);
+    chapters.open(id);
+  },
   { immediate: true },
 );
-onBeforeUnmount(() => report.close());
+onBeforeUnmount(() => {
+  report.close();
+  chapters.close();
+});
 
 // Printing: a closed card prints only its header, so every closed section
 // opens for the print and closes again after it (the cards and their "How
@@ -90,7 +100,19 @@ const hasTranscript = computed(() => {
 // The chat has messages and none of their authors resolved (the measure says
 // `unresolved`): typically a chat saved before messages carried their authors.
 const authorsUnknown = computed(() => record.value?.measures?.["m.author_resolution"]?.state === "unresolved");
-const summary = computed(() => analysisSummary(record.value?.chatLabels, state.analysis, { transcript: hasTranscript.value }));
+const summary = computed(() =>
+  analysisSummary(record.value?.chatLabels, state.analysis, {
+    transcript: hasTranscript.value,
+    reading: chapters.state.body?.state || "",
+  }),
+);
+// A run that ends brings new chapters, or none: read them again.
+watch(
+  () => summary.value.busy,
+  (busy, wasBusy) => {
+    if (wasBusy && !busy) chapters.reload();
+  },
+);
 
 // The run's elapsed time, ticking once a second while it is in flight.
 const now = ref(Date.now());
@@ -129,7 +151,6 @@ const short = computed(() => inShort(record.value?.measures || {}));
     </Card>
 
     <template v-else-if="body">
-      <SessionRidge :minutes="record?.pulse?.minutes || []" />
       <header class="r-head">
         <h1 class="r-title">{{ title }}</h1>
         <p class="r-date">
@@ -159,6 +180,8 @@ const short = computed(() => inShort(record.value?.measures || {}));
         </p>
         <p v-if="state.refetch.status === 'error'" class="r-hint" role="alert">{{ state.refetch.error }}</p>
       </header>
+
+      <SessionRidge :minutes="record?.pulse?.minutes || []" :chapters="chapters.state.body" explain />
 
       <Card class="r-analysis" :aria-busy="summary.busy ? 'true' : 'false'">
         <CardHeader icon="zap" :title="summary.title" :level="2">

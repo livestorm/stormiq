@@ -29,9 +29,25 @@ export function minuteTicks(count, { maxTicks = 10 } = {}) {
   return ticks;
 }
 
+/** Where minute `index` of `count` sits on a time axis, in percent: the
+ * middle of the minute (minute 0 of 30 at 1.7%). */
+export function minuteCenter(index, count) {
+  if (!(count > 0)) return 0;
+  return ((index + 0.5) / count) * 100;
+}
+
+/** Where `seconds` on the session clock sits on an axis of `count` minutes,
+ * in percent, held between 0 and 100. */
+export function secondsLeft(seconds, count) {
+  if (!(count > 0) || typeof seconds !== "number" || !Number.isFinite(seconds)) return 0;
+  return Math.min(Math.max((seconds / (count * 60)) * 100, 0), 100);
+}
+
 /** The ridge: one value per minute (audience chat messages), drawn as a line
  * and the area under it in a `width` × `height` box, the tallest minute
- * `top` units below the top. Returns `{ line, area }` SVG path data, both
+ * `top` units below the top. Each minute's point sits in the middle of its
+ * minute (`minuteCenter`), on the same clock as the time axis, and the line
+ * runs flat to both edges. Returns `{ line, area }` SVG path data, both
  * empty without values. A chat with no message gives a flat line at the
  * bottom. */
 export function ridgePaths(values, { width = 1000, height = 100, top = 6 } = {}) {
@@ -40,11 +56,12 @@ export function ridgePaths(values, { width = 1000, height = 100, top = 6 } = {})
   const peak = Math.max(...points);
   const floor = height - 1;
   const span = floor - top;
-  const x = (index) => (points.length === 1 ? width / 2 : (index / (points.length - 1)) * width);
+  const x = (index) => (minuteCenter(index, points.length) / 100) * width;
   const y = (value) => (peak > 0 ? floor - (value / peak) * span : floor);
   const coords = points.map((value, index) => `${x(index).toFixed(1)},${y(value).toFixed(1)}`);
-  const line = `M${coords.join(" L")}`;
-  const area = `${line} L${x(points.length - 1).toFixed(1)},${height} L${x(0).toFixed(1)},${height} Z`;
+  const edge = (at, value) => `${at.toFixed(1)},${y(value).toFixed(1)}`;
+  const line = `M${[edge(0, points[0]), ...coords, edge(width, points.at(-1))].join(" L")}`;
+  const area = `${line} L${width.toFixed(1)},${height} L0.0,${height} Z`;
   return { line, area };
 }
 
