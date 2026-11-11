@@ -5,7 +5,7 @@ Creates, in organization `bench-org`:
     bench-long      2-hour session, 400 attendees, full outputs, and its
                     people stored as a synced roster (the v1 record reads it)
     bench-pending   2-hour session whose transcript job is still running
-    bench-card-NN   40 one-hour sessions for the card list (half with a cover)
+    bench-card-NN   40 one-hour sessions for the card list
 plus an OAuth connection `bench-conn` for that org (expires in a year).
 
 All content is generated (fixed random seed): no customer data is involved.
@@ -343,7 +343,7 @@ def seed_roster(session_id: str, people: List[Dict[str, Any]], event_payload: Di
 
 
 def seed_session(rng: random.Random, session_id: str, *, duration_s: int, attendees: int, chat: int, questions: int,
-                 with_transcript: bool = True, with_outputs: bool = True, cover: bool = False,
+                 with_transcript: bool = True, with_outputs: bool = True,
                  stored_roster: bool = False, started_at: int) -> None:
     event_id = f"evt-{session_id}"
     people = build_people(rng, attendees, started_at)
@@ -363,10 +363,6 @@ def seed_session(rng: random.Random, session_id: str, *, duration_s: int, attend
         fields.update(outputs)
         fields["analysis_md"] = outputs["analysis_bundle"]["English"]
         fields["deep_analysis_md"] = outputs["deep_analysis_bundle"]["English"]
-    if cover:
-        fields["cover_image_bytes"] = rng.randbytes(1_500_000)
-        fields["cover_image_mime"] = "image/png"
-        fields["cover_image_generated_at"] = datetime.now(timezone.utc)
     upsert_cached_session("bench-credential", session_id, **fields)
     if stored_roster:
         seed_roster(session_id, people, fields["event_payload"])
@@ -409,14 +405,14 @@ def main() -> int:
     base = int(datetime(2026, 10, 1, 9, tzinfo=timezone.utc).timestamp())
     seed_connection()
     seed_session(rng, "bench-short", duration_s=600, attendees=60, chat=40, questions=10, started_at=base)
-    seed_session(rng, "bench-long", duration_s=7200, attendees=400, chat=600, questions=80, cover=True,
+    seed_session(rng, "bench-long", duration_s=7200, attendees=400, chat=600, questions=80,
                  stored_roster=True, started_at=base)
     seed_session(rng, "bench-pending", duration_s=7200, attendees=400, chat=600, questions=80,
                  with_transcript=False, with_outputs=False, started_at=base)
     create_transcript_job("bench-pending")
     for i in range(40):
         seed_session(rng, f"bench-card-{i:02d}", duration_s=3600, attendees=150, chat=150, questions=25,
-                     cover=i % 2 == 0, started_at=base - i * 86400)
+                     started_at=base - i * 86400)
     print("Seeded bench-short, bench-long, bench-pending and 40 card sessions in organization", ORG)
     return 0
 

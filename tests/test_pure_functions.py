@@ -800,19 +800,6 @@ def test_a_stored_placeholder_bundle_counts_as_missing():
     assert api_logic._serialize_outputs(cached)["contentRepurposeBundle"] == {"French": real}
 
 
-# ── Cover images: a shut-down model is replaced ────────────────────────────
-
-
-@pytest.mark.parametrize(
-    ("saved", "sent"),
-    [("gpt-image-1", "gpt-image-2"), ("gpt-image-2", "gpt-image-2"), ("", "gpt-image-2")],
-)
-def test_a_retired_image_model_is_replaced(saved, sent):
-    from livestorm_app.ai import cover_image
-
-    assert cover_image.resolve_image_model(saved) == sent
-
-
 # ── Livestorm payloads: registrant join links are never kept ───────────────
 #
 # Synthetic payloads in the shapes the API returns: the session with

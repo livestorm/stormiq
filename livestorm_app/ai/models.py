@@ -18,8 +18,8 @@ Status says where a model may be chosen:
 
 Rows follow the claude-api reference (2026-10), prices included
 (`PRICES_AS_OF`). StormIQ calls Claude for every text job since the owner's
-decision of 2026-11-11: the OpenAI text models are gone (OpenAI is used for
-cover images only, `ai/cover_image.py`).
+decision of 2026-11-11: the OpenAI text models are gone (OpenAI is used only
+as Surprise me's backup voice, `ai/surprise_voice.py`).
 """
 
 from __future__ import annotations

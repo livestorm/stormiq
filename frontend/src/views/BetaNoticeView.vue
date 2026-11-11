@@ -13,7 +13,6 @@ const MODELS = [
   { step: "Repurposing", model: "claude-haiku-4-5", purpose: "A summary, a blog post, a follow-up email and social posts." },
   { step: "Smart Recap", model: "claude-sonnet-4-6", purpose: "A recap in three tones (professional, hype, surprise), with a stronger model on purpose." },
   { step: "Languages", model: "claude-haiku-4-5", purpose: "Translates an output between English and French when the other language is asked for." },
-  { step: "Session cover", model: "gpt-image-2 (OpenAI Images API)", purpose: "A cover image for the session, from its professional Smart Recap." },
 ];
 </script>
 
@@ -47,7 +46,7 @@ const MODELS = [
           <li><strong>Livestorm</strong> for the session, the event, the chat, the questions and the recording.</li>
           <li><strong>Gladia</strong> for transcription, speakers, sentences and named entities.</li>
           <li><strong>Anthropic Claude</strong> for every piece of text: the analyses, Smart Recap and repurposed content.</li>
-          <li><strong>OpenAI Images API</strong> only for session cover images.</li>
+          <li><strong>ElevenLabs</strong>, with <strong>OpenAI</strong> as the backup, only to read Surprise me's show aloud.</li>
         </ul>
       </Card>
     </div>
@@ -85,9 +84,9 @@ const MODELS = [
           Render-managed PostgreSQL database located in Frankfurt. No data is persisted outside the EU.
         </p>
         <p class="b-text">
-          AI inference requests are sent to Anthropic's API (Claude) for text generation and to OpenAI's API for cover
-          image generation. Both providers process data transiently and do not retain request content for training purposes
-          under their standard API terms.
+          AI inference requests are sent to Anthropic's API (Claude) for text generation. Surprise me's show sends only its
+          script's lines to ElevenLabs or, as the backup, OpenAI's speech API, to read them aloud. Anthropic and OpenAI
+          process data transiently and do not retain request content for training purposes under their standard API terms.
         </p>
       </div>
     </Card>

@@ -261,11 +261,11 @@ def test_request_models_reject_unknown_language_and_tone(model, payload):
         model.model_validate(payload)
 
 
-# ── Cover images ───────────────────────────────────────────────────────────
+# ── No paid work from a read, nothing chained after a recap ────────────────
 
 
-def test_reading_a_workspace_never_starts_a_paid_cover(monkeypatch):
-    row = {"smart_recap_bundle": {"professional": "# Recap"}, "has_cover_image": False, "transcript_payload": {}}
+def test_reading_a_workspace_never_starts_paid_work(monkeypatch):
+    row = {"smart_recap_bundle": {"professional": "# Recap"}, "transcript_payload": {}}
     started: list = []
     monkeypatch.setattr(api_logic, "fetch_cached_session", lambda key, sid, *, organization_id: row)
     monkeypatch.setattr(api_logic, "_serialize_cached_session", lambda sid, cached: {"sessionId": sid})
@@ -287,27 +287,20 @@ class _FakeArqPool:
         return object()
 
 
-def _strict_fetch(row):
-    # Same keyword-only signature as db.fetch_cached_session: a call without
-    # an explicit scope raises TypeError, as it does in production.
-    def fetch(api_key, session_id, *, organization_id):
-        assert organization_id is ALL_ORGS
-        return row
-    return fetch
+def test_a_professional_recap_queues_nothing_after_it(monkeypatch):
+    # Cover images were removed (November 2026): the recap job no longer
+    # chains a paid OpenAI Images job, and the worker has no cover job.
+    monkeypatch.setattr(worker, "_read_llm_key_or_raise", lambda: "key")
 
+    async def fake_run_ai_job(kind, session_id, runner, *args):
+        return {"ok": True}
 
-def test_professional_recap_queues_one_cover_with_a_fixed_id(monkeypatch):
-    monkeypatch.setattr(worker, "fetch_cached_session", _strict_fetch({"has_cover_image": False}))
+    monkeypatch.setattr(worker, "_run_ai_job", fake_run_ai_job)
     pool = _FakeArqPool()
-    asyncio.run(worker._enqueue_default_cover_image({"redis": pool}, "s1"))
-    assert pool.calls == [("run_cover_image_job", ("s1",), {"_job_id": "cover_image:s1"})]
-
-
-def test_existing_cover_is_not_regenerated(monkeypatch):
-    monkeypatch.setattr(worker, "fetch_cached_session", _strict_fetch({"has_cover_image": True}))
-    pool = _FakeArqPool()
-    asyncio.run(worker._enqueue_default_cover_image({"redis": pool}, "s1"))
+    assert asyncio.run(worker.run_smart_recap_job({"redis": pool}, "s1", "professional")) == {"ok": True}
     assert pool.calls == []
+    names = {getattr(f, "name", getattr(f, "__name__", "")) for f in worker.WorkerSettings.functions}
+    assert not any("cover" in name for name in names)
 
 
 # ── Transcript jobs: one active job per session (Postgres) ─────────────────
@@ -501,7 +494,6 @@ def test_every_job_kind_has_its_own_timeout_and_no_retries():
         for f in worker.WorkerSettings.functions
     }
     assert timeouts["run_transcription"] == 120 * 60
-    assert timeouts["run_cover_image_job"] == 5 * 60
     for name in ("run_overall_analysis_job", "run_faq_job", "run_decisions_job", "run_team_digest_job", "run_attendee_followup_job", "run_deep_analysis_job", "run_smart_recap_job", "run_content_repurposing_job"):
         assert timeouts[name] == 15 * 60
     # The chat labels' batches, then the understanding call and its 10-minute stream deadline.
