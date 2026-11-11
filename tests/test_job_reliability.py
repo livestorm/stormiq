@@ -2296,3 +2296,28 @@ def test_a_closed_sync_is_not_reopened_by_a_late_reconcile(test_database):
     assert db.update_livestorm_sync(sync_id, status="error", error="lost", only_from=("pending", "running")) is False
     assert _sync_row(sync_id)["status"] == "completed"
     assert db.touch_livestorm_sync(sync_id) is False, "only a running sync is kept fresh"
+
+
+# ── "Add" chains the session analysis after the transcript ──
+
+
+@pytest.mark.parametrize("marked", [True, False], ids=["added", "not-added"])
+def test_the_transcript_job_queues_the_analysis_only_when_add_asked(monkeypatch, marked):
+    queued = []
+
+    async def fake_enqueue(pool, function_name, job_id, *args):
+        queued.append((function_name, job_id, *args))
+        return {"jobId": job_id, "jobStatus": "pending", "enqueued": True}
+
+    monkeypatch.setattr(worker, "transcript_job_then_analyse", lambda job_id: marked)
+    monkeypatch.setattr(worker, "enqueue_unique_job", fake_enqueue)
+    asyncio.run(worker._chain_analysis_after({"redis": object()}, "job-1", "sess-1"))
+    assert queued == ([("run_session_analysis_job", api_logic.session_analysis_job_id("sess-1"), "sess-1")] if marked else [])
+
+
+def test_a_failed_chain_never_fails_the_transcript_job(monkeypatch):
+    def broken(job_id):
+        raise RuntimeError("database down")
+
+    monkeypatch.setattr(worker, "transcript_job_then_analyse", broken)
+    asyncio.run(worker._chain_analysis_after({"redis": object()}, "job-1", "sess-1"))

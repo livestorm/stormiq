@@ -395,6 +395,7 @@ def fetch_session_transcript_workspace(session_id: SessionId, request: FetchSess
             read_scope=caller.read_scope,
             organization_id=caller.org_id,
             **caller.generator_kwargs(),
+            analyse=request.analyse,
         )
     except Exception as exc:
         raise_http_error("Transcript", exc)
