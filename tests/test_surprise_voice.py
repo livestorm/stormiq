@@ -100,9 +100,9 @@ def test_a_clip_key_changes_with_the_text_the_voice_the_model_and_the_notes():
         assert base != clip_key("Hello.", {**SETTINGS, field: other})
 
 
-def test_a_voice_gpt_4o_mini_tts_does_not_offer_becomes_marin():
-    assert resolve_voice(" Cedar ") == "cedar"
-    assert resolve_voice("not-a-voice") == "marin" and resolve_voice(None) == "marin"
+def test_a_voice_gpt_4o_mini_tts_does_not_offer_becomes_cedar():
+    assert resolve_voice(" Marin ") == "marin"
+    assert resolve_voice("not-a-voice") == "cedar" and resolve_voice(None) == "cedar"
 
 
 def test_the_voice_settings_read_the_setting_and_the_prompt_file(monkeypatch):
@@ -110,6 +110,13 @@ def test_the_voice_settings_read_the_setting_and_the_prompt_file(monkeypatch):
     settings = voice.voice_settings()
     assert settings["voice"] == "sage" and settings["model"] == "gpt-4o-mini-tts"
     assert settings["instructions"] == Path("prompts/surprise_voice.txt").read_text(encoding="utf-8").strip()
+
+
+def test_the_delivery_notes_ask_for_a_dry_wry_man_who_never_mocks_anyone():
+    notes = Path("prompts/surprise_voice.txt").read_text(encoding="utf-8")
+    for words in ("a man", "Dry, wry and a little sarcastic", "warm underneath", "deadpan pause", "Never mean", "never at a person"):
+        assert words in notes
+    assert len(notes) < 1500, "short notes: gpt-4o-mini-tts reads them with every sentence"
 
 
 # ── The call ──
@@ -243,6 +250,8 @@ def run_env(monkeypatch):
     monkeypatch.setattr(api_logic, "fetch_surprise_voice_clips", clips.fetch)
     monkeypatch.setattr(api_logic, "save_surprise_voice_clip", clips.save)
     monkeypatch.setattr(api_logic, "prune_surprise_voice_clips", clips.prune)
+    # No storyboard yet, and no Claude key passed: the run skips it (tests/test_surprise_story.py).
+    monkeypatch.setattr(api_logic, "fetch_surprise_storyboard", lambda sid, key, *, organization_id: None)
 
     def speak(api_key, text, settings):
         spoken.append(text)
@@ -262,8 +271,9 @@ def test_the_run_reads_each_beat_once_saves_each_clip_whole_and_tidies_the_rest(
     assert all(saved[4] == pytest.approx(5 * 1152 / 44100, abs=0.001) for saved in clips.saved)
     keys = sorted(clip_key(beat["text"], SETTINGS) for beat in beats)
     assert clips.pruned == [(SESSION_ID, keys)]
-    assert result == {"status": "ok", "made": len(beats), "beats": len(beats)}
-    assert published[0] == ("speaking", {"done": 0, "total": len(beats), "percent": 10})
+    assert result == {"status": "ok", "made": len(beats), "beats": len(beats), "story": "skipped"}
+    assert published[0] == ("storyboard", {})
+    assert published[1] == ("speaking", {"done": 0, "total": len(beats), "percent": 10})
     assert published[-1] == ("speaking", {"done": len(beats), "total": len(beats), "percent": 95})
 
 
@@ -319,14 +329,18 @@ def test_the_worker_job_reads_its_key_from_the_environment_and_clears_its_progre
         asyncio.run(worker.run_surprise_voice_job({}, SESSION_ID))
     monkeypatch.setattr(worker, "get_runtime_secret", lambda name, default="": "sk-env" if name == "OPENAI_API_KEY" else default)
 
-    def run(api_key, session_id, *, publish):
-        seen["key"] = api_key
-        return {"status": "ok", "made": 0, "beats": 1}
+    def run(api_key, session_id, *, publish, llm_key):
+        seen["key"], seen["llm_key"] = api_key, llm_key
+        return {"status": "ok", "made": 0, "beats": 1, "story": "made"}
 
     monkeypatch.setattr(api_logic, "run_surprise_voice", run)
+    monkeypatch.setenv("CLAUDE_API_KEY", "claude-env")
     assert asyncio.run(worker.run_surprise_voice_job({}, SESSION_ID))["status"] == "ok"
-    assert seen["key"] == "sk-env"
-    assert cleared == [("surprise_voice", SESSION_ID)] * 2
+    assert seen["key"] == "sk-env" and seen["llm_key"] == "claude-env", "both keys from the worker's own environment"
+    monkeypatch.delenv("CLAUDE_API_KEY")
+    asyncio.run(worker.run_surprise_voice_job({}, SESSION_ID))
+    assert seen["llm_key"] == "", "without a Claude key the voice is still made"
+    assert cleared == [("surprise_voice", SESSION_ID)] * 3
     names = {getattr(item, "name", None) or getattr(item, "__name__", "") for item in worker.WorkerSettings.functions}
     assert "run_surprise_voice_job" in names
 
@@ -357,9 +371,28 @@ def test_a_voice_already_made_is_not_queued_again(client, backend, monkeypatch):
         "fetch_surprise_voice_clips",
         lambda sid, keys, *, organization_id: {key: {"duration_s": 1.5, "size": 9} for key in keys},
     )
+    scene = {"effect": "pop", "headline": "rocks", "number": None, "quote": None}
+    monkeypatch.setattr(
+        api_logic, "fetch_surprise_storyboard", lambda sid, key, *, organization_id: {"version": 1, "source": "model", "scenes": [None, scene]}
+    )
     body = _call(client, "POST", VOICE, cookie="conn-a", body={}).json()
     assert body["state"] == "ready" and all(beat["ready"] and beat["durationS"] == 1.5 for beat in body["beats"])
+    assert body["story"] == "ready" and [beat["scene"] for beat in body["beats"]] == [None, scene, None]
     assert backend.enqueued == []
+
+
+def test_a_voice_made_without_its_storyboard_plays_and_play_tries_the_storyboard_again(client, backend, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(
+        api_logic,
+        "fetch_surprise_voice_clips",
+        lambda sid, keys, *, organization_id: {key: {"duration_s": 1.5, "size": 9} for key in keys},
+    )
+    monkeypatch.setattr(api_logic, "read_job_status_sync", lambda job_id: {"jobStatus": "complete"})
+    read = _call(client, "GET", VOICE, cookie="conn-a").json()
+    assert read["state"] == "ready" and read["story"] == "missing", "the player draws its own scenes"
+    assert all(beat["scene"] is None for beat in read["beats"]) and backend.enqueued == []
+    _call(client, "POST", VOICE, cookie="conn-a", body={})
+    assert backend.enqueued == [("run_surprise_voice_job", f"surprise_voice:{SESSION_ID}", SESSION_ID)]
 
 
 @pytest.mark.parametrize(("method", "path"), [("POST", VOICE), ("GET", VOICE), ("GET", VOICE + "/clip")])
@@ -406,6 +439,9 @@ def test_admins_voice_list_is_the_servers():
     source = (Path(__file__).resolve().parents[1] / "frontend" / "src" / "views" / "AdminView.vue").read_text(encoding="utf-8")
     listed = re.search(r"const TTS_VOICES = \[(.*?)\];", source).group(1)
     assert tuple(re.findall(r'"([a-z]+)"', listed)) == voice.TTS_VOICES
+    assert re.search(r'const DEFAULT_TTS_VOICE = "([a-z]+)";', source).group(1) == voice.DEFAULT_TTS_VOICE == "cedar"
+    labels = re.search(r"const VOICE_LABELS = \{(.*?)\};", source, re.DOTALL).group(1)
+    assert tuple(re.findall(r"^\s*([a-z]+):", labels, re.MULTILINE)) == voice.TTS_VOICES, "a label for every voice"
 
 
 # ── Stored ──

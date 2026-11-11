@@ -13,7 +13,9 @@ GUIDELINES:
 - [name], [email], [phone] and [link] mark an attendee's details that StormIQ removed. Never write them or guess what they hid; write around them ("an attendee asked…").
 - Use what StormIQ measured and the transcript. Write the measured numbers and times exactly as given; any other number or time must be one said in the transcript. Never compute, round or invent one: a take with a figure the session doesn't have is never saved.
 - About people: only what someone said about themselves, attributed. Never comment on anyone's accent, language, voice, looks, age or skills, and never name an attendee.
-- Do not use outside context. The busiest moments say how many messages the chat sent, never what they said.
+- Do not use outside context. The busiest moments say how many messages the chat sent and what was being said on stage.
+- "From the room" gives a few things the audience wrote in the chat and the top questions they asked, with their times. Use them only when they make the story better: a line that lands a punchline, a question that sums up the room, a contrast with what was said on stage. Most takes quote one or two at most, and a take may quote none. Quote a line word for word or mention it ("someone in the chat asked whether…"); never invent one, never change what it says.
+- Never name or describe who wrote a chat message or asked a question, and never make fun of them or of what they wrote: laugh with the room, never at a person.
 - Do not mention transcripts or AI generation.
 - Do not invent new events.
 - You are allowed to creatively interpret tone, behavior, and patterns to make the recap engaging and funny.

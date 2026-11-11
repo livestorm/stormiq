@@ -78,7 +78,7 @@ ANTHROPIC_CUSTOM_HEADERS      # Leave unset. The SDK would add its headers to ev
                               # the host to the SDK explicitly.
 OPENAI_API_KEY                # Required for cover images and Surprise me's voice (worker)
 TTS_MODEL                     # Optional. Surprise me's speech model (default gpt-4o-mini-tts)
-TTS_VOICE                     # Optional. Its voice when Admin set none (default marin)
+TTS_VOICE                     # Optional. Its voice when Admin set none (default cedar)
 ORG_DAILY_LLM_BUDGET_USD      # Optional, worker. Daily spend cap per org for automatic text jobs (none exists yet), in
                               # dollars, per UTC day. Unset: no limit. Never applies to jobs a user starts or to covers.
 

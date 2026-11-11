@@ -40,6 +40,7 @@ The OpenAI text models (gpt-4o-mini, gpt-4o, gpt-4.1-mini, gpt-4.1, gpt-5.4-mini
 | `decisions` | v1: decisions and commitments, over the session's dossier | `claude-sonnet-5-5` | medium | 8,000 |
 | `team_digest` | v1: the team digest, over the digest's brief | `claude-haiku-5-5` | low | 1,000 |
 | `attendee_followup` | v1.1: the attendee follow-up, over its brief (`record/format_briefs.py`) | `claude-sonnet-5-5` | medium | 6,000 |
+| `surprise_storyboard` | v1: Surprise me's storyboard, on the Play click (`ai/surprise_story.py`) | `claude-haiku-5-5` | low | 3,000 |
 | `deep_analysis` | Deep Analysis | `claude-haiku-4-5-20251001` | medium | 5,000 |
 | `smart_recap` | Smart Recap, every tone | `claude-sonnet-4-6` | low | 900 |
 | `content_repurposing` | Content Repurposing | `claude-haiku-4-5-20251001` | medium | 12,000 |
@@ -55,7 +56,7 @@ A v1 job's spec also sets how its request is laid out (`layout`), whether its st
 
 | Job kind | Layout | Cached prefix |
 |---|---|---|
-| `profile`, `verify_meaning` | instructions | none |
+| `profile`, `verify_meaning`, `surprise_storyboard` | instructions | none |
 | `chat_labels` | instructions | the instructions, when a session has at least two batches |
 | `understanding` | dossier | the dossier, when a run has at least two passes (one today, so nothing is cached) |
 
@@ -88,7 +89,7 @@ The Admin page still has its own lists (`frontend/src/views/AdminView.vue`), and
 - **Claude:** Haiku 4.5 and Sonnet 4.6 (the defaults) and Opus 4.8. A saved model that isn't one of these shows as unset.
 - **Images:** gpt-image-2. gpt-image-1 was shut down on 2026-10-23: `cover_image.resolve_image_model` sends gpt-image-2 when the setting or `IMAGE_MODEL` still names it, and Admin shows gpt-image-2 as active.
 
-The voice is the `tts_voice` setting, then `TTS_VOICE`, then `marin`; the speech model is `TTS_MODEL` (default `gpt-4o-mini-tts`); how it reads is `prompts/surprise_voice.txt` ("Warm, upbeat presenter; lively but clear."). A change to any of them, or to the take, gives new clip keys, so the voice is recorded again on the next Play (`surprise_voice.voice_settings`, `clip_key`).
+The voice is the `tts_voice` setting, then `TTS_VOICE`, then `cedar` (`surprise_voice.DEFAULT_TTS_VOICE`: a male voice, one of the two newest and most natural gpt-4o-mini-tts voices with marin, and the one that follows delivery notes best; Admin lists each voice with a word on how it sounds); the speech model is `TTS_MODEL` (default `gpt-4o-mini-tts`); how it reads is `prompts/surprise_voice.txt` (a man narrating like a witty friend: dry, wry and a little sarcastic, a deadpan pause before each punchline, warm underneath, never mocking anyone). A change to any of them, or to the take, gives new clip keys, so the voice is recorded again on the next Play (`surprise_voice.voice_settings`, `clip_key`).
 
 The image model is the `image_model` setting, then `IMAGE_MODEL`, then `gpt-image-2`. Image size and quality come from `IMAGE_SIZE` (default `1536x1024`) and `IMAGE_QUALITY` (default `high`).
 
@@ -167,7 +168,7 @@ Rows written by OpenAI calls before 2026-11-11 keep their `provider` and `reason
 
 The cost is estimated when the row is written, from the price of the model that answered (`ai.usage.estimate_cost_usd_micros`); a served id outside the catalog is priced as the model asked for. A model with no price in the catalog gets no cost; its tokens are still counted.
 
-The speech calls of Surprise me's voice don't go through `llm_client` either: no `llm_usage` row, no budget (a user starts them, and a take is a few cents of audio). The cover image call (OpenAI Images, `cover_image.generate_cover_image_with_openai`) doesn't go through `llm_client`. It leaves no `llm_usage` row and isn't held to the daily budget, although the worker starts it on its own after a Professional Smart Recap ([jobs.md](jobs.md#cover-images)). Logging it is on the [roadmap](roadmap.md#4-models).
+Surprise me's storyboard (`surprise_storyboard`) is a text job like the others: it goes through `llm_client.generate_json` and leaves an `llm_usage` row; a user starts it (Play), so it isn't budgeted. The speech calls of Surprise me's voice don't go through `llm_client` either: no `llm_usage` row, no budget (a user starts them, and a take is a few cents of audio). The cover image call (OpenAI Images, `cover_image.generate_cover_image_with_openai`) doesn't go through `llm_client`. It leaves no `llm_usage` row and isn't held to the daily budget, although the worker starts it on its own after a Professional Smart Recap ([jobs.md](jobs.md#cover-images)). Logging it is on the [roadmap](roadmap.md#4-models).
 
 **Daily budget.** `ORG_DAILY_LLM_BUDGET_USD` stops one organization's automatic text jobs for the rest of the UTC day once its estimated spend reaches it. It applies only to the job kinds marked `automatic` in `ai/jobs.py` (`ai.jobs.automatic_kinds`), and none is yet, so today it limits nothing. A job a user starts, every classic output included, is never held to it. `llm_client` checks it in the worker before each send, the truncation retry included (`ai.usage.check_org_budget`):
 

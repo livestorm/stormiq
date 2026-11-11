@@ -491,6 +491,7 @@ def ensure_database_schema() -> None:
             _ensure_output_versions_schema(cursor)
             _ensure_org_settings_schema(cursor)
             _ensure_surprise_voice_schema(cursor)
+            _ensure_surprise_storyboard_schema(cursor)
             _ensure_session_faq_schema(cursor)
         connection.commit()
 
@@ -790,6 +791,25 @@ def _ensure_surprise_voice_schema(cursor: Any) -> None:
             duration_s  DOUBLE PRECISION,
             created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             PRIMARY KEY (session_id, clip_key)
+        )
+        """
+    )
+
+
+def _ensure_surprise_storyboard_schema(cursor: Any) -> None:
+    """Surprise me's storyboard (`ai/surprise_story.py`): what the player
+    shows for each beat, one row per session, keyed by `story_key` (the
+    take's beats and the storyboard's version): a read with another key
+    finds none. Written whole by the voice job, after the check. References
+    `session_cache` (deleted with it) and has no org column: every read
+    joins `session_cache` on its org."""
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS surprise_storyboards (
+            session_id  TEXT PRIMARY KEY REFERENCES session_cache (session_id) ON DELETE CASCADE,
+            story_key   TEXT NOT NULL,
+            storyboard  JSONB NOT NULL,
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
         """
     )
@@ -2963,6 +2983,69 @@ def prune_surprise_voice_clips(session_id: str, keep: Sequence[str]) -> int:
         logger.error("Failed to prune voice clips for session_id=%s (%s)", session_id_value, _error_label(exc))
         raise RuntimeError("Could not tidy the voice clips.") from exc
     return int(removed or 0)
+
+
+# ── Surprise me's storyboard (ai/surprise_story.py) ───────────────────────
+
+
+def fetch_surprise_storyboard(session_id: str, story_key: str, *, organization_id: OrgScope) -> Optional[Dict[str, Any]]:
+    """The session's storyboard (`{version, source, scenes}`) when it was
+    made for `story_key`; None when there is none, it is for another take,
+    or the session isn't in the scope (a blank scope never queries). Raises
+    when the database can't be read."""
+    session_id_value = str(session_id or "").strip()
+    key_value = str(story_key or "").strip()
+    if not database_enabled() or not session_id_value or not key_value:
+        return None
+    try:
+        org_filter = _org_filter(organization_id)
+    except ScopeMatchesNothing:
+        return None
+    scope_clause = " AND c.organization_id = %s" if org_filter is not None else ""
+    params = (session_id_value, key_value) + ((org_filter,) if org_filter is not None else ())
+    with get_db_connection() as connection:
+        row = connection.execute(
+            f"""
+            SELECT s.storyboard
+            FROM surprise_storyboards s
+            JOIN session_cache c ON c.session_id = s.session_id
+            WHERE s.session_id = %s AND s.story_key = %s{scope_clause}
+            LIMIT 1
+            """,
+            params,
+        ).fetchone()
+    if not row or not isinstance(row.get("storyboard"), dict):
+        return None
+    return dict(row["storyboard"])
+
+
+def save_surprise_storyboard(session_id: str, story_key: str, storyboard: Mapping[str, Any]) -> None:
+    """Save the session's storyboard whole (the voice job, after the check),
+    replacing one for an older take. Raises RuntimeError when the write
+    fails, or when the session is gone."""
+    session_id_value = str(session_id or "").strip()
+    key_value = str(story_key or "").strip()
+    if not session_id_value or not key_value or not isinstance(storyboard, Mapping):
+        raise ValueError("save_surprise_storyboard requires a session id, a key and the storyboard.")
+    if not database_enabled():
+        raise RuntimeError("Database is not configured.")
+    try:
+        with get_db_connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO surprise_storyboards (session_id, story_key, storyboard, created_at)
+                VALUES (%s, %s, %s::jsonb, NOW())
+                ON CONFLICT (session_id) DO UPDATE SET
+                    story_key = EXCLUDED.story_key,
+                    storyboard = EXCLUDED.storyboard,
+                    created_at = NOW()
+                """,
+                (session_id_value, key_value, json.dumps(_without_nul(dict(storyboard)), ensure_ascii=False)),
+            )
+            connection.commit()
+    except Exception as exc:
+        logger.error("Failed to save a storyboard for session_id=%s (%s)", session_id_value, _error_label(exc))
+        raise RuntimeError("Could not save the storyboard.") from exc
 
 
 # ── The question desk's saved replies (record/question_desk.py) ───────────

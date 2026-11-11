@@ -115,6 +115,11 @@ JOB_SPECS: Tuple[JobSpec, ...] = (
     # The Follow-up's "Attendee follow-up" (`ai/public_formats.py`): the email
     # the host sends attendees, from its brief (`record/format_briefs.py`).
     JobSpec("attendee_followup", "Attendee follow-up", "v1", "claude-sonnet-5-5", "medium", 6_000, layout="dossier"),
+    # Surprise me's storyboard (`ai/surprise_story.py`): a headline, a number or a
+    # room's line per beat of the saved take, on the Play click. Haiku: a short
+    # pick from given words, checked word for word in code, with the player's
+    # own scenes as the fallback, while the user waits for the voice.
+    JobSpec("surprise_storyboard", "Surprise me storyboard", "v1", "claude-haiku-5-5", "low", 3_000, layout="instructions"),
     JobSpec("deep_analysis", "Deep Analysis", "legacy", "claude-haiku-4-5-20251001",
             "medium", 5_000, LEGACY_DEFAULT_SETTING, truncation_retry=True),
     JobSpec("smart_recap", "Smart Recap", "legacy", "claude-sonnet-4-6",

@@ -5,19 +5,24 @@ import ProgressSteps from "../ui/ProgressSteps.vue";
 import UiButton from "../ui/UiButton.vue";
 import { api } from "../../api";
 import { beatsWithParts, countUp, surpriseBeats } from "../../followup/surpriseBeats";
-import { beatMs, captionWords, curveGeometry, revealedChars, sceneFor } from "../../followup/surpriseScenes";
+import { beatMs, clockLabel, curveGeometry, headlineWords, percentValue, storyScene } from "../../followup/surpriseScenes";
 import { createSurpriseVoice } from "../../followup/useSurpriseVoice";
 import { voiceSteps } from "../../report/progress";
 
 // Surprise me, played: one beat at a time, each read by its own OpenAI clip
 // (made in the worker the first time someone presses Play, then kept), each
-// with a scene drawn from the session's real data (`surpriseScenes.js`):
-// the audience chat's curve for a time or a peak, a ring for a percentage, a
-// number counting up, a bold card for a punchline, key words otherwise. The
-// caption is revealed word by word in step with the clip (its share of the
-// text at the clip's share of time). "Sound off" plays the captions alone, at
-// each clip's measured length or a reading pace, and needs no clip at all.
-// With "reduce motion" nothing moves: the scenes and captions show whole.
+// shown as a storyboard scene (`surpriseScenes.js` `storyScene`): the voice
+// tells the sentence, the screen tells the story, never by writing the
+// sentence out. A scene is one short headline lifted from the beat (slammed
+// in, stamped on, popped in word by word, or over a flash of colour for a
+// punchline), a number it says counting up (a ring for a percentage), one of
+// the room's own lines flying in as a chat bubble, or the audience chat's
+// curve drawing in to its minute. The server's storyboard (Claude, checked
+// word for word) when it sent one; else the page's own scenes. "CC" shows
+// the sentence as a subtitle, off by default; screen readers always get it.
+// "Sound off" plays the scenes alone, at each clip's measured length or a
+// reading pace, and needs no clip at all. With "reduce motion" nothing
+// moves: each scene shows whole.
 const props = defineProps({
   sessionId: { type: String, required: true },
   take: { type: String, required: true },
@@ -54,7 +59,8 @@ const percent = computed(() => {
 const index = ref(-1); // the beat on screen, -1 before the start
 const playing = ref(false);
 const fraction = ref(0); // how far into the beat on screen, 0 to 1
-const muted = ref(false); // captions only, no sound
+const muted = ref(false); // the scenes only, no sound
+const captions = ref(false); // "CC": the sentence as a subtitle, off by default
 const waiting = ref(false); // Play pressed while the voice is being made
 const counted = ref(null); // the number shown while it counts up
 
@@ -71,12 +77,18 @@ let run = 0; // bumps on every stop, so a late event of an old beat is ignored
 
 const beat = computed(() => (index.value >= 0 ? beats.value[index.value] || null : null));
 const finished = computed(() => index.value === beats.value.length - 1 && !playing.value && fraction.value >= 1);
-const scene = computed(() => (beat.value ? sceneFor(beat.value, { minutes: props.minutes }) : null));
-const curve = computed(() => (scene.value?.type === "curve" ? curveGeometry(props.minutes, scene.value.minute) : null));
-const shownType = computed(() => (scene.value?.type === "curve" && !curve.value ? "words" : scene.value?.type || "idle"));
-const words = computed(() => captionWords(beat.value?.parts || []));
-const reveal = computed(() => (reduced ? Infinity : revealedChars(beat.value?.text.length || 0, fraction.value)));
-const bigCaption = computed(() => ["punch", "words"].includes(shownType.value));
+function sceneAt(i) {
+  const item = beats.value[i];
+  return item ? storyScene(item, { minutes: props.minutes, index: i }) : null;
+}
+
+const scene = computed(() => (index.value >= 0 ? sceneAt(index.value) : null));
+const curve = computed(() => (scene.value?.effect === "pulse" ? curveGeometry(props.minutes, scene.value.minute) : null));
+// A pulse whose minute can't be drawn slams its headline in instead.
+const effect = computed(() => (scene.value?.effect === "pulse" && !curve.value ? "slam" : scene.value?.effect || "idle"));
+const headline = computed(() => headlineWords(scene.value?.headline));
+const ring = computed(() => (effect.value === "count" ? percentValue(scene.value?.number) : null));
+const bubbleTime = computed(() => clockLabel(scene.value?.quote?.t));
 
 function clipUrl(item) {
   return item?.clip ? api.getSurpriseVoiceClipUrl(props.sessionId, item.clip) : "";
@@ -101,11 +113,11 @@ function stop() {
 }
 
 // A count's number counts up to the one said, then stays. A ring fills to its
-// percentage with the percentage itself shown from the start.
-function countNumber(item, ms) {
+// percentage while the percentage counts up with it.
+function countNumber(i, ms) {
   counted.value = null;
-  const shown = sceneFor(item, { minutes: props.minutes });
-  const target = shown.type === "count" ? countUp(shown.label) : null;
+  const shown = sceneAt(i);
+  const target = shown?.effect === "count" ? countUp(shown.number) : null;
   if (reduced || !target || !ms) return;
   const start = performance.now();
   const length = Math.min(1100, Math.max(500, ms * 0.6));
@@ -127,7 +139,8 @@ function finishBeat(i, mine) {
     return;
   }
   // A beat of silence before a punchline, a breath after it.
-  const pause = beats.value[i + 1]?.kind === "punch" ? 450 : beats.value[i].kind === "punch" ? 400 : 150;
+  // (The deadpan pause the voice leaves before a punchline.)
+  const pause = beats.value[i + 1]?.kind === "punch" ? 550 : beats.value[i].kind === "punch" ? 400 : 150;
   timer = setTimeout(() => startBeat(i + 1, mine, 0), pause);
 }
 
@@ -168,7 +181,7 @@ function startBeat(i, mine, from = 0) {
   if (mine !== run) return;
   const item = beats.value[i];
   if (!item) return;
-  if (from === 0) countNumber(item, (item.durationS || 0) * 1000 || beatMs(item));
+  if (from === 0) countNumber(i, (item.durationS || 0) * 1000 || beatMs(item));
   index.value = i;
   fraction.value = from;
   if (!withVoice(item)) {
@@ -298,22 +311,24 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="sp" aria-label="Surprise me, played" :lang="lang">
-    <div class="sp-stage" :class="`is-${shownType}`">
+    <div class="sp-stage" :class="`is-${effect}`">
       <div v-if="making && waiting" class="sp-making" role="status">
         <ProgressSteps :steps="steps" :percent="percent" label="Recording the voice" note="The voice is kept: the next play starts at once." />
-        <UiButton variant="ghost" small icon="volume-x" @click="playSilently">Play with captions only</UiButton>
+        <UiButton variant="ghost" small icon="volume-x" @click="playSilently">Play without sound</UiButton>
       </div>
 
       <div v-else-if="!beat" class="sp-scene is-idle">
         <div class="sp-glow" aria-hidden="true" />
-        <p class="sp-idle-text">Press play: the take, read aloud, one beat at a time, over the session's own data.</p>
+        <p class="sp-idle-text">Press play: the take, read aloud, one beat at a time, as a storyboard of the session's own words, numbers and chat.</p>
       </div>
 
       <Transition v-else :name="reduced ? '' : 'sp-scene'" mode="out-in">
-        <div :key="index" class="sp-scene" :class="[`is-${shownType}`, { 'is-punchline': scene.punch }]">
-          <div v-if="shownType === 'words' || shownType === 'punch'" class="sp-glow" aria-hidden="true" />
+        <div :key="index" class="sp-scene" :class="[`is-${effect}`, { 'is-punchline': scene.punch }]" aria-hidden="true">
+          <div v-if="effect === 'flash' || scene.punch" class="sp-flash" />
+          <div v-if="effect === 'pop' || effect === 'slam'" class="sp-glow" />
 
-          <div v-if="shownType === 'curve'" class="sp-curve" aria-hidden="true">
+          <!-- The audience chat's curve draws in to the minute. -->
+          <div v-if="effect === 'pulse'" class="sp-curve">
             <svg class="sp-curve-svg" viewBox="0 0 1000 200" preserveAspectRatio="none">
               <path :d="curve.area" class="sp-curve-area" />
               <path :d="curve.line" class="sp-curve-line" pathLength="1" vector-effect="non-scaling-stroke" />
@@ -326,26 +341,38 @@ onBeforeUnmount(() => {
             <span class="sp-curve-axis">The audience chat, minute by minute</span>
           </div>
 
-          <div v-else-if="shownType === 'ring'" class="sp-ring" aria-hidden="true">
-            <svg viewBox="0 0 120 120" class="sp-ring-svg">
-              <circle cx="60" cy="60" r="50" class="sp-ring-track" pathLength="100" />
-              <circle cx="60" cy="60" r="50" class="sp-ring-fill" pathLength="100" :style="{ strokeDashoffset: 100 - scene.value }" />
+          <!-- A number the beat says counts up; a percentage fills a ring. -->
+          <div v-else-if="effect === 'count'" class="sp-count" :class="{ 'has-ring': ring !== null }">
+            <svg v-if="ring !== null" viewBox="0 0 120 120" class="sp-ring-svg">
+              <circle cx="60" cy="60" r="52" class="sp-ring-track" pathLength="100" />
+              <circle cx="60" cy="60" r="52" class="sp-ring-fill" pathLength="100" :style="{ strokeDashoffset: 100 - ring }" />
             </svg>
-            <span class="sp-ring-value">{{ scene.label }}</span>
+            <span class="sp-count-value">{{ counted ?? scene.number }}</span>
           </div>
 
-          <div v-else-if="shownType === 'count'" class="sp-count" aria-hidden="true">{{ counted ?? scene.label }}</div>
+          <!-- One of the room's own lines flies in as a chat bubble. -->
+          <figure v-else-if="effect === 'chat'" class="sp-bubble" :class="`is-${scene.quote.kind}`">
+            <figcaption class="sp-bubble-head">
+              <Icon :name="scene.quote.kind === 'question' ? 'help-circle' : 'message-circle'" :size="14" />
+              {{ scene.quote.kind === "question" ? "Asked in the Q&A" : "In the chat" }}<template v-if="bubbleTime"> · {{ bubbleTime }}</template>
+            </figcaption>
+            <blockquote class="sp-bubble-text">{{ scene.quote.text }}</blockquote>
+          </figure>
 
-          <p class="sp-caption" :class="{ 'is-big': bigCaption, 'is-title': scene.title }" aria-hidden="true">
-            <span
-              v-for="(word, i) in words"
-              :key="i"
-              class="sp-word"
-              :class="[`is-${word.kind}`, { 'is-on': word.start < reveal }]"
-            >{{ word.text }}</span>
+          <!-- The headline: words of the beat, never the whole sentence. -->
+          <p
+            v-if="scene.headline"
+            class="sp-headline"
+            :class="[`is-${effect}`, { 'is-small': ['count', 'chat', 'pulse'].includes(effect) }]"
+          >
+            <template v-if="effect === 'pop'">
+              <span v-for="(word, i) in headline" :key="i" class="sp-pop" :style="{ animationDelay: `${i * 140}ms` }">{{ word }}</span>
+            </template>
+            <template v-else>{{ scene.headline }}</template>
           </p>
         </div>
       </Transition>
+      <p v-if="beat && captions && !(making && waiting)" class="sp-cc">{{ beat.text }}</p>
       <p v-if="beat" class="siq-sr-only" aria-live="polite">{{ beat.text }}</p>
     </div>
 
@@ -374,6 +401,9 @@ onBeforeUnmount(() => {
         <UiButton variant="ghost" small :icon="muted ? 'volume-x' : 'volume-2'" :aria-pressed="muted ? 'true' : 'false'" @click="toggleSound">
           {{ muted ? "Sound off" : "Sound on" }}
         </UiButton>
+        <UiButton variant="ghost" small icon="captions" :aria-pressed="captions ? 'true' : 'false'" @click="captions = !captions">
+          CC<span class="siq-sr-only"> (subtitles {{ captions ? "on" : "off" }})</span>
+        </UiButton>
       </div>
       <span class="sp-position">{{ index >= 0 ? `Beat ${index + 1} of ${beats.length}` : `${beats.length} beats` }}</span>
     </div>
@@ -382,15 +412,15 @@ onBeforeUnmount(() => {
       <p class="sp-note"><Icon name="info" :size="14" /> {{ failure }}</p>
       <div class="sp-controls">
         <UiButton variant="secondary" small icon="refresh-cw" :disabled="making" @click="retryVoice">Try the voice again</UiButton>
-        <UiButton variant="ghost" small icon="volume-x" @click="playSilently">Play with captions only</UiButton>
+        <UiButton variant="ghost" small icon="volume-x" @click="playSilently">Play without sound</UiButton>
       </div>
     </div>
     <p v-else class="sp-note">
       <Icon name="info" :size="14" />
       {{
         voiceReady
-          ? "Read by an AI voice (OpenAI). The scenes show this session's own data."
-          : "The first play records an AI voice (OpenAI) from the take's text alone, in a minute or so. Then it is kept."
+          ? "Read by an AI voice (OpenAI). The scenes show this session's own words, numbers and chat."
+          : "The first play plans the scenes (Claude) and records an AI voice (OpenAI) from the take's text, in a minute or so. Then both are kept."
       }}
     </p>
   </section>
@@ -435,6 +465,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   gap: var(--siq-space-4);
   width: 100%;
+  min-width: 0;
 }
 
 .sp-idle-text {
@@ -446,7 +477,7 @@ onBeforeUnmount(() => {
   color: var(--siq-muted);
 }
 
-/* ── The soft background of the words and punch scenes ── */
+/* ── The soft moving background ── */
 .sp-glow {
   position: absolute;
   inset: -40%;
@@ -466,96 +497,251 @@ onBeforeUnmount(() => {
   }
 }
 
-/* ── The caption, revealed word by word ── */
-.sp-caption {
-  position: relative;
-  max-width: 34ch;
-  margin: 0;
-  font-size: var(--siq-text-card-title);
-  line-height: 1.4;
-  color: var(--siq-ink);
-  text-wrap: balance;
-}
-
-.sp-caption.is-big {
-  font-size: var(--siq-text-section);
-  line-height: 1.35;
-}
-
-.sp-caption.is-title {
-  font-size: var(--siq-text-display);
-  line-height: var(--siq-text-display-lh);
-  letter-spacing: -0.015em;
-}
-
-.sp-scene.is-punchline .sp-caption {
-  font-weight: var(--siq-weight-semibold);
-}
-
-.sp-word {
-  opacity: 0.18;
-  transition-property: opacity;
-  transition-duration: 0.18s;
-  transition-timing-function: var(--siq-ease);
-}
-
-.sp-word.is-on {
-  opacity: 1;
-}
-
-.sp-word.is-number {
-  font-weight: var(--siq-weight-semibold);
-  font-variant-numeric: tabular-nums;
-  color: var(--siq-accent);
-}
-
-.sp-word.is-keyword {
-  padding: 0 0.1em;
-  border-radius: 0.2em;
-  background: linear-gradient(transparent 55%, color-mix(in srgb, var(--siq-accent) 28%, transparent) 55%) no-repeat;
-  background-size: 0% 100%;
-  transition-property: opacity, background-size;
-  transition-duration: 0.18s, 0.5s;
-}
-
-.sp-word.is-keyword.is-on {
-  background-size: 100% 100%;
-}
-
-/* ── Punchline: a bold card with a flash of colour ── */
-.sp-scene.is-punch {
-  padding: var(--siq-space-6) var(--siq-space-5);
-  border-radius: var(--siq-radius-card);
-  background: var(--siq-card);
-  box-shadow: var(--siq-card-shadow);
-  overflow: hidden;
-  animation: sp-flash 0.9s var(--siq-ease) both;
+/* ── A punchline: a flash of colour behind the scene ── */
+.sp-flash {
+  position: absolute;
+  inset: -60%;
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--siq-accent) 45%, transparent), transparent);
+  opacity: 0;
+  animation: sp-flash 1.1s var(--siq-ease) both;
+  pointer-events: none;
 }
 
 @keyframes sp-flash {
   0% {
-    transform: scale(0.94);
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--siq-accent) 55%, transparent), var(--siq-card-shadow);
+    opacity: 0;
+    transform: scale(0.4);
   }
-  45% {
-    transform: scale(1.02);
-    box-shadow: 0 0 0 14px color-mix(in srgb, var(--siq-accent) 0%, transparent), var(--siq-card-shadow);
+  25% {
+    opacity: 1;
   }
   100% {
+    opacity: 0.18;
     transform: scale(1);
-    box-shadow: var(--siq-card-shadow);
   }
 }
 
-/* ── Curve: the audience chat draws in, the minute lights up ── */
-.sp-scene.is-curve {
+/* ── The headline: words of the beat, never the sentence ── */
+.sp-headline {
+  position: relative;
+  max-width: 18ch;
+  margin: 0;
+  font-size: var(--siq-text-display);
+  line-height: var(--siq-text-display-lh);
+  font-weight: var(--siq-weight-semibold);
+  letter-spacing: -0.015em;
+  color: var(--siq-ink);
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+
+.sp-headline.is-small {
+  max-width: 30ch;
+  font-size: var(--siq-text-section);
+  line-height: var(--siq-text-section-lh);
+}
+
+.sp-headline.is-slam,
+.sp-headline.is-flash {
+  font-size: calc(var(--siq-text-display) * 1.2);
+  animation: sp-slam 0.55s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+
+.sp-headline.is-flash {
+  color: var(--siq-accent);
+}
+
+@keyframes sp-slam {
+  0% {
+    opacity: 0;
+    transform: scale(2.6);
+    filter: blur(6px);
+  }
+  55% {
+    opacity: 1;
+    transform: scale(0.94);
+    filter: blur(0);
+  }
+  72% {
+    transform: scale(1.04) rotate(-1deg);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.sp-headline.is-stamp {
+  padding: var(--siq-space-2) var(--siq-space-4);
+  border: 4px solid var(--siq-accent);
+  border-radius: var(--siq-radius-control);
+  color: var(--siq-accent);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  transform: rotate(-6deg);
+  animation: sp-stamp 0.45s cubic-bezier(0.3, 1.6, 0.5, 1) 0.15s both;
+}
+
+@keyframes sp-stamp {
+  0% {
+    opacity: 0;
+    transform: rotate(-14deg) scale(2.2);
+  }
+  60% {
+    opacity: 1;
+    transform: rotate(-5deg) scale(0.92);
+  }
+  100% {
+    transform: rotate(-6deg) scale(1);
+  }
+}
+
+/* Pop: the headline's words, one by one. */
+.sp-pop {
+  display: inline-block;
+  margin: 0 0.12em;
+  animation: sp-pop 0.42s cubic-bezier(0.2, 1.6, 0.4, 1) both;
+}
+
+@keyframes sp-pop {
+  0% {
+    opacity: 0;
+    transform: translateY(0.4em) scale(0.3);
+  }
+  70% {
+    opacity: 1;
+    transform: translateY(-0.06em) scale(1.12);
+  }
+  100% {
+    transform: none;
+  }
+}
+
+/* ── Count: a number the beat says, counting up; a ring for a percentage ── */
+.sp-count {
+  position: relative;
+  display: grid;
+  place-items: center;
+  animation: sp-zoom 0.5s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+
+.sp-count.has-ring {
+  width: 11rem;
+  height: 11rem;
+}
+
+.sp-count-value {
+  position: relative;
+  font-size: calc(var(--siq-text-display) * 1.8);
+  line-height: 1;
+  font-weight: var(--siq-weight-semibold);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+  color: var(--siq-accent);
+}
+
+.sp-count.has-ring .sp-count-value {
+  font-size: var(--siq-text-display);
+}
+
+@keyframes sp-zoom {
+  0% {
+    opacity: 0;
+    transform: scale(0.2);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.sp-ring-svg {
+  position: absolute;
+  inset: 0;
+  transform: rotate(-90deg);
+}
+
+.sp-ring-track,
+.sp-ring-fill {
+  fill: none;
+  stroke-width: 9;
+}
+
+.sp-ring-track {
+  stroke: var(--siq-border);
+}
+
+.sp-ring-fill {
+  stroke: var(--siq-accent);
+  stroke-linecap: round;
+  stroke-dasharray: 100;
+  animation: sp-ring 1.1s var(--siq-ease) 0.2s both;
+}
+
+@keyframes sp-ring {
+  from {
+    stroke-dashoffset: 100;
+  }
+}
+
+/* ── Chat: the room's own line flies in ── */
+.sp-bubble {
+  position: relative;
+  max-width: min(100%, 26rem);
+  margin: 0;
+  padding: var(--siq-space-3) var(--siq-space-4);
+  border-radius: var(--siq-radius-card) var(--siq-radius-card) var(--siq-radius-card) var(--siq-radius-inline);
+  background: var(--siq-card);
+  box-shadow: var(--siq-card-shadow), inset 3px 0 0 var(--siq-s1);
+  text-align: left;
+  animation: sp-fly 0.6s cubic-bezier(0.2, 1.3, 0.4, 1) both;
+}
+
+.sp-bubble.is-question {
+  box-shadow: var(--siq-card-shadow), inset 3px 0 0 var(--siq-s2);
+}
+
+@keyframes sp-fly {
+  0% {
+    opacity: 0;
+    transform: translate3d(30%, 60%, 0) rotate(8deg) scale(0.6);
+  }
+  70% {
+    opacity: 1;
+    transform: translate3d(-2%, -4%, 0) rotate(-1.5deg) scale(1.03);
+  }
+  100% {
+    transform: none;
+  }
+}
+
+.sp-bubble-head {
+  display: flex;
+  align-items: center;
+  gap: var(--siq-space-1);
+  margin-bottom: var(--siq-space-1);
+  font-size: var(--siq-text-caption);
+  line-height: var(--siq-text-caption-lh);
+  color: var(--siq-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.sp-bubble-text {
+  margin: 0;
+  font-size: var(--siq-text-card-title);
+  line-height: var(--siq-text-card-title-lh);
+  color: var(--siq-ink);
+  overflow-wrap: anywhere;
+}
+
+/* ── Pulse: the audience chat draws in, the minute lights up ── */
+.sp-scene.is-pulse {
   padding-top: var(--siq-space-6);
 }
 
 .sp-curve {
   position: relative;
   width: 100%;
-  height: 9rem;
+  height: 8rem;
   margin-bottom: var(--siq-space-4);
 }
 
@@ -653,74 +839,42 @@ onBeforeUnmount(() => {
   color: var(--siq-muted);
 }
 
-/* ── Ring: fills to the percentage said ── */
-.sp-ring {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 9rem;
-  height: 9rem;
-}
-
-.sp-ring-svg {
+/* ── CC: the sentence as a subtitle, when asked for ── */
+.sp-cc {
   position: absolute;
-  inset: 0;
-  transform: rotate(-90deg);
+  left: var(--siq-space-3);
+  right: var(--siq-space-3);
+  bottom: var(--siq-space-3);
+  margin: 0 auto;
+  max-width: 60ch;
+  padding: var(--siq-space-1) var(--siq-space-3);
+  border-radius: var(--siq-radius-control);
+  background: var(--siq-ink);
+  color: var(--siq-page);
+  font-size: var(--siq-text-small);
+  line-height: var(--siq-text-small-lh);
 }
 
-.sp-ring-track,
-.sp-ring-fill {
-  fill: none;
-  stroke-width: 10;
-}
-
-.sp-ring-track {
-  stroke: var(--siq-border);
-}
-
-.sp-ring-fill {
-  stroke: var(--siq-accent);
-  stroke-linecap: round;
-  stroke-dasharray: 100;
-  animation: sp-ring 1.1s var(--siq-ease) both;
-}
-
-@keyframes sp-ring {
-  from {
-    stroke-dashoffset: 100;
-  }
-}
-
-.sp-ring-value,
-.sp-count {
-  font-size: var(--siq-text-display);
-  line-height: var(--siq-text-display-lh);
-  font-weight: var(--siq-weight-semibold);
-  font-variant-numeric: tabular-nums;
-  color: var(--siq-accent);
-}
-
-.sp-count {
-  font-size: calc(var(--siq-text-display) * 1.6);
-  letter-spacing: -0.02em;
+.sp-stage:has(.sp-cc) {
+  padding-bottom: calc(var(--siq-space-6) + 3rem);
 }
 
 /* ── Changing beats ── */
 .sp-scene-enter-active,
 .sp-scene-leave-active {
   transition-property: opacity, transform;
-  transition-duration: 0.26s;
+  transition-duration: 0.22s;
   transition-timing-function: var(--siq-ease);
 }
 
 .sp-scene-enter-from {
   opacity: 0;
-  transform: translateY(10px);
+  transform: scale(0.96);
 }
 
 .sp-scene-leave-to {
   opacity: 0;
-  transform: translateY(-8px);
+  transform: scale(1.04);
 }
 
 /* ── Progress, one segment a beat ── */
@@ -792,54 +946,63 @@ onBeforeUnmount(() => {
     min-height: 15rem;
     padding: var(--siq-space-5) var(--siq-space-4);
   }
-  .sp-caption,
-  .sp-caption.is-big {
-    font-size: var(--siq-text-card-title);
-  }
-  .sp-caption.is-title {
+  .sp-headline,
+  .sp-headline.is-slam,
+  .sp-headline.is-flash {
     font-size: var(--siq-text-section);
     line-height: var(--siq-text-section-lh);
   }
+  .sp-headline.is-small {
+    font-size: var(--siq-text-card-title);
+    line-height: var(--siq-text-card-title-lh);
+  }
   .sp-curve {
-    height: 7rem;
+    height: 6rem;
   }
-  .sp-ring {
-    width: 7rem;
-    height: 7rem;
+  .sp-count.has-ring {
+    width: 8rem;
+    height: 8rem;
   }
-  .sp-ring-value {
+  .sp-count-value {
+    font-size: calc(var(--siq-text-display) * 1.3);
+  }
+  .sp-count.has-ring .sp-count-value {
     font-size: var(--siq-text-section);
   }
-  .sp-count {
-    font-size: var(--siq-text-display);
+  .sp-bubble-text {
+    font-size: var(--siq-text-body);
+    line-height: var(--siq-text-body-lh);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .sp-glow,
+  .sp-flash,
+  .sp-headline,
+  .sp-pop,
+  .sp-count,
+  .sp-bubble,
   .sp-curve-area,
   .sp-curve-line,
   .sp-curve-rule,
   .sp-curve-dot,
   .sp-curve-tag,
-  .sp-ring-fill,
-  .sp-scene.is-punch {
+  .sp-ring-fill {
     animation: none;
   }
-  .sp-word,
-  .sp-word.is-keyword {
+  .sp-flash {
+    opacity: 0.18;
+  }
+  .sp-scene-enter-active,
+  .sp-scene-leave-active {
     transition: none;
   }
 }
 
 @media (forced-colors: active) {
   .sp-stage,
-  .sp-scene.is-punch {
+  .sp-bubble {
     border: 1px solid CanvasText;
-  }
-  .sp-word.is-keyword {
-    background: none;
-    text-decoration: underline;
   }
   .sp-segment {
     border: 1px solid CanvasText;

@@ -49,6 +49,7 @@ export function transcriptSteps(progress) {
 export const VOICE_STEPS = [
   { stage: "queued", label: "Waiting for a free worker" },
   { stage: "reading", label: "Reading the take" },
+  { stage: "storyboard", label: "Planning the scenes" },
   { stage: "speaking", label: "Recording the voice" },
 ];
 
