@@ -646,6 +646,20 @@ def get_session_findings(session_id: str, *, organization_id: OrgScope) -> Dict[
     return {"sessionId": session_id, "updatedAt": row.get("updated_at"), **_sanitize_json_value(body)}
 
 
+def get_session_voices(session_id: str, *, organization_id: OrgScope) -> Dict[str, Any]:
+    """The Report's "Who spoke up": `{sessionId, updatedAt, version,
+    internal, total, people, others}` (`record.voices.chat_voices`): the
+    audience members who wrote, the most active first, with short names only
+    through `roster.display_people` and one message each. Read on demand with
+    the caller's scope; nothing is cached. A row that is missing or outside
+    the scope raises `SessionNotFoundError`."""
+    inputs, row = _transcript_inputs(session_id, organization_id=organization_id)
+    from livestorm_app.record.voices import chat_voices
+
+    body = _sanitize_json_value(chat_voices(inputs))
+    return {"sessionId": session_id, "updatedAt": row.get("updated_at"), **body}
+
+
 def get_session_transcript_view(session_id: str, *, organization_id: OrgScope) -> Dict[str, Any]:
     """The Transcript tab's room view: `{sessionId, updatedAt, version,
     clock, speakers, speech, room, chapters}` (`record.transcript_view.transcript_view`).

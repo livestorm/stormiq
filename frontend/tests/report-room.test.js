@@ -1,12 +1,15 @@
 // The v1 Report's room and questions sections wording (src/report/room.js,
-// src/report/questions.js): the chat themes table, the question count and
-// the Q&A's answers. The fixtures carry no chat labels, so the labelled
-// measures are written here, shaped as `record.measures` sends them.
+// src/report/questions.js): the chat themes table, and every question as
+// the desk lists it (still open, answered, with its answers). The record
+// fixtures carry no chat labels, so the labelled measures are written here,
+// shaped as `record.measures` sends them; the questions come from the desk's
+// fixture, generated from the real route.
 
 import { describe, expect, it } from "vitest";
 import small from "./fixtures/record-v1.json";
 import { chatThemes, labelStatus, languagesLabel, roomSummary, themeRowName } from "../src/report/room";
-import { qaAnswers, questionCount, questionsSummary } from "../src/report/questions";
+import desk from "./fixtures/questions-v1.json";
+import { answerDelay, questionGroups, questionItem, questionNotes, questionsHeadline } from "../src/report/questions";
 
 const theme = (key, messages, share, ids = [], languages = [{ language: "en", messages }]) => ({
   key, messages, share, languages, ids,
@@ -34,14 +37,6 @@ const total = (rows = { qa: 4, chat: 12, chatLogistics: 3 }, state = "ok") => ({
   coverage: { chatMessages: 60, teamMessages: 3, labels: "model" },
   rows: Object.entries(rows).map(([key, questions]) => ({ key, questions })),
 });
-
-const qa = (rows = { written: 2, oral: 1, marked: 0, open: 1 }, state = "ok") => {
-  const den = Object.values(rows).reduce((a, b) => a + b, 0);
-  return {
-    id: "m.questions_qa", version: 1, value: den ? (den - rows.open) / den : null, num: den - rows.open, den, state,
-    coverage: { questions: den }, rows: Object.entries(rows).map(([key, questions]) => ({ key, questions })),
-  };
-};
 
 describe("chatThemes", () => {
   it("lists the themes with messages in the server's order, with shares and languages", () => {
@@ -106,58 +101,65 @@ describe("roomSummary", () => {
   });
 });
 
-describe("questionCount", () => {
-  it("adds the chat's questions and counts the session's own apart", () => {
-    const count = questionCount({ "m.questions_total": total(), "m.questions_qa": qa() });
-    expect(count).toMatchObject({ value: "16", parts: ["4 in the Q&A", "12 in the chat"], status: "estimated" });
-    expect(count.apart).toBe("3 chat questions about the session itself (a replay, the slides), counted apart.");
+describe("questionGroups", () => {
+  it("lists every question, still open first, then answered, with the desk's counts", () => {
+    const groups = questionGroups(desk);
+    expect(groups.map((group) => [group.key, group.title, group.count])).toEqual([
+      ["open", "Still open", 2],
+      ["answered", "Answered", 3],
+    ]);
+    const ids = groups.flatMap((group) => group.items.map((item) => item.id));
+    expect(ids.sort()).toEqual(desk.questions.map((q) => q.id).sort());
+    expect(groups[0].items.every((item) => ["Still open", "Covered in the talk, not marked"].includes(item.status.label))).toBe(true);
   });
 
-  it("shows the Q&A alone, said as such, until the chat is labelled", () => {
-    const count = questionCount(small.record.measures);
-    expect(count).toMatchObject({ parts: ["in the Q&A"], status: "measured", apart: "" });
-    expect(count.value).toBe(String(small.record.measures["m.questions_qa"].den));
-    expect(count.note).toBe("Run the analysis to count the chat's questions.");
-  });
-
-  it("is null without questions or labels", () => {
-    expect(questionCount({})).toBeNull();
+  it("drops an empty group, and has none without a desk", () => {
+    const answeredOnly = { ...desk, summary: { ...desk.summary, open: 0, covered: 0 }, questions: desk.questions.filter((q) => ["written", "aloud", "here"].includes(q.status)) };
+    expect(questionGroups(answeredOnly).map((group) => group.key)).toEqual(["answered"]);
+    expect(questionGroups(null)).toEqual([]);
   });
 });
 
-describe("qaAnswers", () => {
-  it("words the four rows and the answered share", () => {
-    const answers = qaAnswers({ "m.questions_qa": qa() });
-    expect(answers.rows.map((row) => [row.label, row.questions, row.open])).toEqual([
-      ["Answered in writing", "2", false], ["Answered aloud", "1", false], ["Marked answered", "0", false], ["Still open", "1", true],
+describe("questionItem", () => {
+  it("says who asked, where and when", () => {
+    const item = questionItem(desk.questions.find((q) => q.id === "Q001"));
+    expect(item).toMatchObject({ text: "Will the slides be shared?", source: "qa", who: "Theo P. · Q&A · Before" });
+    expect(item.answers).toEqual([{ label: "Written answer", text: "Yes, see the chat.", quote: false }]);
+  });
+
+  it("shows the passage of the talk that answers it, and the host's own answer first", () => {
+    const covered = questionItem(desk.questions.find((q) => q.id === "C0010"));
+    expect(covered.answers).toEqual([
+      { label: "Seems answered in the talk at 5:19", text: "Pricing works per team and scales with seats.", quote: true },
     ]);
-    expect(answers.rate).toBe("75%");
-    expect(answers.status).toBe("measured");
+    const replied = questionItem({ id: "Q9", text: "?", status: "here", reply: "Mine", answer: "Theirs" });
+    expect(replied.answers.map((answer) => answer.label)).toEqual(["Your answer", "Written answer"]);
+  });
+});
+
+describe("questionsHeadline, answerDelay and questionNotes", () => {
+  it("sums up the desk: how many, answered and still open", () => {
+    expect(questionsHeadline(desk)).toEqual({ takeaway: "5 questions: 3 answered, 2 still open.", chip: "2 still open" });
+    expect(questionsHeadline({ summary: { total: 0 } })).toEqual({ takeaway: "No audience question in the Q&A or the chat.", chip: "" });
+  });
+
+  it("falls back on the record's count before the desk loads", () => {
+    expect(questionsHeadline(null, { "m.questions_total": total() }).takeaway).toBe("16 questions.");
+    expect(questionsHeadline(null, {}).takeaway).toBe("What the audience asked, and what was answered.");
   });
 
   it("gives the median delay only when its measure shows", () => {
-    const shown = { state: "ok", value: 95 };
-    expect(qaAnswers({ "m.questions_qa": qa(), "m.time_to_answer": shown }).delay).toBe("1 min 35 s");
-    const gated = qaAnswers({ "m.questions_qa": qa(), "m.time_to_answer": { state: "insufficient", value: null } });
-    expect(gated.delay).toBe("");
-    expect(gated.note).toBe("Too few written answers with a time for a median delay.");
+    expect(answerDelay({ "m.time_to_answer": { state: "ok", value: 95 } })).toBe("Written answers came 1 min 35 s after the question (median).");
+    expect(answerDelay({ "m.time_to_answer": { state: "insufficient", value: null } })).toBe("");
   });
 
-  it("says when the Q&A was empty, and is null when it wasn't fetched", () => {
-    expect(qaAnswers({ "m.questions_qa": qa({ written: 0, oral: 0, marked: 0, open: 0 }, "insufficient") })).toMatchObject({
-      rows: [], note: "No question in the Q&A.",
-    });
-    expect(qaAnswers({ "m.questions_qa": { state: "unavailable", rows: [] } })).toBeNull();
+  it("notes the requests counted apart and why chat questions may be missing", () => {
+    expect(questionNotes(desk)).toEqual(["1 replay or slides request in the chat, counted apart."]);
+    expect(questionNotes({ summary: { chatQuestions: "none" } })[0]).toMatch(/once the session is analysed/);
   });
 });
 
-describe("questionsSummary and labelStatus", () => {
-  it("sums up the count and the open Q&A questions", () => {
-    expect(questionsSummary({ "m.questions_total": total(), "m.questions_qa": qa() })).toEqual({
-      takeaway: "16 questions: 4 in the Q&A, 12 in the chat.", chip: "1 still open in Q&A",
-    });
-  });
-
+describe("labelStatus", () => {
   it("marks anything the labels count as estimated", () => {
     expect(labelStatus(total())).toBe("estimated");
     expect(labelStatus(total(undefined, "unavailable"))).toBe("");

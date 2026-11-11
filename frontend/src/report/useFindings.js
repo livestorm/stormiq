@@ -1,19 +1,20 @@
-// The Report's findings: one session's `GET /record/findings`. Nothing here
-// calls a model.
+// The Report's reads that come on demand, beside the record: one session's
+// `GET /record/findings` ("What stood out") and `GET /record/voices` ("Who
+// spoke up"). Nothing here calls a model.
 //
-// `createFindings()` returns a small reactive model the view owns (one per
-// view, not a global store), with the same scope rules as the chapters
-// (`followup/useChapters.js`): every request carries the open session's
-// AbortController signal; opening another session aborts the old one and
-// drops late results.
-//   open(sessionId)   loads the findings
-//   reload()          loads them again (after a run of the analysis)
+// `createFindings()` and `createVoices()` each return a small reactive model
+// the view owns (one per view, not a global store), with the same scope
+// rules as the chapters (`followup/useChapters.js`): every request carries
+// the open session's AbortController signal; opening another session aborts
+// the old one and drops late results.
+//   open(sessionId)   loads it
+//   reload()          loads it again (after a run of the analysis)
 //   close()           cancels everything (the view calls it on unmount)
 
 import { markRaw, reactive } from "vue";
 import { api as defaultApi } from "../api";
 
-export function createFindings({ api = defaultApi } = {}) {
+function createRead(get, failure) {
   const state = reactive({ sessionId: "", loading: false, error: "", body: null });
   let scope = null;
 
@@ -27,13 +28,13 @@ export function createFindings({ api = defaultApi } = {}) {
   async function load(own) {
     state.loading = true;
     try {
-      const body = await api.getSessionFindings(own.sessionId, { signal: own.controller.signal });
+      const body = await get(own.sessionId, { signal: own.controller.signal });
       if (!isCurrent(own)) return;
       state.body = body && typeof body === "object" ? markRaw(body) : null;
       state.error = "";
     } catch (error) {
       if (!isCurrent(own) || error?.name === "AbortError") return;
-      state.error = error?.message || "The findings could not be loaded.";
+      state.error = error?.message || failure;
     } finally {
       if (isCurrent(own)) state.loading = false;
     }
@@ -54,4 +55,12 @@ export function createFindings({ api = defaultApi } = {}) {
   }
 
   return { state, open, reload, close };
+}
+
+export function createFindings({ api = defaultApi } = {}) {
+  return createRead((id, options) => api.getSessionFindings(id, options), "The findings could not be loaded.");
+}
+
+export function createVoices({ api = defaultApi } = {}) {
+  return createRead((id, options) => api.getSessionVoices(id, options), "The list of who wrote could not be loaded.");
 }
