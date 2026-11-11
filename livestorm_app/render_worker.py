@@ -50,6 +50,9 @@ from livestorm_app.queue import RENDER_QUEUE, get_redis_settings, job_result_ser
 from livestorm_app.video.keys import video_key
 
 logger = logging.getLogger(__name__)
+# Like the main worker: without it, INFO lines (each stage's time and speed,
+# startup) never reach the service's log; only warnings and errors did.
+logging.basicConfig(level=logging.INFO)
 
 VIDEO_KIND = "surprise_video"
 # Above the picture step's ceiling (`render.PICTURE_TIMEOUT_MAX_S`), with
