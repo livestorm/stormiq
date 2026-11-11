@@ -4,7 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import record from "./fixtures/record-v1.json";
 import { MAX_FAILURES, POLL_MS, createSessionReport } from "../src/report/useSessionReport";
-import { analysisSteps, analysisSummary, elapsedLabel, formatLength, formatSessionStart } from "../src/report/format";
+import { analysisSteps, analysisSummary, elapsedLabel, formatLength, formatSessionStart, preparationView } from "../src/report/format";
 
 function httpError(status, message = `HTTP ${status}`) {
   const error = new Error(message);
@@ -17,6 +17,7 @@ function fakeApi(overrides = {}) {
     getSessionRecord: vi.fn(async () => record),
     getSessionAnalysisJob: vi.fn(async () => ({ jobId: "j", jobStatus: "not_found" })),
     startSessionAnalysis: vi.fn(async () => ({ jobId: "j", jobStatus: "pending", enqueued: true })),
+    getTranscriptJobStatus: vi.fn(async () => ({ jobStatus: "not_found" })),
     ...overrides,
   };
 }
@@ -28,6 +29,46 @@ async function tick(ms) {
 describe("createSessionReport", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
+
+  it("prepares a session just added: the transcript, then the analysis the worker chains, then the Report", async () => {
+    const transcript = ["running", "running", "completed"];
+    const runs = ["not_found", "not_found", "pending", "running", "completed"];
+    const api = fakeApi({
+      getTranscriptJobStatus: vi.fn(async () => ({ jobStatus: transcript.shift() ?? "completed", progress: { message: "Transcribing…" } })),
+      getSessionAnalysisJob: vi.fn(async () => ({ jobStatus: runs.shift() ?? "completed" })),
+    });
+    const report = createSessionReport({ api });
+    await report.open("sess-1", { prepare: true });
+    expect(report.state.preparing).toBe(true);
+    expect(report.state.transcript).toMatchObject({ status: "running", progress: { message: "Transcribing…" } });
+    await tick(POLL_MS * 2);
+    expect(report.state.transcript.status).toBe("done");
+    expect(api.getSessionRecord).toHaveBeenCalledTimes(2);
+    for (let i = 0; i < 8 && report.state.preparing; i += 1) await tick(POLL_MS);
+    expect(report.state.analysis.status).toBe("completed");
+    expect(report.state.preparing).toBe(false);
+    report.close();
+  });
+
+  it("waits for a transcript job that isn't queued yet, and ends when nothing comes", async () => {
+    const api = fakeApi();
+    const report = createSessionReport({ api });
+    await report.open("sess-1", { prepare: true });
+    expect(report.state.preparing).toBe(true);
+    for (let i = 0; i < 12 && report.state.preparing; i += 1) await tick(POLL_MS);
+    expect(report.state.preparing).toBe(false);
+    expect(api.getTranscriptJobStatus.mock.calls.length).toBeGreaterThan(1);
+    report.close();
+  });
+
+  it("never prepares a session opened normally", async () => {
+    const api = fakeApi();
+    const report = createSessionReport({ api });
+    await report.open("sess-1");
+    expect(report.state.preparing).toBe(false);
+    expect(api.getTranscriptJobStatus).toHaveBeenCalledTimes(1);
+    report.close();
+  });
 
   it("loads the record and asks once whether a run is in flight", async () => {
     const api = fakeApi();
@@ -236,6 +277,20 @@ describe("format", () => {
     expect(analysisSummary({ state: "none" }, { status: "error", error: "Boom" })).toMatchObject({
       detail: "Boom", action: "Try again", tone: "low",
     });
+  });
+
+  it("words the preparation of a session just added", () => {
+    const running = preparationView({ status: "running", progress: { message: "Uploading the recording" } }, { status: "idle" });
+    expect(running.steps.map((step) => [step.label, step.state])).toEqual([
+      ["Fetched from Livestorm", "done"],
+      ["Transcribing the recording", "current"],
+      ["Reading the chat and the talk with AI", "todo"],
+      ["Your report", "todo"],
+    ]);
+    expect(running.steps[1].detail).toBe("Uploading the recording");
+    const noRecording = preparationView({ status: "error" }, { status: "running", progress: { stage: "labelling" } });
+    expect(noRecording.steps[1].state).toBe("skipped");
+    expect(noRecording.steps[2]).toMatchObject({ state: "current", detail: "Labelling the chat. This takes about a minute." });
   });
 
   it("shows a run's steps from the stage the server sent", () => {

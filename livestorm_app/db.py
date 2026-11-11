@@ -333,6 +333,15 @@ def ensure_database_schema() -> None:
                 ADD COLUMN IF NOT EXISTS progress TEXT
                 """
             )
+            # Set when the session was added with "Add" (`api_logic.
+            # fetch_session_transcript_data(analyse=True)`): when the job
+            # ends, the worker queues the session analysis.
+            cursor.execute(
+                """
+                ALTER TABLE transcript_jobs
+                ADD COLUMN IF NOT EXISTS then_analyse BOOLEAN NOT NULL DEFAULT FALSE
+                """
+            )
             # OAuth connection that started a queued job. It doubles as the
             # user's session cookie value, so it is kept here (never in
             # Redis job args or logs) and cleared once the worker claims
@@ -1392,6 +1401,29 @@ def claim_transcript_job(job_id: str) -> Optional[Dict[str, Any]]:
     if not row:
         return None
     return {"connection_id": str(row["connection_id"] or "")}
+
+
+def mark_transcript_job_then_analyse(job_id: str) -> None:
+    """Have the worker queue the session analysis when this transcript job
+    ends (`transcript_jobs.then_analyse`). Raises when the database can't be
+    written."""
+    if not database_enabled() or not str(job_id or "").strip():
+        return
+    with get_db_connection() as connection:
+        connection.execute("UPDATE transcript_jobs SET then_analyse = TRUE WHERE job_id = %s", (str(job_id).strip(),))
+        connection.commit()
+
+
+def transcript_job_then_analyse(job_id: str) -> bool:
+    """Whether the session analysis should follow this transcript job."""
+    if not database_enabled() or not str(job_id or "").strip():
+        return False
+    with get_db_connection() as connection:
+        row = connection.execute("SELECT then_analyse FROM transcript_jobs WHERE job_id = %s", (str(job_id).strip(),)).fetchone()
+    if row is None:
+        return False
+    value = row["then_analyse"] if isinstance(row, dict) else row[0]
+    return bool(value)
 
 
 def update_transcript_job_status(job_id: str, status: str, error: Optional[str] = None) -> None:

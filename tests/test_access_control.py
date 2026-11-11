@@ -330,6 +330,24 @@ def test_owner_can_start_transcript_for_an_uncached_session(client, backend):
     assert not any("conn-a" in str(arg) for arg in backend.enqueued[0])
 
 
+def test_add_marks_the_transcript_job_to_chain_the_analysis(client, backend, monkeypatch):
+    marked = []
+    monkeypatch.setattr(api_logic, "mark_transcript_job_then_analyse", marked.append)
+    response = _call(
+        client, "POST", "/api/sessions/{session_id}/fetch-transcript",
+        cookie="conn-a", body={"forceRefresh": True, "analyse": True}, session_id="sess-new",
+    )
+    assert response.status_code == 200, response.text
+    assert marked == ["job-new"], "the worker queues the analysis when this job ends"
+    assert backend.enqueued == [("run_transcription", "transcription:job-new", "job-new", "sess-new")]
+
+
+def test_add_on_a_transcribed_session_queues_the_analysis_at_once(client, backend):
+    response = _call(client, "POST", "/api/sessions/{session_id}/fetch-transcript", cookie="conn-a", body={"analyse": True})
+    assert response.status_code == 200, response.text
+    assert backend.enqueued == [("run_session_analysis_job", api_logic.session_analysis_job_id(SESSION_ID), SESSION_ID)]
+
+
 def test_owner_starts_a_people_sync_with_ids_only_in_the_queue(client, backend):
     response = _call(client, "POST", "/api/sessions/{session_id}/roster-sync", cookie="conn-a")
     assert response.status_code == 200, response.text

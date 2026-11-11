@@ -630,12 +630,13 @@ watch(
 
 // Start (or attach to) the transcript job and wait for it. Errors become
 // the "transcript unavailable" reason unless `throwErrors` is set.
-async function loadTranscript(sessionScope, { forceRefresh = false, throwErrors = false } = {}) {
+async function loadTranscript(sessionScope, { forceRefresh = false, throwErrors = false, analyse = false } = {}) {
   const { id, controller } = sessionScope;
   try {
     const response = await api.fetchSessionTranscript(
       id,
-      { apiKey: state.apiKey, forceRefresh },
+      // `analyse`: "Add" chains the session analysis after the transcript.
+      { apiKey: state.apiKey, forceRefresh, ...(analyse ? { analyse: true } : {}) },
       { signal: controller.signal },
     );
     assertCurrent(sessionScope);
@@ -682,7 +683,7 @@ async function resumeTranscript(sessionScope) {
   }
 }
 
-async function loadSessionById(sessionId) {
+async function loadSessionById(sessionId, { analyse = false } = {}) {
   // Load a specific session's workspace by ID. Used by the parameterised
   // session routes: the URL is the truth. Uses the cache when available;
   // otherwise fetches the base data and starts the transcript (a teammate
@@ -729,7 +730,7 @@ async function loadSessionById(sessionId) {
       const baseData = await api.fetchSessionBase(id, { apiKey: state.apiKey, forceRefresh: false }, { signal });
       assertCurrent(sessionScope);
       setWorkspace(baseData);
-      await loadTranscript(sessionScope);
+      await loadTranscript(sessionScope, { analyse });
       return state.workspace;
     },
     sessionScope,

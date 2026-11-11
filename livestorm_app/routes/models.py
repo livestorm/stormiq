@@ -36,6 +36,9 @@ class WorkspaceEventsRequest(BaseModel):
 class FetchSessionRequest(BaseModel):
     api_key: str = Field("", alias="apiKey")
     force_refresh: bool = Field(False, alias="forceRefresh")
+    # "Add" on the Add session page: analyse the session once its transcript
+    # job ends (`fetch-transcript` only).
+    analyse: bool = False
 
 
 class SpeakerLabelsRequest(BaseModel):

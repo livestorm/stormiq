@@ -59,6 +59,7 @@ from livestorm_app.db import (
     sweep_stuck_livestorm_syncs,
     touch_livestorm_sync,
     update_transcript_job_progress,
+    transcript_job_then_analyse,
     update_transcript_job_status,
     upsert_cached_session,
 )
@@ -66,7 +67,7 @@ from livestorm_app.progress import (
     clear_progress_sync,
     publish_progress_sync,
 )
-from livestorm_app.queue import cover_image_job_id, get_redis_settings, job_result_serializer
+from livestorm_app.queue import cover_image_job_id, enqueue_unique_job, get_redis_settings, job_result_serializer
 
 
 logger = logging.getLogger(__name__)
@@ -396,6 +397,7 @@ async def run_transcription(
         # Pollers read the durable cache first, so progress can go at once.
         clear_progress_sync("transcript", session_id)
         logger.info("[run_transcription] job_id=%s session_id=%s done", job_id, session_id)
+        await _chain_analysis_after(ctx, job_id, session_id)
         return {"jobId": job_id, "status": "completed"}
     except asyncio.CancelledError:
         # Timeout or worker shutdown. CancelledError is not an Exception,
@@ -413,7 +415,24 @@ async def run_transcription(
         logger.exception("[run_transcription] job_id=%s session_id=%s failed", job_id, session_id)
         update_transcript_job_status(job_id, "error", error=str(exc))
         clear_progress_sync("transcript", session_id)
+        # No transcript (no recording, a failed transcription): the chat is
+        # still analysed when the session was added with "Add".
+        await _chain_analysis_after(ctx, job_id, session_id)
         raise
+
+
+async def _chain_analysis_after(ctx: Dict[str, Any], job_id: str, session_id: str) -> None:
+    """Queue the session analysis when the transcript job was started by
+    "Add" (`transcript_jobs.then_analyse`). Never fails the transcript job."""
+    from livestorm_app.api_logic import SESSION_ANALYSIS_FUNCTION, session_analysis_job_id
+
+    try:
+        if not await asyncio.to_thread(transcript_job_then_analyse, job_id):
+            return
+        job = await enqueue_unique_job(ctx["redis"], SESSION_ANALYSIS_FUNCTION, session_analysis_job_id(session_id), session_id)
+        logger.info("[run_transcription] job_id=%s chained the session analysis: %s", job_id, job.get("jobStatus"))
+    except Exception:
+        logger.exception("[run_transcription] job_id=%s could not chain the session analysis", job_id)
 
 
 # ── AI flow jobs (overall / deep / smart recap / content repurposing) ──────

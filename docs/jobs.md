@@ -103,7 +103,7 @@ Smart Recap is on demand only: nothing generates it automatically.
 
 ### The session analysis (v1)
 
-The v1 Report's analysis, started by the user ("Analyse session") and never on its own. One run, two steps: it labels the chat, then reads the session (the understanding job) when it has a transcript.
+The v1 Report's analysis, started by a user's action: "Analyse session" on the Report, or "Add" on the Add session page, which chains it after the transcript. `fetch-transcript` with `analyse: true` queues it at once when the transcript is already there, else marks the transcript job (`transcript_jobs.then_analyse`); when that job ends, completed or failed (no recording: the chat is still analysed), `worker._chain_analysis_after` queues the analysis under its usual job id. It never runs on a webhook, a schedule or a page view. One run, two steps: it labels the chat, then reads the session (the understanding job) when it has a transcript.
 
 | Start | Poll | Worker job | One job per |
 |---|---|---|---|

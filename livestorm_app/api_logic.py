@@ -21,6 +21,7 @@ from livestorm_app.db import (
     fetch_chat_labels,
     fetch_chat_labels_stamp,
     fetch_figure_checks,
+    mark_transcript_job_then_analyse,
     fetch_question_replies,
     fetch_roster_status,
     fetch_session_fields,
@@ -1364,8 +1365,14 @@ def fetch_session_transcript_data(
     created_by_user_id: str = "",
     created_by_email: str = "",
     created_by_name: str = "",
+    analyse: bool = False,
 ) -> Dict[str, Any]:
     """Start a transcription job (or attach to the active one).
+
+    `analyse` (the Add session page's "Add") chains the session analysis:
+    queued at once when the transcript is already there, else marked on the
+    transcript job, which the worker queues when the job ends
+    (`worker.run_transcription`), with or without a transcript.
 
     Scope args as in `fetch_session_base_data`. `job_connection_id` is the
     caller's `Caller.job_connection_id()`. It is stored on the job's row
@@ -1387,6 +1394,8 @@ def fetch_session_transcript_data(
 
     # Return immediately when transcript is already cached (skip job machinery).
     if not force_refresh and isinstance(cached, dict) and isinstance(cached.get("transcript_payload"), dict):
+        if analyse:
+            _chain_session_analysis(session_id)
         return _serialize_cached_session(session_id, cached)
 
     if not isinstance(cached, dict):
@@ -1402,6 +1411,8 @@ def fetch_session_transcript_data(
     if isinstance(existing_job, dict):
         existing_job = _reconcile_transcript_job(existing_job)
         if existing_job.get("status") in ACTIVE_TRANSCRIPT_JOB_STATUSES:
+            if analyse:
+                mark_transcript_job_then_analyse(existing_job["job_id"])
             return {"jobId": existing_job["job_id"], "jobStatus": existing_job["status"]}
 
     # Pre-stamp organization_id (and the generator identity if we have it)
@@ -1422,6 +1433,8 @@ def fetch_session_transcript_data(
     # The connection id is stored on the row, not in the job args: it is
     # also the user's session cookie, and arq keeps args in Redis and logs.
     job = create_transcript_job(session_id, connection_id=job_connection_id)
+    if analyse:
+        mark_transcript_job_then_analyse(job["job_id"])
     if not job["created"]:
         return {"jobId": job["job_id"], "jobStatus": job["status"]}
     job_id = job["job_id"]
@@ -2219,6 +2232,13 @@ SESSION_ANALYSIS_FUNCTION = "run_session_analysis_job"
 
 def session_analysis_job_id(session_id: str) -> str:
     return ai_job_id(SESSION_ANALYSIS_KIND, session_id, "")
+
+
+def _chain_session_analysis(session_id: str) -> None:
+    """Queue the session analysis after "Add" (or join the run in flight).
+    Best effort: a queue that is down leaves the Report's "Analyse session"."""
+    if not enqueue_unique_job_sync(SESSION_ANALYSIS_FUNCTION, session_analysis_job_id(session_id), session_id):
+        logger.warning("Could not chain the session analysis for session_id=%s", session_id)
 
 
 def start_session_analysis(session_id: str, *, organization_id: OrgScope) -> Dict[str, Any]:

@@ -94,15 +94,19 @@ const addingId = ref("");
 // says it too, at the top of the page).
 const failedId = ref("");
 
-function open(id) {
-  router.push(`/sessions/${encodeURIComponent(id)}`);
+// `prepare`: just added, so the Report shows its preparation (the transcript,
+// then the analysis) until the data is in.
+function open(id, { prepare = false } = {}) {
+  router.push(`/sessions/${encodeURIComponent(id)}${prepare ? "?prepare=1" : ""}`);
 }
 
 function add(id) {
   if (!id || addingId.value) return;
   addingId.value = id;
   failedId.value = "";
-  loadSessionById(id).catch(() => {
+  // "Add" fetches the session, starts its transcript and has the server
+  // analyse it once the transcript is done; the Report shows the progress.
+  loadSessionById(id, { analyse: true }).catch(() => {
     if (addingId.value !== id) return;
     addingId.value = "";
     failedId.value = id;
@@ -115,7 +119,7 @@ function add(id) {
 watch(
   () => state.workspace?.sessionId,
   (id) => {
-    if (id && id === addingId.value) open(id);
+    if (id && id === addingId.value) open(id, { prepare: true });
   },
 );
 

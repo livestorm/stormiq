@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { RouterLink } from "vue-router";
+import { RouterLink, useRoute, useRouter } from "vue-router";
 import Card from "../components/ui/Card.vue";
 import CardHeader from "../components/ui/CardHeader.vue";
 import Chip from "../components/ui/Chip.vue";
@@ -15,7 +15,7 @@ import { inShort } from "../report/vitals";
 import SessionRidge from "../components/report/SessionRidge.vue";
 import SessionTabs from "../components/report/SessionTabs.vue";
 import UiButton from "../components/ui/UiButton.vue";
-import { analysisSummary, elapsedLabel, formatLength, formatSessionStart } from "../report/format";
+import { analysisSummary, elapsedLabel, formatLength, formatSessionStart, preparationView } from "../report/format";
 import { createSessionReport } from "../report/useSessionReport";
 import { createChapters } from "../followup/useChapters";
 import { createFindings } from "../report/useFindings";
@@ -38,10 +38,14 @@ const chapters = createChapters();
 // The findings (`GET /record/findings`): "What stood out".
 const findings = createFindings();
 
+const route = useRoute();
+const router = useRouter();
+
 watch(
   () => props.sessionId,
   (id) => {
-    report.open(id);
+    // `?prepare=1`: just added by "Add"; the page shows the preparation.
+    report.open(id, { prepare: route.query.prepare === "1" });
     chapters.open(id);
     findings.open(id);
   },
@@ -137,6 +141,30 @@ watch(
 );
 onBeforeUnmount(() => clearInterval(ticker));
 const elapsed = computed(() => (summary.value.busy ? elapsedLabel(summary.value.startedAtMs, now.value) : ""));
+
+// Just added: the transcript and the first analysis are being made. The
+// page shows their progress in place of the Report until they are done,
+// then drops `?prepare=1` so a reload opens the Report at once.
+const preparation = computed(() => preparationView(state.transcript, state.analysis));
+const prepStarted = Date.now();
+const prepElapsed = computed(() => (state.preparing ? elapsedLabel(prepStarted, now.value) : ""));
+watch(
+  () => state.preparing,
+  (preparing, was) => {
+    clearInterval(prepTicker);
+    prepTicker = preparing ? setInterval(() => (now.value = Date.now()), 1000) : null;
+    if (was && !preparing && route.query.prepare) {
+      router.replace({ query: { ...route.query, prepare: undefined } });
+      chapters.reload();
+      findings.reload();
+    }
+  },
+);
+let prepTicker = null;
+onBeforeUnmount(() => clearInterval(prepTicker));
+// The analysis card: only when there is something to do, a run in flight or
+// a failure; an analysed session shows none.
+const showAnalysis = computed(() => Boolean(summary.value.action) || summary.value.busy || summary.value.tone === "low");
 const short = computed(() => inShort(record.value?.measures || {}));
 
 </script>
@@ -191,9 +219,29 @@ const short = computed(() => inShort(record.value?.measures || {}));
         <p v-if="state.refetch.status === 'error'" class="r-hint" role="alert">{{ state.refetch.error }}</p>
       </header>
 
-      <SessionRidge :minutes="record?.pulse?.minutes || []" :chapters="chapters.state.body" explain />
+      <SessionRidge v-if="!state.preparing" :minutes="record?.pulse?.minutes || []" :chapters="chapters.state.body" explain />
 
-      <Card class="r-analysis" :aria-busy="summary.busy ? 'true' : 'false'">
+      <Card v-if="state.preparing" class="r-prepare" aria-busy="true">
+        <CardHeader icon="zap" :title="preparation.title" :level="2" />
+        <p class="r-text" role="status">{{ preparation.detail }}</p>
+        <ol class="r-prep-steps" aria-label="Steps">
+          <li v-for="step in preparation.steps" :key="step.label" class="r-prep-step" :class="`is-${step.state}`">
+            <span class="r-step-mark" aria-hidden="true">
+              <Icon v-if="step.state === 'done'" name="check" :size="14" />
+              <span v-else-if="step.state === 'current'" class="r-prep-spinner" />
+            </span>
+            <span class="r-prep-text">
+              <span class="r-prep-label">{{ step.label }}</span>
+              <span v-if="step.detail" class="r-muted r-small">{{ step.detail }}</span>
+            </span>
+            <span class="siq-sr-only">{{ { done: ": done", current: ": in progress", todo: ": next", skipped: ": skipped" }[step.state] }}</span>
+          </li>
+        </ol>
+        <div class="r-bar is-waiting" role="progressbar" aria-label="Preparing the report"><span class="r-bar-fill" /></div>
+        <p v-if="prepElapsed" class="r-muted r-small">Running for {{ prepElapsed }}.</p>
+      </Card>
+
+      <Card v-else-if="showAnalysis" class="r-analysis" :aria-busy="summary.busy ? 'true' : 'false'">
         <CardHeader icon="zap" :title="summary.title" :level="2">
           <template #right>
             <Chip v-if="summary.tone === 'good'" tone="good" icon="check">Up to date</Chip>
@@ -241,6 +289,7 @@ const short = computed(() => inShort(record.value?.measures || {}));
 
       <SessionTabs :session-id="sessionId" current="report" />
 
+      <template v-if="!state.preparing">
       <Card v-if="short.sentence || short.chips.length" padding="hero">
         <CardHeader icon="star" title="In short" :level="2" />
         <p v-if="short.sentence" class="r-lead">{{ short.sentence }}</p>
@@ -268,6 +317,7 @@ const short = computed(() => inShort(record.value?.measures || {}));
       <AudienceSection :measures="record.measures || {}" />
 
       <MethodSection :body="body" />
+      </template>
     </template>
   </div>
 </template>
@@ -428,6 +478,12 @@ const short = computed(() => inShort(record.value?.measures || {}));
   box-shadow: inset 0 0 0 1.5px var(--siq-border);
 }
 
+.r-prep-step .r-step-mark {
+  flex: none;
+  margin-top: 2px;
+}
+
+.r-prep-step.is-done .r-step-mark,
 .r-step.is-done .r-step-mark {
   background: var(--siq-accent);
   box-shadow: none;
@@ -479,6 +535,63 @@ const short = computed(() => inShort(record.value?.measures || {}));
 
 .r-bar.is-waiting .r-bar-fill {
   width: 0 !important;
+}
+
+.r-prep-steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--siq-space-3);
+  margin: var(--siq-space-4) 0;
+  padding: 0;
+  list-style: none;
+}
+
+.r-prep-step {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--siq-space-3);
+  color: var(--siq-muted);
+}
+
+.r-prep-step.is-done,
+.r-prep-step.is-current {
+  color: var(--siq-ink);
+}
+
+.r-prep-step.is-skipped .r-prep-label {
+  text-decoration: line-through;
+}
+
+.r-prep-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.r-prep-label {
+  font-weight: var(--siq-weight-medium);
+}
+
+.r-prep-spinner {
+  display: block;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--siq-accent);
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: r-spin 0.9s linear infinite;
+}
+
+@keyframes r-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .r-prep-spinner {
+    animation: none;
+  }
 }
 
 @keyframes r-pulse {
