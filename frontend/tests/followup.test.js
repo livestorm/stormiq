@@ -36,6 +36,19 @@ describe("the Follow-up outputs", () => {
     expect(outputText(outputs, outputFor("recap-hype"), "English")).toBe("");
   });
 
+  it("read, make and follow the decisions by language, with no PDF", () => {
+    const decisions = outputFor("decisions");
+    const listed = { ...outputs, decisionsBundle: { English: "## Commitments\n\n- **Send the slides.**" } };
+    expect(decisions.flow).toBe("decisions");
+    expect(outputText(listed, decisions, "English")).toBe("## Commitments\n\n- **Send the slides.**");
+    expect(outputText(outputs, decisions, "English")).toBe("");
+    expect(canMake(outputs, decisions, "French")).toBe(false);
+    expect(canMake(listed, decisions, "French")).toBe(true);
+    const state = { loading: { decisions: true }, aiJobs: { decisions: { language: "English", progress: { percent: 30 } } } };
+    expect(making(state, decisions, "English")).toEqual({ busy: true, progress: 30 });
+    expect(pdfUrl(fakeApi, "s1", decisions, "English")).toBe("");
+  });
+
   it("read, make and follow the FAQ by language, with no PDF", () => {
     const faq = outputFor("faq");
     const withFaq = { ...outputs, faqBundle: { English: "## Questions and answers\n### Is there an API?\nYes." } };
@@ -85,6 +98,7 @@ describe("the Follow-up outputs", () => {
     expect(groups.flatMap((group) => group.items).some((item) => item.key === "recap-surprise")).toBe(false);
     expect(groups[0].items).toEqual([
       { key: "overall", label: "Session analysis", ready: true, keys: ["overall"], toggle: "" },
+      { key: "decisions", label: "Decisions and commitments", ready: false, keys: ["decisions"], toggle: "" },
       { key: "recap-professional", label: "Smart Recap", ready: true, keys: ["recap-professional", "recap-hype"], toggle: "recap" },
     ]);
     expect(groups[1].items.map((item) => item.label)).toEqual(["Summary", "Blog post", "Follow-up email", "Social posts", "FAQ"]);

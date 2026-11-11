@@ -24,6 +24,18 @@ The Follow-up tab's "FAQ" (job kind `faq`): one Haiku 5.5 call at low effort (`a
 
 Stored as `faq_bundle: {English: "...", French: "..."}`.
 
+## Decisions and commitments
+
+The Follow-up tab's "Decisions and commitments" (job kind `decisions`): one Sonnet 5.5 call at medium effort (`ai/decisions.py`, the `dossier` layout, 8,000 answer tokens) over the session's dossier ([prompt](../prompts/decisions.txt)), on a click on Follow-up, never by "Analyse session".
+
+- **What the model sees**: the understanding's own dossier (`record.understanding.build_dossier`): the utterances by id with speaker keys (`S0`), never a name, and the audience's questions for context. It needs a transcript, not "Analyse session". One call, so nothing is cached.
+- **What it returns** (`SessionDecisions`): items in the order said, each a `decision` (something settled) or a `commitment` (someone will do something), with a plain English sentence, an owner (`speaker`, or the words of the utterance that say who), a due date in the utterance's words, the utterance's id and the words quoted.
+- **What code keeps** (`record.decisions.check_decisions`): an item whose utterance is in the dossier and whose quote is in it (or the one after it), word for word; an owner only when it is the speaker or its words are in the utterance, a due date only when its words are; repeats once. Anything else is dropped, never shown.
+- **What code writes** (`record.decisions.decisions_markdown`): a Decisions section and a Commitments section (each only with items), a bullet per item: the sentence, "Owner: …", "Due: …", then who said it and when, with the words in italics. The speaker's name is the one saved on the Transcript tab, else "Speaker n", added after the call. Times are on the session clock when the alignment allows minutes, else the recording's, and the text says so. With nothing kept: "No decisions or commitments were stated on stage."
+- The French version is a translation of the English one (the `translation` job).
+
+Stored as `decisions_bundle: {English: "...", French: "..."}`, each save kept in `output_versions`.
+
 ## Deep Analysis
 
 The Follow-up tab no longer lists it (November 2026); its route, job and stored outputs stay. It reads the classic inputs below.

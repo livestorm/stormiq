@@ -262,7 +262,7 @@ def get_transcript_download(session_id: str, *, organization_id: OrgScope) -> Di
 # English-only markdown columns).
 _OUTPUT_FIELDS = [
     "analysis_bundle", "analysis_md", "deep_analysis_bundle", "deep_analysis_md",
-    "content_repurpose_bundle", "smart_recap_bundle", "faq_bundle",
+    "content_repurpose_bundle", "smart_recap_bundle", "faq_bundle", "decisions_bundle",
 ]
 
 
@@ -274,6 +274,7 @@ def _serialize_outputs(cached_session: Dict[str, Any]) -> Dict[str, Any]:
         "contentRepurposeBundle": _stored_content_bundles(cached_session),
         "smartRecapBundle": _normalize_smart_recap_bundle(cached_session.get("smart_recap_bundle")),
         "faqBundle": _normalize_text_bundle(cached_session.get("faq_bundle"), ""),
+        "decisionsBundle": _normalize_text_bundle(cached_session.get("decisions_bundle"), ""),
     }
 
 
@@ -1755,6 +1756,65 @@ def run_faq(api_analysis_key: str, session_id: str, output_language: str) -> Dic
     return {"markdown": faq_md, "bundle": faq_bundle}
 
 
+def run_decisions(api_analysis_key: str, session_id: str, output_language: str) -> Dict[str, Any]:
+    """The Follow-up's "Decisions and commitments" in one language. English
+    is read from the session's dossier (`_write_decisions`); another
+    language is a translation of the English one, which must exist first.
+    Saved in `decisions_bundle` under the language."""
+    cached = _require_cached_payloads(session_id, organization_id=ALL_ORGS)
+    bundle = _normalize_text_bundle(cached.get("decisions_bundle"), "")
+    if str(output_language or "").strip() not in ("", "English") and not bundle.get("English", "").strip():
+        raise RuntimeError("Generate the English decisions first before translating.")
+    source_language, source_markdown = _get_alternate_language_text(bundle, output_language)
+    if source_markdown:
+        markdown = translate_markdown_with_openai(
+            api_key=api_analysis_key,
+            model=get_llm_model("translation"),
+            source_markdown=source_markdown,
+            source_language=OUTPUT_LANGUAGE_MAP.get(source_language, source_language),
+            target_language=OUTPUT_LANGUAGE_MAP.get(output_language, output_language),
+            ctx=_llm_call_context("translation", "decisions", session_id, output_language, cached),
+        )
+    else:
+        markdown = _write_decisions(api_analysis_key, session_id, cached, output_language)
+    markdown = _require_generated_text(markdown, "list of decisions")
+    merge_cached_bundle_entry(session_id, "decisions_bundle", output_language, markdown, provenance=run_provenance())
+    bundle[output_language] = markdown
+    return {"markdown": markdown, "bundle": bundle}
+
+
+def _write_decisions(api_key: str, session_id: str, cached: Mapping[str, Any], output_language: str) -> str:
+    """What was decided and promised on stage, read from the session's
+    dossier (`record.understanding.build_dossier`: utterances by id and
+    speaker key, never a name) by one model call (`ai.decisions`), checked
+    against it and worded by code (`record.decisions`) with the speakers'
+    saved names. Needs a transcript; it doesn't need "Analyse session"."""
+    from livestorm_app.ai.decisions import read_decisions
+    from livestorm_app.record.decisions import check_decisions, decisions_markdown
+    from livestorm_app.record.inputs import load_record_inputs
+    from livestorm_app.record.roster import stored_roster_rows
+    from livestorm_app.record.understanding import build_dossier
+
+    roster_status = fetch_roster_status(session_id, ALL_ORGS) or {}
+    stored_roster = fetch_session_roster(session_id, ALL_ORGS) if roster_status.get("roster") is not None else None
+    inputs = load_record_inputs(
+        dict(cached),
+        roster_rows=stored_roster_rows(stored_roster) if stored_roster is not None else None,
+        stored_labels=fetch_chat_labels(session_id, ALL_ORGS),
+    )
+    dossier, utterances, _questions = build_dossier(inputs)
+    if not utterances:
+        raise RuntimeError("Decisions and commitments are read from the transcript: this session has none yet.")
+    answer = read_decisions(
+        dossier,
+        api_key=api_key,
+        ctx=_llm_call_context("decisions", "decisions", session_id, output_language, cached),
+    )
+    items = check_decisions([item.model_dump() for item in answer.items], utterances)
+    names = cached.get("transcript_speaker_names") if isinstance(cached.get("transcript_speaker_names"), dict) else {}
+    return decisions_markdown(items, utterances, names, on_clock=any(u.get("t") is not None for u in utterances))
+
+
 class NoQuestionsError(RuntimeError):
     """The session has no audience question to make a FAQ from."""
 
@@ -2092,6 +2152,9 @@ def _extract_cached_ai_body(cached: Dict[str, Any], kind: str, language: str = "
     if kind == "faq":
         bundle = _normalize_text_bundle(cached.get("faq_bundle"), "")
         return bundle.get(language) if bundle.get(language) else None
+    if kind == "decisions":
+        bundle = _normalize_text_bundle(cached.get("decisions_bundle"), "")
+        return bundle.get(language) if bundle.get(language) else None
     if kind == "smart_recap":
         bundle = _normalize_smart_recap_bundle(cached.get("smart_recap_bundle"))
         return bundle.get(tone) if bundle.get(tone) else None
@@ -2112,6 +2175,7 @@ _ARQ_JOB_FUNCTION_BY_KIND: Dict[str, str] = {
     "smart_recap": "run_smart_recap_job",
     "content_repurposing": "run_content_repurposing_job",
     "faq": "run_faq_job",
+    "decisions": "run_decisions_job",
 }
 
 # The columns `_extract_cached_ai_body` reads for each kind: job starts and
@@ -2122,6 +2186,7 @@ _AI_BODY_FIELDS: Dict[str, List[str]] = {
     "smart_recap": ["smart_recap_bundle"],
     "content_repurposing": ["content_repurpose_bundle"],
     "faq": ["faq_bundle"],
+    "decisions": ["decisions_bundle"],
 }
 
 
@@ -2171,7 +2236,7 @@ def _start_ai_job(
     # English-first enforcement: French (and any non-English variant) must be
     # a translation of the existing English version so outputs stay consistent.
     # Reject if English hasn't been generated yet.
-    if kind in ("overall_analysis", "deep_analysis", "content_repurposing", "faq") and str(language or "").strip() not in ("", "English"):
+    if kind in ("overall_analysis", "deep_analysis", "content_repurposing", "faq", "decisions") and str(language or "").strip() not in ("", "English"):
         if not _extract_cached_ai_body(cached, kind, language="English"):
             raise RuntimeError("Generate the English version first before translating to another language.")
 
@@ -2436,6 +2501,14 @@ def start_faq(session_id: str, output_language: str, *, organization_id: OrgScop
 
 def get_faq_job_data(session_id: str, job_id: str, language: str, *, organization_id: OrgScope, outputs_only: bool = False) -> Dict[str, Any]:
     return _get_ai_job_data("faq", session_id, job_id, language=language, organization_id=organization_id, outputs_only=outputs_only)
+
+
+def start_decisions(session_id: str, output_language: str, *, organization_id: OrgScope) -> Dict[str, Any]:
+    return _start_ai_job("decisions", session_id, language=output_language, organization_id=organization_id)
+
+
+def get_decisions_job_data(session_id: str, job_id: str, language: str, *, organization_id: OrgScope, outputs_only: bool = False) -> Dict[str, Any]:
+    return _get_ai_job_data("decisions", session_id, job_id, language=language, organization_id=organization_id, outputs_only=outputs_only)
 
 
 def start_deep_analysis(session_id: str, output_language: str, *, organization_id: OrgScope) -> Dict[str, Any]:

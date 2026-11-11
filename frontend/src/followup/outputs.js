@@ -29,6 +29,15 @@ export const OUTPUTS = [
     pdf: { kind: "overall" },
   },
   {
+    key: "decisions",
+    group: "Analysis",
+    label: "Decisions and commitments",
+    about: "What was decided on stage and who promised to do what, with the words said and when, for the team's notes.",
+    flow: "decisions",
+    bundle: "decisionsBundle",
+    by: "language",
+  },
+  {
     key: "recap-professional",
     group: "Analysis",
     label: "Smart Recap",
@@ -123,6 +132,7 @@ const BY_KEY = new Map(OUTPUTS.map((output) => [output.key, output]));
 const JOB_KIND = {
   analysis: "overall_analysis",
   faq: "faq",
+  decisions: "decisions",
   smartRecap: "smart_recap",
   contentRepurposing: "content_repurposing",
 };

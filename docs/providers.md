@@ -36,6 +36,7 @@ The OpenAI text models (gpt-4o-mini, gpt-4o, gpt-4.1-mini, gpt-4.1, gpt-5.4-mini
 |---|---|---|---|---|
 | `overall_analysis` | v1: the Session analysis, over the session's brief | `claude-sonnet-5-5` | medium | 6,000 |
 | `faq` | v1: the FAQ, over the question desk | `claude-haiku-5-5` | low | 4,000 |
+| `decisions` | v1: decisions and commitments, over the session's dossier | `claude-sonnet-5-5` | medium | 8,000 |
 | `deep_analysis` | Deep Analysis | `claude-haiku-4-5-20251001` | medium | 5,000 |
 | `smart_recap` | Smart Recap, every tone | `claude-sonnet-4-6` | low | 900 |
 | `content_repurposing` | Content Repurposing | `claude-haiku-4-5-20251001` | medium | 12,000 |

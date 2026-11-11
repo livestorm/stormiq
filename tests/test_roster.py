@@ -1043,6 +1043,8 @@ RECORD_ENTRY_POINTS = {
         "_write_session_analysis",
         # The Follow-up's FAQ: its brief (`record.faq_brief`) from the question desk.
         "_write_faq",
+        # The Follow-up's decisions and commitments: the understanding's dossier (`record.understanding.build_dossier`), checked by `record.decisions`.
+        "_write_decisions",
         # Before you share: the figure checks (`record.figure_checks`).
         "_figure_check_list", "get_session_figure_checks", "save_session_figure_check",
         # The analysis's second step: the dossier, its checks and the result's version.

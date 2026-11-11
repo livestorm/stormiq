@@ -129,6 +129,7 @@ function make() {
   const run = {
     analysis: () => store.runAnalysis(lang),
     faq: () => store.runFaq(lang),
+    decisions: () => store.runDecisions(lang),
     smartRecap: () => store.runSmartRecap(tone),
     contentRepurposing: () => store.runContentRepurposing(lang),
   }[flow];
@@ -138,6 +139,7 @@ function make() {
 const makeLabel = computed(() => {
   if (output.value.corner) return "Write a surprise take";
   if (output.value.key === "faq") return `Write the FAQ${language.value === "French" ? " in French" : ""}`;
+  if (output.value.key === "decisions") return `List the decisions${language.value === "French" ? " in French" : ""}`;
   if (output.value.flow === "contentRepurposing") return `Write the repurposed content${language.value === "French" ? " in French" : ""}`;
   return `Write the ${output.value.label.toLowerCase()}${output.value.by === "language" && language.value === "French" ? " in French" : ""}`;
 });
@@ -368,6 +370,10 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
             Not written yet. It runs only when you ask, with AI, from the question desk: every question with its answer
             (written, from the host, or from the talk), and the ones still open. Who asked is never sent. Run "Analyse
             session" on the Report first.
+          </p>
+          <p v-else-if="output.key === 'decisions'" class="f-text">
+            Not listed yet. It runs only when you ask, with AI, from the transcript: what was decided on stage and who
+            promised what, each with the words said and when. Only what the transcript says word for word is kept.
           </p>
           <p v-else class="f-text">Not written yet. It runs only when you ask, with AI, from the transcript and the chat.</p>
           <p v-if="output.flow === 'contentRepurposing'" class="f-muted">
