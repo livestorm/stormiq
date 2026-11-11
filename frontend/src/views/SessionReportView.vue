@@ -18,6 +18,8 @@ import UiButton from "../components/ui/UiButton.vue";
 import { analysisSummary, elapsedLabel, formatLength, formatSessionStart } from "../report/format";
 import { createSessionReport } from "../report/useSessionReport";
 import { createChapters } from "../followup/useChapters";
+import { createFindings } from "../report/useFindings";
+import FindingsSection from "../components/report/FindingsSection.vue";
 
 // The Report: a session's page. It holds the session header, the analysis
 // the user starts, the tabs, and the Report's sections.
@@ -32,18 +34,22 @@ const { state } = report;
 // The chapters (`GET /record/chapters`): the cover chart draws them, and
 // their state says whether the session itself has been read.
 const chapters = createChapters();
+// The findings (`GET /record/findings`): "What stood out".
+const findings = createFindings();
 
 watch(
   () => props.sessionId,
   (id) => {
     report.open(id);
     chapters.open(id);
+    findings.open(id);
   },
   { immediate: true },
 );
 onBeforeUnmount(() => {
   report.close();
   chapters.close();
+  findings.close();
 });
 
 // Printing: a closed card prints only its header, so every closed section
@@ -110,7 +116,10 @@ const summary = computed(() =>
 watch(
   () => summary.value.busy,
   (busy, wasBusy) => {
-    if (wasBusy && !busy) chapters.reload();
+    if (wasBusy && !busy) {
+      chapters.reload();
+      findings.reload();
+    }
   },
 );
 
@@ -240,6 +249,8 @@ const short = computed(() => inShort(record.value?.measures || {}));
       </Card>
 
       <VitalsRow :measures="record.measures || {}" />
+
+      <FindingsSection :body="findings.state.body" />
 
       <Card>
         <PulseChart :pulse="record.pulse" :alignment="clock.alignment || null" />

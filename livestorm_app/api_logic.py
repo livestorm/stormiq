@@ -627,6 +627,23 @@ def get_session_chapters(session_id: str, *, organization_id: OrgScope) -> Dict[
     return {"sessionId": session_id, "updatedAt": row.get("updated_at"), **_sanitize_json_value(body)}
 
 
+def get_session_findings(session_id: str, *, organization_id: OrgScope) -> Dict[str, Any]:
+    """The Report's findings: `{sessionId, updatedAt, state, version, found,
+    nothing, notChecked}` (`record.findings.findings`), from the session's
+    payloads, its chat labels and the stored understanding (`state`: its
+    reading's, `ready`, `stale` or `none`). No model call; read on demand
+    with the caller's scope and not cached."""
+    inputs, row = _transcript_inputs(session_id, organization_id=organization_id)
+    from livestorm_app.record.findings import findings
+    from livestorm_app.record.understanding import chapter_list, current_reading
+
+    stored = fetch_understanding(session_id, organization_id)
+    result, state, _ = current_reading(stored, inputs)
+    chapters, _ = chapter_list(stored, inputs)
+    body = {"state": state, **findings(inputs, chapters, result)}
+    return {"sessionId": session_id, "updatedAt": row.get("updated_at"), **_sanitize_json_value(body)}
+
+
 def get_session_transcript_view(session_id: str, *, organization_id: OrgScope) -> Dict[str, Any]:
     """The Transcript tab's room view: `{sessionId, updatedAt, version,
     clock, speakers, speech, room, chapters}` (`record.transcript_view.transcript_view`).

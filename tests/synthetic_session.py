@@ -65,6 +65,7 @@ TRANSCRIPT_FIXTURE = REPO_ROOT / "frontend" / "tests" / "fixtures" / "transcript
 QUESTIONS_FIXTURE = REPO_ROOT / "frontend" / "tests" / "fixtures" / "questions-v1.json"
 CHAPTERS_FIXTURE = REPO_ROOT / "frontend" / "tests" / "fixtures" / "chapters-v1.json"
 FIGURES_FIXTURE = REPO_ROOT / "frontend" / "tests" / "fixtures" / "figures-v1.json"
+FINDINGS_FIXTURE = REPO_ROOT / "frontend" / "tests" / "fixtures" / "findings-v1.json"
 
 # How the synthetic chat is labelled for the question desk (`chat_labels`):
 # every message "social", except these (class, question kind).
@@ -741,6 +742,15 @@ def chapters_response(row: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         return _get_json(row, f"/api/sessions/{row['session_id']}/record/chapters")
 
 
+def findings_response(row: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """What `GET /api/sessions/{id}/record/findings` sends for `row`
+    (default: `cached_row()`), its understanding stored, through the real
+    route."""
+    row = cached_row() if row is None else row
+    with with_understanding(row):
+        return _get_json(row, f"/api/sessions/{row['session_id']}/record/findings")
+
+
 def chat_labels(row: Dict[str, Any]) -> Dict[str, Any]:
     """Stored labels for `row`'s chat, as `db.fetch_chat_labels` returns
     them, made from `CHAT_LABELS` (no model call)."""
@@ -849,6 +859,8 @@ def write_record_fixture() -> None:
     print(f"wrote {CHAPTERS_FIXTURE.relative_to(REPO_ROOT)}")
     FIGURES_FIXTURE.write_text(dump(figures_response()), encoding="utf-8")
     print(f"wrote {FIGURES_FIXTURE.relative_to(REPO_ROOT)}")
+    FINDINGS_FIXTURE.write_text(dump(findings_response()), encoding="utf-8")
+    print(f"wrote {FINDINGS_FIXTURE.relative_to(REPO_ROOT)}")
 
 
 def write_classic_snapshot() -> None:

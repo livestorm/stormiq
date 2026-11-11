@@ -23,6 +23,7 @@ from livestorm_app.api_logic import (
     get_session_figure_checks,
     save_session_figure_check,
     get_session_chapters,
+    get_session_findings,
     get_session_chat_messages,
     get_session_open_questions_csv,
     get_session_question_desk,
@@ -184,6 +185,22 @@ def update_session_figure_check(
         logger.exception("Figure check save failed for session_id=%s", session_id)
         raise HTTPException(
             status_code=500, detail={"resource": FIGURES_RESOURCE, "message": "The figure check could not be saved."}
+        ) from exc
+
+
+@router.get("/api/sessions/{session_id}/record/findings")
+def session_findings(session_id: SessionId, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
+    """The Report's findings: what stood out, what was checked and found
+    nothing, what couldn't be checked (`api_logic.get_session_findings`).
+    No model call."""
+    try:
+        return get_session_findings(session_id, organization_id=caller.read_scope)
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail={"resource": "Session findings", "message": str(exc)}) from exc
+    except Exception as exc:
+        logger.exception("Session findings failed for session_id=%s", session_id)
+        raise HTTPException(
+            status_code=500, detail={"resource": "Session findings", "message": "The findings could not be read."}
         ) from exc
 
 
