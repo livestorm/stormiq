@@ -130,6 +130,7 @@ function make() {
     analysis: () => store.runAnalysis(lang),
     faq: () => store.runFaq(lang),
     decisions: () => store.runDecisions(lang),
+    teamDigest: () => store.runTeamDigest(lang),
     smartRecap: () => store.runSmartRecap(tone),
     contentRepurposing: () => store.runContentRepurposing(lang),
   }[flow];
@@ -140,6 +141,7 @@ const makeLabel = computed(() => {
   if (output.value.corner) return "Write a surprise take";
   if (output.value.key === "faq") return `Write the FAQ${language.value === "French" ? " in French" : ""}`;
   if (output.value.key === "decisions") return `List the decisions${language.value === "French" ? " in French" : ""}`;
+  if (output.value.key === "team-digest") return `Write the team digest${language.value === "French" ? " in French" : ""}`;
   if (output.value.flow === "contentRepurposing") return `Write the repurposed content${language.value === "French" ? " in French" : ""}`;
   return `Write the ${output.value.label.toLowerCase()}${output.value.by === "language" && language.value === "French" ? " in French" : ""}`;
 });
@@ -374,6 +376,11 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
           <p v-else-if="output.key === 'decisions'" class="f-text">
             Not listed yet. It runs only when you ask, with AI, from the transcript: what was decided on stage and who
             promised what, each with the words said and when. Only what the transcript says word for word is kept.
+          </p>
+          <p v-else-if="output.key === 'team-digest'" class="f-text">
+            Not written yet. It runs only when you ask, with AI: about 100 words for the team's channel, marked internal,
+            from the Report's numbers, the key moments, the open questions and the decisions if you listed them. A digest
+            with a number or a time StormIQ didn't measure is never saved. Nobody is named.
           </p>
           <p v-else class="f-text">Not written yet. It runs only when you ask, with AI, from the transcript and the chat.</p>
           <p v-if="output.flow === 'contentRepurposing'" class="f-muted">

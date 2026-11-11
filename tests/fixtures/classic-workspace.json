@@ -3839,7 +3839,8 @@
         "professional": "# Recap\n\nA synthetic recap."
       },
       "faqBundle": {},
-      "decisionsBundle": {}
+      "decisionsBundle": {},
+      "teamDigestBundle": {}
     }
   }
 }

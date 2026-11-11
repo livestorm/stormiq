@@ -263,6 +263,7 @@ def get_transcript_download(session_id: str, *, organization_id: OrgScope) -> Di
 _OUTPUT_FIELDS = [
     "analysis_bundle", "analysis_md", "deep_analysis_bundle", "deep_analysis_md",
     "content_repurpose_bundle", "smart_recap_bundle", "faq_bundle", "decisions_bundle",
+    "team_digest_bundle",
 ]
 
 
@@ -275,6 +276,7 @@ def _serialize_outputs(cached_session: Dict[str, Any]) -> Dict[str, Any]:
         "smartRecapBundle": _normalize_smart_recap_bundle(cached_session.get("smart_recap_bundle")),
         "faqBundle": _normalize_text_bundle(cached_session.get("faq_bundle"), ""),
         "decisionsBundle": _normalize_text_bundle(cached_session.get("decisions_bundle"), ""),
+        "teamDigestBundle": _normalize_text_bundle(cached_session.get("team_digest_bundle"), ""),
     }
 
 
@@ -1815,6 +1817,98 @@ def _write_decisions(api_key: str, session_id: str, cached: Mapping[str, Any], o
     return decisions_markdown(items, utterances, names, on_clock=any(u.get("t") is not None for u in utterances))
 
 
+def run_team_digest(api_analysis_key: str, session_id: str, output_language: str) -> Dict[str, Any]:
+    """The Follow-up's "Team digest" in one language. English is written
+    from the digest's brief and checked by code (`_write_team_digest`);
+    another language is a translation of the English one, which must exist
+    first. Saved in `team_digest_bundle` under the language."""
+    cached = _require_cached_payloads(session_id, organization_id=ALL_ORGS)
+    bundle = _normalize_text_bundle(cached.get("team_digest_bundle"), "")
+    if str(output_language or "").strip() not in ("", "English") and not bundle.get("English", "").strip():
+        raise RuntimeError("Generate the English team digest first before translating.")
+    source_language, source_markdown = _get_alternate_language_text(bundle, output_language)
+    if source_markdown:
+        markdown = translate_markdown_with_openai(
+            api_key=api_analysis_key,
+            model=get_llm_model("translation"),
+            source_markdown=source_markdown,
+            source_language=OUTPUT_LANGUAGE_MAP.get(source_language, source_language),
+            target_language=OUTPUT_LANGUAGE_MAP.get(output_language, output_language),
+            ctx=_llm_call_context("translation", "team_digest", session_id, output_language, cached),
+        )
+    else:
+        markdown = _write_team_digest(api_analysis_key, session_id, cached, output_language)
+    markdown = _require_generated_text(markdown, "team digest")
+    merge_cached_bundle_entry(session_id, "team_digest_bundle", output_language, markdown, provenance=run_provenance())
+    bundle[output_language] = markdown
+    return {"markdown": markdown, "bundle": bundle}
+
+
+def _write_team_digest(api_key: str, session_id: str, cached: Mapping[str, Any], output_language: str) -> str:
+    """About 100 words for the team's channel, written by one model call
+    (`ai.team_digest`) from the digest's brief (`record.digest_brief`): the
+    record's vitals, key moments, placed chapters, open questions and the
+    listed decisions, never a name. The answer is checked by code before it
+    is returned (`check_digest`: marked internal, every number and time in
+    the brief, short); one that fails raises `LLMInvalidOutput`, so nothing
+    is saved. Doesn't need "Analyse session": without it there are fewer
+    parts to the brief."""
+    from livestorm_app.ai.team_digest import write_team_digest
+    from livestorm_app.llm_client import LLMInvalidOutput
+    from livestorm_app.record.assemble import assemble_record, chapter_marks, clock_meta, session_meta
+    from livestorm_app.record.decisions import decision_lines
+    from livestorm_app.record.digest_brief import DigestRejected, build_digest_brief, check_digest
+    from livestorm_app.record.inputs import load_record_inputs
+    from livestorm_app.record.moments import room_moments
+    from livestorm_app.record.question_desk import question_desk
+    from livestorm_app.record.roster import stored_roster_rows
+    from livestorm_app.record.understanding import chapter_list, current_reading, located_answers
+
+    roster_status = fetch_roster_status(session_id, ALL_ORGS) or {}
+    stored_roster = fetch_session_roster(session_id, ALL_ORGS) if roster_status.get("roster") is not None else None
+    inputs = load_record_inputs(
+        dict(cached),
+        roster_rows=stored_roster_rows(stored_roster) if stored_roster is not None else None,
+        stored_labels=fetch_chat_labels(session_id, ALL_ORGS),
+    )
+    stored = fetch_understanding(session_id, ALL_ORGS)
+    result, _state, _utterances = current_reading(stored, inputs)
+    names = cached.get("transcript_speaker_names") if isinstance(cached.get("transcript_speaker_names"), dict) else {}
+    chapters, _chapters_state = chapter_list(stored, inputs)
+    marks = chapter_marks(inputs, chapters)
+    placed = (
+        [{"title": chapter["title"], "t": mark["t"]} for chapter, mark in zip(chapters, marks["marks"], strict=True)]
+        if marks["placed"] else []
+    )
+    located, located_state = located_answers(stored, inputs)
+    desk = question_desk(inputs, fetch_question_replies(session_id, ALL_ORGS), located, located_state)
+    listed = _normalize_text_bundle(cached.get("decisions_bundle"), "").get("English", "").strip()
+    brief = build_digest_brief(
+        title=session_meta(inputs)["title"],
+        length_s=clock_meta(inputs).get("endS"),
+        internal=bool(inputs.roster.meta.internal),
+        measures=assemble_record(inputs)["record"].get("measures") or {},
+        questions_open=desk["summary"].get("open"),
+        moments=room_moments(inputs, result or {}, names),
+        chapters=placed,
+        # The open questions' words only: never who asked, never the desk's ids.
+        open_questions=[q["text"] for q in desk["questions"] if q["status"] == "open"],
+        decisions=decision_lines(listed) if listed else None,
+        # The speakers' names the host saved never reach the model.
+        hidden_names=[str(name) for name in names.values() if name],
+    )
+    text = write_team_digest(
+        brief,
+        api_key=api_key,
+        ctx=_llm_call_context("team_digest", "team_digest", session_id, output_language, cached),
+    )
+    try:
+        return check_digest(text, brief.text)
+    except DigestRejected as exc:
+        # The check's own words, never the model's.
+        raise LLMInvalidOutput(f"The team digest {exc}. Nothing was saved.") from None
+
+
 class NoQuestionsError(RuntimeError):
     """The session has no audience question to make a FAQ from."""
 
@@ -2155,6 +2249,9 @@ def _extract_cached_ai_body(cached: Dict[str, Any], kind: str, language: str = "
     if kind == "decisions":
         bundle = _normalize_text_bundle(cached.get("decisions_bundle"), "")
         return bundle.get(language) if bundle.get(language) else None
+    if kind == "team_digest":
+        bundle = _normalize_text_bundle(cached.get("team_digest_bundle"), "")
+        return bundle.get(language) if bundle.get(language) else None
     if kind == "smart_recap":
         bundle = _normalize_smart_recap_bundle(cached.get("smart_recap_bundle"))
         return bundle.get(tone) if bundle.get(tone) else None
@@ -2176,6 +2273,7 @@ _ARQ_JOB_FUNCTION_BY_KIND: Dict[str, str] = {
     "content_repurposing": "run_content_repurposing_job",
     "faq": "run_faq_job",
     "decisions": "run_decisions_job",
+    "team_digest": "run_team_digest_job",
 }
 
 # The columns `_extract_cached_ai_body` reads for each kind: job starts and
@@ -2187,6 +2285,7 @@ _AI_BODY_FIELDS: Dict[str, List[str]] = {
     "content_repurposing": ["content_repurpose_bundle"],
     "faq": ["faq_bundle"],
     "decisions": ["decisions_bundle"],
+    "team_digest": ["team_digest_bundle"],
 }
 
 
@@ -2236,7 +2335,7 @@ def _start_ai_job(
     # English-first enforcement: French (and any non-English variant) must be
     # a translation of the existing English version so outputs stay consistent.
     # Reject if English hasn't been generated yet.
-    if kind in ("overall_analysis", "deep_analysis", "content_repurposing", "faq", "decisions") and str(language or "").strip() not in ("", "English"):
+    if kind in ("overall_analysis", "deep_analysis", "content_repurposing", "faq", "decisions", "team_digest") and str(language or "").strip() not in ("", "English"):
         if not _extract_cached_ai_body(cached, kind, language="English"):
             raise RuntimeError("Generate the English version first before translating to another language.")
 
@@ -2509,6 +2608,14 @@ def start_decisions(session_id: str, output_language: str, *, organization_id: O
 
 def get_decisions_job_data(session_id: str, job_id: str, language: str, *, organization_id: OrgScope, outputs_only: bool = False) -> Dict[str, Any]:
     return _get_ai_job_data("decisions", session_id, job_id, language=language, organization_id=organization_id, outputs_only=outputs_only)
+
+
+def start_team_digest(session_id: str, output_language: str, *, organization_id: OrgScope) -> Dict[str, Any]:
+    return _start_ai_job("team_digest", session_id, language=output_language, organization_id=organization_id)
+
+
+def get_team_digest_job_data(session_id: str, job_id: str, language: str, *, organization_id: OrgScope, outputs_only: bool = False) -> Dict[str, Any]:
+    return _get_ai_job_data("team_digest", session_id, job_id, language=language, organization_id=organization_id, outputs_only=outputs_only)
 
 
 def start_deep_analysis(session_id: str, output_language: str, *, organization_id: OrgScope) -> Dict[str, Any]:

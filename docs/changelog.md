@@ -4,6 +4,7 @@ What has shipped, newest first. What's next is in [roadmap.md](roadmap.md).
 
 ## November 2026: "StormIQ for Livestorm"
 
+- **Team digest.** Follow-up has a new item under Analysis: about 100 words to paste in the team's Slack or Teams channel, marked internal on its first line, with the session's key numbers, the busiest moments with their times, the questions still open and the decisions if they were listed. Haiku 5.5 writes it on click; StormIQ checks that every number and time in it is one it measured, or saves nothing. Nobody is named. French is a translation of the English one.
 - **Decisions and commitments.** Follow-up has a new item under Analysis: what was decided on stage and who promised to do what, with the owner and due date when said, who said it, when, and the exact words. It is listed on click by Sonnet 5.5 from the transcript (no need to analyse the session first), and only what the transcript says word for word is kept. French is a translation of the English one.
 - **Earlier versions of AI outputs are kept.** Writing an output again no longer loses the previous one: every saved output is kept with the models and prompts that made it, ready for the Follow-up page to show earlier versions. Nothing changes on screen yet.
 - **Where each question came from, on the question desk.** Every question carries a coloured badge, "Q&A tab" in orange or "Chat" in blue, with an edge of the same colour, and a **Both · Q&A tab · Chat** switch beside the status filters keeps one source, with its counts.

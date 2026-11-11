@@ -38,6 +38,15 @@ export const OUTPUTS = [
     by: "language",
   },
   {
+    key: "team-digest",
+    group: "Analysis",
+    label: "Team digest",
+    about: "About 100 words for the team's Slack or Teams channel, marked internal: the numbers with their times, and the decisions.",
+    flow: "teamDigest",
+    bundle: "teamDigestBundle",
+    by: "language",
+  },
+  {
     key: "recap-professional",
     group: "Analysis",
     label: "Smart Recap",
@@ -133,6 +142,7 @@ const JOB_KIND = {
   analysis: "overall_analysis",
   faq: "faq",
   decisions: "decisions",
+  teamDigest: "team_digest",
   smartRecap: "smart_recap",
   contentRepurposing: "content_repurposing",
 };
