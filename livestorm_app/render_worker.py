@@ -8,8 +8,13 @@ It takes jobs from `queue.RENDER_QUEUE` only, one at a time (`max_jobs=1`):
 under the id `surprise_video:{session_id}`. It reads what the show job saved
 (the timeline, the final shot list, the voice clips and the pictures),
 renders the video (`video/render.py`) and saves it whole
-(`db.save_surprise_video`). It calls no paid provider and needs no key:
-only `DATABASE_URL`, `REDIS_URL` and `ADMIN_EMAILS` (whose organization has
+(`db.save_surprise_video`). The video's intro and outro are the same on
+every show: the first render that needs one makes it and stores it
+(`ensure_bumpers`, `db.save_surprise_bumper`, keyed by
+`render.bumper_key`); every later render reuses it and draws only the
+show's middle. Each stage's time is logged with the session id only. It
+calls no paid provider and needs no key: only `DATABASE_URL`, `REDIS_URL`
+and `ADMIN_EMAILS` (whose organization has
 Surprise me by default, `db.fetch_surprise_enabled`). The web process and the main worker
 never import it, nor the renderer.
 
@@ -20,7 +25,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Dict
+import time
+from typing import Any, Dict, Mapping
 
 from arq import func
 
@@ -29,12 +35,14 @@ from livestorm_app.db import (
     ALL_ORGS,
     ensure_database_schema,
     fetch_session_fields,
+    fetch_surprise_bumper,
     fetch_surprise_enabled,
     fetch_surprise_images,
     fetch_surprise_shotlist,
     fetch_surprise_timeline,
     fetch_surprise_video_meta,
     fetch_surprise_voice_clip,
+    save_surprise_bumper,
     save_surprise_video,
 )
 from livestorm_app.progress import clear_progress_sync, publish_progress_sync
@@ -44,9 +52,9 @@ from livestorm_app.video.keys import video_key
 logger = logging.getLogger(__name__)
 
 VIDEO_KIND = "surprise_video"
-# A two-minute show takes a few minutes on one CPU; the picture step alone
-# stops at `render.PICTURE_TIMEOUT_S`.
-RENDER_JOB_TIMEOUT_SECONDS = 20 * 60
+# Above the picture step's ceiling (`render.PICTURE_TIMEOUT_MAX_S`), with
+# room for the bumpers on a first render, the join and the mix.
+RENDER_JOB_TIMEOUT_SECONDS = 45 * 60
 
 
 class VideoFailed(RuntimeError):
@@ -86,6 +94,25 @@ def _load(session_id: str) -> Dict[str, Any]:
     }
 
 
+def ensure_bumpers(timeline: Mapping[str, Any], job: str = "") -> Dict[str, bytes]:
+    """The intro's and the outro's MP4 for this timeline: read from
+    `surprise_bumpers`, or rendered and saved whole when missing (one at a
+    time: the worker runs one job at a time)."""
+    from livestorm_app.video import render
+    from livestorm_app.video.film import bumper_spans
+
+    made: Dict[str, bytes] = {}
+    for kind, seconds in bumper_spans(timeline):
+        key = render.bumper_key(kind, seconds)
+        data = fetch_surprise_bumper(key)
+        if data is None:
+            logger.info("[render_surprise_video] %s %s bumper missing: rendering it once", job, kind)
+            data = render.render_bumper(kind, seconds, job=job)
+            save_surprise_bumper(key, kind, mp4=data, duration_s=seconds)
+        made[kind] = data
+    return made
+
+
 def render_and_save(session_id: str, publish=lambda stage: None) -> Dict[str, Any]:
     """Render the session's video and save it, unless the saved one was made
     from the same show (`video_key`). Raises `VideoFailed` or the renderer's
@@ -97,10 +124,15 @@ def render_and_save(session_id: str, publish=lambda stage: None) -> Dict[str, An
     if meta and meta["video_key"] == parts["video_key"]:
         return {"status": "kept", "size": meta["size_bytes"], "duration_s": meta["duration_s"]}
     publish("rendering")
+    job = f"session_id={session_id}"
+    started = time.monotonic()
+    bumpers = ensure_bumpers(parts["timeline"], job)
+    logger.info("[render_surprise_video] %s bumpers ready in %.1fs", job, time.monotonic() - started)
     made = render_video(
         parts["timeline"], parts["shots"], pulse=parts["pulse"], clips=parts["clips"], images=parts["images"],
-        on_stage=publish,
+        bumpers=bumpers, on_stage=publish, job=job,
     )
+    logger.info("[render_surprise_video] %s rendered in %.1fs", job, time.monotonic() - started)
     save_surprise_video(session_id, parts["video_key"], mp4=made["mp4"], duration_s=made["duration_s"])
     return {"status": "made", "size": made["size"], "duration_s": made["duration_s"]}
 

@@ -361,6 +361,21 @@ surprise_videos (
 
 Surprise me's video ([jobs.md](jobs.md#surprise-me-show)). The show job writes the timeline, the shot list (whole, at stage `directed` before the pictures, then `final`) and each picture whole as it is made (`save_surprise_timeline`, `save_surprise_shotlist`, `save_surprise_image`, which raise); a new script or voice replaces the timeline and the shot list, and the pictures the final shot list no longer uses are dropped (`prune_surprise_images`). Only the render worker writes a video, whole, replacing the older one (`save_surprise_video`, which raises); about 8 MB for a two-minute show. None has an org column: the reads (`fetch_surprise_timeline`, `fetch_surprise_shotlist` by their key, or the session's current one for the render worker; `fetch_surprise_images` by key; `fetch_surprise_video_meta`, never the bytes; `fetch_surprise_video_range`, a byte range read with `substring` for the MP4 route) join `session_cache` on its org, and a blank scope reads nothing. A shot's `chat` is one of the room's redacted lines (id, kind, text), never who wrote it; `spoken` holds the heard words with their times, and stays on the server. All four are deleted with their session and emptied by the AI outputs' reset. The in-browser player's `surprise_storyboards` table is dropped (`DROP TABLE IF EXISTS`, in `_ensure_surprise_video_schema`): the director replaced it.
 
+## `surprise_bumpers`
+
+```sql
+surprise_bumpers (
+  bumper_key  TEXT PRIMARY KEY,    -- sha256 of BUMPER_VERSION, kind, length, frame, encode, the CLI's version, the page's bytes and the files it draws (video/render.bumper_key)
+  kind        TEXT NOT NULL,       -- intro | outro
+  mp4         BYTEA NOT NULL,      -- STORAGE EXTERNAL; the silent picture, encoded as every video's middle
+  duration_s  DOUBLE PRECISION NOT NULL,
+  size_bytes  INTEGER NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+```
+
+The intro and outro of Surprise me's video ([jobs.md](jobs.md#the-render-worker)), the same on every show: a few hundred kB each. The render worker reads one by its key (`fetch_surprise_bumper`) and, when it is missing, renders it once and saves it whole (`save_surprise_bumper`, which raises; a second save of the same key keeps the first). It holds nothing from a session or an organization, so it has no scope and no foreign key, and it is not an AI output: the AI outputs' reset keeps it. A new design, encode or renderer makes a new key; older rows stay unused (one per change, small), and deleting them is always safe: the next render makes them again.
+
 ## `surprise_scripts`
 
 ```sql
