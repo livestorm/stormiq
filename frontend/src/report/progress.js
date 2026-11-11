@@ -45,21 +45,30 @@ export function transcriptSteps(progress) {
   return stepsAt(TRANSCRIPT_STEPS, progress?.stage || "queued", progress?.message || "");
 }
 
-// Surprise me's show, as the worker reports it (SURPRISE_SHOW_STAGE_FLOORS):
-// one job, one loader, from the take to the voice.
+// Surprise me's show, as the workers report it: the show job
+// (SURPRISE_SHOW_STAGE_FLOORS), then the render worker
+// (SURPRISE_VIDEO_STAGE_FLOORS). One loader, from the take to the MP4.
 export const SHOW_STEPS = [
   { stage: "queued", label: "Waiting for a free worker" },
   { stage: "take", label: "Writing the take" },
   { stage: "script", label: "Writing the script" },
-  { stage: "storyboard", label: "Planning the scenes" },
   { stage: "voice", label: "Recording the voice" },
+  { stage: "timing", label: "Timing" },
+  { stage: "directing", label: "Directing the shots" },
+  { stage: "pictures", label: "Drawing the pictures" },
+  { stage: "rendering", label: "Rendering the video" },
 ];
 
-/** The show job's steps: `progress` is the job's `{stage, done, total}`
- * (lines recorded so far, on the voice step). */
+/** The show's steps: `progress` is the job's `{stage, done, total}` (lines
+ * recorded so far, on the voice step). The render's last stage, `mixing`,
+ * stays on "Rendering the video". */
 export function showSteps(progress) {
+  const stage = progress?.stage === "mixing" ? "rendering" : progress?.stage || "queued";
   const total = Number(progress?.total);
   const done = Number(progress?.done) || 0;
-  const detail = progress?.stage === "voice" && total > 0 ? `${done} of ${total} lines` : "";
-  return stepsAt(SHOW_STEPS, progress?.stage || "queued", detail);
+  let detail = "";
+  if (stage === "voice" && total > 0) detail = `${done} of ${total} lines`;
+  else if (progress?.stage === "mixing") detail = "Mixing the sound";
+  else if (stage === "rendering") detail = "A few minutes: every frame is drawn.";
+  return stepsAt(SHOW_STEPS, stage, detail);
 }

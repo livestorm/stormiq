@@ -60,6 +60,13 @@ def _seed():
         connection.execute(
             "INSERT INTO session_faq (session_id, entries) VALUES ('sess-r', %s::jsonb)", (json.dumps([]),)
         )
+        # Surprise me's video: its timeline, shot list, a picture and the MP4.
+        connection.execute("INSERT INTO surprise_timelines (session_id, timeline_key, timeline) VALUES ('sess-r', 't', '{}')")
+        connection.execute("INSERT INTO surprise_shotlists (session_id, shots_key, shotlist) VALUES ('sess-r', 's', '{}')")
+        connection.execute("INSERT INTO surprise_show_images (session_id, image_key, mime, image) VALUES ('sess-r', 'i', 'image/jpeg', 'x')")
+        connection.execute(
+            "INSERT INTO surprise_videos (session_id, video_key, mp4, duration_s, size_bytes) VALUES ('sess-r', 'v', 'mp4', 1, 3)"
+        )
         connection.execute(
             """
             INSERT INTO session_question_replies (session_id, source, livestorm_id, evidence_id, answered, reply, located)
@@ -90,7 +97,7 @@ def test_a_dry_run_counts_and_changes_nothing(test_database):
     lines = []
     counts = _script().run(apply=False, out=lines.append)
     assert all(counts[f"session_cache.{column}"] == 1 for column in db.AI_OUTPUT_COLUMNS)
-    seeded = [table for table in db.AI_OUTPUT_TABLES if table not in ("surprise_storyboards", "surprise_scripts", "surprise_voice_clips")]
+    seeded = [table for table in db.AI_OUTPUT_TABLES if table not in ("surprise_scripts", "surprise_voice_clips")]
     assert all(counts[table] == 1 for table in seeded)
     assert counts["session_question_replies.located"] == 1
     assert "session_cache.cover_image" not in counts, "covers only when asked"

@@ -30,6 +30,7 @@ Or run everything in Docker with `make stack` (app on http://localhost:10000). L
 |---|---|
 | **web** | FastAPI API plus the built Vue SPA ([Dockerfile](Dockerfile)) |
 | **worker** | arq worker for transcription (Gladia) and AI generation ([docker/Dockerfile.worker](docker/Dockerfile.worker)) |
+| **render** | arq render worker for Surprise me's MP4: HyperFrames (headless Chrome) and ffmpeg ([docker/Dockerfile.render](docker/Dockerfile.render)) |
 | **redis** | job queue and progress |
 | **Postgres** | session cache, OAuth connections, jobs |
 

@@ -86,7 +86,7 @@ export const OUTPUTS = [
     key: "recap-surprise",
     group: "Smart Recap",
     label: "Surprise me",
-    about: "The session as a short show: an unexpected take, performed by an AI voice over the session's own numbers and chat. Just for fun.",
+    about: "The session as a short video: an unexpected take, performed by an AI voice over motion graphics of the session's own numbers and chat. Just for fun.",
     flow: "smartRecap",
     bundle: "smartRecapBundle",
     by: "tone",

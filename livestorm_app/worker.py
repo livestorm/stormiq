@@ -11,7 +11,8 @@ FastAPI app (via `livestorm_app.queue.enqueue_unique_job_sync`):
     - run_deep_analysis_job(session_id, output_language)
     - run_smart_recap_job(session_id, tone)
     - run_content_repurposing_job(session_id, output_language)
-    - run_surprise_show_job(session_id) (Surprise me's show, on Make the show)
+    - run_surprise_show_job(session_id) (Surprise me's show, on Make the show;
+      it queues the video on the render worker's own queue, `render_worker.py`)
     - run_people_sync(sync_id, session_id)
 
 plus a no-op `ping` and the stuck-job sweeper cron.
@@ -202,10 +203,12 @@ LLM_JOB_TIMEOUT_SECONDS = 60 * 15  # up to two LLM calls (truncation or complete
 # call, streamed with its own 10-minute deadline (`JobSpec.call_deadline_s`).
 SESSION_ANALYSIS_TIMEOUT_SECONDS = 60 * 25
 # Surprise me's show: the take (up to two Claude calls), the script (up to
-# two), the storyboard (one), then one speech call per line (a few dozen at
-# most, four at a time, each with a 60-second read timeout; again with the
-# backup voice when ElevenLabs refuses the account).
-SURPRISE_SHOW_JOB_TIMEOUT_SECONDS = 60 * 25
+# two), then one speech call per line (a few dozen at most, four at a time,
+# each with a 60-second read timeout; again with the backup voice when
+# ElevenLabs refuses the account), one whisper-1 call per clip (four at a
+# time, 60 s), the director (one Claude call) and up to three pictures at
+# once (240 s each). The video is rendered by the render worker.
+SURPRISE_SHOW_JOB_TIMEOUT_SECONDS = 60 * 30
 
 # Transcriptions download the recording and run ffmpeg locally; more than a
 # couple at once can exhaust the starter instance's memory. Extra jobs wait
@@ -685,9 +688,11 @@ async def run_content_repurposing_job(
 # ── Surprise me's show job ─────────────────────────────────────────────────
 #
 # One click, one job (`api_logic.run_surprise_show`): the take when there is
-# none (Claude, the Smart Recap's surprise tone), the performance script and
-# the storyboard (Claude), then one clip per line (ElevenLabs, or OpenAI as
-# the backup voice). Queued only when a user clicks "Make the show"
+# none (Claude, the Smart Recap's surprise tone), the performance script
+# (Claude), one clip per line (ElevenLabs, or OpenAI as the backup voice),
+# the timing (OpenAI whisper-1), the shot list (Claude) and up to three
+# pictures (OpenAI Images); then it queues the render on the render worker's
+# queue (`render_worker.py`). Queued only when a user clicks "Make the show"
 # (`api_logic.start_surprise_show`), with the session id as its only
 # argument; every key comes from the worker's own environment, and none is
 # ever logged or put in an error.
@@ -720,9 +725,11 @@ async def run_surprise_show_job(ctx: Dict[str, Any], session_id: str) -> Dict[st
         keys = _show_keys()
         result = await asyncio.to_thread(_collecting, functools.partial(run_surprise_show, publish=publish), keys, session_id)
         logger.info(
-            "[run_surprise_show_job] session_id=%s done take=%s script=%s story=%s lines=%s made=%s voice=%s fell_back=%s",
-            session_id, result.get("take"), result.get("script"), result.get("story"), result.get("lines"),
-            result.get("made"), result.get("voice"), result.get("fellBack"),
+            "[run_surprise_show_job] session_id=%s done take=%s script=%s lines=%s made=%s voice=%s fell_back=%s "
+            "timing=%s timed=%s director=%s pictures=%s video=%s",
+            session_id, result.get("take"), result.get("script"), result.get("lines"), result.get("made"),
+            result.get("voice"), result.get("fellBack"), result.get("timing"), result.get("timed"),
+            result.get("director"), result.get("pictures"), result.get("video"),
         )
         return result
     except Exception:

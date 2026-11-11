@@ -203,7 +203,7 @@ def room_lines(
 
 def room_line_text(row: Mapping[str, Any], *, with_id: bool = False) -> str:
     """One "From the room" line: "- 12:34 chat: "…"", a question with its
-    upvotes when it has some; `with_id` puts its id first (the storyboard's)."""
+    upvotes when it has some; `with_id` puts its id first."""
     label = "question" if row.get("kind") == "question" else "chat"
     votes = row.get("votes")
     if label == "question" and isinstance(votes, int) and votes > 0:

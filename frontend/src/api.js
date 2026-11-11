@@ -264,17 +264,24 @@ export const api = {
     const params = new URLSearchParams({ language, item });
     return `${sessionPath(sessionId, "/content-repurposing-pdf")}?${params.toString()}`;
   },
-  // Surprise me's show: the take, its beats, the script's lines by clip
-  // (never their words) and the voice. POST queues the one paid job that
-  // makes what is missing (no body: everything comes from the saved session).
+  // Surprise me's show: the take, its beats, the voice and the video's state
+  // (never the script's words). POST queues the one paid job that makes what
+  // is missing, then the video (no body: everything comes from the saved session).
   getSurpriseShow(sessionId, { signal } = {}) {
     return request(sessionPath(sessionId, "/surprise-show"), { signal });
   },
   startSurpriseShow(sessionId, { signal } = {}) {
     return request(sessionPath(sessionId, "/surprise-show"), { method: "POST", signal });
   },
-  getSurpriseShowClipUrl(sessionId, clip) {
-    return `${sessionPath(sessionId, "/surprise-show/clip")}?key=${encodeURIComponent(String(clip ?? ""))}`;
+  // The show's MP4 (the browser streams it with Range requests). `version`
+  // (from the show's `video.version`) makes a new video a new URL;
+  // `download` names the file for saving.
+  getSurpriseVideoUrl(sessionId, version = "", { download = false } = {}) {
+    const params = new URLSearchParams();
+    if (version) params.set("v", String(version));
+    if (download) params.set("download", "1");
+    const query = params.toString();
+    return `${sessionPath(sessionId, "/surprise-show/video.mp4")}${query ? `?${query}` : ""}`;
   },
   // The open questions with who asked them (name, company; no email), as CSV.
   // The question desk's CSV: `scope` "open" (the questions still open),

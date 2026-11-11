@@ -118,11 +118,12 @@ JOB_SPECS: Tuple[JobSpec, ...] = (
     # The Follow-up's "No-show follow-up" (`ai/public_formats.py`): the email
     # the host sends people who registered and didn't come, from its brief.
     JobSpec("no_show_followup", "No-show follow-up", "v1", "claude-sonnet-5-5", "medium", 6_000, layout="dossier"),
-    # Surprise me's storyboard (`ai/surprise_story.py`): a headline, a number or a
-    # room's line per beat of the saved take, on the Play click. Haiku: a short
-    # pick from given words, checked word for word in code, with the player's
-    # own scenes as the fallback, while the user waits for the voice.
-    JobSpec("surprise_storyboard", "Surprise me storyboard", "v1", "claude-haiku-5-5", "low", 3_000, layout="instructions"),
+    # Surprise me's director (`ai/surprise_director.py`): the video's shot list,
+    # one shot per clause of the timed script, in the show job. Sonnet: picking
+    # the visual gag and the punchline's beat is the job. Checked in code (words
+    # copied from the clause, figures, chat lines and minutes from our data, no
+    # name in an image prompt); shots from rules are the fallback.
+    JobSpec("surprise_director", "Surprise me director", "v1", "claude-sonnet-5-5", "medium", 12_000, layout="instructions"),
     # Surprise me's performance script (`ai/surprise_performance.py`): the saved
     # take rewritten for the ear, line by line with a tone, in the show job.
     # Sonnet: comic timing is the whole point. Checked in code (every figure

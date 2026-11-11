@@ -1,0 +1,69 @@
+/* Surprise me's video (livestorm_app/video/film.py). Drawn in a 1920x1080 frame (#film), scaled to the
+   1280x720 picture HyperFrames renders (#root). Fonts are files in the project: the render needs no network. */
+@font-face { font-family: "Sora"; src: url("assets/fonts/Sora.woff2") format("woff2"); font-weight: 100 800; }
+@font-face { font-family: "League Gothic"; src: url("assets/fonts/LeagueGothic.ttf") format("truetype"); font-weight: 400; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 1280px; height: 720px; overflow: hidden; background: #0A1430; }
+#root { position: relative; width: 1280px; height: 720px; overflow: hidden; }
+#film { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; overflow: hidden; transform: scale(0.6666667); transform-origin: 0 0; font-family: "Sora", "Noto Color Emoji", sans-serif; color: #F4F7FF; }
+#bg { position: absolute; inset: 0; background: radial-gradient(120% 90% at 50% 40%, #13265C 0%, #0A1430 60%, #060C20 100%); overflow: hidden; }
+#glow { position: absolute; left: 260px; top: -240px; width: 1400px; height: 1400px; border-radius: 50%;
+  background: conic-gradient(from 0deg, rgba(46,230,201,0.16), rgba(59,123,255,0.20), rgba(11,66,195,0.05), rgba(46,230,201,0.16)); filter: blur(120px); }
+#grid { position: absolute; inset: 0; background-image: linear-gradient(rgba(143,163,209,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(143,163,209,0.06) 1px, transparent 1px); background-size: 96px 96px; }
+#camera { position: absolute; inset: 0; }
+.shot, #intro, #endcard { position: absolute; inset: 0; }
+.stage { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; }
+.flood { position: absolute; inset: 0; background: #2EE6C9; }
+.words { max-width: 1680px; text-align: center; line-height: 1.04; letter-spacing: -0.035em; font-weight: 800; }
+.w { display: inline-block; }
+.stamp { border: 14px solid; border-radius: 28px; padding: 18px 54px; font-weight: 800; letter-spacing: -0.02em; text-transform: uppercase; max-width: 1600px; text-align: center; line-height: 1.05; }
+.emo { position: absolute; width: 220px; height: 220px; font-size: 190px; line-height: 220px; text-align: center; font-family: "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji", sans-serif; }
+.numwrap { position: relative; display: flex; align-items: center; justify-content: center; }
+.num { font-size: 300px; font-weight: 800; letter-spacing: -0.05em; color: #2EE6C9; font-variant-numeric: tabular-nums; line-height: 1; text-shadow: 0 0 60px rgba(46,230,201,0.35); }
+.num.ringnum { position: absolute; font-size: 128px; color: #F4F7FF; }
+.ring { width: 560px; height: 560px; transform: rotate(-90deg); }
+.ring-bg { fill: none; stroke: rgba(143,163,209,0.18); stroke-width: 34; }
+.ring-fg { fill: none; stroke: #2EE6C9; stroke-width: 34; stroke-linecap: round; stroke-dasharray: 1 1; }
+.cap { margin-top: 30px; }
+.cap.top { position: absolute; top: 90px; left: 0; right: 0; display: flex; justify-content: center; }
+.cap.low { position: absolute; bottom: 90px; left: 0; right: 0; display: flex; justify-content: center; }
+.pulsewrap { position: absolute; inset: 0; }
+.pulse { width: 1920px; height: 1080px; }
+.axis { stroke: rgba(143,163,209,0.35); stroke-width: 3; }
+.pline { fill: none; stroke: #2EE6C9; stroke-width: 9; stroke-linejoin: round; stroke-linecap: round; stroke-dasharray: 1 1; }
+.mkline { stroke: #F4F7FF; stroke-width: 3; stroke-dasharray: 10 10; }
+.mkdot { fill: #F4F7FF; stroke: #2EE6C9; stroke-width: 8; }
+.src { fill: #8FA3D1; font-size: 30px; font-family: "Sora", sans-serif; }
+.bubble { margin-top: 120px; max-width: 1300px; background: #F4F7FF; color: #0A1430; border-radius: 44px 44px 44px 10px; padding: 40px 56px; box-shadow: 0 30px 80px rgba(0,0,0,0.45); }
+.bubble .who { display: flex; align-items: center; gap: 16px; font-size: 30px; color: #3B5BA9; font-weight: 600; margin-bottom: 14px; }
+.bubble .av { width: 54px; height: 54px; border-radius: 50%; background: #2EE6C9; color: #0A1430; display: inline-flex; align-items: center; justify-content: center; font-weight: 800; }
+.bubble .msg { font-weight: 600; line-height: 1.25; letter-spacing: -0.01em; }
+.imgwrap { position: absolute; inset: 0; overflow: hidden; }
+.imgwrap img { width: 1920px; height: 1080px; object-fit: cover; }
+.shade { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(10,20,48,0) 45%, rgba(10,20,48,0.9) 100%); }
+.half { position: absolute; top: 0; bottom: 0; width: 960px; display: flex; align-items: center; justify-content: center; padding: 60px; }
+.half.l { left: 0; background: #13265C; }
+.half.r { right: 0; background: #2EE6C9; }
+.half .words { font-size: 110px; }
+.vs { position: absolute; left: 885px; top: 465px; width: 150px; height: 150px; border-radius: 50%; background: #0A1430; color: #F4F7FF; font-size: 60px; font-weight: 800; display: flex; align-items: center; justify-content: center; border: 6px solid #F4F7FF; }
+#hold { position: absolute; inset: 0; background: radial-gradient(60% 60% at 50% 50%, rgba(0,0,0,0) 30%, rgba(2,5,15,0.95) 100%); opacity: 0; pointer-events: none; }
+#dots { position: absolute; left: 50%; bottom: 120px; width: 180px; margin-left: -90px; display: flex; justify-content: space-between; opacity: 0; }
+#dots i { width: 34px; height: 34px; border-radius: 50%; background: #2EE6C9; opacity: 0; display: block; }
+#flash { position: absolute; inset: 0; background: #FFFFFF; opacity: 0; pointer-events: none; }
+#progress { position: absolute; left: 0; bottom: 0; width: 1920px; height: 8px; background: linear-gradient(90deg, #3B7BFF, #2EE6C9); transform-origin: 0 50%; }
+.center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 28px; }
+.mark { width: 150px; height: 150px; }
+.mark.big { width: 220px; height: 220px; }
+.introt { font-size: 110px; font-weight: 800; letter-spacing: -0.04em; }
+.introt span { color: #2EE6C9; }
+.endname { font-size: 140px; font-weight: 800; letter-spacing: -0.04em; }
+.endsub { font-size: 40px; color: #8FA3D1; font-weight: 500; }
+.black { position: absolute; inset: 0; background: #03050C; }
+.deadpan { font-family: "League Gothic", "Sora", sans-serif; text-transform: uppercase; color: #F4F7FF; line-height: 0.9; letter-spacing: 0.01em; text-align: center; max-width: 1760px; }
+#intro .title { font-size: 150px; font-weight: 800; letter-spacing: -0.045em; display: flex; }
+#intro .title span { display: inline-block; }
+#intro .title .bang { color: #2EE6C9; }
+#intro .tag { font-size: 46px; color: #8FA3D1; font-weight: 500; letter-spacing: -0.01em; }
+#intro .sweep { width: 520px; height: 10px; border-radius: 5px; background: linear-gradient(90deg, #3B7BFF, #2EE6C9); transform-origin: 0 50%; }
+#outro, #endcard { position: absolute; inset: 0; }
+#outro .signoff { font-size: 120px; font-weight: 800; letter-spacing: -0.04em; text-align: center; }

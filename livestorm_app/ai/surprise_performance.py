@@ -1,11 +1,11 @@
 """Surprise me's performance script: the saved take rewritten for the ear, as
 a short stand-up bit, line by line, each with a delivery tone (prompt:
 `prompts/surprise_performance.txt`). The voice says these lines; the page
-never shows them: the screen plays the take's beats (the storyboard) and
-CC shows the take's own sentence.
+never gets them as text: the video shows at most six words of a clause at a
+time (`ai/surprise_director.py`).
 
 - **When.** In the show job only (`api_logic.run_surprise_show`), after the
-  take and before the storyboard; cached by `script_key` (the beats' text
+  take and before the voice; cached by `script_key` (the beats' text
   and `SCRIPT_VERSION`) in `surprise_scripts`, so a replay costs nothing.
 - **The call** (`write_script`): a v1 job (`ai.jobs`, kind
   `surprise_performance`, Sonnet 5.5, the `instructions` layout), over the
