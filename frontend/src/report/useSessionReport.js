@@ -2,8 +2,10 @@
 //
 // `createSessionReport()` returns a small reactive model the Report view
 // owns (one per view, not a global store):
-//   open(sessionId)   loads `GET /record`, then asks once whether an analysis
-//                     run is in flight (a teammate may have started one)
+//   open(sessionId)   loads `GET /record`, then asks whether the transcript is
+//                     being made (it follows it, then reloads the record and
+//                     looks a few times for the analysis "Add" chains after
+//                     it) and whether an analysis run is in flight
 //   startAnalysis()   `POST /session-analysis`, then polls until it finishes,
 //                     and reloads the record so the labels show at once
 //   loadChat()        `GET /record/chat` once, when someone first opens a count
@@ -25,6 +27,9 @@ import { api as defaultApi } from "../api";
 export const POLL_MS = 2000;
 export const MAX_POLL_MS = 30000;
 export const MAX_FAILURES = 5;
+// After the transcript, the worker queues the analysis "Add" asked for: the
+// page looks for it this many times, POLL_MS apart.
+export const CHAIN_CHECKS = 4;
 
 const IN_FLIGHT = new Set(["pending", "running"]);
 
@@ -50,6 +55,11 @@ export function createSessionReport({ api = defaultApi } = {}) {
     // status: idle | starting | pending | running | completed | error; progress:
     // the run's latest stage from the server (`{stage, percent, started_at_ms}`), or null.
     analysis: { status: "idle", error: "", progress: null },
+    // The transcript job, while one runs: idle | running | done | error;
+    // `progress` is its latest step from the server (`{message, …}`).
+    transcript: { status: "idle", progress: null, error: "" },
+    // Opened by "Add": the transcript and the first analysis are being made.
+    preparing: false,
     chat: emptyChat(), // the chat's text by id, read on demand
     // "Fetch again from Livestorm": the session, chat and questions read again
     // (free, no transcript), then the record. idle | running | done | error.
@@ -63,7 +73,11 @@ export function createSessionReport({ api = defaultApi } = {}) {
 
   function stopPoll(own) {
     if (own?.timer) clearTimeout(own.timer);
-    if (own) own.timer = null;
+    if (own?.transcriptTimer) clearTimeout(own.transcriptTimer);
+    if (own) {
+      own.timer = null;
+      own.transcriptTimer = null;
+    }
   }
 
   function close() {
@@ -112,6 +126,7 @@ export function createSessionReport({ api = defaultApi } = {}) {
         return;
       }
       state.analysis = { status: "error", error: error?.message || "The analysis status could not be read." };
+      state.preparing = false;
       return;
     }
     if (!isCurrent(own)) return;
@@ -126,13 +141,16 @@ export function createSessionReport({ api = defaultApi } = {}) {
         schedulePoll(own);
       } else {
         state.analysis = { status: "error", error: "The analysis status could not be read." };
+        state.preparing = false;
       }
     } else if (status === "error") {
       state.analysis = { status: "error", error: job?.error || "The analysis failed." };
+      state.preparing = false;
     } else {
       // completed, or not_found once its result has expired: the record says what was saved.
       state.analysis = { status: "completed", error: "" };
       await loadRecord(own, { quiet: true });
+      if (isCurrent(own)) state.preparing = false;
     }
   }
 
@@ -151,20 +169,76 @@ export function createSessionReport({ api = defaultApi } = {}) {
     }
   }
 
-  async function open(sessionId) {
+  // The analysis the worker queues after the transcript: looked for a few
+  // times, since it lands a moment after the transcript is saved.
+  async function findChainedRun(own) {
+    for (let left = CHAIN_CHECKS; left > 0; left -= 1) {
+      if (!isCurrent(own)) return;
+      await checkRunInFlight(own);
+      if (!isCurrent(own) || IN_FLIGHT.has(state.analysis.status) || state.analysis.status === "error") return;
+      if (left > 1) await new Promise((resolve) => (own.transcriptTimer = setTimeout(resolve, POLL_MS)));
+    }
+  }
+
+  // `waits`: with `prepare` ("Add" opened the page), how many more times a
+  // transcript job that isn't there yet is looked for before going on.
+  async function followTranscript(own, waits = 0) {
+    if (!isCurrent(own)) return;
+    let job;
+    try {
+      job = await api.getTranscriptJobStatus(own.sessionId, { signal: own.controller.signal });
+    } catch (error) {
+      if (!isCurrent(own) || isAbort(error)) return;
+      // A blip: look again; the page still shows what it has.
+      own.transcriptTimer = setTimeout(() => followTranscript(own), MAX_POLL_MS);
+      return;
+    }
+    if (!isCurrent(own)) return;
+    const status = job?.jobStatus;
+    if (IN_FLIGHT.has(status)) {
+      state.transcript = { status: "running", progress: job?.progress ?? null, error: "" };
+      own.transcriptTimer = setTimeout(() => followTranscript(own), POLL_MS);
+      return;
+    }
+    if (state.transcript.status !== "running") {
+      // Nothing being made. Just added: the job may not be queued yet, or the
+      // transcript was already there and the analysis comes next.
+      if (waits > 0) {
+        own.transcriptTimer = setTimeout(() => followTranscript(own, waits - 1), POLL_MS);
+      } else if (own.prepare) {
+        await findChainedRun(own);
+        if (isCurrent(own) && !IN_FLIGHT.has(state.analysis.status)) state.preparing = false;
+      }
+      return;
+    }
+    state.transcript = status === "error"
+      ? { status: "error", progress: null, error: job?.error || "The transcript could not be made." }
+      : { status: "done", progress: null, error: "" };
+    await loadRecord(own, { quiet: true });
+    await findChainedRun(own);
+    if (isCurrent(own) && !IN_FLIGHT.has(state.analysis.status)) state.preparing = false;
+  }
+
+  async function open(sessionId, { prepare = false } = {}) {
     const id = String(sessionId ?? "").trim();
     close();
-    const own = { sessionId: id, controller: new AbortController(), timer: null, failures: 0, chatToken: null };
+    const own = { sessionId: id, controller: new AbortController(), timer: null, transcriptTimer: null, failures: 0, chatToken: null, prepare };
     scope = own;
     state.sessionId = id;
     state.record = null;
     state.error = "";
     state.analysis = { status: "idle", error: "", progress: null };
+    state.transcript = { status: "idle", progress: null, error: "" };
+    // Just added ("Add" opened the page with `prepare`): the page shows the
+    // preparation until the transcript and the first analysis are done.
+    state.preparing = prepare;
     state.chat = emptyChat();
     state.refetch = { status: "idle", error: "" };
     if (!id) return;
     await loadRecord(own);
-    if (isCurrent(own) && state.record) await checkRunInFlight(own);
+    if (!isCurrent(own) || !state.record) return;
+    await checkRunInFlight(own);
+    await followTranscript(own, prepare ? CHAIN_CHECKS : 0);
   }
 
   async function startAnalysis() {

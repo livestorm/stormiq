@@ -60,6 +60,7 @@ transcript_jobs (
   status        TEXT NOT NULL DEFAULT 'pending', -- 'pending' | 'running' | 'completed' | 'error'
   error         TEXT,
   progress      TEXT,                          -- JSON progress from the Gladia poll
+  then_analyse  BOOLEAN NOT NULL DEFAULT FALSE, -- "Add" started it: the worker queues the session analysis when it ends
   connection_id TEXT,                          -- OAuth connection that started the job (NULL = LS_API_KEY, local dev).
                                                -- Read and cleared when the worker claims the job; cleared when it ends.
                                                -- Never returned by any route: it is also the session cookie value.

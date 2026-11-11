@@ -140,3 +140,39 @@ export function analysisSummary(chatLabels, analysis, { transcript = true, readi
     tone: "neutral",
   };
 }
+
+/** The preparation of a session just added ("Add"): what the page shows
+ * until its transcript and first analysis are done. `transcript` and
+ * `analysis` are the Report's states. Returns `{title, detail, steps}`, each
+ * step `{label, state, detail}` (done | current | todo | skipped). */
+export function preparationView(transcript, analysis) {
+  const t = transcript?.status || "idle";
+  const a = analysis?.status || "idle";
+  const analysing = a === "pending" || a === "running" || a === "starting";
+  const transcriptStep =
+    t === "running"
+      ? { state: "current", detail: transcript?.progress?.message || "Sending the recording for transcription." }
+      : t === "error"
+        ? { state: "skipped", detail: "No transcript: the recording couldn't be transcribed, so the chat is analysed on its own." }
+        : { state: "done", detail: "" };
+  const stage = analysis?.progress?.stage;
+  const analysisStep = analysing
+    ? { state: "current", detail: stage ? STAGE_DETAIL[stage] || "" : "Waiting for a free worker." }
+    : a === "completed"
+      ? { state: "done", detail: "" }
+      : { state: "todo", detail: "" };
+  const steps = [
+    { label: "Fetched from Livestorm", state: "done", detail: "The session, its chat, questions and people." },
+    { label: "Transcribing the recording", ...transcriptStep },
+    { label: "Reading the chat and the talk with AI", ...analysisStep },
+    { label: "Your report", state: a === "completed" ? "current" : "todo", detail: "" },
+  ];
+  return {
+    title: "Preparing your report",
+    detail:
+      t === "running"
+        ? "A long recording takes a few minutes to transcribe. It keeps going if you leave this page."
+        : "Almost there. It keeps going if you leave this page.",
+    steps,
+  };
+}

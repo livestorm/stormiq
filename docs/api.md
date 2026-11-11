@@ -38,7 +38,7 @@ Every route is a FastAPI handler in [`livestorm_app/routes/`](../livestorm_app/r
 | `/api/sessions/{id}/record/questions.csv` | GET | caller | The desk's questions as a CSV download, with who asked each one (name and company, on every session; never an email). `?scope=` `open` (default: the questions still open), `all` (with a Status column) or `answers` (with Status and Answer, for a follow-up email); another scope is a 422. `Cache-Control: private, no-store`. 404 if not cached |
 | `/api/sessions/{id}/fetch` | POST | caller | Session, chat and questions, then start the transcript job ([jobs.md](jobs.md#fetching-a-session)). Also starts the people sync when the session needs one (`rosterSync`, [below](#fetching-a-session)) |
 | `/api/sessions/{id}/fetch-base` | POST | caller | Session, chat and questions only. Also starts the people sync when the session needs one (`rosterSync`, [below](#fetching-a-session)) |
-| `/api/sessions/{id}/fetch-transcript` | POST | caller | Start (or attach to) the transcript job |
+| `/api/sessions/{id}/fetch-transcript` | POST | caller | Start (or attach to) the transcript job. `analyse: true` ("Add") chains the session analysis after it ([jobs.md](jobs.md#the-session-analysis-v1)) |
 | `/api/sessions/{id}/transcript-job` | GET | caller | Transcript job status and progress |
 | `/api/sessions/{id}/transcript.json` | GET | caller | Full raw transcript as a download (the workspace carries only subtitles) |
 | `/api/sessions/{id}/speaker-labels` | POST | caller | Save edited speaker labels |

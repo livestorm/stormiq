@@ -185,6 +185,23 @@ def close_queue_bridge() -> None:
     _bridge.close()
 
 
+async def enqueue_unique_job(pool: ArqRedis, function_name: str, job_id: str, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+    """`enqueue_unique_job_sync`'s work, for async code that has a pool (the
+    worker chaining one job after another): `{jobId, jobStatus, enqueued}`."""
+    for _attempt in range(2):
+        job = await pool.enqueue_job(function_name, *args, _job_id=job_id, **kwargs)
+        if job is not None:
+            return {"jobId": job_id, "jobStatus": "pending", "enqueued": True}
+        status = await _job_status(pool, job_id)
+        if status["jobStatus"] in ("pending", "running"):
+            return {"jobId": job_id, "jobStatus": status["jobStatus"], "enqueued": False}
+        # Finished (or gone between the two calls): drop the retained
+        # result so the id is free, then enqueue again.
+        await pool.delete(result_key_prefix + job_id)
+    status = await _job_status(pool, job_id)
+    return {"jobId": job_id, "jobStatus": status["jobStatus"], "enqueued": False}
+
+
 def enqueue_unique_job_sync(
     function_name: str,
     job_id: str,
@@ -206,18 +223,7 @@ def enqueue_unique_job_sync(
     retry after an error. Returns None when Redis is unreachable.
     """
     async def enqueue(pool: ArqRedis) -> Dict[str, Any]:
-        for _attempt in range(2):
-            job = await pool.enqueue_job(function_name, *args, _job_id=job_id, **kwargs)
-            if job is not None:
-                return {"jobId": job_id, "jobStatus": "pending", "enqueued": True}
-            status = await _job_status(pool, job_id)
-            if status["jobStatus"] in ("pending", "running"):
-                return {"jobId": job_id, "jobStatus": status["jobStatus"], "enqueued": False}
-            # Finished (or gone between the two calls): drop the retained
-            # result so the id is free, then enqueue again.
-            await pool.delete(result_key_prefix + job_id)
-        status = await _job_status(pool, job_id)
-        return {"jobId": job_id, "jobStatus": status["jobStatus"], "enqueued": False}
+        return await enqueue_unique_job(pool, function_name, job_id, *args, **kwargs)
 
     try:
         return _bridge.run(enqueue)
