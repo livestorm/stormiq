@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
@@ -25,6 +26,8 @@ from livestorm_app.db import (
     update_oauth_connection_tokens,
 )
 
+
+logger = logging.getLogger(__name__)
 
 LIVESTORM_OAUTH_COOKIE = "livestorm_oauth_connection"
 LIVESTORM_OAUTH_HANDSHAKE_COOKIE = "livestorm_oauth_handshake"
@@ -323,7 +326,23 @@ def persist_oauth_connection(token_payload: Dict[str, Any], me_payload: Dict[str
     connection = fetch_oauth_connection(connection_id)
     if not isinstance(connection, dict):
         raise RuntimeError("OAuth connection could not be saved.")
+    _remember_admin_organization(connection)
     return connection
+
+
+def _remember_admin_organization(connection: Dict[str, Any]) -> None:
+    """An admin signing in turns Surprise Me! on for their own organization
+    (unless an admin already set it), so it stays on after they sign out.
+    Best-effort: a failed write never fails the sign-in, and the read falls
+    back to the admins' connections anyway (`db.fetch_surprise_enabled`)."""
+    from livestorm_app.auth import _is_admin_connection
+    from livestorm_app.db import remember_admin_organization
+
+    try:
+        if _is_admin_connection(connection):
+            remember_admin_organization(str(connection.get("organization_id") or ""))
+    except Exception as exc:
+        logger.error("Could not remember an admin's organization (%s)", type(exc).__name__)
 
 
 def delete_connection(connection_id: str) -> None:

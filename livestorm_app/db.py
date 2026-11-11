@@ -724,7 +724,7 @@ def _ensure_org_settings_schema(cursor: Any) -> None:
         """
         CREATE TABLE IF NOT EXISTS org_settings (
             organization_id  TEXT PRIMARY KEY,
-            surprise_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            surprise_enabled BOOLEAN NOT NULL,
             updated_by_email TEXT,
             updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
@@ -3496,11 +3496,33 @@ def get_all_settings() -> Dict[str, str]:
         return {}
 
 
+def _admin_emails() -> List[str]:
+    """Every admin's email, lower case: `ADMIN_EMAILS` and `admin_users`
+    (the table is read inside the SQL that uses this)."""
+    from livestorm_app.auth import env_admin_emails
+
+    return sorted(env_admin_emails())
+
+
+# An organization is an admins' organization when one of StormIQ's admins
+# signed in from it (`oauth_connections`), now or before (`org_settings`
+# remembers it: `remember_admin_organization`).
+_ADMIN_ORG_SQL = """
+    EXISTS (
+        SELECT 1 FROM oauth_connections oc
+        WHERE oc.organization_id = {org}
+          AND (LOWER(oc.email) = ANY(%s) OR LOWER(oc.email) IN (SELECT LOWER(email) FROM admin_users))
+    )
+"""
+
+
 def fetch_surprise_enabled(organization_id: str) -> bool:
     """Whether Surprise Me! is on for an organization: its `org_settings`
-    row, else on. A blank organization (a session cached without one, local
-    development) has no setting and is on. Raises when the database can't be
-    read: callers fail closed."""
+    row; without one, on only for the admins' own organization (one of
+    StormIQ's admins signed in from it), off for every other: an admin opts
+    an organization in from the Admin page. A blank organization (a session
+    cached without one, local development) has no setting and is on. Raises
+    when the database can't be read: callers fail closed."""
     org = str(organization_id or "").strip()
     if not org or not database_enabled():
         return True
@@ -3508,7 +3530,31 @@ def fetch_surprise_enabled(organization_id: str) -> bool:
         row = connection.execute(
             "SELECT surprise_enabled FROM org_settings WHERE organization_id = %s", (org,)
         ).fetchone()
-    return True if row is None else bool(row["surprise_enabled"])
+        if row is not None:
+            return bool(row["surprise_enabled"])
+        admins = connection.execute(
+            "SELECT " + _ADMIN_ORG_SQL.format(org="%s") + " AS admin_org", (org, _admin_emails())
+        ).fetchone()
+    return bool(admins and admins["admin_org"])
+
+
+def remember_admin_organization(organization_id: str) -> None:
+    """An admin signed in from this organization: Surprise Me! is on for it
+    unless an admin already set it (an existing setting is never changed).
+    Raises on a failed write."""
+    org = str(organization_id or "").strip()
+    if not org or not database_enabled():
+        return
+    with get_db_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO org_settings (organization_id, surprise_enabled, updated_by_email, updated_at)
+            VALUES (%s, TRUE, NULL, NOW())
+            ON CONFLICT (organization_id) DO NOTHING
+            """,
+            (org,),
+        )
+        connection.commit()
 
 
 def save_surprise_enabled(organization_id: str, enabled: bool, *, updated_by_email: Optional[str]) -> None:
@@ -3553,13 +3599,14 @@ def admin_list_organizations() -> List[Dict[str, Any]]:
             SELECT COALESCE(o.organization_id, s.organization_id) AS organization_id,
                    COALESCE(o.sessions, 0) AS sessions,
                    o.last_session_at,
-                   COALESCE(s.surprise_enabled, TRUE) AS surprise_enabled,
+                   COALESCE(s.surprise_enabled, {admin_org}) AS surprise_enabled,
                    s.updated_by_email,
                    s.updated_at
             FROM orgs o
             FULL OUTER JOIN org_settings s ON s.organization_id = o.organization_id
             ORDER BY sessions DESC, organization_id
-            """
+            """.replace("{admin_org}", _ADMIN_ORG_SQL.format(org="COALESCE(o.organization_id, s.organization_id)")),
+            (_admin_emails(),),
         ).fetchall()
     return [dict(row) for row in rows]
 

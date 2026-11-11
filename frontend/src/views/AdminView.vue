@@ -457,8 +457,8 @@ onMounted(() => {
     <Card v-else-if="activeTab === 'organizations'" padding="flush">
       <div class="adm-bar">
         <p class="adm-muted">
-          Surprise me is on for every organization until you turn it off here, for a customer who asks (a regulated
-          industry, a formal brand). Members can't turn it back on.
+          Surprise me is off for every organization except StormIQ's own (the one an admin signs in from) until you
+          turn it on here. Members can't change it.
         </p>
       </div>
       <p v-if="organizationsError" class="adm-message adm-pad" role="alert"><Icon name="info" :size="16" />{{ organizationsError }}</p>

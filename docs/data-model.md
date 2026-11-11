@@ -295,12 +295,12 @@ output_versions (
 
 ## `org_settings`
 
-One row per organization whose switches a StormIQ admin changed (Admin → Organizations). An organization without a row has the defaults.
+One row per organization whose switches a StormIQ admin changed (Admin → Organizations), or an admin signed in from (Surprise Me! on, written once at sign-in and never over an existing row). An organization without a row has the defaults: Surprise Me! off, except for an organization an admin is signed in from (`db.fetch_surprise_enabled`).
 
 ```sql
 org_settings (
   organization_id  TEXT PRIMARY KEY,
-  surprise_enabled BOOLEAN NOT NULL DEFAULT TRUE,  -- Surprise Me! on Follow-up
+  surprise_enabled BOOLEAN NOT NULL,               -- Surprise Me! on Follow-up
   updated_by_email TEXT,                           -- the admin who changed it
   updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )
