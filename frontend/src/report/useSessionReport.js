@@ -249,13 +249,15 @@ export function createSessionReport({ api = defaultApi } = {}) {
     // Just added ("Add" opened the page with `prepare`): the page shows the
     // preparation until the transcript and the first analysis are done.
     state.preparing = prepare;
-    state.fetching = false;
+    // Just added: the fetch from Livestorm is the first step until the record is in.
+    state.fetching = prepare;
     state.chat = emptyChat();
     // A "Fetch again" started on another page of this session shows here too.
     const running = refreshOf(id);
     state.refetch = { status: running.status === "running" ? "running" : "idle", error: "" };
     if (!id) return;
     await loadRecord(own, { quiet: prepare });
+    if (isCurrent(own) && state.record) state.fetching = false;
     // Just added: the fetch from Livestorm may still be saving the session.
     if (prepare && isCurrent(own) && !state.record) await waitForRecord(own);
     if (!isCurrent(own) || !state.record) return;

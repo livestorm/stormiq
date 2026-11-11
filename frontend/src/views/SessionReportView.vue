@@ -234,7 +234,14 @@ const points = computed(() =>
   <div ref="page" class="r-page">
     <SessionTabs :session-id="sessionId" current="report" :title="body ? title : ''" />
 
-    <p v-if="state.loading && !body" class="r-status" role="status">Loading the session…</p>
+    <!-- Just added: the loader shows at once, before the session is saved and its record read. -->
+    <Card v-if="state.preparing && !body" class="r-prepare" aria-busy="true">
+      <CardHeader icon="zap" :title="preparation.title" :level="2" />
+      <p class="r-text" role="status">{{ preparation.detail }}</p>
+      <ProgressSteps :steps="preparation.steps" :percent="preparation.percent" label="Preparing the report" :elapsed="prepElapsed" />
+    </Card>
+
+    <p v-else-if="state.loading && !body" class="r-status" role="status">Loading the session…</p>
 
     <Card v-else-if="state.error && !body" tone="fair">
       <CardHeader icon="info" title="This session could not be loaded" :level="1" />
