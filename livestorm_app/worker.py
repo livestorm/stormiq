@@ -473,6 +473,9 @@ async def _run_ai_job(
         clear_progress_sync(kind, session_id)
 
 
+SESSION_ANALYSIS_PROGRESS = "session_analysis"  # progress.SESSION_ANALYSIS_STAGE_FLOORS
+
+
 async def run_session_analysis_job(ctx: Dict[str, Any], session_id: str) -> Dict[str, Any]:
     """The v1 session analysis the user starts: the chat labels, then the
     understanding job when there is a transcript
@@ -482,8 +485,16 @@ async def run_session_analysis_job(ctx: Dict[str, Any], session_id: str) -> Dict
 
     api_key = _read_llm_key_or_raise()
     logger.info("[session_analysis] session_id=%s start", session_id)
+    started_at_ms = int(time.time() * 1000)
+
+    def report(stage: str) -> None:
+        # The page's progress panel: the stage, and when this run started.
+        publish_progress_sync(SESSION_ANALYSIS_PROGRESS, session_id, stage, extra={"started_at_ms": started_at_ms})
+
+    # First thing, so a poll never reads an earlier run's last stage as this one's.
+    report("labelling")
     try:
-        result = await asyncio.to_thread(run_session_analysis, api_key, session_id)
+        result = await asyncio.to_thread(run_session_analysis, api_key, session_id, report)
     except Exception as exc:
         logger.error("[session_analysis] session_id=%s failed (%s)", session_id, type(exc).__name__)
         raise

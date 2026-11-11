@@ -37,6 +37,10 @@ def queue(monkeypatch):
 
     monkeypatch.setattr(api_logic, "enqueue_unique_job_sync", enqueue)
     monkeypatch.setattr(api_logic, "read_job_status_sync", lambda job_id: calls["reads"].append(job_id) or {"jobStatus": "running"})
+    monkeypatch.setattr(
+        api_logic, "read_progress",
+        lambda kind, key: {"kind": kind, "stage": "reading", "percent": 25} if key == synthetic.SESSION_ID else None,
+    )
     return calls
 
 
@@ -64,7 +68,7 @@ def test_the_poll_reads_the_sessions_own_run_whatever_id_is_sent(queue):
     status = api_logic.get_session_analysis_job(
         synthetic.SESSION_ID, "session_analysis:other-orgs-session:_", organization_id=synthetic.ORGANIZATION_ID,
     )
-    assert status == {"jobId": JOB_ID, "jobStatus": "running"}
+    assert status == {"jobId": JOB_ID, "jobStatus": "running", "progress": {"kind": "session_analysis", "stage": "reading", "percent": 25}}
     assert queue["reads"] == [JOB_ID]
 
 
@@ -131,6 +135,15 @@ def test_a_run_labels_every_chat_message_and_stores_them(run):
     understood = run["understood"]
     assert understood["model"] == "claude-sonnet-5-5" and understood["dossier_hash"] == run["dossier"].sha256
     assert [c["title"] for c in understood["result"]["chapters"]] == ["The whole session"]
+
+
+def test_a_run_reports_each_stage_as_it_starts(run):
+    stages = []
+    api_logic.run_session_analysis("key-1", synthetic.SESSION_ID, stages.append)
+    assert stages == ["labelling", "reading", "saving", "done"]
+    again = []
+    api_logic.run_session_analysis("key-1", synthetic.SESSION_ID, again.append)
+    assert again == ["labelling", "done"], "nothing new to read: no reading stage"
 
 
 def test_an_unchanged_chat_is_not_labelled_again(run):
@@ -207,8 +220,22 @@ def test_a_failed_read_keeps_the_labels_just_made_and_the_earlier_reading(run):
 
 
 def test_the_worker_reads_the_key_itself_and_passes_the_session_id_on(monkeypatch):
-    seen = []
+    seen, published = [], []
     monkeypatch.setattr(worker, "_read_llm_key_or_raise", lambda: "key-from-env")
-    monkeypatch.setattr(api_logic, "run_session_analysis", lambda key, session_id: seen.append((key, session_id)) or {"chatLabels": "labelled"})
+    monkeypatch.setattr(worker, "publish_progress_sync", lambda kind, key, stage, extra=None: published.append((kind, key, stage, extra)))
+
+    def fake_run(key, session_id, report):
+        seen.append((key, session_id))
+        report("reading")
+        return {"chatLabels": "labelled"}
+
+    monkeypatch.setattr(api_logic, "run_session_analysis", fake_run)
     assert asyncio.run(worker.run_session_analysis_job({}, synthetic.SESSION_ID)) == {"chatLabels": "labelled"}
     assert seen == [("key-from-env", synthetic.SESSION_ID)]
+    # The first stage is published before the run starts, so a poll never
+    # reads an earlier run's last stage; every stage carries when it started.
+    assert [(kind, key, stage) for kind, key, stage, _ in published] == [
+        ("session_analysis", synthetic.SESSION_ID, "labelling"),
+        ("session_analysis", synthetic.SESSION_ID, "reading"),
+    ]
+    assert len({extra["started_at_ms"] for *_, extra in published}) == 1

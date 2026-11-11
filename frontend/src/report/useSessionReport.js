@@ -47,7 +47,9 @@ export function createSessionReport({ api = defaultApi } = {}) {
     loading: false,
     error: "",
     record: null, // the route's whole response: {sessionId, updatedAt, meta, record}
-    analysis: { status: "idle", error: "" }, // idle | starting | pending | running | completed | error
+    // status: idle | starting | pending | running | completed | error; progress:
+    // the run's latest stage from the server (`{stage, percent, started_at_ms}`), or null.
+    analysis: { status: "idle", error: "", progress: null },
     chat: emptyChat(), // the chat's text by id, read on demand
   });
   let scope = null;
@@ -113,7 +115,7 @@ export function createSessionReport({ api = defaultApi } = {}) {
     const status = job?.jobStatus;
     if (IN_FLIGHT.has(status)) {
       own.failures = 0;
-      state.analysis = { status, error: "" };
+      state.analysis = { status, error: "", progress: job?.progress ?? null };
       schedulePoll(own);
     } else if (status === "unknown") {
       if (own.failures + 1 < MAX_FAILURES) {
@@ -136,7 +138,7 @@ export function createSessionReport({ api = defaultApi } = {}) {
       const job = await api.getSessionAnalysisJob(own.sessionId, { signal: own.controller.signal });
       if (!isCurrent(own)) return;
       if (IN_FLIGHT.has(job?.jobStatus)) {
-        state.analysis = { status: job.jobStatus, error: "" };
+        state.analysis = { status: job.jobStatus, error: "", progress: job?.progress ?? null };
         schedulePoll(own);
       } else if (job?.jobStatus === "error") {
         state.analysis = { status: "error", error: job?.error || "The last analysis failed." };
@@ -154,7 +156,7 @@ export function createSessionReport({ api = defaultApi } = {}) {
     state.sessionId = id;
     state.record = null;
     state.error = "";
-    state.analysis = { status: "idle", error: "" };
+    state.analysis = { status: "idle", error: "", progress: null };
     state.chat = emptyChat();
     if (!id) return;
     await loadRecord(own);

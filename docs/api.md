@@ -42,7 +42,7 @@ Every route is a FastAPI handler in [`livestorm_app/routes/`](../livestorm_app/r
 | `/api/sessions/{id}/roster-status` | GET | caller | v1 Report only: the stored roster's header and the latest people sync, with its progress ([below](#the-people-sync)). 404 if not cached |
 | `/api/sessions/{id}/roster-sync` | POST | caller | v1 Report only: start reading the session's people from Livestorm in the worker ([jobs.md](jobs.md#people-sync)). Starts nothing for another org's session; 429 over the org's daily call cap |
 | `/api/sessions/{id}/session-analysis` | POST | caller | v1 Report only: start the session analysis (the chat labels, for now) in the worker, or join the run in flight; no body ([jobs.md](jobs.md#the-session-analysis-v1)) |
-| `/api/sessions/{id}/session-analysis/job` | GET | caller | v1 Report only: the analysis run's status, `{jobId, jobStatus, error?}`; the job id is derived from the session |
+| `/api/sessions/{id}/session-analysis/job` | GET | caller | v1 Report only: the analysis run's status, `{jobId, jobStatus, error?, progress}`; the job id is derived from the session. `progress` is the run's latest stage from Redis, `{kind, stage, percent, started_at_ms, updated_at_ms}` or null ([jobs.md](jobs.md#the-session-analysis-v1)) |
 | `/api/sessions/{id}/analysis` | POST | caller | Start the overall analysis (English or French) |
 | `/api/sessions/{id}/deep-analysis` | POST | caller | Start the deep analysis (English or French) |
 | `/api/sessions/{id}/smart-recap` | POST | caller | Start a Smart Recap (`professional`, `hype` or `surprise`) |
