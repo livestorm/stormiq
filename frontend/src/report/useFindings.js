@@ -1,8 +1,9 @@
 // The Report's reads that come on demand, beside the record: one session's
 // `GET /record/findings` ("What stood out") and `GET /record/voices` ("Who
-// spoke up"). Nothing here calls a model.
+// spoke up") and `GET /record/moments` (the Pulse's key moments, told).
+// Nothing here calls a model.
 //
-// `createFindings()` and `createVoices()` each return a small reactive model
+// `createFindings()`, `createMoments()` and `createVoices()` each return a small reactive model
 // the view owns (one per view, not a global store), with the same scope
 // rules as the chapters (`followup/useChapters.js`): every request carries
 // the open session's AbortController signal; opening another session aborts
@@ -59,6 +60,10 @@ function createRead(get, failure) {
 
 export function createFindings({ api = defaultApi } = {}) {
   return createRead((id, options) => api.getSessionFindings(id, options), "The findings could not be loaded.");
+}
+
+export function createMoments({ api = defaultApi } = {}) {
+  return createRead((id, options) => api.getSessionMoments(id, options), "The key moments could not be loaded.");
 }
 
 export function createVoices({ api = defaultApi } = {}) {

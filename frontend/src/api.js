@@ -181,6 +181,10 @@ export const api = {
   getSessionFindings(sessionId, { signal } = {}) {
     return request(sessionPath(sessionId, "/record/findings"), { signal });
   },
+  // The Pulse's key moments, told: what was said, what people wrote, the questions.
+  getSessionMoments(sessionId, { signal } = {}) {
+    return request(sessionPath(sessionId, "/record/moments"), { signal });
+  },
   // The Report's "Who spoke up": the audience members who wrote, with one message each.
   getSessionVoices(sessionId, { signal } = {}) {
     return request(sessionPath(sessionId, "/record/voices"), { signal });

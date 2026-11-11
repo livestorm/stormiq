@@ -1,0 +1,54 @@
+{
+  "sessionId": "synthetic-webinar",
+  "updatedAt": "2026-10-02T08:30:00Z",
+  "version": 1,
+  "usualPerMinute": 0.0,
+  "surges": false,
+  "speech": true,
+  "moments": [
+    {
+      "start": 60.0,
+      "end": 120.0,
+      "kind": "social",
+      "messages": 3,
+      "people": 3,
+      "questions": 0,
+      "peak": 3,
+      "prompt": null,
+      "said": {
+        "t": 30.9,
+        "speakers": [
+          "Nora Vale"
+        ],
+        "text": "today we look at the new dashboard and the export i just put the slides link in the chat tell us in the chat where you are joining from",
+        "precise": true
+      },
+      "written": [
+        {
+          "id": "C0006",
+          "t": 62.0,
+          "text": "Hi from Lyon",
+          "author": "Mila F."
+        },
+        {
+          "id": "C0007",
+          "t": 66.0,
+          "text": "Hello from Berlin",
+          "author": "Lena H."
+        },
+        {
+          "id": "C0008",
+          "t": 70.0,
+          "text": "Thanks!",
+          "author": "Theo P."
+        }
+      ],
+      "asked": [],
+      "themes": {
+        "social": 3
+      },
+      "n": 1
+    }
+  ],
+  "state": "ready"
+}

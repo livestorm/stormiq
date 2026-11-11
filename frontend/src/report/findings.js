@@ -219,9 +219,11 @@ export function findingsView(body, lang = "en") {
 /** What the findings mark on the Pulse, in percent of an axis of `count`
  * minutes: the monologue stretch that was found (`bands`), every prompt to
  * the room that was checked (`prompts`, `missed` when the room answered
- * after the speaker moved on), and the unprompted moments, numbered
- * (`pins`). */
-export function pulseMarks(body, count) {
+ * after the speaker moved on), and the moments, numbered (`pins`): the
+ * key moments told under the chart (`momentPins`, from `GET
+ * /record/moments`) when they are loaded, else the unprompted moments
+ * found. */
+export function pulseMarks(body, count, told = null) {
   const all = [...(body?.found || []), ...(body?.nothing || [])];
   const monologue = (body?.found || []).find((item) => item.id === "monologue");
   const prompts = all.find((item) => item.id === "prompts");
@@ -241,10 +243,12 @@ export function pulseMarks(body, count) {
     title: `${clockLabel(row.t)} prompt to the room: “${row.quote}”`,
   }));
   const moments = (body?.found || []).find((item) => item.id === "moments");
-  const pins = (moments?.values?.moments || []).map((moment) => ({
-    n: moment.n,
-    left: (secondsLeft(moment.start, count) + secondsLeft(moment.end, count)) / 2,
-    title: `${moment.n}. ${clockLabel(moment.start)}: ${plural(moment.messages, "message", "messages")}${moment.quote ? ` while the speaker was saying “${moment.quote}”` : ""}`,
-  }));
+  const pins = told
+    ? told.map((pin) => ({ n: pin.n, left: (secondsLeft(pin.start, count) + secondsLeft(pin.end, count)) / 2, title: pin.title }))
+    : (moments?.values?.moments || []).map((moment) => ({
+      n: moment.n,
+      left: (secondsLeft(moment.start, count) + secondsLeft(moment.end, count)) / 2,
+      title: `${moment.n}. ${clockLabel(moment.start)}: ${plural(moment.messages, "message", "messages")}${moment.quote ? ` while the speaker was saying “${moment.quote}”` : ""}`,
+    }));
   return { bands, prompts: marks, pins };
 }

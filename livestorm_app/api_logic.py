@@ -646,6 +646,26 @@ def get_session_findings(session_id: str, *, organization_id: OrgScope) -> Dict[
     return {"sessionId": session_id, "updatedAt": row.get("updated_at"), **_sanitize_json_value(body)}
 
 
+def get_session_moments(session_id: str, *, organization_id: OrgScope) -> Dict[str, Any]:
+    """The Pulse's key moments, told: `{sessionId, updatedAt, version, state,
+    usualPerMinute, surges, speech, moments}` (`record.moments.room_moments`):
+    when the room reacted, what was being said, what people wrote and the
+    questions asked then, from the session's payloads, its chat labels, the
+    stored understanding's prompts (only while read from the session as it
+    is now) and the speakers' saved names. Authors as short names that fail
+    closed. No model call; read on demand with the caller's scope and not
+    cached. A row that is missing or outside the scope raises
+    `SessionNotFoundError`."""
+    inputs, row = _transcript_inputs(session_id, organization_id=organization_id)
+    from livestorm_app.record.moments import room_moments
+    from livestorm_app.record.understanding import current_reading
+
+    result, _, _ = current_reading(fetch_understanding(session_id, organization_id), inputs)
+    names = row.get("transcript_speaker_names") if isinstance(row.get("transcript_speaker_names"), dict) else {}
+    body = _sanitize_json_value(room_moments(inputs, result or {}, names))
+    return {"sessionId": session_id, "updatedAt": row.get("updated_at"), **body}
+
+
 def get_session_voices(session_id: str, *, organization_id: OrgScope) -> Dict[str, Any]:
     """The Report's "Who spoke up": `{sessionId, updatedAt, version,
     internal, total, people, others}` (`record.voices.chat_voices`): the

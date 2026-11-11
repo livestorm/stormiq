@@ -109,7 +109,7 @@ const source = computed(() =>
         <span class="r-key"><span class="r-swatch r-s1" />Audience</span>
         <span class="r-key"><span class="r-swatch r-s3" />Your team</span>
         <span v-if="marks.prompts.length" class="r-key"><span class="r-prompt-key" aria-hidden="true" />Prompt to the room</span>
-        <span v-if="marks.pins?.length" class="r-key"><span class="r-pin r-pin-key" aria-hidden="true">1</span>The room leaned in</span>
+        <span v-if="marks.pins?.length" class="r-key"><span class="r-pin r-pin-key" aria-hidden="true">1</span>Key moment, told below</span>
       </div>
       <div v-if="marks.pins?.length" class="r-pins" aria-hidden="true">
         <span v-for="pin in marks.pins" :key="`n${pin.n}`" class="r-pin" :style="{ left: `${pin.left}%` }" :title="pin.title">
