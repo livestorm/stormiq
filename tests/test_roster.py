@@ -1035,6 +1035,8 @@ RECORD_ENTRY_POINTS = {
         "_transcript_inputs", "_chapter_list", "get_session_chapters",
         # The Follow-up's Session analysis: its brief (`record.session_brief`) from the record, the understanding and the desk.
         "_write_session_analysis",
+        # The Follow-up's FAQ: its brief (`record.faq_brief`) from the question desk.
+        "_write_faq",
         # Before you share: the figure checks (`record.figure_checks`).
         "_figure_check_list", "get_session_figure_checks", "save_session_figure_check",
         # The analysis's second step: the dossier, its checks and the result's version.

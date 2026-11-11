@@ -120,6 +120,9 @@ export const api = {
   runAnalysis(sessionId, payload, options) {
     return postJson(sessionPath(sessionId, "/analysis"), payload, options);
   },
+  runFaq(sessionId, payload, options) {
+    return postJson(sessionPath(sessionId, "/faq"), payload, options);
+  },
   runDeepAnalysis(sessionId, payload, options) {
     return postJson(sessionPath(sessionId, "/deep-analysis"), payload, options);
   },

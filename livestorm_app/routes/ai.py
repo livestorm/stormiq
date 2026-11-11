@@ -12,12 +12,14 @@ from livestorm_app.api_logic import (
     build_smart_recap_pdf,
     get_content_repurposing_job_data,
     get_deep_analysis_job_data,
+    get_faq_job_data,
     get_overall_analysis_job_data,
     get_session_analysis_job,
     get_smart_recap_job_data,
     start_content_repurposing,
     start_session_analysis,
     start_deep_analysis,
+    start_faq,
     start_overall_analysis,
     start_smart_recap,
 )
@@ -72,6 +74,25 @@ def overall_analysis_job(session_id: SessionId, caller: Caller = Depends(get_cal
         return get_overall_analysis_job_data(session_id, jobId, language, organization_id=caller.read_scope, outputs_only=outputsOnly)
     except Exception as exc:
         raise_http_error("Analysis", exc)
+        raise
+
+
+@router.post("/api/sessions/{session_id}/faq")
+def faq(session_id: SessionId, request: AnalysisRequest, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
+    """Start a FAQ job. See `overall_analysis` for the contract; poll `/faq/job`."""
+    try:
+        return start_faq(session_id, request.output_language, organization_id=caller.read_scope)
+    except Exception as exc:
+        raise_http_error("FAQ", exc)
+        raise
+
+
+@router.get("/api/sessions/{session_id}/faq/job")
+def faq_job(session_id: SessionId, caller: Caller = Depends(get_caller), jobId: str = Query(""), language: str = Query("English"), outputsOnly: bool = Query(False)) -> Dict[str, Any]:
+    try:
+        return get_faq_job_data(session_id, jobId, language, organization_id=caller.read_scope, outputs_only=outputsOnly)
+    except Exception as exc:
+        raise_http_error("FAQ", exc)
         raise
 
 

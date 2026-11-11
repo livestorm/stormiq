@@ -322,6 +322,7 @@ async def _job_status(pool: ArqRedis, job_id: str) -> Dict[str, Any]:
 
 AI_JOB_KINDS = frozenset({
     "overall_analysis",
+    "faq",
     "deep_analysis",
     "smart_recap",
     "content_repurposing",

@@ -74,6 +74,7 @@ Four flows, each a queue-backed job:
 | Start | Poll | Worker job | One job per |
 |---|---|---|---|
 | `POST /api/sessions/{id}/analysis` | `GET …/analysis/job?language=` | `run_overall_analysis_job` | language |
+| `POST /api/sessions/{id}/faq` | `GET …/faq/job?language=` | `run_faq_job` | language |
 | `POST …/deep-analysis` | `GET …/deep-analysis/job?language=` | `run_deep_analysis_job` | language |
 | `POST …/smart-recap` | `GET …/smart-recap/job?tone=` | `run_smart_recap_job` | tone |
 | `POST …/content-repurposing` | `GET …/content-repurposing/job?language=` | `run_content_repurposing_job` | language |
@@ -88,7 +89,7 @@ Four flows, each a queue-backed job:
 
 **The worker job** reads the active provider's key from its env, publishes stage-floor progress to Redis (`queued` → `loading_sources` → `building_prompt` → `analyzing`), runs the synchronous runner (`api_logic.run_overall_analysis` and the like) in `asyncio.to_thread`, and clears progress when it finishes or fails. Pollers read the durable cache first, so no "done" marker has to linger. Only complete output is saved (see [ai-outputs.md](ai-outputs.md)).
 
-The runner picks its model by job kind (`llm_client.get_llm_model`): `overall_analysis`, `deep_analysis`, `smart_recap`, `content_repurposing`, or `translation` for a French version ([providers.md](providers.md#which-model-a-job-uses)).
+The runner picks its model by job kind (`llm_client.get_llm_model`): `overall_analysis`, `faq`, `deep_analysis`, `smart_recap`, `content_repurposing`, or `translation` for a French version ([providers.md](providers.md#which-model-a-job-uses)).
 
 **Refusals.** When the model declines, the job fails after that one call with "The model declined this session. Nothing was saved.", which the poll returns as its `error`. It names no category: that stays in the call's `llm_usage` row (`refusal_category`). arq stores the raised exception, and `llm_client.LLMRefused` is rebuilt from its category when the poll reads it back. Nothing is retried, the content-bundle attempts included ([ai-outputs.md](ai-outputs.md#saving-rules)).
 

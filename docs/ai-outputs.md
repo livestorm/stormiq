@@ -13,6 +13,17 @@ The Follow-up tab's "Session analysis" (job kind `overall_analysis`, kept for it
 
 Stored as `analysis_bundle: {English: "...", French: "..."}`. The legacy `analysis_md` column mirrors English only. Analyses written before November 2026 stay as they were until written again.
 
+## FAQ
+
+The Follow-up tab's "FAQ" (job kind `faq`): one Haiku 5.5 call at low effort (`ai/faq.py`, the `dossier` layout, 4,000 answer tokens) over the question desk ([prompt](../prompts/faq.txt)).
+
+- **The brief** (`record.faq_brief.build_faq_brief`, built by `api_logic._write_faq`): the session's title and whether it is internal, then each question of the desk (`question_desk`) in its order, under an id of the brief's own (`q1`): where and when it was asked, its status, its text, and the answers StormIQ holds for it: Livestorm's written answer, the host's answer saved on the desk, and the passage of the talk that answers it with its time. A question marked answered aloud with no passage found says so. Never who asked, never the desk's ids.
+- **It needs "Analyse session" first**: the chat must be labelled (the desk lists the chat's questions from the labels) and, when there is a transcript, the session read as it is now (the talk's answers); otherwise the job fails with `SessionNotAnalysedError`. A session without a transcript gets a FAQ from its Q&A and chat alone. No question, no FAQ (`NoQuestionsError`).
+- **Two sections**, in the FAQ's language: Questions and answers (each answered question, reworded neutrally and merged with its duplicates, as a level-3 heading, its answer built only from the brief's answers, "(Answered at 5:19 in the replay.)" when it comes from the talk) and Still to answer (left out when nothing is open). The prompt has the model drop every name, greeting and off-topic question.
+- The French version is a translation of the English one (the `translation` job), as for the Session analysis.
+
+Stored as `faq_bundle: {English: "...", French: "..."}`.
+
 ## Deep Analysis
 
 The Follow-up tab no longer lists it (November 2026); its route, job and stored outputs stay. It reads the classic inputs below.

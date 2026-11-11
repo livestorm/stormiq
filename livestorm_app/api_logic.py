@@ -260,7 +260,7 @@ def get_transcript_download(session_id: str, *, organization_id: OrgScope) -> Di
 # English-only markdown columns).
 _OUTPUT_FIELDS = [
     "analysis_bundle", "analysis_md", "deep_analysis_bundle", "deep_analysis_md",
-    "content_repurpose_bundle", "smart_recap_bundle",
+    "content_repurpose_bundle", "smart_recap_bundle", "faq_bundle",
 ]
 
 
@@ -271,6 +271,7 @@ def _serialize_outputs(cached_session: Dict[str, Any]) -> Dict[str, Any]:
         "deepAnalysisBundle": _normalize_text_bundle(cached_session.get("deep_analysis_bundle"), str(cached_session.get("deep_analysis_md") or "")),
         "contentRepurposeBundle": _stored_content_bundles(cached_session),
         "smartRecapBundle": _normalize_smart_recap_bundle(cached_session.get("smart_recap_bundle")),
+        "faqBundle": _normalize_text_bundle(cached_session.get("faq_bundle"), ""),
     }
 
 
@@ -1622,6 +1623,86 @@ def _write_session_analysis(api_key: str, session_id: str, cached: Mapping[str, 
     )
 
 
+def run_faq(api_analysis_key: str, session_id: str, output_language: str) -> Dict[str, Any]:
+    """The Follow-up's "FAQ" in one language. English is written from the
+    question desk (`_write_faq`); another language is a translation of the
+    English one, which must exist first. Saved in `faq_bundle` under the
+    language."""
+    cached = _require_cached_payloads(session_id, organization_id=ALL_ORGS)
+    faq_bundle = _normalize_text_bundle(cached.get("faq_bundle"), "")
+    if str(output_language or "").strip() not in ("", "English") and not faq_bundle.get("English", "").strip():
+        raise RuntimeError("Generate the English FAQ first before translating.")
+    source_language, source_markdown = _get_alternate_language_text(faq_bundle, output_language)
+    if source_markdown:
+        faq_md = translate_markdown_with_openai(
+            api_key=api_analysis_key,
+            model=get_llm_model("translation"),
+            source_markdown=source_markdown,
+            source_language=OUTPUT_LANGUAGE_MAP.get(source_language, source_language),
+            target_language=OUTPUT_LANGUAGE_MAP.get(output_language, output_language),
+            ctx=_llm_call_context("translation", "faq", session_id, output_language, cached),
+        )
+    else:
+        faq_md = _write_faq(api_analysis_key, session_id, cached, output_language)
+    faq_md = _require_generated_text(faq_md, "FAQ")
+    merge_cached_bundle_entry(session_id, "faq_bundle", output_language, faq_md)
+    faq_bundle[output_language] = faq_md
+    return {"markdown": faq_md, "bundle": faq_bundle}
+
+
+class NoQuestionsError(RuntimeError):
+    """The session has no audience question to make a FAQ from."""
+
+
+def _write_faq(api_key: str, session_id: str, cached: Mapping[str, Any], output_language: str) -> str:
+    """The FAQ written from the session's question desk
+    (`record.faq_brief.build_faq_brief`): its questions, statuses and
+    answers, without their authors. The desk lists the chat's questions and
+    the talk's answers only once the session is analysed, so this raises
+    `SessionNotAnalysedError` until the chat is labelled and, with a
+    transcript, the session read as it is now; `NoQuestionsError` when
+    there is no question."""
+    from livestorm_app.ai.faq import write_faq
+    from livestorm_app.db import fetch_understanding
+    from livestorm_app.record.assemble import session_meta
+    from livestorm_app.record.faq_brief import build_faq_brief
+    from livestorm_app.record.inputs import load_record_inputs
+    from livestorm_app.record.question_desk import question_desk
+    from livestorm_app.record.roster import stored_roster_rows
+    from livestorm_app.record.understanding import READY, STALE, located_answers
+
+    roster_status = fetch_roster_status(session_id, ALL_ORGS) or {}
+    stored_roster = fetch_session_roster(session_id, ALL_ORGS) if roster_status.get("roster") is not None else None
+    inputs = load_record_inputs(
+        dict(cached),
+        roster_rows=stored_roster_rows(stored_roster) if stored_roster is not None else None,
+        stored_labels=fetch_chat_labels(session_id, ALL_ORGS),
+    )
+    if (inputs.chat_labels_info or {}).get("state") != "ready":
+        raise SessionNotAnalysedError('Run "Analyse session" on the Report first: the FAQ lists the chat\'s questions it finds.')
+    located, located_state = located_answers(fetch_understanding(session_id, ALL_ORGS), inputs)
+    if inputs.transcript is not None and located_state == STALE:
+        raise SessionNotAnalysedError('The session changed since it was analysed. Run "Analyse session" again on the Report first.')
+    if inputs.transcript is not None and located_state != READY:
+        raise SessionNotAnalysedError('Run "Analyse session" on the Report first: the FAQ uses the answers it finds in the talk.')
+    desk = question_desk(inputs, fetch_question_replies(session_id, ALL_ORGS), located, located_state)
+    # The desk's rows without their authors or ids: names never reach a model.
+    questions = [
+        {"source": q["source"], "t": q["t"], "answered_as": q["status"], "text": q["text"],
+         "answer": q["answer"], "reply": q["reply"], "located": q["located"]}
+        for q in desk["questions"]
+    ]
+    if not questions:
+        raise NoQuestionsError("This session has no audience question to make a FAQ from.")
+    brief = build_faq_brief(title=session_meta(inputs)["title"], internal=bool(inputs.roster.meta.internal), questions=questions)
+    return write_faq(
+        brief,
+        output_language=OUTPUT_LANGUAGE_MAP.get(output_language, output_language),
+        api_key=api_key,
+        ctx=_llm_call_context("faq", "faq", session_id, output_language, cached),
+    )
+
+
 def run_deep_analysis(api_analysis_key: str, session_id: str, output_language: str) -> Dict[str, Any]:
     cached = _require_cached_payloads(session_id, organization_id=ALL_ORGS)
     session_payload = cached.get("session_payload")
@@ -1903,6 +1984,9 @@ def _extract_cached_ai_body(cached: Dict[str, Any], kind: str, language: str = "
     if kind == "deep_analysis":
         bundle = _normalize_text_bundle(cached.get("deep_analysis_bundle"), str(cached.get("deep_analysis_md") or ""))
         return bundle.get(language) if bundle.get(language) else None
+    if kind == "faq":
+        bundle = _normalize_text_bundle(cached.get("faq_bundle"), "")
+        return bundle.get(language) if bundle.get(language) else None
     if kind == "smart_recap":
         bundle = _normalize_smart_recap_bundle(cached.get("smart_recap_bundle"))
         return bundle.get(tone) if bundle.get(tone) else None
@@ -1922,6 +2006,7 @@ _ARQ_JOB_FUNCTION_BY_KIND: Dict[str, str] = {
     "deep_analysis": "run_deep_analysis_job",
     "smart_recap": "run_smart_recap_job",
     "content_repurposing": "run_content_repurposing_job",
+    "faq": "run_faq_job",
 }
 
 # The columns `_extract_cached_ai_body` reads for each kind: job starts and
@@ -1931,6 +2016,7 @@ _AI_BODY_FIELDS: Dict[str, List[str]] = {
     "deep_analysis": ["deep_analysis_bundle", "deep_analysis_md"],
     "smart_recap": ["smart_recap_bundle"],
     "content_repurposing": ["content_repurpose_bundle"],
+    "faq": ["faq_bundle"],
 }
 
 
@@ -1980,7 +2066,7 @@ def _start_ai_job(
     # English-first enforcement: French (and any non-English variant) must be
     # a translation of the existing English version so outputs stay consistent.
     # Reject if English hasn't been generated yet.
-    if kind in ("overall_analysis", "deep_analysis", "content_repurposing") and str(language or "").strip() not in ("", "English"):
+    if kind in ("overall_analysis", "deep_analysis", "content_repurposing", "faq") and str(language or "").strip() not in ("", "English"):
         if not _extract_cached_ai_body(cached, kind, language="English"):
             raise RuntimeError("Generate the English version first before translating to another language.")
 
@@ -2230,6 +2316,14 @@ def start_overall_analysis(session_id: str, output_language: str, *, organizatio
 
 def get_overall_analysis_job_data(session_id: str, job_id: str, language: str, *, organization_id: OrgScope, outputs_only: bool = False) -> Dict[str, Any]:
     return _get_ai_job_data("overall_analysis", session_id, job_id, language=language, organization_id=organization_id, outputs_only=outputs_only)
+
+
+def start_faq(session_id: str, output_language: str, *, organization_id: OrgScope) -> Dict[str, Any]:
+    return _start_ai_job("faq", session_id, language=output_language, organization_id=organization_id)
+
+
+def get_faq_job_data(session_id: str, job_id: str, language: str, *, organization_id: OrgScope, outputs_only: bool = False) -> Dict[str, Any]:
+    return _get_ai_job_data("faq", session_id, job_id, language=language, organization_id=organization_id, outputs_only=outputs_only)
 
 
 def start_deep_analysis(session_id: str, output_language: str, *, organization_id: OrgScope) -> Dict[str, Any]:

@@ -521,6 +521,22 @@ async def run_overall_analysis_job(
     )
 
 
+async def run_faq_job(
+    ctx: Dict[str, Any],
+    session_id: str,
+    output_language: str,
+) -> Dict[str, Any]:
+    from livestorm_app.api_logic import run_faq
+
+    openai_key = _read_llm_key_or_raise()
+    return await _run_ai_job(
+        "faq",
+        session_id,
+        run_faq,
+        openai_key, session_id, output_language,
+    )
+
+
 async def run_deep_analysis_job(
     ctx: Dict[str, Any],
     session_id: str,
@@ -919,6 +935,7 @@ class WorkerSettings:
         func(run_transcription, timeout=TRANSCRIPTION_JOB_TIMEOUT_SECONDS),
         func(run_session_analysis_job, timeout=SESSION_ANALYSIS_TIMEOUT_SECONDS),
         func(run_overall_analysis_job, timeout=LLM_JOB_TIMEOUT_SECONDS),
+        func(run_faq_job, timeout=LLM_JOB_TIMEOUT_SECONDS),
         func(run_deep_analysis_job, timeout=LLM_JOB_TIMEOUT_SECONDS),
         func(run_smart_recap_job, timeout=LLM_JOB_TIMEOUT_SECONDS),
         func(run_content_repurposing_job, timeout=LLM_JOB_TIMEOUT_SECONDS),

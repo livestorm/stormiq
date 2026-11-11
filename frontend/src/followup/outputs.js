@@ -106,6 +106,15 @@ export const OUTPUTS = [
     item: "social_media",
     sections: true,
   },
+  {
+    key: "faq",
+    group: "Repurposing",
+    label: "FAQ",
+    about: "The audience's questions and their answers, for the replay page or the follow-up email. Who asked is never named.",
+    flow: "faq",
+    bundle: "faqBundle",
+    by: "language",
+  },
 ];
 
 const BY_KEY = new Map(OUTPUTS.map((output) => [output.key, output]));
@@ -113,6 +122,7 @@ const BY_KEY = new Map(OUTPUTS.map((output) => [output.key, output]));
 // The store's job slot for each flow (`state.aiJobs[jobKind]`).
 const JOB_KIND = {
   analysis: "overall_analysis",
+  faq: "faq",
   smartRecap: "smart_recap",
   contentRepurposing: "content_repurposing",
 };

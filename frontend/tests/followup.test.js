@@ -36,6 +36,18 @@ describe("the Follow-up outputs", () => {
     expect(outputText(outputs, outputFor("recap-hype"), "English")).toBe("");
   });
 
+  it("read, make and follow the FAQ by language, with no PDF", () => {
+    const faq = outputFor("faq");
+    const withFaq = { ...outputs, faqBundle: { English: "## Questions and answers\n### Is there an API?\nYes." } };
+    expect(outputText(withFaq, faq, "English")).toBe("## Questions and answers\n### Is there an API?\nYes.");
+    expect(outputText(outputs, faq, "English")).toBe("");
+    expect(canMake(outputs, faq, "French")).toBe(false);
+    expect(canMake(withFaq, faq, "French")).toBe(true);
+    const state = { loading: { faq: true }, aiJobs: { faq: { language: "English", progress: { percent: 10 } } } };
+    expect(making(state, faq, "English")).toEqual({ busy: true, progress: 10 });
+    expect(pdfUrl(fakeApi, "s1", faq, "English")).toBe("");
+  });
+
   it("clean a recap's Title and Description labels as the classic view did", () => {
     expect(cleanRecap("## title\nA day\n## Description\nBody")).toBe("## A day\nBody");
     expect(cleanRecap("")).toBe("");
@@ -75,7 +87,7 @@ describe("the Follow-up outputs", () => {
       { key: "overall", label: "Session analysis", ready: true, keys: ["overall"], toggle: "" },
       { key: "recap-professional", label: "Smart Recap", ready: true, keys: ["recap-professional", "recap-hype"], toggle: "recap" },
     ]);
-    expect(groups[1].items.map((item) => item.label)).toEqual(["Summary", "Blog post", "Follow-up email", "Social posts"]);
+    expect(groups[1].items.map((item) => item.label)).toEqual(["Summary", "Blog post", "Follow-up email", "Social posts", "FAQ"]);
   });
 
   it("switch the recap between Formal and Hype, and leave the Deep analysis off the list", () => {

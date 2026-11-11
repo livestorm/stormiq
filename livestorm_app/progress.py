@@ -99,6 +99,7 @@ STAGE_TABLE: Dict[str, Dict[str, int]] = {
     "roster": ROSTER_STAGE_FLOORS,
     "session_analysis": SESSION_ANALYSIS_STAGE_FLOORS,
     "overall_analysis": ANALYSIS_STAGE_FLOORS,
+    "faq": ANALYSIS_STAGE_FLOORS,
     "deep_analysis": ANALYSIS_STAGE_FLOORS,
     "smart_recap": ANALYSIS_STAGE_FLOORS,
     "content_repurposing": ANALYSIS_STAGE_FLOORS,

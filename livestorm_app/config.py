@@ -46,6 +46,7 @@ COVER_IMAGE_PROMPT_PATH = PROMPTS_DIR / "cover_image_prompt.txt"
 CHAT_LABELS_PROMPT_PATH = PROMPTS_DIR / "chat_labels.txt"  # v1: ai/chat_labelling.py
 UNDERSTANDING_PROMPT_PATH = PROMPTS_DIR / "understanding.txt"  # v1: ai/understanding.py
 SESSION_ANALYSIS_PROMPT_PATH = PROMPTS_DIR / "session_analysis.txt"  # v1: ai/session_analysis.py
+FAQ_PROMPT_PATH = PROMPTS_DIR / "faq.txt"  # v1: ai/faq.py
 
 ENV_PATH = Path(".env")
 
