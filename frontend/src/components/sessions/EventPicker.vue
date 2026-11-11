@@ -23,7 +23,12 @@ const searchId = `ep-search-${useId()}`;
 
 const current = computed(() => props.events.find((option) => option.value === props.modelValue) || null);
 const options = computed(() => [
-  ...(query.value.trim() ? [] : [{ value: "", label: `All events (${props.events.reduce((sum, e) => sum + e.count, 0)})` }]),
+  ...(query.value.trim()
+    ? []
+    : [(() => {
+        const count = props.events.reduce((sum, e) => sum + e.count, 0);
+        return { value: "", title: "All events", count, label: `All events (${count})` };
+      })()]),
   ...searchEvents(props.events, query.value),
 ]);
 

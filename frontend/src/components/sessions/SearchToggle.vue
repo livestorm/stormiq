@@ -18,10 +18,17 @@ const input = ref(null);
 const toggle = ref(null);
 const inputId = `st-${useId()}`;
 
+// Opening swaps the focused icon button for the field: removing the button
+// moves focus off it (a focusout with nowhere to go), which must not read as
+// "left the empty search" and fold it straight back.
+let opening = false;
+
 async function expand() {
+  opening = true;
   expanded.value = true;
   await nextTick();
   input.value?.focus();
+  opening = false;
 }
 
 async function collapse({ refocus = false } = {}) {
@@ -33,7 +40,7 @@ async function collapse({ refocus = false } = {}) {
 }
 
 function onFocusOut(event) {
-  if (props.modelValue.trim()) return;
+  if (opening || props.modelValue.trim()) return;
   if (root.value?.contains(event.relatedTarget)) return;
   collapse();
 }

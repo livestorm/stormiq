@@ -3,7 +3,9 @@ import Icon from "../ui/Icon.vue";
 
 // One choice among a few, as a column of 40px buttons: the current one is
 // pressed and ticked (icon and state, never colour alone). Used by the
-// Sessions page's column filters and its event picker.
+// Sessions page's column filters and its event picker. An option with a
+// `count` shows it as a badge on the right, and its `title` (else `label`)
+// on at most two lines, the whole title in its tooltip.
 defineProps({
   options: { type: Array, required: true },
   modelValue: { type: [String, Number], default: "" },
@@ -20,10 +22,13 @@ const emit = defineEmits(["choose"]);
       type="button"
       class="ol-option siq-fx"
       :aria-pressed="option.value === modelValue ? 'true' : 'false'"
+      :aria-label="option.label"
+      :title="option.title || option.label"
       @click="emit('choose', option.value)"
     >
       <Icon name="check" :size="16" class="ol-tick" />
-      <span class="ol-text">{{ option.label }}</span>
+      <span class="ol-text">{{ option.title || option.label }}</span>
+      <span v-if="option.count !== undefined" class="ol-count" aria-hidden="true">{{ option.count }}</span>
     </button>
   </div>
 </template>
@@ -32,6 +37,7 @@ const emit = defineEmits(["choose"]);
 .ol {
   display: flex;
   flex-direction: column;
+  gap: 2px;
 }
 
 .ol-option {
@@ -41,7 +47,7 @@ const emit = defineEmits(["choose"]);
   width: 100%;
   min-height: var(--siq-target);
   margin: 0;
-  padding: 0 var(--siq-space-3) 0 var(--siq-space-2);
+  padding: var(--siq-space-2) var(--siq-space-3) var(--siq-space-2) var(--siq-space-2);
   border: 0;
   border-radius: var(--siq-radius-inline);
   background: transparent;
@@ -72,9 +78,35 @@ const emit = defineEmits(["choose"]);
   visibility: visible;
 }
 
+.ol-tick {
+  flex: none;
+}
+
+/* A long title wraps to two lines at most, then ends in "…". */
 .ol-text {
+  flex: 1;
   min-width: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
   overflow-wrap: anywhere;
+  line-height: var(--siq-text-ui-lh);
+}
+
+.ol-count {
+  flex: none;
+  align-self: center;
+  min-width: 1.5rem;
+  padding: 0 var(--siq-space-2);
+  border-radius: var(--siq-radius-pill);
+  background: var(--siq-surface-2);
+  color: var(--siq-muted);
+  font-size: var(--siq-text-small);
+  line-height: var(--siq-text-small-lh);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
 }
 
 .ol-option.siq-fx:focus-visible {
