@@ -26,6 +26,48 @@ export function inlineParts(value) {
   return parts.length ? parts : [{ text: "" }];
 }
 
+/** Markdown text cut at its top-level headings (the shallowest level it
+ * uses): `[{title, text}]`, `text` the section's Markdown without its
+ * heading. Text before the first heading is a section with no title. Used
+ * where each part is copied apart (a social post, an email). */
+export function markdownSections(value) {
+  const lines = String(value ?? "").replace(/\r\n?/g, "\n").split("\n");
+  const levels = lines.map((line) => line.match(HEADING)).filter(Boolean).map((match) => match[1].length);
+  if (!levels.length) return String(value ?? "").trim() ? [{ title: "", text: String(value).trim() }] : [];
+  const top = Math.min(...levels);
+  const sections = [];
+  let current = { title: "", lines: [] };
+  for (const line of lines) {
+    const heading = line.match(HEADING);
+    if (heading && heading[1].length === top) {
+      sections.push(current);
+      current = { title: inlineParts(heading[2]).map((part) => part.text).join(""), lines: [] };
+    } else {
+      current.lines.push(line);
+    }
+  }
+  sections.push(current);
+  return sections
+    .map((section) => ({ title: section.title, text: section.lines.join("\n").trim() }))
+    .filter((section) => section.title || section.text);
+}
+
+/** Markdown as plain text, for pasting into a post or an email: headings,
+ * bold, italic and code marks dropped, bullets as "• ", numbered items kept,
+ * paragraphs kept apart. */
+export function plainText(value) {
+  const out = [];
+  for (const block of markdownBlocks(value)) {
+    const words = (parts) => parts.map((part) => part.text).join("");
+    if (block.type === "list") {
+      out.push(block.items.map((item, index) => `${block.ordered ? `${index + 1}.` : "•"} ${words(item)}`).join("\n"));
+    } else {
+      out.push(words(block.parts));
+    }
+  }
+  return out.join("\n\n");
+}
+
 /** Markdown text as `[{type, ...}]` blocks:
  * - `{type: "heading", level, parts}` (levels 1–6 as written);
  * - `{type: "paragraph", parts}`: lines of one paragraph keep their line

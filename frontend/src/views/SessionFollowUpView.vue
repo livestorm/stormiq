@@ -22,7 +22,9 @@ import {
   outputReady,
   outputText,
   pdfUrl,
+  toggleOptions,
 } from "../followup/outputs";
+import { markdownSections, plainText } from "../followup/markdown";
 import { filterCounts } from "../followup/desk";
 import { createChapters } from "../followup/useChapters";
 import { createQuestionDesk } from "../followup/useQuestionDesk";
@@ -102,6 +104,9 @@ function show(key, lang = language.value) {
 }
 
 const groups = computed(() => outputGroups(outputs.value, language.value));
+// Formal and Hype (the Smart Recap): one item in the list, a toggle on the output.
+const toggles = computed(() => toggleOptions(output.value));
+const listKey = computed(() => toggles.value[0]?.key || output.value.key);
 const corner = computed(() =>
   CORNER_OUTPUTS.map((item) => ({ key: item.key, label: item.label, ready: outputReady(outputs.value, item, language.value) })),
 );
@@ -116,7 +121,6 @@ function make() {
   const lang = language.value;
   const run = {
     analysis: () => store.runAnalysis(lang),
-    deepAnalysis: () => store.runDeepAnalysis(lang),
     smartRecap: () => store.runSmartRecap(tone),
     contentRepurposing: () => store.runContentRepurposing(lang),
   }[flow];
@@ -129,17 +133,19 @@ const makeLabel = computed(() => {
   return `Write the ${output.value.label.toLowerCase()}${output.value.by === "language" && language.value === "French" ? " in French" : ""}`;
 });
 
-// ── Copy ──
-const copied = ref(false);
+// ── Copy: the whole output, or one section of it (a post, an email) ──
+// Each section of a post or an email list is copied apart, as plain text.
+const sections = computed(() => (output.value.sections && body.value ? markdownSections(body.value) : []));
+const copied = ref(""); // "all", a section's index, or ""
 let copiedTimer = null;
-async function copy() {
+async function copy(text, which = "all") {
   try {
-    await navigator.clipboard.writeText(body.value);
-    copied.value = true;
+    await navigator.clipboard.writeText(text);
+    copied.value = which;
     clearTimeout(copiedTimer);
-    copiedTimer = setTimeout(() => (copied.value = false), 2000);
+    copiedTimer = setTimeout(() => (copied.value = ""), 2000);
   } catch {
-    copied.value = false;
+    copied.value = "";
   }
 }
 onBeforeUnmount(() => clearTimeout(copiedTimer));
@@ -171,7 +177,7 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
       <nav class="f-nav" aria-label="Follow-up">
         <label class="f-pick">
           <span class="siq-sr-only">Show</span>
-          <select class="f-input f-select" :value="ownValue || output.key" @change="show($event.target.value)">
+          <select class="f-input f-select" :value="ownValue || listKey" @change="show($event.target.value)">
             <optgroup label="From the session">
               <option :value="DESK">Question desk{{ openCount ? ` · ${openCount} open` : "" }}</option>
               <option :value="CHAPTERS">Chapters and show notes</option>
@@ -224,8 +230,8 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
               <button
                 type="button"
                 class="f-item siq-fx"
-                :class="{ 'is-current': !onOwn && item.key === output.key }"
-                :aria-current="!onOwn && item.key === output.key ? 'true' : undefined"
+                :class="{ 'is-current': !onOwn && item.keys.includes(output.key) }"
+                :aria-current="!onOwn && item.keys.includes(output.key) ? 'true' : undefined"
                 @click="show(item.key)"
               >
                 <span>{{ item.label }}</span>
@@ -269,7 +275,22 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
 
       <Card v-else-if="workspace" class="f-output" :aria-busy="busy.busy ? 'true' : 'false'">
         <CardHeader :title="output.label" :subtitle="output.about" :level="2">
-          <template v-if="output.by === 'language'" #right>
+          <template v-if="toggles.length" #right>
+            <div class="f-segmented" role="group" aria-label="Tone">
+              <button
+                v-for="option in toggles"
+                :key="option.key"
+                type="button"
+                class="f-seg siq-fx"
+                :class="{ 'is-on': option.key === output.key }"
+                :aria-pressed="option.key === output.key ? 'true' : 'false'"
+                @click="show(option.key)"
+              >
+                {{ option.toggleLabel }}
+              </button>
+            </div>
+          </template>
+          <template v-else-if="output.by === 'language'" #right>
             <div class="f-segmented" role="group" aria-label="Language">
               <button
                 v-for="option in LANGUAGES"
@@ -289,13 +310,34 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
 
         <template v-if="body">
           <div class="f-actions">
-            <UiButton variant="secondary" small :icon="copied ? 'check' : 'copy'" @click="copy">
-              {{ copied ? "Copied" : "Copy" }}
+            <UiButton variant="secondary" small :icon="copied === 'all' ? 'check' : 'copy'" @click="copy(body)">
+              {{ copied === "all" ? "Copied" : sections.length > 1 ? "Copy all" : "Copy" }}
             </UiButton>
             <UiButton v-if="pdf" variant="ghost" small icon="download" :href="pdf">PDF</UiButton>
             <span class="f-muted f-ai">Written by AI from this session. Check it before you share it.</span>
           </div>
-          <MarkdownBlocks :text="body" :lang="language === 'French' && output.by === 'language' ? 'fr' : undefined" />
+          <div v-if="sections.length > 1" class="f-sections">
+            <section v-for="(section, index) in sections" :key="index" class="f-section">
+              <div class="f-section-head">
+                <h3 class="f-section-title">{{ section.title || "Notes" }}</h3>
+                <UiButton
+                  variant="ghost"
+                  small
+                  :icon="copied === index ? 'check' : 'copy'"
+                  :aria-label="`Copy ${section.title || 'this part'}`"
+                  @click="copy(plainText(section.text), index)"
+                >
+                  {{ copied === index ? "Copied" : "Copy" }}
+                </UiButton>
+              </div>
+              <MarkdownBlocks
+                :text="section.text"
+                :top="4"
+                :lang="language === 'French' && output.by === 'language' ? 'fr' : undefined"
+              />
+            </section>
+          </div>
+          <MarkdownBlocks v-else :text="body" :lang="language === 'French' && output.by === 'language' ? 'fr' : undefined" />
         </template>
 
         <div v-else-if="busy.busy" class="f-empty" role="status">
@@ -665,5 +707,35 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
   .f-layout {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+/* A post or an email list: one block per part, each with its own Copy. */
+.f-sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--siq-space-4);
+}
+
+.f-section {
+  padding: var(--siq-space-4) var(--siq-space-5) var(--siq-space-5);
+  border: 1px solid var(--siq-hairline);
+  border-radius: var(--siq-radius-control);
+  background: var(--siq-surface-2);
+}
+
+.f-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--siq-space-3);
+  margin-bottom: var(--siq-space-3);
+}
+
+.f-section-title {
+  margin: 0;
+  font-size: var(--siq-text-card-title);
+  line-height: var(--siq-text-card-title-lh);
+  font-weight: var(--siq-weight-semibold);
+  color: var(--siq-ink);
 }
 </style>

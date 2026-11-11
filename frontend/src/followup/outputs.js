@@ -9,50 +9,48 @@ export const LANGUAGES = [
   { value: "French", label: "Français" },
 ];
 
-// One entry per output the page lists. `flow` names the store action and its
+// One entry per output the page shows. `flow` names the store action and its
 // loading flag and job slot; `bundle` is the workspace output; `by` is what
 // the bundle is keyed by (a language, or a tone); `item` is a repurposing
-// item inside a language.
+// item inside a language. Entries that share a `toggle` are one item in the
+// list, switched by a toggle on the output (`toggleLabel`): the Smart
+// Recap's Formal and Hype. `sections`: each top-level section (a post, an
+// email) gets its own Copy. The Deep analysis is off the list for now (the
+// owner's decision, November 2026); its server side stays.
 export const OUTPUTS = [
   {
     key: "overall",
     group: "Analysis",
-    label: "Overall analysis",
-    about: "What happened in the session and what to do next, in one read.",
+    label: "Session analysis",
+    about: "What happened, what landed with the audience, the questions, and what to do next.",
     flow: "analysis",
     bundle: "analysisBundle",
     by: "language",
     pdf: { kind: "overall" },
   },
   {
-    key: "deep",
-    group: "Analysis",
-    label: "Deep analysis",
-    about: "Scores, key moments, speakers, the audience's intent, risks and recommendations.",
-    flow: "deepAnalysis",
-    bundle: "deepAnalysisBundle",
-    by: "language",
-    pdf: { kind: "deep" },
-  },
-  {
     key: "recap-professional",
-    group: "Smart Recap",
-    label: "Recap: professional",
-    about: "A polished recap for internal sharing or stakeholder readouts.",
+    group: "Analysis",
+    label: "Smart Recap",
+    about: "A short recap of the session, ready to share.",
     flow: "smartRecap",
     bundle: "smartRecapBundle",
     by: "tone",
     tone: "professional",
+    toggle: "recap",
+    toggleLabel: "Formal",
   },
   {
     key: "recap-hype",
-    group: "Smart Recap",
-    label: "Recap: hype",
-    about: "A more energetic version that keeps momentum and punch.",
+    group: "Analysis",
+    label: "Smart Recap",
+    about: "A short recap of the session, ready to share.",
     flow: "smartRecap",
     bundle: "smartRecapBundle",
     by: "tone",
     tone: "hype",
+    toggle: "recap",
+    toggleLabel: "Hype",
   },
   {
     key: "recap-surprise",
@@ -95,6 +93,7 @@ export const OUTPUTS = [
     bundle: "contentRepurposeBundle",
     by: "language",
     item: "email",
+    sections: true,
   },
   {
     key: "social",
@@ -105,6 +104,7 @@ export const OUTPUTS = [
     bundle: "contentRepurposeBundle",
     by: "language",
     item: "social_media",
+    sections: true,
   },
 ];
 
@@ -113,14 +113,19 @@ const BY_KEY = new Map(OUTPUTS.map((output) => [output.key, output]));
 // The store's job slot for each flow (`state.aiJobs[jobKind]`).
 const JOB_KIND = {
   analysis: "overall_analysis",
-  deepAnalysis: "deep_analysis",
   smartRecap: "smart_recap",
   contentRepurposing: "content_repurposing",
 };
 
-/** The output for a key (from a URL), or the first one. */
+/** The output for a key (from a URL), or the first one (also for an output
+ * that left the list, such as the Deep analysis). */
 export function outputFor(key) {
   return BY_KEY.get(key) || OUTPUTS[0];
+}
+
+/** The outputs one toggle switches between, in order (`[]` without one). */
+export function toggleOptions(output) {
+  return output?.toggle ? OUTPUTS.filter((item) => item.toggle === output.toggle) : [];
 }
 
 /** The old classic routes, as the Follow-up output to open. */
@@ -197,9 +202,11 @@ export function outputReady(outputs, output, language) {
   return Boolean(outputText(outputs, output, language));
 }
 
-/** The list on the left: groups of `{key, label, ready}`, `ready` when the
- * output exists in `language` (a recap in any). The corner's outputs are
- * not in a group (`CORNER_OUTPUTS`). */
+/** The list on the left: groups of `{key, label, ready, keys}`, `ready`
+ * when the output exists in `language` (a recap in any). Outputs that share
+ * a toggle are one item: `key` its first, `keys` all of them (for the
+ * current mark), `ready` when any is. The corner's outputs are not in a
+ * group (`CORNER_OUTPUTS`). */
 export function outputGroups(outputs, language) {
   const groups = [];
   for (const output of OUTPUTS) {
@@ -209,7 +216,14 @@ export function outputGroups(outputs, language) {
       group = { name: output.group, items: [] };
       groups.push(group);
     }
-    group.items.push({ key: output.key, label: output.label, ready: Boolean(outputText(outputs, output, language)) });
+    const ready = Boolean(outputText(outputs, output, language));
+    const shared = output.toggle ? group.items.find((item) => item.toggle === output.toggle) : null;
+    if (shared) {
+      shared.keys.push(output.key);
+      shared.ready = shared.ready || ready;
+      continue;
+    }
+    group.items.push({ key: output.key, label: output.label, ready, keys: [output.key], toggle: output.toggle || "" });
   }
   return groups;
 }

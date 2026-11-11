@@ -31,6 +31,9 @@
   --siq-selected-ink: #0b42c3;
   --siq-ink: #12262b;
   --siq-ink-2: #4d5b66;
+  /* Long AI text read as prose (Follow-up): softer than ink, a touch lighter in dark mode. */
+  --siq-prose: #22363b;
+  --siq-prose-weight: 400;
   --siq-muted: #5d6d79;
   --siq-border: #8094a3;
   --siq-border-hover: #5d6d79;
@@ -107,6 +110,8 @@
   --siq-text-tag: 11px; /* the "Beta" tag */
   --siq-text-tag-lh: 16px;
   --siq-text-reading-lh: 22px; /* 14px text read as prose ("How we know") */
+  --siq-text-prose: 16px; /* AI text read at length (Follow-up) */
+  --siq-text-prose-lh: 28px;
   --siq-label-tracking: 0.06em;
 
   /* ── Shape and space ─────────────────────────────────────────────────── */
@@ -145,6 +150,8 @@
     --siq-selected-ink: #ffffff;
     --siq-ink: #ffffff;
     --siq-ink-2: #ced0d0;
+    --siq-prose: #d9dfe0;
+    --siq-prose-weight: 350;
     --siq-muted: #a4b5c1;
     --siq-border: #5d6d79;
     --siq-border-hover: #ced0d0;
@@ -199,6 +206,8 @@
     --siq-selected-ink: #ffffff;
     --siq-ink: #ffffff;
     --siq-ink-2: #ced0d0;
+    --siq-prose: #d9dfe0;
+    --siq-prose-weight: 350;
     --siq-muted: #a4b5c1;
     --siq-border: #5d6d79;
     --siq-border-hover: #ced0d0;
