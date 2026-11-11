@@ -63,6 +63,16 @@ The detectors of this version:
   lag (the median delay of replies to prompts, else `DEFAULT_LAG_S`), only
   on a verified clock. It needs `MOMENTS_MIN_MESSAGES` live audience
   messages and the chat labelled.
+- **demand** (#5, what the room asked for against what it got): the
+  stored understanding's groups of questions asking the same thing. For
+  each group of `DEMAND_MIN_QUESTIONS` or more desk questions: how many
+  asked, how many people, how many are still unmet (`UNMET`: open, or only
+  seemingly answered in the talk), and the talk spent answering them (the
+  seconds of the utterances the understanding located as their answers,
+  each counted once) with the chapter the first of them is in. It fires
+  when half or more of a group's questions are unmet. Statuses are the
+  question desk's (`question_desk`), passed in by the loader; it needs the
+  session read as it is now.
 
 Never a name or a message's text: counts, times and our own ids.
 
@@ -116,6 +126,11 @@ MOMENTS_MIN_MESSAGES = 30
 DEFAULT_LAG_S = 15.0
 MAX_MOMENTS = 5
 MAX_QUOTE_CHARS = 200
+
+DEMAND_MIN_QUESTIONS = 3
+# A question the host hasn't seen answered: still open, or a passage of the
+# talk seems to answer it but nobody confirmed it.
+UNMET = ("open", "covered")
 
 
 def _finite(value: Any) -> Optional[float]:
@@ -600,10 +615,84 @@ def detect_moments(inputs: Any, prompts: Sequence[Mapping[str, Any]], lag: Optio
     return {**base, "state": FOUND, "strength": round(strength, 2), "values": {**values, "moments": ordered}}
 
 
-def findings(inputs: Any, chapters: Sequence[Mapping[str, Any]], understanding: Mapping[str, Any]) -> Dict[str, Any]:
+# ── #5: what the room asked for against what it got ──
+
+
+def detect_demand(
+    inputs: Any,
+    understanding: Mapping[str, Any],
+    statuses: Optional[Mapping[str, str]],
+    chapters: Sequence[Mapping[str, Any]],
+) -> Dict[str, Any]:
+    base = {"id": "demand", "confidence": "estimated"}
+    if not understanding or statuses is None:
+        return {**base, "state": NOT_CHECKED, "reason": "no_reading"}
+    groups = [g for g in understanding.get("groups") or [] if isinstance(g, Mapping)]
+    events = inputs.events
+    authors: Dict[str, Any] = {}
+    if events is not None and not events.empty:
+        for eid, ref, author_id in events[["eid", "author_ref", "author_id"]].itertuples(index=False, name=None):
+            who = ref if isinstance(ref, str) and ref else (author_id if isinstance(author_id, str) and author_id else None)
+            authors[str(eid)] = who
+    spans: Dict[str, Tuple[float, float]] = {}
+    order: Dict[str, int] = {}
+    if inputs.transcript is not None:
+        frame = inputs.transcript.utterances.sort_values(["r_start", "order"], na_position="last", kind="stable")
+        for index, (uid, start, end) in enumerate(frame[["uid", "r_start", "r_end"]].itertuples(index=False, name=None)):
+            order[str(uid)] = index
+            start, end = _finite(start), _finite(end)
+            if start is not None and end is not None:
+                spans[str(uid)] = (start, max(end, start))
+    answers = {
+        str(a.get("question")): [str(u) for u in a.get("utterances") or []]
+        for a in understanding.get("answers") or []
+        if isinstance(a, Mapping)
+    }
+    rows = []
+    for group in groups:
+        asked = [str(q) for q in group.get("questions") or [] if str(q) in statuses]
+        if len(asked) < DEMAND_MIN_QUESTIONS:
+            continue
+        unmet = sum(1 for q in asked if statuses[q] in UNMET)
+        uids = list(dict.fromkeys(u for q in asked for u in answers.get(q, []) if u in spans))
+        talk = sum(spans[u][1] - spans[u][0] for u in uids)
+        first = min(uids, key=lambda u: order.get(u, 0)) if uids else None
+        chapter = None
+        if first is not None:
+            for item in chapters:
+                if order.get(str(item.get("first")), -1) <= order[first] <= order.get(str(item.get("last")), -1):
+                    chapter = item.get("title")
+                    break
+        rows.append(
+            {
+                "label": str(group.get("label") or ""),
+                "asked": len(asked),
+                "people": len({authors.get(q) for q in asked if authors.get(q)}),
+                "unmet": unmet,
+                "talkS": round(talk, 1),
+                "chapter": chapter,
+            }
+        )
+    rows.sort(key=lambda row: (-row["unmet"], -row["asked"], row["label"]))
+    values = {"topics": rows, "groups": len(groups)}
+    fired = [row for row in rows if row["unmet"] * 2 >= row["asked"]]
+    if not fired:
+        return {**base, "state": NOTHING, "values": values}
+    strength = min(0.4 + 0.08 * max(row["unmet"] for row in fired), 1.0)
+    return {**base, "state": FOUND, "strength": round(strength, 2), "values": {**values, "unmet": [row["label"] for row in fired]}}
+
+
+def findings(
+    inputs: Any,
+    chapters: Sequence[Mapping[str, Any]],
+    understanding: Mapping[str, Any],
+    statuses: Optional[Mapping[str, str]] = None,
+) -> Dict[str, Any]:
     """`{version, found, nothing, notChecked}`: every detector's answer, the
     found ones strongest first. `chapters` are `understanding.chapter_list`'s
-    and `understanding` the current reading's result (its `prompts`)."""
+    and `understanding` the current reading's result (its `prompts`,
+    `answers` and `groups`); `statuses` the question desk's status by
+    question id, or None (then #5 isn't checked)."""
     prompts = [p for p in (understanding.get("prompts") or []) if isinstance(p, Mapping)]
     answered = [a for a in (understanding.get("answers") or []) if isinstance(a, Mapping)]
     to_prompts = detect_prompts(inputs, prompts)
@@ -615,6 +704,7 @@ def findings(inputs: Any, chapters: Sequence[Mapping[str, Any]], understanding: 
         detect_monologue(inputs, prompts, answered),
         to_prompts,
         detect_moments(inputs, prompts, statistics.median(delays) if delays else None),
+        detect_demand(inputs, understanding, statuses, chapters),
     ]
     return {
         "version": FINDINGS_VERSION,

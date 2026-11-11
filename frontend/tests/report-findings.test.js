@@ -44,6 +44,7 @@ describe("the findings' words", () => {
     expect(view.nothing.map((item) => item.line)).toEqual([
       "Production: no burst of sound or connection complaints, and no late start.",
       "Monologues: the longest stretch without bringing the room in was 5 min.",
+      "What the room asked for: no topic drew 3 or more questions.",
     ]);
     expect(view.notChecked.map((item) => item.line)).toEqual([
       "Chapters: too little unprompted chat to compare them.",
@@ -253,9 +254,40 @@ describe("in French", () => {
   });
 });
 
+describe("what the room asked for", () => {
+  const demand = {
+    id: "demand", state: "found", confidence: "estimated", strength: 0.8,
+    values: {
+      groups: 2,
+      unmet: ["How much does it cost"],
+      topics: [
+        { label: "How much does it cost", asked: 6, people: 3, unmet: 5, talkS: 40, chapter: "Pricing for larger teams" },
+        { label: "Can we export to CSV", asked: 3, people: 0, unmet: 0, talkS: 0, chapter: null },
+      ],
+    },
+  };
+
+  it("names the topic, how many asked and how much of the talk answered it", () => {
+    const made = foundFinding(demand, "en", "s1");
+    expect(made.headline).toBe("3 people asked about “How much does it cost”, and most got no answer");
+    expect(made.rows).toEqual([
+      "“How much does it cost” · 6 questions from 3 people · 5 unanswered · 40 s of the talk answered it in “Pricing for larger teams”",
+      "“Can we export to CSV” · 3 questions · 0 unanswered · no answer found in the talk",
+    ]);
+    expect(LINES.demand.en).toContain(made.next);
+  });
+
+  it("says it in French too, and what it checked when nothing stood out", () => {
+    expect(foundFinding(demand, "fr", "s1").headline).toBe("3 personnes ont posé des questions sur « How much does it cost », la plupart sans réponse");
+    const lines = checkedLines({ nothing: [{ id: "demand", values: { topics: [demand.values.topics[1]] } }], notChecked: [{ id: "demand", reason: "no_reading" }] });
+    expect(lines.nothing.map((item) => item.line)).toEqual(["What the room asked for: every topic several people asked about got its answers."]);
+    expect(lines.notChecked[0].topic).toBe("What the room asked for");
+  });
+});
+
 describe("Next time", () => {
   it("has the same number of lines in each language for every situation, none of them a cause or a strategy", () => {
-    expect(SITUATIONS.length).toBe(7);
+    expect(SITUATIONS.length).toBe(8);
     for (const key of SITUATIONS) {
       expect(LINES[key].fr.length).toBe(LINES[key].en.length);
       expect(LINES[key].en.length).toBeGreaterThanOrEqual(3);

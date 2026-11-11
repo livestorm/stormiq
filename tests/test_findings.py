@@ -16,6 +16,7 @@ from livestorm_app.record.findings import (
     chapter_index,
     dead_air,
     detect_chapters,
+    detect_demand,
     detect_friction,
     detect_moments,
     detect_monologue,
@@ -254,6 +255,66 @@ def test_authors_without_a_person_are_told_apart_by_their_livestorm_id():
 
 
 # ── The route ──
+
+
+# ── #5: what the room asked for against what it got ──
+
+
+def _demand_inputs():
+    """Six chat questions on one topic by three people, two answered in the
+    talk (by the transcript's 3rd and 4th utterances), and their statuses."""
+    inputs, chapters, _ = _setup()
+    rows = [
+        {
+            "eid": f"C9{i:03d}", "kind": "chat", "livestorm_id": f"q-{i}", "reply_to": None, "at_unix": None,
+            "t": 600.0 + i, "phase": "live", "minute": 10, "is_team": False, "author_id": None,
+            "author_ref": f"P-{i % 3}", "text": "How much does it cost?", "has_link": False,
+        }
+        for i in range(6)
+    ]
+    inputs = dataclasses.replace(inputs, events=pd.concat([inputs.events, pd.DataFrame(rows)], ignore_index=True))
+    ids = [row["eid"] for row in rows]
+    uids = list(inputs.transcript.utterances["uid"])
+    understanding = {
+        "groups": [{"label": "How much does it cost", "questions": ids}, {"label": "Small", "questions": ids[:0]}],
+        "answers": [{"question": ids[0], "utterances": [uids[2], uids[3]]}, {"question": ids[1], "utterances": [uids[3]]}],
+    }
+    statuses = {qid: "open" for qid in ids}
+    statuses[ids[0]] = "aloud"
+    statuses[ids[1]] = "covered"
+    return inputs, chapters, understanding, statuses, uids
+
+
+def test_a_topic_many_asked_about_and_few_got_answered_is_found():
+    inputs, chapters, understanding, statuses, uids = _demand_inputs()
+    answer = detect_demand(inputs, understanding, statuses, chapters)
+    assert answer["state"] == FOUND
+    topic = answer["values"]["topics"][0]
+    assert topic["label"] == "How much does it cost"
+    assert (topic["asked"], topic["people"], topic["unmet"]) == (6, 3, 5)
+    frame = inputs.transcript.utterances.set_index("uid")
+    talk = sum(float(frame.loc[u, "r_end"] - frame.loc[u, "r_start"]) for u in uids[2:4])
+    assert abs(topic["talkS"] - round(talk, 1)) < 0.11, "each answering utterance counted once"
+    assert topic["chapter"] in {c["title"] for c in chapters}
+    assert answer["values"]["unmet"] == ["How much does it cost"]
+
+
+def test_a_topic_that_got_its_answers_is_checked_and_nothing_is_found():
+    inputs, chapters, understanding, statuses, _ = _demand_inputs()
+    answered = {qid: "written" for qid in statuses}
+    assert detect_demand(inputs, understanding, answered, chapters)["state"] == NOTHING
+    # A question the desk doesn't list (a team member's, a logistics one) isn't counted.
+    few = {qid: status for qid, status in list(statuses.items())[:2]}
+    nothing = detect_demand(inputs, understanding, few, chapters)
+    assert nothing["state"] == NOTHING and nothing["values"]["topics"] == []
+
+
+def test_demand_needs_the_session_read_as_it_is_now():
+    inputs, chapters, understanding, _, _ = _demand_inputs()
+    assert detect_demand(inputs, understanding, None, chapters) == {
+        "id": "demand", "confidence": "estimated", "state": NOT_CHECKED, "reason": "no_reading",
+    }
+    assert detect_demand(inputs, {}, {}, chapters)["reason"] == "no_reading"
 
 
 def test_the_frontend_fixture_is_the_route_response():

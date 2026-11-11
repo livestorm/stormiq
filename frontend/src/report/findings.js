@@ -128,7 +128,33 @@ function momentsFinding(values) {
   };
 }
 
-const FOUND = { moments: momentsFinding, chapters: chaptersFinding, friction: frictionFinding, monologue: monologueFinding, prompts: promptsFinding };
+function talkLine(topic) {
+  if (!topic.talkS) return "no answer found in the talk";
+  const where = topic.chapter ? ` in “${topic.chapter}”` : "";
+  return `${topic.talkS < 60 ? `${Math.round(topic.talkS)} s` : `${minutes(topic.talkS)} min`} of the talk answered it${where}`;
+}
+
+function demandFinding(values) {
+  const topics = values.topics || [];
+  const unmet = topics.filter((topic) => (values.unmet || []).includes(topic.label));
+  const top = unmet[0];
+  return {
+    headline:
+      unmet.length === 1
+        ? `${top.people > 1 ? plural(top.people, "person", "people") : plural(top.asked, "question", "questions")} asked about “${top.label}”, and most got no answer`
+        : `${unmet.length} topics the room kept asking about got few answers`,
+    lines: [
+      "The analysis grouped the questions that ask the same thing. A topic stands out when half or more of its questions have no answer: none written, none marked answered, none confirmed in the talk.",
+    ],
+    chart: null,
+    rows: topics.map(
+      (topic) =>
+        `“${topic.label}” · ${plural(topic.asked, "question", "questions")}${fromPeople(topic.people)} · ${topic.unmet} unanswered · ${talkLine(topic)}`,
+    ),
+  };
+}
+
+const FOUND = { demand: demandFinding, moments: momentsFinding, chapters: chaptersFinding, friction: frictionFinding, monologue: monologueFinding, prompts: promptsFinding };
 
 // ── Checked, nothing unusual · not checked ──
 
@@ -149,6 +175,10 @@ const NOTHING = {
     const count = (values?.prompts || []).length;
     return `Prompts to the room: it had time to answer ${count === 1 ? "the one prompt" : `all ${count} prompts`}.`;
   },
+  demand: (values) =>
+    (values?.topics || []).length
+      ? `What the room asked for: every topic several people asked about got its answers.`
+      : "What the room asked for: no topic drew 3 or more questions.",
 };
 
 const NOT_CHECKED = {
@@ -177,6 +207,9 @@ const NOT_CHECKED = {
     clock: "Prompts to the room: needs the recording's clock checked to the second.",
     no_prompts: "Prompts to the room: the analysis found none in the talk.",
   },
+  demand: {
+    no_reading: "What the room asked for: needs “Analyse session” on the session as it is now, to group the questions.",
+  },
 };
 
 const EN = {
@@ -198,7 +231,7 @@ export function foundFinding(finding, lang = "en", seed = "") {
   return { id: finding.id, confidence: finding.confidence || "estimated", ...made, next: nextTime(finding, lang, seed) };
 }
 
-const CHECK_ICONS = { chapters: "list", friction: "zap", monologue: "timer", moments: "activity", prompts: "message-circle" };
+const CHECK_ICONS = { demand: "help-circle", chapters: "list", friction: "zap", monologue: "timer", moments: "activity", prompts: "message-circle" };
 
 // "Chapters: the room's…" (English) or "Chapitres : le chat…" (French):
 // the topic before the first colon, the verdict after it.

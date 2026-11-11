@@ -77,6 +77,18 @@ const LIBRARY = {
       "Demandez à un co-animateur de relever les réponses qui arrivent après, et revenez-y.",
     ],
   },
+  demand: {
+    en: [
+      "Answer the topic the room kept asking about in the follow-up email: several people are waiting for it.",
+      "Put the topic the room kept asking about on the agenda next time, early.",
+      "Prepare a short answer to the most asked topic before going live, and give it during the session.",
+    ],
+    fr: [
+      "Répondez dans l'e-mail de suivi au sujet sur lequel la salle revenait : plusieurs personnes attendent la réponse.",
+      "Mettez au programme, et tôt, le sujet sur lequel la salle revenait la prochaine fois.",
+      "Préparez une réponse courte au sujet le plus demandé avant le direct, et donnez-la pendant la session.",
+    ],
+  },
   moments: {
     en: [
       "Clip the moments the room leaned in: they make the best excerpts to share.",
