@@ -69,7 +69,7 @@ Render, configured in [`render.yaml`](../render.yaml):
 `render.yaml` declares it (`stormiq-render`), but a Blueprint that is already synced may not create a new service on its own. To create it by hand in the Render dashboard:
 
 1. **New → Background Worker**, from this repository, branch `main`, runtime **Docker**, Dockerfile path `./docker/Dockerfile.render`, Docker build context `.` (the repository root). No start command: the image's `CMD` runs `arq livestorm_app.render_worker.WorkerSettings`.
-2. **Instance type: Standard (2 GB RAM, 1 CPU)** or larger. Headless Chrome and ffmpeg need about 1 to 1.5 GB for one 720p render (`max_jobs=1`); Starter's 512 MB is not enough. A two-minute show renders in a few minutes on one CPU (about 3.5 minutes on an Apple-silicon Mac); the job's timeout is 20 minutes.
+2. **Instance type: Standard (2 GB RAM, 1 CPU)** or larger. Headless Chrome and ffmpeg need about 1 to 1.5 GB for one 720p render (`max_jobs=1`); Starter's 512 MB is not enough. A two-minute show renders in about 5 minutes on one CPU: only its middle, as the intro and outro are made once (on the first render after a deploy that changed them, about a minute more) and stored in `surprise_bumpers`. The job's timeout is 45 minutes. The log gives each stage's time and speed with the session id only (`[render] session_id=… middle: 2640 frames in …s (… fps)`, then the join and the mix).
 3. **Environment:** `DATABASE_URL` (the same internal URL as web and worker) and `REDIS_URL` (from the `stormiq-redis` Key Value's internal connection string, as on the worker). Nothing else: no AI key, no Livestorm key.
 4. **Auto-deploy** on, like web and worker. Region: the same as Postgres and Redis.
 5. After the first deploy, its log says `[render worker] startup complete (queue stormiq:render)`. Make a show on a session (Follow-up → Surprise me → Make the show): the page goes through "Rendering the video" and plays the MP4.
@@ -105,6 +105,7 @@ HYPERFRAMES_BIN               # The hyperframes CLI (default "hyperframes"; make
 RENDER_WORKERS                # Render worker only. Headless Chrome workers capturing frames at once (default 1, at most 4): one per CPU of its plan
 GSAP_JS_PATH                  # gsap.min.js 3.15.0 (default /opt/stormiq-render/node_modules/gsap/dist/gsap.min.js)
 FFMPEG_BIN                    # ffmpeg (default "ffmpeg")
+FFPROBE_BIN                   # ffprobe, which checks the video's parts share their encoding before they are joined (default "ffprobe")
 ORG_DAILY_LLM_BUDGET_USD      # Optional, worker. Daily spend cap per org for automatic text jobs (none exists yet), in
                               # dollars, per UTC day. Unset: no limit. Never applies to jobs a user starts.
 

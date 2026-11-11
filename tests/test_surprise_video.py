@@ -490,27 +490,76 @@ def _film_inputs():
 
 def test_the_film_escapes_the_rooms_words_and_freezes_the_held_punchline():
     tl, shots = _film_inputs()
-    page, effects = film.build_film(tl, shots, pulse=PULSE, images={}, mark_svg='<svg width="28" height="28"></svg>', css="body{}")
+    page, effects = film.build_film(tl, shots, pulse=PULSE, images={}, css="body{}")
     assert "<script>alert(1)</script>" not in page and "&lt;script&gt;alert(1)&lt;/script&gt;" in page
     assert 'class="deadpan"' in page and "NOBODY ASKED WHY." in page, "the held punchline in condensed capitals"
     assert 'data-width="1280" data-height="720"' in page and "window.__timelines" in page
-    assert 'id="it-0"' in page and film.TAGLINE in page and 'id="so-w0"' in page and ">session.<" in page
     files = {event["file"] for event in effects}
     assert {"jingle-bass-meant-jazz-in.flac", "jingle-bass-meant-jazz-out.flac", "dun.flac"} <= files
     assert all((render.AUDIO_DIR / name).is_file() for name in files), "every effect is a committed file"
     assert effects == sorted(effects, key=lambda event: event["t"])
 
 
+def test_the_film_is_the_middle_alone_its_times_shifted_to_start_at_zero():
+    tl, shots = _film_inputs()
+    parts = film.spans(tl)
+    page, effects = film.build_film(tl, shots, pulse=PULSE, images={}, css="")
+    assert f'data-composition-id="main" data-start="0" data-duration="{parts["middle"]:.3f}"' in page
+    first = tl["shots"][0]
+    assert f'id="s0" class="clip shot" data-start="{first["start"] - tl["intro_s"]:.3f}"' in page
+    assert 'id="it-0"' not in page and film.TAGLINE not in page and 'id="so-w0"' not in page, "no intro or outro in it"
+    progress = {"scaleX": 1, "duration": round(parts["middle"], 3), "ease": "none"}
+    assert f'tl.fromTo("#progress",{{"scaleX": 0}},{json.dumps(progress)},0.000);' in page, "the bar runs over the middle only"
+    assert '"#glow"' not in page, "the glow is still: the joins can't be seen"
+    jingles = {event["file"]: event["t"] for event in effects if event["file"].startswith("jingle-")}
+    assert jingles["jingle-bass-meant-jazz-in.flac"] == 0.15, "the sound stays on the whole video's clock"
+    assert jingles["jingle-bass-meant-jazz-out.flac"] == round(parts["join"] + film.SIGNOFF_S - 0.35, 3)
+    dun = [event["t"] for event in effects if event["file"] == "dun.flac"]
+    assert dun and dun[0] > tl["intro_s"], "a shot's sound at its time in the whole video"
+
+
+def test_the_middle_moves_with_transforms_and_opacity_never_a_blur():
+    tl, shots = _film_inputs()
+    for n, transition in enumerate(("whip", "zoom", "blur")):
+        shots[n] = {**shots[n], "transition": transition}
+    page, _ = film.build_film(tl, shots, pulse=PULSE, images={}, css="")
+    assert "blur(" not in page, "a CSS blur is redrawn by the CPU on every frame"
+
+
+def test_the_parts_are_whole_frames_and_meet_at_the_end_card():
+    tl = {"intro_s": 4.0, "end_card": 31.27, "total": 37.27, "outro_s": 6.0}
+    parts = film.spans(tl)
+    assert parts["intro"] == 4.0 and parts["outro"] == 6.0
+    assert round(parts["middle"] * keys.FPS) == round((31.27 - 4.0) * keys.FPS)
+    assert abs(parts["join"] - 31.27) <= 0.5 / keys.FPS and parts["total"] == parts["join"] + 6.0
+    assert film.bumper_spans(tl) == [("intro", 4.0), ("outro", 6.0)]
+
+
+def test_the_intro_and_outro_hold_nothing_from_a_show_and_are_the_same_every_time():
+    mark = '<svg width="28" height="28"></svg>'
+    intro = film.build_bumper("intro", 4.0, mark_svg=mark, css="body{}")
+    outro = film.build_bumper("outro", 6.0, mark_svg=mark, css="body{}")
+    assert 'id="it-0"' in intro and film.TAGLINE in intro and 'data-duration="4.000"' in intro
+    assert 'id="so-w0"' in outro and ">session.<" in outro and ">StormIQ<" in outro and 'data-duration="6.000"' in outro
+    assert 'width="100%" height="100%"' in intro, "the mark fills its box"
+    assert "#progress" not in intro + outro and '"#glow"' not in intro + outro
+    assert intro == film.build_bumper("intro", 4.0, mark_svg=mark, css="body{}")
+    with pytest.raises(ValueError):
+        film.build_bumper("outro", film.SIGNOFF_S, mark_svg=mark, css="")
+    with pytest.raises(ValueError):
+        film.build_bumper("middle", 4.0, mark_svg=mark, css="")
+
+
 def test_the_film_needs_one_shot_per_clause():
     tl, shots = _film_inputs()
     with pytest.raises(ValueError):
-        film.build_film(tl, shots[:-1], pulse=[], images={}, mark_svg="<svg/>", css="")
+        film.build_film(tl, shots[:-1], pulse=[], images={}, css="")
 
 
 def test_a_picture_shot_without_its_picture_is_drawn_as_type():
     tl, shots = _film_inputs()
     shots[1] = {**shots[1], "type": "image", "image": "k"}
-    page, _ = film.build_film(tl, shots, pulse=[], images={}, mark_svg="<svg/>", css="")
+    page, _ = film.build_film(tl, shots, pulse=[], images={}, css="")
     assert "<img" not in page
 
 
@@ -528,14 +577,28 @@ def test_the_mix_places_each_clip_brings_the_voice_to_16_lufs_and_starts_fast(tm
 # ── The renderer, with the CLI and ffmpeg faked ──
 
 
-def _fake_runner(calls, *, fail=None, timeout=None):
+PROBE = {"codec_name": "h264", "profile": "High", "level": 31, "width": 1280, "height": 720, "pix_fmt": "yuv420p",
+         "r_frame_rate": "24/1", "time_base": "1/12288", "extradata_hash": "SHA256:abc"}
+BUMPERS = {"intro": b"INTRO", "outro": b"OUTRO"}
+
+
+def _fake_runner(calls, *, fail=None, timeout=None, probes=None):
+    """Fakes the CLI, ffprobe (the same encoding for every part, or
+    `probes` in turn) and ffmpeg (writes its last argument)."""
+    probes = list(probes or [])
+
     def run(args, **kwargs):
         calls.append((list(args), kwargs))
         if timeout and timeout in args:
             raise subprocess.TimeoutExpired(args, 1)
         if fail and fail in " ".join(args):
             return subprocess.CompletedProcess(args, 1, stdout="", stderr="chrome crashed")
+        if args[0] == "ffprobe":
+            stream = probes.pop(0) if probes else PROBE
+            return subprocess.CompletedProcess(args, 0, stdout=json.dumps({"streams": [stream]}), stderr="")
         out = Path(args[args.index("--output") + 1]) if "--output" in args else Path(args[-1])
+        if not out.is_absolute():
+            out = Path(kwargs["cwd"]) / out
         out.write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"x" * 100)
         return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
 
@@ -548,10 +611,12 @@ def gsap(tmp_path, monkeypatch):
     path.write_text("/* gsap */")
     monkeypatch.setenv("GSAP_JS_PATH", str(path))
     monkeypatch.setenv("HYPERFRAMES_BIN", "npx -y hyperframes@0.9.34")
+    monkeypatch.delenv("FFPROBE_BIN", raising=False)
+    monkeypatch.delenv("FFMPEG_BIN", raising=False)
     return path
 
 
-def test_the_render_writes_a_project_runs_the_pinned_cli_at_720p_then_mixes(gsap):
+def test_the_render_draws_the_middle_joins_the_stored_bumpers_by_copy_then_mixes(gsap):
     tl, shots = _film_inputs()
     calls, stages = [], []
     clips = {clip["key"]: b"mp3" for clip in CLIPS}
@@ -561,16 +626,83 @@ def test_the_render_writes_a_project_runs_the_pinned_cli_at_720p_then_mixes(gsap
         if "render" in args:
             project = Path(args[args.index("render") + 1])
             seen["files"] = sorted(str(p.relative_to(project)) for p in project.rglob("*") if p.is_file())
+        if "concat" in args:
+            work = Path(kwargs["cwd"])
+            seen["list"] = (work / "parts.txt").read_text()
+            seen["intro"], seen["outro"] = (work / "intro.mp4").read_bytes(), (work / "outro.mp4").read_bytes()
         return _fake_runner(calls)(args, **kwargs)
 
-    made = render.render_video(tl, shots, pulse=PULSE, clips=clips, images={1: b"jpeg"}, run=run, on_stage=stages.append)
-    assert made["size"] == len(made["mp4"]) and made["duration_s"] == tl["total"]
-    picture, sound = calls[0][0], calls[1][0]
+    made = render.render_video(tl, shots, pulse=PULSE, clips=clips, images={1: b"jpeg"}, bumpers=BUMPERS, run=run,
+                               on_stage=stages.append, job="session_id=s1")
+    parts = film.spans(tl)
+    assert made["size"] == len(made["mp4"]) and made["duration_s"] == round(parts["total"], 3)
+    tools = [args[0] for args, _ in calls]
+    assert tools == ["npx", "ffprobe", "ffprobe", "ffprobe", "ffmpeg", "ffmpeg"], "the middle, three probes, the join, the mix"
+    picture, join, sound = calls[0][0], calls[4][0], calls[5][0]
     assert picture[:4] == ["npx", "-y", "hyperframes@0.9.34", "render"] and picture[picture.index("--fps") + 1] == "24"
-    assert calls[0][1]["timeout"] == render.PICTURE_TIMEOUT_S and calls[0][1]["env"]["HYPERFRAMES_NO_TELEMETRY"] == "1"
-    assert sound[0] == "ffmpeg" and "+faststart" in sound and stages == ["mixing"]
+    assert picture[picture.index("--crf") + 1] == render.PICTURE_CRF
+    assert calls[0][1]["timeout"] == render.picture_timeout(parts["middle"]) and calls[0][1]["env"]["HYPERFRAMES_NO_TELEMETRY"] == "1"
+    assert "-show_data_hash" in calls[1][0], "the parameters compared include the SPS and PPS"
+    assert join[join.index("-f") + 1] == "concat" and join[join.index("-c:v") + 1] == "copy", "joined by copy, never encoded again"
+    assert seen["list"] == "file 'intro.mp4'\nfile 'middle.mp4'\nfile 'outro.mp4'\n"
+    assert (seen["intro"], seen["outro"]) == (b"INTRO", b"OUTRO")
+    assert sound[0] == "ffmpeg" and "+faststart" in sound and sound[sound.index("-i") + 1].endswith("picture.mp4")
+    assert sound[sound.index("-t") + 1] == f"{parts['total']:.3f}" and stages == ["mixing"]
     assert {"index.html", "hyperframes.json", "assets/gsap.min.js", "assets/fonts/Sora.woff2",
-            "assets/fonts/LeagueGothic.ttf", "assets/img_001.jpg"} <= set(seen["files"])
+            "assets/fonts/LeagueGothic.ttf", "assets/background.png", "assets/img_001.jpg"} <= set(seen["files"])
+
+
+@pytest.mark.parametrize("differ", [{"level": 40}, {"extradata_hash": "SHA256:def"}, {"extradata_hash": None}])
+def test_parts_encoded_differently_are_joined_by_one_encode_with_the_same_settings(gsap, differ, caplog):
+    tl, shots = _film_inputs()
+    calls = []
+    run = _fake_runner(calls, probes=[PROBE, {**PROBE, **differ}, PROBE])
+    render.render_video(tl, shots, pulse=[], clips={c["key"]: b"m" for c in CLIPS}, images={}, bumpers=BUMPERS, run=run)
+    join = calls[4][0]
+    assert join[join.index("-c:v") + 1] == "libx264" and join[join.index("-crf") + 1] == render.PICTURE_CRF
+    assert join[join.index("-r") + 1] == str(keys.FPS) and "encoding the join" in caplog.text
+    assert render.same_encoding([PROBE, dict(PROBE), PROBE]) and not render.same_encoding([])
+
+
+def test_a_bumper_is_rendered_from_its_own_page_with_the_middles_settings(gsap):
+    calls, seen = [], {}
+
+    def run(args, **kwargs):
+        project = Path(args[args.index("render") + 1])
+        seen["page"] = (project / "index.html").read_text()
+        return _fake_runner(calls)(args, **kwargs)
+
+    data = render.render_bumper("outro", 6.0, run=run)
+    assert data.startswith(b"\x00\x00\x00\x18ftyp")
+    assert ">StormIQ<" in seen["page"] and 'data-duration="6.000"' in seen["page"]
+    args = calls[0][0]
+    assert args[args.index("--crf") + 1] == render.PICTURE_CRF and args[args.index("--max-bitrate") + 1] == render.PICTURE_MAX_BITRATE
+    assert args[args.index("--fps") + 1] == str(keys.FPS)
+
+
+def test_a_bumpers_key_covers_its_kind_length_page_encode_and_renderer(monkeypatch):
+    key = render.bumper_key("intro", 4.0)
+    assert key == render.bumper_key("intro", 4.0) and len(key) == 64
+    assert len({key, render.bumper_key("outro", 6.0), render.bumper_key("intro", 5.0)}) == 3
+    monkeypatch.setattr(render, "PICTURE_CRF", "18")
+    assert render.bumper_key("intro", 4.0) != key, "a new encode makes new bumpers"
+    monkeypatch.undo()
+    monkeypatch.setattr(render, "_css", lambda: "body{color:red}")
+    assert render.bumper_key("intro", 4.0) != key, "a new design makes new bumpers"
+
+
+def test_the_pinned_renderer_is_the_one_the_image_installs():
+    dockerfile = (Path(__file__).resolve().parents[1] / "docker" / "Dockerfile.render").read_text()
+    assert f"hyperframes@{render.HYPERFRAMES_VERSION} " in dockerfile
+
+
+def test_the_picture_timeout_grows_with_the_video_and_the_job_outlasts_it():
+    short, long = render.picture_timeout(30), render.picture_timeout(150)
+    assert render.PICTURE_TIMEOUT_BASE_S < short < long <= render.PICTURE_TIMEOUT_MAX_S
+    assert render.picture_timeout(10_000) == render.PICTURE_TIMEOUT_MAX_S
+    bumpers = render.picture_timeout(4) + render.picture_timeout(6)
+    worst = bumpers + render.PICTURE_TIMEOUT_MAX_S + 3 * render.PROBE_TIMEOUT_S + render.JOIN_TIMEOUT_S + render.MIX_TIMEOUT_S
+    assert render_worker.RENDER_JOB_TIMEOUT_SECONDS > worst
 
 
 def test_the_capture_workers_follow_render_workers_within_bounds(monkeypatch):
@@ -583,7 +715,7 @@ def test_the_capture_workers_follow_render_workers_within_bounds(monkeypatch):
 
 def test_the_film_page_is_made_at_the_videos_frame_rate():
     tl, shots = _film_inputs()
-    page, _effects = film.build_film(tl, shots, pulse=PULSE, images={}, mark_svg="<svg/>", css="")
+    page, _effects = film.build_film(tl, shots, pulse=PULSE, images={}, css="")
     assert f'data-fps="{keys.FPS}"' in page and keys.FPS == 24
 
 
@@ -591,13 +723,17 @@ def test_a_failed_or_slow_render_says_so_without_the_tools_output(gsap, caplog):
     tl, shots = _film_inputs()
     clips = {clip["key"]: b"mp3" for clip in CLIPS}
     with pytest.raises(render.RenderFailed) as failed:
-        render.render_video(tl, shots, pulse=[], clips=clips, images={}, run=_fake_runner([], fail="hyperframes"))
+        render.render_video(tl, shots, pulse=[], clips=clips, images={}, bumpers=BUMPERS, run=_fake_runner([], fail="hyperframes"))
     assert str(failed.value) == "The video could not render its pictures. Please try again."
     assert "chrome crashed" in caplog.text, "the tool's output is logged, never returned"
     with pytest.raises(render.RenderFailed, match="took too long"):
-        render.render_video(tl, shots, pulse=[], clips=clips, images={}, run=_fake_runner([], timeout="render"))
+        render.render_video(tl, shots, pulse=[], clips=clips, images={}, bumpers=BUMPERS, run=_fake_runner([], timeout="render"))
+    with pytest.raises(render.RenderFailed, match="join its parts"):
+        render.render_video(tl, shots, pulse=[], clips=clips, images={}, bumpers=BUMPERS, run=_fake_runner([], fail="concat"))
     with pytest.raises(render.RenderFailed, match="missing"):
-        render.render_video(tl, shots, pulse=[], clips={}, images={}, run=_fake_runner([]))
+        render.render_video(tl, shots, pulse=[], clips={}, images={}, bumpers=BUMPERS, run=_fake_runner([]))
+    with pytest.raises(render.RenderFailed, match="intro or outro"):
+        render.render_video(tl, shots, pulse=[], clips=clips, images={}, bumpers={"intro": b"I"}, run=_fake_runner([]))
 
 
 def test_without_gsap_the_render_stops_before_any_tool(tmp_path, monkeypatch):
@@ -605,7 +741,10 @@ def test_without_gsap_the_render_stops_before_any_tool(tmp_path, monkeypatch):
     tl, shots = _film_inputs()
     calls = []
     with pytest.raises(render.RenderFailed, match="isn't set up"):
-        render.render_video(tl, shots, pulse=[], clips={c["key"]: b"m" for c in CLIPS}, images={}, run=_fake_runner(calls))
+        render.render_video(tl, shots, pulse=[], clips={c["key"]: b"m" for c in CLIPS}, images={}, bumpers=BUMPERS,
+                            run=_fake_runner(calls))
+    with pytest.raises(render.RenderFailed, match="isn't set up"):
+        render.render_bumper("intro", 4.0, run=_fake_runner(calls))
     assert calls == []
 
 
@@ -626,6 +765,9 @@ def _saved_show(monkeypatch, *, enabled=True, meta=None):
     monkeypatch.setattr(render_worker, "fetch_surprise_voice_clip", lambda sid, key, *, organization_id: {"bytes": b"mp3", "mime": "audio/mpeg"})
     monkeypatch.setattr(render_worker, "fetch_surprise_video_meta", lambda sid, *, organization_id: meta)
     monkeypatch.setattr(render_worker, "save_surprise_video", lambda sid, key, *, mp4, duration_s: saved.append((sid, key, mp4, duration_s)))
+    stored = {render.bumper_key(kind, seconds): kind.upper().encode() for kind, seconds in film.bumper_spans(tl)}
+    monkeypatch.setattr(render_worker, "fetch_surprise_bumper", stored.get)
+    monkeypatch.setattr(render_worker, "save_surprise_bumper", mock.Mock(side_effect=AssertionError("stored already")))
     return saved
 
 
@@ -633,17 +775,40 @@ def test_the_render_worker_renders_what_the_show_job_saved_and_saves_it_whole(mo
     saved = _saved_show(monkeypatch)
     seen = {}
 
-    def fake_render(timeline, shots, *, pulse, clips, images, on_stage):
-        seen.update(clips=clips, images=images, pulse=pulse)
+    def fake_render(timeline, shots, *, pulse, clips, images, bumpers, on_stage, job):
+        seen.update(clips=clips, images=images, pulse=pulse, bumpers=bumpers, job=job)
         on_stage("mixing")
         return {"mp4": b"MP4", "duration_s": timeline["total"], "size": 3}
 
     monkeypatch.setattr(render, "render_video", fake_render)
+    monkeypatch.setattr(render, "render_bumper", mock.Mock(side_effect=AssertionError("the stored bumpers are reused")))
     stages = []
     assert render_worker.render_and_save(SESSION_ID, stages.append)["status"] == "made"
     assert saved == [(SESSION_ID, keys.video_key("tl", "sh", ["img-key"]), b"MP4", _timeline()["total"])]
     assert seen["images"] == {0: b"jpeg"} and set(seen["clips"]) == {c["key"] for c in CLIPS} and seen["pulse"] == PULSE
+    assert seen["bumpers"] == {"intro": b"INTRO", "outro": b"OUTRO"} and seen["job"] == f"session_id={SESSION_ID}"
     assert stages == ["rendering", "mixing"]
+
+
+def test_a_missing_bumper_is_rendered_once_saved_whole_then_reused(monkeypatch):
+    tl = _timeline()
+    store, made = {}, []
+
+    def save(key, kind, *, mp4, duration_s):
+        store[key] = mp4
+        made.append((kind, duration_s))
+
+    def make(kind, seconds, *, job=""):
+        assert job == "session_id=s1"
+        return f"{kind}-{seconds}".encode()
+
+    monkeypatch.setattr(render_worker, "fetch_surprise_bumper", store.get)
+    monkeypatch.setattr(render_worker, "save_surprise_bumper", save)
+    monkeypatch.setattr(render, "render_bumper", make)
+    first = render_worker.ensure_bumpers(tl, "session_id=s1")
+    assert first == {"intro": b"intro-4.0", "outro": b"outro-6.0"} and made == [("intro", 4.0), ("outro", 6.0)]
+    monkeypatch.setattr(render, "render_bumper", mock.Mock(side_effect=AssertionError("made once")))
+    assert render_worker.ensure_bumpers(tl, "session_id=s2") == first and len(made) == 2
 
 
 def test_the_render_worker_keeps_a_video_made_from_the_same_show_and_refuses_when_off(monkeypatch):
@@ -774,6 +939,26 @@ def test_the_videos_parts_are_stored_whole_in_scope(test_database):
             "SELECT attstorage FROM pg_attribute WHERE attrelid = 'surprise_videos'::regclass AND attname = 'mp4'"
         ).fetchone()
     assert storage["attstorage"] == "e", "stored uncompressed, so a range reads only its chunks"
+
+
+def test_a_bumper_is_stored_whole_once_per_key_and_is_not_an_ai_output(test_database):
+    assert db.fetch_surprise_bumper("k1") is None
+    mp4 = bytes(range(256)) * 10
+    db.save_surprise_bumper("k1", "intro", mp4=mp4, duration_s=4.0)
+    assert db.fetch_surprise_bumper("k1") == mp4
+    db.save_surprise_bumper("k1", "intro", mp4=b"other", duration_s=4.0)
+    assert db.fetch_surprise_bumper("k1") == mp4, "the same key is the same picture: the first is kept"
+    db.save_surprise_bumper("k2", "outro", mp4=b"outro", duration_s=6.0)
+    assert db.fetch_surprise_bumper("k2") == b"outro" and db.fetch_surprise_bumper("  ") is None
+    with pytest.raises(ValueError):
+        db.save_surprise_bumper("k3", "middle", mp4=b"x", duration_s=1.0)
+    assert "surprise_bumpers" not in db.AI_OUTPUT_TABLES, "made from no session: a reset keeps it"
+    db.ensure_database_schema()
+    with db.get_db_connection() as connection:
+        storage = connection.execute(
+            "SELECT attstorage FROM pg_attribute WHERE attrelid = 'surprise_bumpers'::regclass AND attname = 'mp4'"
+        ).fetchone()
+    assert storage["attstorage"] == "e" and db.fetch_surprise_bumper("k1") == mp4, "ensured again, kept"
 
 
 def test_the_storyboards_table_is_gone(test_database):

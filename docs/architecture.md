@@ -19,7 +19,7 @@ Browser ── Vue SPA ──/api──▶ web: FastAPI (app.py) ─────
 
 - **web** serves the API and the built SPA. Handlers are plain `def` functions, run in FastAPI's threadpool. It calls the Livestorm API directly (fetching sessions is quick) and hands everything slow or paid to the worker.
 - **worker** runs transcription, the people sync, AI generation and Surprise me's show as arq jobs ([jobs.md](jobs.md)).
-- **render worker** (`render_worker.py`) makes Surprise me's MP4 from what the show job saved, on its own queue (`stormiq:render`), one at a time: the pinned `hyperframes` CLI renders the picture headless, ffmpeg mixes the sound ([jobs.md](jobs.md#the-render-worker)). It calls no provider; the web process and the worker never import it.
+- **render worker** (`render_worker.py`) makes Surprise me's MP4 from what the show job saved, on its own queue (`stormiq:render`), one at a time: the pinned `hyperframes` CLI renders the show's middle headless, ffmpeg joins it to the stored intro and outro (`surprise_bumpers`, made once) and mixes the sound ([jobs.md](jobs.md#the-render-worker)). It calls no provider; the web process and the worker never import it.
 - **Postgres** is the durable store: one row per session holds the Livestorm payloads (minus registrant join links) and every AI output ([data-model.md](data-model.md)).
 - **Redis** holds the job queue and short-lived progress. Losing it loses no results.
 
@@ -42,7 +42,7 @@ Browser ── Vue SPA ──/api──▶ web: FastAPI (app.py) ─────
 | `livestorm_app/queue.py` | arq job ids, enqueue and status from sync code (`_QueueBridge`) |
 | `livestorm_app/worker.py` | arq job handlers (the people sync's per-org lock included), the stuck-job sweeper, `WorkerSettings` |
 | `livestorm_app/render_worker.py` | The render worker's job (`render_surprise_video`) and its `WorkerSettings` (the `stormiq:render` queue, one job at a time) |
-| `livestorm_app/video/` | Surprise me's video: `keys.py` (the video's key, the one module the web process and the worker import), `film.py` (the HyperFrames page from the timeline and shot list), `mix.py` (the ffmpeg mix and mux), `render.py` (the project, the CLI and ffmpeg, with timeouts), `templates/` (the stylesheet, League Gothic, the CC0 effects and jingle with their sources) |
+| `livestorm_app/video/` | Surprise me's video: `keys.py` (the video's key, the one module the web process and the worker import), `film.py` (the HyperFrames pages: the show's middle from the timeline and shot list, and the fixed intro and outro), `mix.py` (the ffmpeg mix and mux), `render.py` (the project, the CLI, the bumpers' key, the join and ffmpeg, with timeouts), `templates/` (the stylesheet, the still background, League Gothic, the CC0 effects and jingle with their sources) |
 | `livestorm_app/progress.py` | Stage-floor progress in Redis |
 | `livestorm_app/llm_client.py` | The text client, Claude only: Anthropic through the official SDK (one client per process, the SDK's retries off, StormIQ's retry policy, streaming with a deadline); one `LLMResult` per answered call, retries, refusals and truncation, `call_llm` for the classic outputs and `generate_text` / `generate_json` (structured outputs) for the v1 jobs, a usage row per call |
 | `livestorm_app/oauth_client.py` | Livestorm OAuth (PKCE), token refresh, profile parsing |

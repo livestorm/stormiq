@@ -9,6 +9,22 @@ card), kinetic type on every clause, the held beat before a punchline
 frozen (grey, a slow push-in, then the punchline in condensed capitals on
 black with a low "dun": the deadpan freeze), subtle CC0 effects, no music.
 
+Three pages, rendered apart and joined by the renderer (`video/render.py`):
+the intro and the outro (`build_bumper`) hold nothing from a show, so each
+is rendered once and stored (`surprise_bumpers`); a show renders only its
+middle (`build_film`), from the intro's end to the end card, its times
+shifted to start at 0. The progress bar runs over the middle only and the
+background is one still picture (`templates/background.png`), so the joins
+can't be seen. The sound is still
+placed on the whole video's clock (`spans`): the effects `build_film`
+returns include the intro's and the outro's.
+
+No GPU on the render worker: every frame is drawn by the CPU. The blurred,
+turning glow behind everything cost two thirds of each frame, so the
+background is a still picture; the middle's moves are transform and
+opacity tweens only (a CSS blur is redrawn on every frame). The intro and
+the outro keep their blurs: they are drawn once.
+
 Pure: no database, no network, no subprocess. Text from the session (the
 clauses' words, the room's lines) is HTML-escaped; nothing from the session
 reaches the page's script but times and numbers.
@@ -36,6 +52,25 @@ JINGLE_GAIN = 0.9
 
 def jingle_files(name: str = JINGLE) -> Tuple[str, str]:
     return f"jingle-{name}-in.flac", f"jingle-{name}-out.flac"
+
+
+def frames(seconds: float) -> int:
+    """`seconds` as a whole number of frames (at least one)."""
+    return max(1, int(round(float(seconds) * FPS)))
+
+
+def spans(timeline: Mapping[str, Any]) -> Dict[str, float]:
+    """The three parts' lengths on whole frames, and where they meet:
+    `{intro, middle, outro, join, total}` in seconds. The middle runs from
+    the timeline's `intro_s` to its `end_card`; `join` is where the outro
+    starts in the joined video (the end card within half a frame)."""
+    intro_s = float(timeline["intro_s"])
+    end_card = float(timeline["end_card"])
+    outro_raw = float(timeline.get("outro_s") or (float(timeline["total"]) - end_card))
+    intro = frames(intro_s) / FPS
+    middle = frames(end_card - intro_s) / FPS
+    outro = frames(outro_raw) / FPS
+    return {"intro": intro, "middle": middle, "outro": outro, "join": intro + middle, "total": intro + middle + outro}
 
 
 def esc(text: Any) -> str:
@@ -94,11 +129,66 @@ def parse_number(text: str) -> Optional[Dict[str, Any]]:
             "comma": "," in match.group(2)}
 
 
-class Film:
-    """One show's page. `timeline`: the saved timeline; `shots`: the saved
-    shot list, one per timeline shot (same ids); `pulse`: `[{m, chat}]`;
-    `images`: shot id -> the image's file name under `assets/`; `mark_svg`:
-    the IQ monogram's SVG."""
+class _Page:
+    """A page's tweens. Times are given on the whole video's clock and
+    written on the page's own (`offset` earlier)."""
+
+    def __init__(self, offset: float = 0.0) -> None:
+        self.offset = float(offset)
+        self.js: List[str] = []
+
+    def at(self, t: float) -> str:
+        return f"{t - self.offset:.3f}"
+
+    def tw(self, sel: str, frm: Mapping[str, Any], to: Mapping[str, Any], at: float) -> None:
+        self.js.append(f"tl.fromTo({_js(sel)},{_js(frm)},{_js(to)},{self.at(at)});")
+
+    def set(self, sel: str, to: Mapping[str, Any], at: float) -> None:
+        self.js.append(f"tl.set({_js(sel)},{_js(to)},{self.at(at)});")
+
+    def reveal_words(self, pid: str, times: Sequence[float], style: str = "pop") -> None:
+        """Each word in at its time: `rise` (up from below), `slam` (from
+        big), `pop` (from a little big), `blur` (out of a blur: the
+        bumpers only, drawn once)."""
+        for n, t in enumerate(times):
+            sel = f"#{pid}-w{n}"
+            if style == "slam":
+                self.tw(sel, {"opacity": 0, "scale": 1.9}, {"opacity": 1, "scale": 1, "duration": 0.2, "ease": "power4.out"}, t)
+            elif style == "rise":
+                self.tw(sel, {"opacity": 0, "y": 40}, {"opacity": 1, "y": 0, "duration": 0.22, "ease": "expo.out"}, t)
+            elif style == "blur":
+                self.tw(sel, {"opacity": 0, "filter": "blur(8px)"},
+                        {"opacity": 1, "filter": "blur(0px)", "duration": 0.14, "ease": "power4.out"}, t)
+            else:
+                self.tw(sel, {"opacity": 0, "scale": 1.18}, {"opacity": 1, "scale": 1, "duration": 0.16, "ease": "power4.out"}, t)
+
+    def page(self, css: str, duration: float, body: str) -> str:
+        return f"""<!doctype html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=1280, height=720"/>
+<title>Surprise me</title>
+<script src="assets/gsap.min.js"></script>
+<style>{css}</style></head>
+<body>
+<div id="root" data-composition-id="main" data-start="0" data-duration="{duration:.3f}" data-width="{WIDTH}" data-height="{HEIGHT}" data-fps="{FPS}">
+<div id="film">
+  {body}
+</div>
+</div>
+<script>
+const tl = gsap.timeline({{ paused: true }});
+{chr(10).join(self.js)}
+window.__timelines = window.__timelines || {{}};
+window.__timelines["main"] = tl;
+</script>
+</body></html>"""
+
+
+class Film(_Page):
+    """One show's page: its middle, from the intro's end to the end card,
+    times shifted by the intro. `timeline`: the saved timeline; `shots`:
+    the saved shot list, one per timeline shot (same ids); `pulse`:
+    `[{m, chat}]`; `images`: shot id -> the image's file name under
+    `assets/`."""
 
     def __init__(
         self,
@@ -107,8 +197,8 @@ class Film:
         *,
         pulse: Sequence[Mapping[str, Any]],
         images: Mapping[int, str],
-        mark_svg: str,
     ) -> None:
+        super().__init__(offset=float(timeline["intro_s"]))
         self.tl = timeline
         clauses = list(timeline.get("shots") or [])
         if len(clauses) != len(shots) or any(int(c["id"]) != int(s["id"]) for c, s in zip(clauses, shots, strict=True)):
@@ -117,9 +207,7 @@ class Film:
         self.shots = [dict(shot) for shot in shots]
         self.pulse = [row for row in pulse if isinstance(row, Mapping)]
         self.images = dict(images)
-        self.mark = re.sub(r'width="\d+" height="\d+"', 'width="100%" height="100%"', mark_svg, count=1)
         self.html: List[str] = []
-        self.js: List[str] = []
         self.sfx: List[Dict[str, Any]] = []
         self.whoosh = 0
         self.pop = 0
@@ -139,12 +227,6 @@ class Film:
                 shot["type"] = "kinetic"  # its picture failed: the words alone
 
     # ---- helpers ----
-    def tw(self, sel: str, frm: Mapping[str, Any], to: Mapping[str, Any], at: float) -> None:
-        self.js.append(f"tl.fromTo({_js(sel)},{_js(frm)},{_js(to)},{at:.3f});")
-
-    def set(self, sel: str, to: Mapping[str, Any], at: float) -> None:
-        self.js.append(f"tl.set({_js(sel)},{_js(to)},{at:.3f});")
-
     def ev(self, file: str, t: float, gain: float) -> None:
         self.sfx.append({"file": file, "t": round(max(0.0, t), 3), "gain": gain})
 
@@ -166,13 +248,13 @@ class Film:
         for n, (x, y) in enumerate(SHAKE):
             self.js.append(
                 f'tl.fromTo("#camera",{{x:{prev[0] * amp:.1f},y:{prev[1] * amp:.1f}}},'
-                f'{{x:{x * amp:.1f},y:{y * amp:.1f},duration:0.045,ease:"none",immediateRender:false}},{at + n * 0.045:.3f});'
+                f'{{x:{x * amp:.1f},y:{y * amp:.1f},duration:0.045,ease:"none",immediateRender:false}},{self.at(at + n * 0.045)});'
             )
             prev = (x, y)
 
     def flash(self, at: float, color: str = "#FFFFFF", peak: float = 0.85) -> None:
         self.set("#flash", {"backgroundColor": color}, at)
-        self.js.append(f'tl.fromTo("#flash",{{opacity:{peak}}},{{opacity:0,duration:0.28,ease:"power2.out",immediateRender:false}},{at:.3f});')
+        self.js.append(f'tl.fromTo("#flash",{{opacity:{peak}}},{{opacity:0,duration:0.28,ease:"power2.out",immediateRender:false}},{self.at(at)});')
 
     def words_html(self, pid: str, words: Sequence[str], accent: str, size: int, color: str = INK,
                    accent_color: str = TEAL) -> str:
@@ -181,18 +263,6 @@ class Film:
             shade = accent_color if accent and norm(word) == norm(accent) else color
             spans.append(f'<span id="{pid}-w{n}" class="w" style="color:{shade}">{esc(word)}</span>')
         return f'<div class="words" style="font-size:{size}px">' + " ".join(spans) + "</div>"
-
-    def reveal_words(self, pid: str, times: Sequence[float], style: str = "blur") -> None:
-        for n, t in enumerate(times):
-            sel = f"#{pid}-w{n}"
-            if style == "slam":
-                self.tw(sel, {"opacity": 0, "scale": 1.9, "filter": "blur(10px)"},
-                        {"opacity": 1, "scale": 1, "filter": "blur(0px)", "duration": 0.2, "ease": "power4.out"}, t)
-            elif style == "rise":
-                self.tw(sel, {"opacity": 0, "y": 40}, {"opacity": 1, "y": 0, "duration": 0.22, "ease": "expo.out"}, t)
-            else:
-                self.tw(sel, {"opacity": 0, "filter": "blur(8px)"},
-                        {"opacity": 1, "filter": "blur(0px)", "duration": 0.14, "ease": "power4.out"}, t)
 
     # ---- one shot ----
     def shot(self, n: int, cl: Mapping[str, Any], sh: Mapping[str, Any]) -> None:
@@ -259,26 +329,28 @@ class Film:
             typ = "kinetic"
             inner = self.words_html(pid, words, sh.get("accent") or "", fit(chars))
 
-        self.html.append(f'<div id="{pid}" class="clip shot" data-start="{start:.3f}" data-duration="{dur:.3f}" data-track-index="2">'
+        self.html.append(f'<div id="{pid}" class="clip shot" data-start="{self.at(start)}" data-duration="{dur:.3f}" data-track-index="2">'
                          f'<div id="{pid}-stage" class="stage">{inner}</div></div>')
         st = f"#{pid}-stage"
+        # Transform and opacity only: a blur is redrawn by the CPU on every frame.
         if trans == "whip":
-            self.tw(st, {"x": 420, "filter": "blur(18px)"}, {"x": 0, "filter": "blur(0px)", "duration": 0.24, "ease": "expo.out"}, start)
+            self.tw(st, {"x": 420, "skewX": -12, "opacity": 0.35},
+                    {"x": 0, "skewX": 0, "opacity": 1, "duration": 0.24, "ease": "expo.out"}, start)
             self.sound("whoosh", start)
         elif trans == "zoom":
-            self.tw(st, {"scale": 1.55, "filter": "blur(10px)"}, {"scale": 1, "filter": "blur(0px)", "duration": 0.32, "ease": "expo.out"}, start)
+            self.tw(st, {"scale": 1.55, "opacity": 0.3}, {"scale": 1, "opacity": 1, "duration": 0.32, "ease": "expo.out"}, start)
             self.sound("whoosh", start)
         elif trans == "drop":
             self.tw(st, {"y": -260}, {"y": 0, "duration": 0.42, "ease": "back.out(1.7)"}, start)
             self.sound("whoosh", start)
         elif trans == "blur":
-            self.tw(st, {"opacity": 0, "filter": "blur(14px)"}, {"opacity": 1, "filter": "blur(0px)", "duration": 0.2, "ease": "power3.out"}, start)
+            self.tw(st, {"opacity": 0, "scale": 1.06}, {"opacity": 1, "scale": 1, "duration": 0.2, "ease": "power3.out"}, start)
         elif trans == "flash":
             self.flash(start, TEAL, 0.7)
         elif trans == "shake":
             self.shake(start + 0.05, 0.8)
         if n in self.light:
-            self.js.append(f'tl.fromTo("{st}",{{scale:1.16}},{{scale:1,duration:0.3,ease:"back.out(2)",immediateRender:false}},{start:.3f});')
+            self.js.append(f'tl.fromTo("{st}",{{scale:1.16}},{{scale:1,duration:0.3,ease:"back.out(2)",immediateRender:false}},{self.at(start)});')
             if trans != "flash":
                 self.flash(start, "#FFFFFF", 0.3)
             self.sound("pop", start)
@@ -287,7 +359,7 @@ class Film:
     def after_arrival(self, pid: str, st: str, start: float, end: float, typ: str, emph: str, times: List[float],
                       cl: Mapping[str, Any], sh: Mapping[str, Any], dur: float) -> None:
         if typ == "kinetic":
-            self.reveal_words(pid, times, "rise" if emph == "build" else "blur")
+            self.reveal_words(pid, times, "rise" if emph == "build" else "pop")
         elif typ == "stamp":
             t0 = times[0] if times else start
             self.tw(f"#{pid}-stamp", {"opacity": 0, "scale": 2.6, "rotation": -2},
@@ -295,7 +367,7 @@ class Film:
             self.shake(t0 + 0.18, 0.7)
             self.sound("pop", t0 + 0.18)
         elif typ == "emoji":
-            self.reveal_words(pid, times, "blur")
+            self.reveal_words(pid, times, "pop")
             for k in range(len(list(sh.get("emoji") or [])[:3] or ["x"])):
                 t = start + 0.08 + k * 0.12
                 self.tw(f"#{pid}-e{k}", {"scale": 0, "rotation": -40 + 30 * k, "opacity": 0},
@@ -322,19 +394,19 @@ class Film:
                 self.tw(f"#{pid}-arc", {"strokeDashoffset": 1},
                         {"strokeDashoffset": 1 - share, "duration": max(0.1, land - begin), "ease": "power2.out"}, begin)
             if times:
-                self.reveal_words(pid, times, "blur")
+                self.reveal_words(pid, times, "pop")
         elif typ == "pulse":
             draw = min(1.2, dur * 0.6)
             self.tw(f"#{pid}-line", {"strokeDashoffset": 1}, {"strokeDashoffset": 0, "duration": draw, "ease": "power2.inOut"}, start)
             self.tw(f"#{pid}-area", {"opacity": 0}, {"opacity": 1, "duration": 0.5}, start + draw * 0.6)
-            self.reveal_words(pid, times, "blur")
+            self.reveal_words(pid, times, "pop")
             if sh.get("minute") is not None and dur > 1.0 and f'id="{pid}-mk"' in self.html[-1]:
                 tz = start + draw
                 self.tw(f"#{pid}-mk", {"scale": 0, "opacity": 0}, {"scale": 1, "opacity": 1, "duration": 0.35, "ease": "back.out(3)"}, tz)
                 self.tw(f"#{pid}-zoom", {"scale": 1}, {"scale": 1.9, "duration": max(0.4, min(0.9, end - tz - 0.1)), "ease": "power2.inOut"}, tz)
                 self.sound("pop", tz)
         elif typ == "chat":
-            self.reveal_words(pid, times, "blur")
+            self.reveal_words(pid, times, "pop")
             self.tw(f"#{pid}-bub", {"scale": 0.5, "opacity": 0, "y": 80},
                     {"scale": 1, "opacity": 1, "y": 0, "duration": 0.45, "ease": "back.out(1.8)"}, start + 0.1)
             self.sound("pop", start + 0.1)
@@ -374,7 +446,7 @@ class Film:
         words[-1] = words[-1].rstrip(",;:—-") or words[-1]
         text = " ".join(words).upper()
         size = int(min(330, 1700 / (0.42 * max(len(text), 1)))) if len(text) < 16 else int(min(230, 2 * 1700 / (0.42 * len(text))))
-        self.html.append(f'<div id="{pid}" class="clip shot" data-start="{start:.3f}" data-duration="{dur:.3f}" data-track-index="2">'
+        self.html.append(f'<div id="{pid}" class="clip shot" data-start="{self.at(start)}" data-duration="{dur:.3f}" data-track-index="2">'
                          f'<div class="black"></div><div id="{pid}-stage" class="stage"><div id="{pid}-big" class="deadpan" '
                          f'style="font-size:{size}px">{esc(text)}</div></div></div>')
         self.tw(f"#{pid}-big", {"scale": 1.45, "opacity": 0}, {"scale": 1, "opacity": 1, "duration": 0.11, "ease": "power4.in"}, start)
@@ -392,7 +464,7 @@ class Film:
             shown = f'(v).toFixed({int(number["dec"])})' + ('.replace(/\\B(?=(\\d{3})+(?!\\d))/g, ",")' if number.get("comma") else "")
         return (f'(function(){{const o={{v:0}};const el=document.getElementById({_js(pid + "-num")});'
                 f'tl.fromTo(o,{{v:0}},{{v:{float(number["to"])},duration:{duration:.3f},ease:"power3.out",onUpdate:function(){{const v=o.v;'
-                f'el.textContent={_js(number["pre"])}+{shown}+{_js(number["post"])};}}}},{at:.3f});}})();')
+                f'el.textContent={_js(number["pre"])}+{shown}+{_js(number["post"])};}}}},{self.at(at)});}})();')
 
     def pulse_svg(self, pid: str, minute: Any) -> str:
         points = self.pulse
@@ -418,25 +490,41 @@ class Film:
                 f'<path id="{pid}-line" d="{path}" class="pline" pathLength="1"/>{marker}'
                 f'<text x="{x0}" y="{y0 + 60}" class="src">Chat messages per minute · start → end</text></svg></div>')
 
-    # ---- the intro and outro: the same on every show ----
-    def intro_html(self, lead: float) -> str:
-        letters = "".join(f'<span id="it-{k}">{esc(c) if c != " " else "&nbsp;"}</span>' for k, c in enumerate("Surprise me"))
-        return (f'<div id="intro" class="clip" data-start="0" data-duration="{lead:.3f}" data-track-index="1"><div id="intro-in" class="center">'
-                f'<div id="intro-mark" class="mark big">{self.mark}</div><div class="title">{letters}<span id="it-bang" class="bang">!</span></div>'
-                f'<div id="intro-sweep" class="sweep"></div><div id="intro-tag" class="tag">{esc(TAGLINE)}</div></div></div>')
-
-    def outro_html(self, end_card: float, total: float) -> str:
-        words = SIGNOFF.split()
-        spans = " ".join(f'<span id="so-w{k}" class="w" style="color:{TEAL if k >= 2 else INK}">{esc(w)}</span>' for k, w in enumerate(words))
-        return (f'<div id="outro" class="clip" data-start="{end_card:.3f}" data-duration="{SIGNOFF_S}" data-track-index="1">'
-                f'<div id="outro-in" class="center"><div class="signoff">{spans}</div></div></div>'
-                f'<div id="endcard" class="clip" data-start="{end_card + SIGNOFF_S:.3f}" data-duration="{total - end_card - SIGNOFF_S:.3f}" '
-                f'data-track-index="1"><div class="center"><div id="end-mark" class="mark big">{self.mark}</div>'
-                f'<div id="end-name" class="endname">StormIQ</div><div id="end-sub" class="endsub">Surprise me · {esc(TAGLINE)}</div></div></div>')
-
-    def intro_outro(self, lead: float, end_card: float) -> None:
+    # ---- the page ----
+    def bumper_sounds(self, lead: float, join: float) -> None:
+        """The intro's and the outro's sounds, on the whole video's clock:
+        the intro starts at 0, the outro at `join`."""
         jingle_in, jingle_out = jingle_files()
         self.ev(jingle_in, 0.15, JINGLE_GAIN)
+        self.sound("whoosh", lead - 0.2)
+        self.ev(jingle_out, join + SIGNOFF_S - 0.35, JINGLE_GAIN)
+
+    def build(self, css: str) -> str:
+        """The middle's page: from the intro's end (time 0 here) to the end card."""
+        for n, (cl, sh) in enumerate(zip(self.clauses, self.shots, strict=True)):
+            self.shot(n, cl, sh)
+        parts = spans(self.tl)
+        self.bumper_sounds(parts["intro"], parts["join"])
+        self.tw("#progress", {"scaleX": 0}, {"scaleX": 1, "duration": round(parts["middle"], 3), "ease": "none"}, self.offset)
+        self.sfx.sort(key=lambda event: event["t"])
+        body = (f'<div id="camera">{"".join(self.html)}</div>'
+                '<div id="hold"></div><div id="flash"></div><div id="progress"></div>')
+        return self.page(css, parts["middle"], body)
+
+
+class Bumper(_Page):
+    """The intro or the outro: nothing from a show, the same on every video."""
+
+    def __init__(self, mark_svg: str) -> None:
+        super().__init__()
+        self.mark = _mark(mark_svg)
+
+    def intro(self, css: str, lead: float) -> str:
+        letters = "".join(f'<span id="it-{k}">{esc(c) if c != " " else "&nbsp;"}</span>' for k, c in enumerate("Surprise me"))
+        body = (f'<div id="camera"><div id="intro" class="clip" data-start="0" data-duration="{lead:.3f}" data-track-index="1">'
+                f'<div id="intro-in" class="center"><div id="intro-mark" class="mark big">{self.mark}</div>'
+                f'<div class="title">{letters}<span id="it-bang" class="bang">!</span></div>'
+                f'<div id="intro-sweep" class="sweep"></div><div id="intro-tag" class="tag">{esc(TAGLINE)}</div></div></div></div>')
         self.tw("#intro-mark", {"scale": 0, "rotation": -120}, {"scale": 1, "rotation": 0, "duration": 0.55, "ease": "back.out(2)"}, 0.15)
         for k in range(len("Surprise me")):
             self.tw(f"#it-{k}", {"opacity": 0, "y": 60, "filter": "blur(6px)"},
@@ -446,50 +534,50 @@ class Film:
         self.tw("#intro-tag", {"opacity": 0, "filter": "blur(8px)"}, {"opacity": 1, "filter": "blur(0px)", "duration": 0.3}, 1.75)
         self.tw("#intro-in", {"x": 0, "filter": "blur(0px)", "opacity": 1},
                 {"x": -420, "filter": "blur(16px)", "opacity": 0, "duration": 0.3, "ease": "power3.in"}, lead - 0.32)
-        self.sound("whoosh", lead - 0.2)
-        self.reveal_words("so", [end_card + 0.15 + k * 0.16 for k in range(len(SIGNOFF.split()))], "rise")
-        self.tw("#outro-in", {"opacity": 1, "filter": "blur(0px)"},
-                {"opacity": 0, "filter": "blur(10px)", "duration": 0.2, "immediateRender": False}, end_card + SIGNOFF_S - 0.22)
-        self.ev(jingle_out, end_card + SIGNOFF_S - 0.35, JINGLE_GAIN)
-        self.tw("#end-mark", {"scale": 0, "rotation": -120}, {"scale": 1, "rotation": 0, "duration": 0.55, "ease": "back.out(2)"}, end_card + SIGNOFF_S + 0.05)
-        self.tw("#end-name", {"opacity": 0, "filter": "blur(8px)"}, {"opacity": 1, "filter": "blur(0px)", "duration": 0.3}, end_card + SIGNOFF_S + 0.35)
-        self.tw("#end-sub", {"opacity": 0}, {"opacity": 1, "duration": 0.4}, end_card + SIGNOFF_S + 0.7)
+        return self.page(css, lead, body)
 
-    # ---- the page ----
-    def build(self, css: str) -> str:
-        for n, (cl, sh) in enumerate(zip(self.clauses, self.shots, strict=True)):
-            self.shot(n, cl, sh)
-        lead, end_card, total = float(self.tl["intro_s"]), float(self.tl["end_card"]), float(self.tl["total"])
-        self.intro_outro(lead, end_card)
-        self.tw("#progress", {"scaleX": 0}, {"scaleX": 1, "duration": end_card, "ease": "none"}, 0)
-        self.tw("#glow", {"rotation": 0}, {"rotation": 360 * total / 60, "duration": total, "ease": "none"}, 0)
-        self.sfx.sort(key=lambda event: event["t"])
-        return f"""<!doctype html>
-<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=1280, height=720"/>
-<title>Surprise me</title>
-<script src="assets/gsap.min.js"></script>
-<style>{css}</style></head>
-<body>
-<div id="root" data-composition-id="main" data-start="0" data-duration="{total:.3f}" data-width="{WIDTH}" data-height="{HEIGHT}" data-fps="{FPS}">
-<div id="film">
-  <div id="bg"><div id="glow"></div><div id="grid"></div></div>
-  <div id="camera">
-    {self.intro_html(lead)}
-    {''.join(self.html)}
-    {self.outro_html(end_card, total)}
-  </div>
-  <div id="hold"></div>
-  <div id="flash"></div>
-  <div id="progress"></div>
-</div>
-</div>
-<script>
-const tl = gsap.timeline({{ paused: true }});
-{chr(10).join(self.js)}
-window.__timelines = window.__timelines || {{}};
-window.__timelines["main"] = tl;
-</script>
-</body></html>"""
+    def outro(self, css: str, length: float) -> str:
+        words = SIGNOFF.split()
+        spans_html = " ".join(f'<span id="so-w{k}" class="w" style="color:{TEAL if k >= 2 else INK}">{esc(w)}</span>'
+                              for k, w in enumerate(words))
+        body = (f'<div id="camera"><div id="outro" class="clip" data-start="0" data-duration="{SIGNOFF_S}" data-track-index="1">'
+                f'<div id="outro-in" class="center"><div class="signoff">{spans_html}</div></div></div>'
+                f'<div id="endcard" class="clip" data-start="{SIGNOFF_S}" data-duration="{length - SIGNOFF_S:.3f}" '
+                f'data-track-index="1"><div class="center"><div id="end-mark" class="mark big">{self.mark}</div>'
+                f'<div id="end-name" class="endname">StormIQ</div><div id="end-sub" class="endsub">Surprise me · {esc(TAGLINE)}</div>'
+                '</div></div></div>')
+        self.reveal_words("so", [0.15 + k * 0.16 for k in range(len(words))], "rise")
+        self.tw("#outro-in", {"opacity": 1, "filter": "blur(0px)"},
+                {"opacity": 0, "filter": "blur(10px)", "duration": 0.2, "immediateRender": False}, SIGNOFF_S - 0.22)
+        self.tw("#end-mark", {"scale": 0, "rotation": -120}, {"scale": 1, "rotation": 0, "duration": 0.55, "ease": "back.out(2)"}, SIGNOFF_S + 0.05)
+        self.tw("#end-name", {"opacity": 0, "filter": "blur(8px)"}, {"opacity": 1, "filter": "blur(0px)", "duration": 0.3}, SIGNOFF_S + 0.35)
+        self.tw("#end-sub", {"opacity": 0}, {"opacity": 1, "duration": 0.4}, SIGNOFF_S + 0.7)
+        return self.page(css, length, body)
+
+
+def _mark(svg: str) -> str:
+    return re.sub(r'width="\d+" height="\d+"', 'width="100%" height="100%"', svg, count=1)
+
+
+BUMPER_KINDS = ("intro", "outro")
+
+
+def bumper_spans(timeline: Mapping[str, Any]) -> List[Tuple[str, float]]:
+    """The bumpers a show needs: `[(kind, seconds)]`, on whole frames."""
+    parts = spans(timeline)
+    return [("intro", parts["intro"]), ("outro", parts["outro"])]
+
+
+def build_bumper(kind: str, seconds: float, *, mark_svg: str, css: str) -> str:
+    """The intro's or the outro's page, `seconds` long. Nothing from a show:
+    the same bytes for the same kind, length and design."""
+    if kind == "intro":
+        return Bumper(mark_svg).intro(css, float(seconds))
+    if kind == "outro":
+        if float(seconds) <= SIGNOFF_S:
+            raise ValueError("The outro is shorter than its sign-off.")
+        return Bumper(mark_svg).outro(css, float(seconds))
+    raise ValueError(f"Unknown bumper: {kind}")
 
 
 def build_film(
@@ -498,10 +586,11 @@ def build_film(
     *,
     pulse: Sequence[Mapping[str, Any]],
     images: Mapping[int, str],
-    mark_svg: str,
     css: str,
 ) -> Tuple[str, List[Dict[str, Any]]]:
-    """The page's HTML and the sound effects to mix (`[{file, t, gain}]`)."""
-    film = Film(timeline, shots, pulse=pulse, images=images, mark_svg=mark_svg)
+    """The middle's page (`spans(timeline)["middle"]` long, starting at the
+    intro's end) and every sound effect of the whole video to mix
+    (`[{file, t, gain}]`, the intro's and the outro's included)."""
+    film = Film(timeline, shots, pulse=pulse, images=images)
     page = film.build(css)
     return page, film.sfx

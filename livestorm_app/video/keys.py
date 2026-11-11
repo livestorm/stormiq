@@ -8,7 +8,7 @@ from typing import Iterable
 
 # Bump when the templates, the film's design, the mix or the encode change:
 # every video key changes with it, and the next click renders again.
-RENDER_VERSION = 2
+RENDER_VERSION = 3
 
 VIDEO_MIME = "video/mp4"
 # 24 fps: a fifth fewer frames to capture than 30, and kinetic type and

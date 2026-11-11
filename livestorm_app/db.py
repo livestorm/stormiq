@@ -863,6 +863,22 @@ def _ensure_surprise_video_schema(cursor: Any) -> None:
     # An MP4 doesn't compress: stored uncompressed out of line, a byte range
     # (`fetch_surprise_video_range`) reads only its own chunks.
     cursor.execute("ALTER TABLE surprise_videos ALTER COLUMN mp4 SET STORAGE EXTERNAL")
+    # The video's intro and outro (`video/render.py`, `render_bumper`): no
+    # session, no organization, nothing from a show; made once by the render
+    # worker per `bumper_key` and joined onto every video. Not an AI output.
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS surprise_bumpers (
+            bumper_key  TEXT PRIMARY KEY,
+            kind        TEXT NOT NULL,
+            mp4         BYTEA NOT NULL,
+            duration_s  DOUBLE PRECISION NOT NULL,
+            size_bytes  INTEGER NOT NULL,
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
+    cursor.execute("ALTER TABLE surprise_bumpers ALTER COLUMN mp4 SET STORAGE EXTERNAL")
 
 
 def _ensure_surprise_script_schema(cursor: Any) -> None:
@@ -3259,6 +3275,49 @@ def save_surprise_video(session_id: str, video_key: str, *, mp4: bytes, duration
     except Exception as exc:
         logger.error("Failed to save the video for session_id=%s (%s)", session_id_value, _error_label(exc))
         raise RuntimeError("Could not save the video.") from exc
+
+
+def fetch_surprise_bumper(bumper_key: str) -> Optional[bytes]:
+    """The stored intro or outro's MP4 for `bumper_key`, or None. Holds
+    nothing from a session, so it has no scope. Raises when the database
+    can't be read."""
+    key_value = str(bumper_key or "").strip()
+    if not database_enabled() or not key_value:
+        return None
+    with get_db_connection() as connection:
+        row = connection.execute(
+            "SELECT mp4 FROM surprise_bumpers WHERE bumper_key = %s LIMIT 1",
+            (key_value,),
+        ).fetchone()
+    if not row or row.get("mp4") is None:
+        return None
+    return bytes(row["mp4"])
+
+
+def save_surprise_bumper(bumper_key: str, kind: str, *, mp4: bytes, duration_s: float) -> None:
+    """Save an intro or outro whole (the render worker). The same key is the
+    same picture, so a second save keeps the first. Raises RuntimeError when
+    the write fails."""
+    key_value = str(bumper_key or "").strip()
+    kind_value = str(kind or "").strip()
+    if not key_value or kind_value not in ("intro", "outro") or not mp4:
+        raise ValueError("save_surprise_bumper requires a key, its kind and the video.")
+    if not database_enabled():
+        raise RuntimeError("Database is not configured.")
+    try:
+        with get_db_connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO surprise_bumpers (bumper_key, kind, mp4, duration_s, size_bytes, created_at)
+                VALUES (%s, %s, %s, %s, %s, NOW())
+                ON CONFLICT (bumper_key) DO NOTHING
+                """,
+                (key_value, kind_value, bytes(mp4), float(duration_s), len(mp4)),
+            )
+            connection.commit()
+    except Exception as exc:
+        logger.error("Failed to save the %s bumper (%s)", kind_value, _error_label(exc))
+        raise RuntimeError("Could not save the video's intro or outro.") from exc
 
 
 # ── Surprise me's performance script (ai/surprise_performance.py) ─────────

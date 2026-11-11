@@ -4,12 +4,12 @@
 @font-face { font-family: "League Gothic"; src: url("assets/fonts/LeagueGothic.ttf") format("truetype"); font-weight: 400; }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html, body { width: 1280px; height: 720px; overflow: hidden; background: #0A1430; }
-#root { position: relative; width: 1280px; height: 720px; overflow: hidden; }
+/* The background is one still picture at the video's size (templates/background.png): the navy radial
+   gradient, the teal and blue glow (a conic gradient blurred 120px) and the 96px grid, drawn once by
+   HyperFrames from the CSS they had until November 2026. With no GPU, drawing them on every frame cost
+   two thirds of the render; a still image costs almost nothing. */
+#root { position: relative; width: 1280px; height: 720px; overflow: hidden; background: #0A1430 url("assets/background.png") 0 0 / 1280px 720px no-repeat; }
 #film { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; overflow: hidden; transform: scale(0.6666667); transform-origin: 0 0; font-family: "Sora", "Noto Color Emoji", sans-serif; color: #F4F7FF; }
-#bg { position: absolute; inset: 0; background: radial-gradient(120% 90% at 50% 40%, #13265C 0%, #0A1430 60%, #060C20 100%); overflow: hidden; }
-#glow { position: absolute; left: 260px; top: -240px; width: 1400px; height: 1400px; border-radius: 50%;
-  background: conic-gradient(from 0deg, rgba(46,230,201,0.16), rgba(59,123,255,0.20), rgba(11,66,195,0.05), rgba(46,230,201,0.16)); filter: blur(120px); }
-#grid { position: absolute; inset: 0; background-image: linear-gradient(rgba(143,163,209,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(143,163,209,0.06) 1px, transparent 1px); background-size: 96px 96px; }
 #camera { position: absolute; inset: 0; }
 .shot, #intro, #endcard { position: absolute; inset: 0; }
 .stage { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; }
