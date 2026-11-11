@@ -108,7 +108,7 @@ def _good(brief_text):
         [
             INTERNAL_MARKER,
             "*Synthetic Product Webinar went well.*",
-            "- 5 audience questions, 1 still open.",
+            "- 5 audience questions, 2 still open.",
             "- From 1:00 to 2:00 the room greeted the team.",
             "- The team will send the slides to everyone.",
         ]
@@ -128,7 +128,7 @@ def test_the_brief_holds_the_vitals_moments_chapters_questions_and_decisions():
     assert text.startswith("# Team digest brief")
     assert "title: Synthetic Product Webinar" in text and "length: 30:00" in text
     assert "- Audience questions (Q&A and chat): 5" in text
-    assert "- Questions still open on the question desk: 1" in text
+    assert "- Questions still open on the question desk: 2" in text, "1 open and 1 covered, as Follow-up counts"
     assert "- 1:00 to 2:00: 3 messages, greetings and logistics; being said on stage: \"" in text
     assert "## Chapters\n- 0:21 Welcome and agenda" in text
     assert "- \"Is there an API?\"" in text
@@ -161,6 +161,21 @@ def test_a_saved_speaker_name_said_on_stage_is_replaced():
     assert "Nora" not in brief.text and "VALE" not in brief.text
     assert "thanks a speaker, over to you a speaker" in brief.text
     assert "everyone is a team member" in brief.text and "- not listed" in brief.text
+
+
+def test_still_open_counts_as_the_follow_up_page_does_open_and_covered_not_confirmed():
+    from livestorm_app.record import question_desk as desk_module
+
+    real = desk_module.question_desk
+
+    def desk(*args, **kwargs):
+        body = real(*args, **kwargs)
+        return {**body, "summary": {**body["summary"], "open": 2, "covered": 3}}
+
+    with mock.patch.object(desk_module, "question_desk", desk):
+        _, seen = _run(answer=f"{INTERNAL_MARKER}\n- The room asked a lot.")
+    text = seen["briefs"][0].text
+    assert "- Questions still open on the question desk: 5" in text
 
 
 def test_vitals_come_from_measures_the_report_shows_and_estimated_ones_say_so():

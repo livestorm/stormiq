@@ -1888,7 +1888,9 @@ def _write_team_digest(api_key: str, session_id: str, cached: Mapping[str, Any],
         length_s=clock_meta(inputs).get("endS"),
         internal=bool(inputs.roster.meta.internal),
         measures=assemble_record(inputs)["record"].get("measures") or {},
-        questions_open=desk["summary"].get("open"),
+        # Still open for the host, as the Follow-up page counts them: open,
+        # and covered in the talk but not confirmed (`desk.js` `filterCounts`).
+        questions_open=int(desk["summary"].get("open") or 0) + int(desk["summary"].get("covered") or 0),
         moments=room_moments(inputs, result or {}, names),
         chapters=placed,
         # The open questions' words only: never who asked, never the desk's ids.
