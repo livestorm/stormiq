@@ -128,6 +128,12 @@ class FakeBackend:
         self.upserts.append((session_id, {"figure_check": fields}))
         return True
 
+    def save_session_faq(self, session_id, *, organization_id, **fields):
+        if session_id != SESSION_ID or not _visible(organization_id):
+            return False
+        self.upserts.append((session_id, {"faq": fields}))
+        return True
+
     def save_located_decision(self, session_id, *, organization_id, **fields):
         if session_id != SESSION_ID or not _visible(organization_id):
             return False
@@ -173,6 +179,8 @@ def backend(monkeypatch):
     monkeypatch.setattr(api_logic, "save_figure_check", fake.save_figure_check)
     monkeypatch.setattr(api_logic, "fetch_figure_checks", lambda session_id, organization_id: {})
     monkeypatch.setattr(api_logic, "list_output_versions", lambda *args, **kwargs: [])
+    monkeypatch.setattr(api_logic, "save_session_faq", fake.save_session_faq)
+    monkeypatch.setattr(api_logic, "fetch_session_faq", lambda session_id, organization_id, language="English": None)
     # One figure to check, so a figure check has something to answer.
     monkeypatch.setattr(
         api_logic,
@@ -240,6 +248,8 @@ BODY = {
     "decision": "reject",
     "key": "k1",
     "choice": "NPS",
+    # The editable FAQ, saved whole.
+    "entries": [{"id": "m-1", "question": "Is there an API?", "answer": "", "source": "none", "origin": "manual", "deskIds": []}],
 }
 
 

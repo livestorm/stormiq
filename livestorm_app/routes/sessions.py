@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Dict, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -15,6 +16,7 @@ from livestorm_app.api_logic import (
     fetch_session_base_data,
     fetch_session_transcript_data,
     get_cached_workspace,
+    FaqInvalidError,
     FigureCheckNotFoundError,
     NothingLocatedError,
     QuestionNotFoundError,
@@ -27,6 +29,8 @@ from livestorm_app.api_logic import (
     get_session_library_row,
     get_session_chat_messages,
     get_session_open_questions_csv,
+    get_session_faq,
+    get_session_faq_export,
     get_session_question_desk,
     get_session_transcript_view,
     get_session_moments,
@@ -35,6 +39,7 @@ from livestorm_app.api_logic import (
     get_transcript_download,
     get_transcript_job_status_data,
     save_session_question_reply,
+    save_session_faq_entries,
     save_speaker_labels,
 )
 from livestorm_app.auth import (
@@ -53,6 +58,7 @@ from livestorm_app.people_sync import (
 )
 from livestorm_app.routes.common import SessionId, logger, raise_http_error
 from livestorm_app.routes.models import (
+    FaqSaveRequest,
     FetchSessionRequest,
     FigureCheckRequest,
     LocatedDecisionRequest,
@@ -61,6 +67,8 @@ from livestorm_app.routes.models import (
 )
 
 router = APIRouter()
+
+_UNSAFE_FILENAME = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 @router.get("/api/sessions/{session_id}/cover.png")
@@ -396,6 +404,84 @@ def download_open_questions_csv(
             "Cache-Control": "private, no-store",
         },
     )
+
+
+FAQ_RESOURCE = "FAQ"
+
+
+def _faq_failed(session_id: str, what: str) -> HTTPException:
+    logger.exception("FAQ %s failed for session_id=%s", what, session_id)
+    return HTTPException(status_code=500, detail={"resource": FAQ_RESOURCE, "message": f"The FAQ could not be {what}."})
+
+
+@router.get("/api/sessions/{session_id}/record/faq")
+def read_session_faq(session_id: SessionId, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
+    """The editable FAQ (`api_logic.get_session_faq`): the saved entries, or
+    the desk's draft before the first save, with what the desk answered
+    since. No model call."""
+    try:
+        return get_session_faq(session_id, organization_id=caller.read_scope)
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail={"resource": FAQ_RESOURCE, "message": str(exc)}) from exc
+    except Exception as exc:
+        raise _faq_failed(session_id, "read") from exc
+
+
+@router.put("/api/sessions/{session_id}/record/faq")
+def update_session_faq(session_id: SessionId, request: FaqSaveRequest, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
+    """Save the FAQ's entries whole and return it (`api_logic.
+    save_session_faq_entries`). Scoped like every session route: another
+    org's session looks missing."""
+    connection = caller.connection if isinstance(caller.connection, dict) else {}
+    entries = [entry.model_dump(by_alias=True) for entry in request.entries]
+    try:
+        return save_session_faq_entries(
+            session_id,
+            entries,
+            organization_id=caller.read_scope,
+            updated_by=str(connection.get("user_id") or "") or None,
+        )
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail={"resource": FAQ_RESOURCE, "message": str(exc)}) from exc
+    except FaqInvalidError as exc:
+        raise HTTPException(status_code=400, detail={"resource": FAQ_RESOURCE, "message": str(exc)}) from exc
+    except Exception as exc:
+        raise _faq_failed(session_id, "saved") from exc
+
+
+def _faq_download(session_id: str, export_format: str, caller: Caller) -> Response:
+    try:
+        result = get_session_faq_export(session_id, export_format, organization_id=caller.read_scope)
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail={"resource": FAQ_RESOURCE, "message": str(exc)}) from exc
+    except Exception as exc:
+        raise _faq_failed(session_id, "exported") from exc
+    filename = _UNSAFE_FILENAME.sub("-", result["filename"]).strip("-.") or f"stormiq-faq.{export_format}"
+    return Response(
+        content=result["content"],
+        media_type=result["media_type"],
+        headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "private, no-store"},
+    )
+
+
+@router.get("/api/sessions/{session_id}/record/faq.md")
+def download_session_faq_markdown(session_id: SessionId, caller: Caller = Depends(get_caller)) -> Response:
+    """The FAQ as saved (or the desk's draft) as Markdown. Private, never cached."""
+    return _faq_download(session_id, "md", caller)
+
+
+@router.get("/api/sessions/{session_id}/record/faq.csv")
+def download_session_faq_csv(session_id: SessionId, caller: Caller = Depends(get_caller)) -> Response:
+    """The FAQ as saved (or the desk's draft) as CSV: question, answer,
+    source, time in the replay. Private, never cached."""
+    return _faq_download(session_id, "csv", caller)
+
+
+@router.get("/api/sessions/{session_id}/record/faq.pdf")
+def download_session_faq_pdf(session_id: SessionId, caller: Caller = Depends(get_caller)) -> Response:
+    """The FAQ as saved (or the desk's draft) as a PDF, with the "StormIQ for
+    Livestorm" lockup and the footer. Private, never cached."""
+    return _faq_download(session_id, "pdf", caller)
 
 
 @router.post("/api/sessions/{session_id}/fetch")

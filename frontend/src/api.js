@@ -192,6 +192,19 @@ export const api = {
       signal,
     });
   },
+  // The editable FAQ: the saved entries (or the desk's draft), with what the
+  // desk answered since (`deskUpdates`).
+  getSessionFaq(sessionId, { signal } = {}) {
+    return request(sessionPath(sessionId, "/record/faq"), { signal });
+  },
+  // Saves the FAQ's entries whole; returns the FAQ.
+  saveSessionFaq(sessionId, { entries }, { signal } = {}) {
+    return request(sessionPath(sessionId, "/record/faq"), {
+      method: "PUT",
+      body: JSON.stringify({ entries }),
+      signal,
+    });
+  },
   // The chapters the session analysis found, with their show notes.
   getSessionChapters(sessionId, { signal } = {}) {
     return request(sessionPath(sessionId, "/record/chapters"), { signal });
@@ -249,6 +262,10 @@ export const api = {
   // "all" (with each one's status) or "answers" (with its status and answer).
   getQuestionsCsvUrl(sessionId, scope = "open") {
     return `${sessionPath(sessionId, "/record/questions.csv")}?scope=${encodeURIComponent(scope)}`;
+  },
+  // The FAQ as saved (or the desk's draft): `format` "md", "csv" or "pdf".
+  getFaqDownloadUrl(sessionId, format) {
+    return sessionPath(sessionId, `/record/faq.${encodeURIComponent(format)}`);
   },
   // Full raw transcript; the workspace payload only carries what the UI renders.
   getTranscriptJsonUrl(sessionId) {

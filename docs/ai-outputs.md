@@ -24,6 +24,8 @@ The Follow-up tab's "FAQ" (job kind `faq`): one Haiku 5.5 call at low effort (`a
 
 Stored as `faq_bundle: {English: "...", French: "..."}`.
 
+Since November 2026 Follow-up shows the editable FAQ instead ([product.md](product.md#the-follow-up-tab-v1), [api.md](api.md#the-editable-faq)), drafted by code from the desk with no model call, and no longer offers "Write the FAQ". This job, its routes and `faq_bundle` are kept as they are; a saved AI FAQ shows read-only under "Earlier AI version".
+
 ## Decisions and commitments
 
 The Follow-up tab's "Decisions and commitments" (job kind `decisions`): one Sonnet 5.5 call at medium effort (`ai/decisions.py`, the `dossier` layout, 8,000 answer tokens) over the session's dossier ([prompt](../prompts/decisions.txt)), on a click on Follow-up, never by "Analyse session".
