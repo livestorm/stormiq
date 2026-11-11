@@ -1384,6 +1384,37 @@ def _roster_sync_on_fetch(
         return dict(ROSTER_SYNC_UNAVAILABLE)
 
 
+class SessionNotFinishedError(RuntimeError):
+    """A pasted session that hasn't happened: nothing to analyse yet."""
+
+
+# Livestorm's session statuses that mean nothing happened yet, or never
+# will (`filter[status]` in the API: upcoming, live, on_demand, past,
+# past_not_started, canceled, draft). The event list shows `past` only;
+# a pasted ID is refused for these, before anything is fetched or saved.
+NOT_FINISHED_STATUSES: Dict[str, str] = {
+    "upcoming": "hasn't taken place yet",
+    "live": "is still live",
+    "past_not_started": "was scheduled but never started",
+    "canceled": "was cancelled",
+    "draft": "is still a draft",
+}
+
+
+def _require_finished(session_payload: Any) -> None:
+    """Raises `SessionNotFinishedError` when Livestorm says the session
+    hasn't happened (`NOT_FINISHED_STATUSES`). A session with another
+    status, or none, goes on."""
+    data = session_payload.get("data") if isinstance(session_payload, Mapping) else None
+    attributes = data.get("attributes") if isinstance(data, Mapping) else None
+    status = str((attributes or {}).get("status") or "").strip().lower()
+    if status in NOT_FINISHED_STATUSES:
+        raise SessionNotFinishedError(
+            f"This session {NOT_FINISHED_STATUSES[status]}, so there is nothing to analyse. "
+            "Add it once it has ended: finished sessions are listed under its event."
+        )
+
+
 def fetch_session_base_data(
     api_key: str,
     session_id: str,
@@ -1428,6 +1459,9 @@ def fetch_session_base_data(
             return {**workspace, "rosterSync": _roster_sync_on_fetch(session_id, cached, fresh=False, **sync_args)}
 
     session_payload = fetch_session_details(api_key, session_id)
+    # Before the chat is fetched or anything saved: a session that hasn't
+    # happened would be stored with nobody in it.
+    _require_finished(session_payload)
     chat_bundle = fetch_chat_and_questions_bundle(api_key, session_id)
     event_payload = _fetch_event_payload_safe(
         api_key, _extract_event_id_from_session(session_payload)

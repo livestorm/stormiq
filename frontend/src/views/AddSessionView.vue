@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { RouterLink, useRouter } from "vue-router";
 import Card from "../components/ui/Card.vue";
 import CardHeader from "../components/ui/CardHeader.vue";
@@ -105,26 +105,24 @@ function open(id, { prepare = false } = {}) {
 
 function add(id) {
   if (!id || addingId.value) return;
+  // Already on screen in the store: open it now.
+  if (state.workspace?.sessionId === id) {
+    open(id);
+    return;
+  }
   addingId.value = id;
   failedId.value = "";
   // "Add" fetches the session, starts its transcript and has the server
-  // analyse it once the transcript is done; the Report shows the progress.
+  // analyse it once the transcript is done. The Report opens straight away
+  // and shows each step, the fetch included; the fetch goes on in the store
+  // after this page closes, and the Report says so if it fails.
   loadSessionById(id, { analyse: true }).catch(() => {
     if (addingId.value !== id) return;
     addingId.value = "";
     failedId.value = id;
   });
-  // Already on screen in the store: open it now.
-  if (state.workspace?.sessionId === id) open(id);
+  open(id, { prepare: true });
 }
-
-// The Report reads the saved session, so open it once the session is saved.
-watch(
-  () => state.workspace?.sessionId,
-  (id) => {
-    if (id && id === addingId.value) open(id, { prepare: true });
-  },
-);
 
 // ── Pasted IDs ──
 const sessionInput = ref("");
@@ -285,6 +283,10 @@ function listPasted() {
             </UiButton>
           </div>
           <p v-if="sessionProblem" class="a-problem" role="alert">{{ sessionProblem }}</p>
+          <!-- A pasted session that couldn't be added says why (an upcoming one, another org's…). -->
+          <p v-else-if="failedId && failedId === idFromInput(sessionInput).id && state.error" class="a-problem" role="alert">
+            Couldn't add it: {{ state.error }}
+          </p>
         </form>
         <form class="a-paste-row" @submit.prevent="listPasted">
           <label class="a-label" for="a-event-input">Event link or ID</label>
