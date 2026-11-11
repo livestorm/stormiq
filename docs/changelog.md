@@ -4,6 +4,7 @@ What has shipped, newest first. What's next is in [roadmap.md](roadmap.md).
 
 ## November 2026: "StormIQ for Livestorm"
 
+- **Follow-up's outputs show the loader too.** Writing an output (a Smart Recap, the FAQ, the digest…) now shows the same steps, bar and clock as the rest of the app, instead of "Writing: 40%", and the output being written shows a small spinner in the list on the left.
 - **Surprise me, played.** A surprise take now has "Play it": the take one sentence at a time in large type, read aloud by your browser's voice, with its numbers counting up, its key words marked and each punchline popping in after a pause. It runs in the page, free; nothing is sent anywhere.
 - **One loader for every job.** The Report's analysis card and the Transcript tab's transcript now show the same loader as a session being prepared: the steps with the current one's detail, a bar that fills with the job's real progress, and the time so far. Follow-up's outputs come next.
 - **Surprise me is refused less often.** Its check now reads numbers said aloud (the transcript often spells them, "fifteen" or "vingt-cinq", where the take writes 15 or 25), and a take that still gives a figure the session doesn't have is written once more, told why, before the page shows an error.

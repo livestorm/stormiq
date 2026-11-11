@@ -228,15 +228,20 @@ export function canMake(outputs, output, language) {
   return Boolean(outputText(outputs, output, "English"));
 }
 
-/** Whether this output is being made now, and its progress (0–100 or
- * null), from the store's loading flag and job slot. */
+/** Whether this output is being made now, its progress (0–100 or null)
+ * and the worker's stage ("analyzing", or "" before it says), from the
+ * store's loading flag and job slot. */
 export function making(state, output, language) {
-  if (!output.flow || !state?.loading?.[output.flow]) return { busy: false, progress: null };
+  if (!output.flow || !state?.loading?.[output.flow]) return { busy: false, progress: null, stage: "" };
   const job = state.aiJobs?.[JOB_KIND[output.flow]];
   const sameSlot = output.by === "tone" ? !job?.tone || job.tone === output.tone : !job?.language || job.language === language;
-  if (!sameSlot) return { busy: false, progress: null };
+  if (!sameSlot) return { busy: false, progress: null, stage: "" };
   const percent = Number(job?.progress?.percent);
-  return { busy: true, progress: Number.isFinite(percent) ? Math.max(0, Math.min(100, Math.round(percent))) : null };
+  return {
+    busy: true,
+    progress: Number.isFinite(percent) ? Math.max(0, Math.min(100, Math.round(percent))) : null,
+    stage: typeof job?.progress?.stage === "string" ? job.progress.stage : "",
+  };
 }
 
 /** The PDF's address for an output that has one, else "". */
