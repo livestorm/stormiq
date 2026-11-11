@@ -107,6 +107,9 @@ export function createTranscriptView({ api = defaultApi } = {}) {
         status,
         error: "",
         progress: Number.isFinite(percent) ? Math.max(0, Math.min(100, Math.round(percent))) : null,
+        // The worker's stage and Gladia's own line, for the loader's steps.
+        stage: typeof job?.progress?.stage === "string" ? job.progress.stage : "",
+        message: typeof job?.progress?.message === "string" ? job.progress.message : "",
       };
       schedulePoll(own);
       return false;

@@ -52,7 +52,7 @@ describe("the Transcript tab's data", () => {
     const view = createTranscriptView({ api });
     view.open("s1");
     await flush();
-    expect(view.state.job).toEqual({ status: "running", error: "", progress: 40 });
+    expect(view.state.job).toEqual({ status: "running", error: "", progress: 40, stage: "", message: "" });
     await flush(POLL_MS);
     expect(view.state.job.status).toBe("running");
     await flush(POLL_MS);
