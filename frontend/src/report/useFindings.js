@@ -3,7 +3,7 @@
 // spoke up") and `GET /record/moments` (the Pulse's key moments, told).
 // Nothing here calls a model.
 //
-// `createFindings()`, `createMoments()` and `createVoices()` each return a small reactive model
+// `createFindings()`, `createMoments()`, `createVoices()` and `createTranscriptLines()` each return a small reactive model
 // the view owns (one per view, not a global store), with the same scope
 // rules as the chapters (`followup/useChapters.js`): every request carries
 // the open session's AbortController signal; opening another session aborts
@@ -68,4 +68,10 @@ export function createMoments({ api = defaultApi } = {}) {
 
 export function createVoices({ api = defaultApi } = {}) {
   return createRead((id, options) => api.getSessionVoices(id, options), "The list of who wrote could not be loaded.");
+}
+
+// The cover chart's replay: what was said and written each minute
+// (`GET /record/transcript`, the Transcript tab's room view; no model).
+export function createTranscriptLines({ api = defaultApi } = {}) {
+  return createRead((id, options) => api.getSessionTranscriptView(id, options), "The transcript could not be loaded.");
 }

@@ -18,7 +18,7 @@ import UiButton from "../components/ui/UiButton.vue";
 import { analysisSummary, elapsedLabel, formatLength, formatSessionStart, preparationView } from "../report/format";
 import { createSessionReport } from "../report/useSessionReport";
 import { createChapters } from "../followup/useChapters";
-import { createFindings, createMoments, createVoices } from "../report/useFindings";
+import { createFindings, createMoments, createTranscriptLines, createVoices } from "../report/useFindings";
 import { momentPins } from "../report/moments";
 import { shortPoints } from "../report/summary";
 import KeyMoments from "../components/report/KeyMoments.vue";
@@ -47,6 +47,8 @@ const desk = createQuestionDesk();
 const voices = createVoices();
 // The Pulse's key moments, told (`GET /record/moments`).
 const moments = createMoments();
+// The cover chart's replay: what was said and written each minute (`GET /record/transcript`).
+const lines = createTranscriptLines();
 
 const route = useRoute();
 const router = useRouter();
@@ -61,6 +63,7 @@ watch(
     desk.open(id);
     voices.open(id);
     moments.open(id);
+    lines.open(id);
   },
   { immediate: true },
 );
@@ -71,6 +74,7 @@ onBeforeUnmount(() => {
   desk.close();
   voices.close();
   moments.close();
+  lines.close();
 });
 
 // Printing: a closed card prints only its header, so every closed section
@@ -143,6 +147,7 @@ watch(
       desk.reload();
       voices.reload();
       moments.reload();
+      lines.reload();
     }
   },
 );
@@ -157,6 +162,7 @@ watch(
     desk.reload();
     voices.reload();
     moments.reload();
+    lines.reload();
   },
 );
 
@@ -192,6 +198,7 @@ watch(
       desk.reload();
       voices.reload();
       moments.reload();
+      lines.reload();
     }
   },
 );
@@ -255,7 +262,14 @@ const points = computed(() =>
         <p v-if="state.refetch.status === 'error'" class="r-hint" role="alert">{{ state.refetch.error }}</p>
       </header>
 
-      <SessionRidge v-if="!state.preparing" :minutes="record?.pulse?.minutes || []" :chapters="chapters.state.body" explain />
+      <SessionRidge
+        v-if="!state.preparing"
+        :minutes="record?.pulse?.minutes || []"
+        :chapters="chapters.state.body"
+        :transcript="lines.state.body"
+        :moments="moments.state.body"
+        explain
+      />
 
       <Card v-if="state.preparing" class="r-prepare" aria-busy="true">
         <CardHeader icon="zap" :title="preparation.title" :level="2" />
