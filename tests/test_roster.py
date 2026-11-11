@@ -1068,6 +1068,8 @@ RECORD_ENTRY_POINTS = {
     ("livestorm_app", "db"): {"replace_chat_labels", "replace_understanding"},
     # Labels the chat in the worker: the chat's hash and the labels' checks.
     ("livestorm_app", "ai", "chat_labelling"): {"label_chat"},
+    # Surprise me's performance script, checked against the take (`record.surprise_brief.check_surprise`).
+    ("livestorm_app", "ai", "surprise_performance"): {"check_script"},
 }
 
 

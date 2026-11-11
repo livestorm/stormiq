@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from livestorm_app.ai.jobs import InvalidModelSetting, check_model_setting, is_model_setting
-from livestorm_app.ai.surprise_voice import TTS_VOICES
+from livestorm_app.ai.surprise_voice import TTS_VOICES, VOICE_PROVIDERS
+from livestorm_app.ai.voice_elevenlabs import VOICE_ID_PATTERN
 from livestorm_app.auth import (
     Caller,
     env_admin_emails,
@@ -119,9 +121,12 @@ def admin_get_settings(_caller: Caller = Depends(require_admin)) -> Dict[str, An
 # Settings saved as given (non-empty). `image_model` is sent as saved, except
 # that an empty or retired id becomes gpt-image-2
 # (cover_image.resolve_image_model). There is no `llm_provider` any more:
-# every text job runs on Claude. `tts_voice` (Surprise me's voice) must be
-# one of the voices gpt-4o-mini-tts offers (`surprise_voice.TTS_VOICES`).
-_PLAIN_SETTING_KEYS = {"image_model", "tts_voice"}
+# every text job runs on Claude. Surprise me's voice: `voice_provider` is
+# `elevenlabs` (the main voice, OpenAI its backup) or `openai`
+# (`surprise_voice.VOICE_PROVIDERS`); `elevenlabs_voice` is an ElevenLabs
+# voice id (`voice_elevenlabs.VOICE_ID_PATTERN`); `tts_voice` must be one of
+# the voices gpt-4o-mini-tts offers (`surprise_voice.TTS_VOICES`).
+_PLAIN_SETTING_KEYS = {"image_model", "tts_voice", "voice_provider", "elevenlabs_voice"}
 
 
 @router.post("/api/admin/settings")
@@ -139,6 +144,18 @@ def admin_update_setting(body: AdminSettingRequest, _caller: Caller = Depends(re
                 status_code=400,
                 detail={"resource": "Setting", "message": f"Unknown voice {value!r}. Use one of: {', '.join(TTS_VOICES)}."},
             )
+    if key == "voice_provider":
+        value = value.lower()
+        if value not in VOICE_PROVIDERS:
+            raise HTTPException(
+                status_code=400,
+                detail={"resource": "Setting", "message": f"Unknown voice provider. Use one of: {', '.join(VOICE_PROVIDERS)}."},
+            )
+    if key == "elevenlabs_voice" and not re.match(VOICE_ID_PATTERN, value):
+        raise HTTPException(
+            status_code=400,
+            detail={"resource": "Setting", "message": "An ElevenLabs voice id is 10 to 40 letters and digits."},
+        )
     if is_model_setting(key):
         # Model ids come from the catalog (ai/models.py), per job (ai/jobs.py).
         try:

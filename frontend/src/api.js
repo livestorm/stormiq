@@ -257,17 +257,17 @@ export const api = {
     const params = new URLSearchParams({ language, item });
     return `${sessionPath(sessionId, "/content-repurposing-pdf")}?${params.toString()}`;
   },
-  // Surprise me, read aloud: the take's beats and their clips (no body: the
-  // server cuts the saved take). Starting it queues the paid voice in the
-  // worker; call it only from a click on Play.
-  getSurpriseVoice(sessionId, { signal } = {}) {
-    return request(sessionPath(sessionId, "/surprise-voice"), { signal });
+  // Surprise me's show: the take, its beats, the script's lines by clip
+  // (never their words) and the voice. POST queues the one paid job that
+  // makes what is missing (no body: everything comes from the saved session).
+  getSurpriseShow(sessionId, { signal } = {}) {
+    return request(sessionPath(sessionId, "/surprise-show"), { signal });
   },
-  startSurpriseVoice(sessionId, { signal } = {}) {
-    return request(sessionPath(sessionId, "/surprise-voice"), { method: "POST", signal });
+  startSurpriseShow(sessionId, { signal } = {}) {
+    return request(sessionPath(sessionId, "/surprise-show"), { method: "POST", signal });
   },
-  getSurpriseVoiceClipUrl(sessionId, clip) {
-    return `${sessionPath(sessionId, "/surprise-voice/clip")}?key=${encodeURIComponent(String(clip ?? ""))}`;
+  getSurpriseShowClipUrl(sessionId, clip) {
+    return `${sessionPath(sessionId, "/surprise-show/clip")}?key=${encodeURIComponent(String(clip ?? ""))}`;
   },
   // The open questions with who asked them (name, company; no email), as CSV.
   // The question desk's CSV: `scope` "open" (the questions still open),

@@ -120,6 +120,12 @@ JOB_SPECS: Tuple[JobSpec, ...] = (
     # pick from given words, checked word for word in code, with the player's
     # own scenes as the fallback, while the user waits for the voice.
     JobSpec("surprise_storyboard", "Surprise me storyboard", "v1", "claude-haiku-5-5", "low", 3_000, layout="instructions"),
+    # Surprise me's performance script (`ai/surprise_performance.py`): the saved
+    # take rewritten for the ear, line by line with a tone, in the show job.
+    # Sonnet: comic timing is the whole point. Checked in code (every figure
+    # the take's, no leak, beats in order); the take's own beats are the fallback.
+    JobSpec("surprise_performance", "Surprise me performance script", "v1", "claude-sonnet-5-5", "medium", 4_000,
+            layout="instructions"),
     JobSpec("deep_analysis", "Deep Analysis", "legacy", "claude-haiku-4-5-20251001",
             "medium", 5_000, LEGACY_DEFAULT_SETTING, truncation_retry=True),
     JobSpec("smart_recap", "Smart Recap", "legacy", "claude-sonnet-4-6",

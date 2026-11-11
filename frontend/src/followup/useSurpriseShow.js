@@ -1,13 +1,15 @@
-// Surprise me's voice: one session's `GET /surprise-voice` (the take's beats,
-// cut by the server from the saved take, and which clips are made), and
-// `POST /surprise-voice`, which queues the paid voice in the worker. The
-// player calls `start()` only from a click on Play.
+// Surprise me's show: one session's `GET /surprise-show` (the take and its
+// beats, the script's lines by beat and clip key, never their words, which
+// clips are made, the voice), and `POST /surprise-show`, which queues the one
+// paid job that makes what is missing: the take, the performance script, the
+// storyboard and the voice. `start()` is called only from a click on "Make
+// the show".
 //
-// `createSurpriseVoice()` returns a small reactive model the player owns:
-//   open(sessionId)   reads the voice (and follows a job already running)
-//   reload()          reads it again (a new take was written)
-//   start()           the click on Play: queue the clips, then follow the job
-//   close()           cancels everything (the player calls it on unmount)
+// `createSurpriseShow()` returns a small reactive model the page owns:
+//   open(sessionId)   reads the show (and follows a job already running)
+//   reload()          reads it again
+//   start()           the click on "Make the show": queue it, then follow the job
+//   close()           cancels everything (the page calls it on unmount)
 //
 // Scope rules, as in the workspace store (frontend/CLAUDE.md): every request
 // carries the open session's AbortController signal; opening another session
@@ -29,8 +31,8 @@ function retryable(error) {
   return !status || status === 408 || status === 429 || status >= 500;
 }
 
-export function createSurpriseVoice({ api = defaultApi } = {}) {
-  // body: the server's answer, `{state, beats, ready, total, progress, error?}`.
+export function createSurpriseShow({ api = defaultApi } = {}) {
+  // body: the server's answer, `{state, take, beats, lines, voice, ready, total, progress, error?}`.
   const state = reactive({ sessionId: "", loading: false, starting: false, error: "", body: null });
   let scope = null;
 
@@ -69,7 +71,7 @@ export function createSurpriseVoice({ api = defaultApi } = {}) {
     if (!isCurrent(own)) return;
     if (!poll) state.loading = true;
     try {
-      const body = await api.getSurpriseVoice(own.sessionId, { signal: own.controller.signal });
+      const body = await api.getSurpriseShow(own.sessionId, { signal: own.controller.signal });
       if (!isCurrent(own)) return;
       accept(own, body);
     } catch (error) {
@@ -79,7 +81,7 @@ export function createSurpriseVoice({ api = defaultApi } = {}) {
         schedule(own);
         return;
       }
-      state.error = error?.message || "The voice could not be read.";
+      state.error = error?.message || "The show could not be read.";
     } finally {
       if (isCurrent(own) && !poll) state.loading = false;
     }
@@ -99,7 +101,7 @@ export function createSurpriseVoice({ api = defaultApi } = {}) {
     if (scope) read(scope);
   }
 
-  /** The click on Play: queue the voice (paid). Resolves once the server
+  /** The click on "Make the show": queue the show (paid). Resolves once the server
    * answered; the poll then follows the job until it is ready or fails. */
   async function start() {
     const own = scope;
@@ -107,12 +109,12 @@ export function createSurpriseVoice({ api = defaultApi } = {}) {
     state.starting = true;
     state.error = "";
     try {
-      const body = await api.startSurpriseVoice(own.sessionId, { signal: own.controller.signal });
+      const body = await api.startSurpriseShow(own.sessionId, { signal: own.controller.signal });
       if (!isCurrent(own)) return;
       accept(own, body);
     } catch (error) {
       if (!isCurrent(own) || error?.name === "AbortError") return;
-      state.error = error?.message || "The voice could not be started.";
+      state.error = error?.message || "The show could not be started.";
     } finally {
       if (isCurrent(own)) state.starting = false;
     }

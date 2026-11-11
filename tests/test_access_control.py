@@ -105,7 +105,7 @@ class FakeBackend:
         return None
 
     def fetch_surprise_voice_clips(self, session_id, clip_keys, *, organization_id):
-        return {}  # no clip made yet: Play queues the voice
+        return {}  # no clip made yet: Make the show queues the job
 
     def fetch_surprise_voice_clip(self, session_id, clip_key, *, organization_id):
         if session_id == SESSION_ID and _visible(organization_id):
@@ -181,13 +181,19 @@ def backend(monkeypatch):
     monkeypatch.setattr(api_logic, "fetch_session_fields", fake.fetch_session_fields)
     monkeypatch.setattr(routes_sessions, "fetch_cover_image", fake.fetch_cover_image)
     monkeypatch.setattr(api_logic, "upsert_cached_session", fake.upsert_cached_session)
-    # Surprise me, read aloud: on for org-a, its clips, and a fixed voice (no settings read).
+    # Surprise me's show: on for org-a, its clips, no script yet, and fixed voices (no settings read).
     monkeypatch.setattr(api_logic, "fetch_surprise_enabled", lambda org: True)
     monkeypatch.setattr(api_logic, "fetch_surprise_voice_clips", fake.fetch_surprise_voice_clips)
     monkeypatch.setattr(api_logic, "fetch_surprise_voice_clip", fake.fetch_surprise_voice_clip)
     monkeypatch.setattr(api_logic, "fetch_surprise_storyboard", lambda sid, key, *, organization_id: None)
+    monkeypatch.setattr(api_logic, "fetch_surprise_script", lambda sid, key, *, organization_id: None)
     monkeypatch.setattr(
-        api_logic, "voice_settings", lambda: {"model": "gpt-4o-mini-tts", "voice": "marin", "instructions": "Warm."}
+        api_logic,
+        "voice_plan",
+        lambda: (
+            {"provider": "elevenlabs", "model": "eleven_v3", "voice": "fnYMz3F5gMEDGMWcH1ex", "notes": "stability=0.5"},
+            {"provider": "openai", "model": "gpt-4o-mini-tts", "voice": "marin", "notes": "Warm."},
+        ),
     )
     monkeypatch.setattr(api_logic, "save_question_reply", fake.save_question_reply)
     monkeypatch.setattr(api_logic, "fetch_question_replies", lambda session_id, organization_id: {})

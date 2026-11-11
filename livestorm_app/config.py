@@ -43,6 +43,12 @@ OPENAI_SPEECH_URL = "https://api.openai.com/v1/audio/speech"
 TTS_MODEL = os.getenv("TTS_MODEL", "gpt-4o-mini-tts")
 TTS_VOICE = os.getenv("TTS_VOICE", "cedar")
 
+# Surprise me's main voice (`ai/voice_elevenlabs.py`): ElevenLabs text to
+# speech, one clip per line of the performance script. The worker reads
+# ELEVENLABS_API_KEY from its own environment; without it, or when
+# ElevenLabs refuses for quota, payment or auth, OpenAI (above) records it.
+ELEVENLABS_TTS_URL = "https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
+
 PROMPTS_DIR = Path("prompts")
 ANALYSIS_DEEP_PROMPT_PATH = PROMPTS_DIR / "analysis_deep_prompt.txt"
 CONTENT_REPURPOSE_BUNDLE_PROMPT_PATH = PROMPTS_DIR / "content_repurpose_bundle_prompt.txt"
@@ -52,6 +58,7 @@ SMART_RECAP_SURPRISE_PROMPT_PATH = PROMPTS_DIR / "smart_recap_surprise_prompt.tx
 COVER_IMAGE_PROMPT_PATH = PROMPTS_DIR / "cover_image_prompt.txt"
 SURPRISE_VOICE_PROMPT_PATH = PROMPTS_DIR / "surprise_voice.txt"  # how the voice reads the take (ai/surprise_voice.py)
 SURPRISE_STORYBOARD_PROMPT_PATH = PROMPTS_DIR / "surprise_storyboard.txt"  # v1: ai/surprise_story.py
+SURPRISE_PERFORMANCE_PROMPT_PATH = PROMPTS_DIR / "surprise_performance.txt"  # v1: ai/surprise_performance.py
 CHAT_LABELS_PROMPT_PATH = PROMPTS_DIR / "chat_labels.txt"  # v1: ai/chat_labelling.py
 UNDERSTANDING_PROMPT_PATH = PROMPTS_DIR / "understanding.txt"  # v1: ai/understanding.py
 SESSION_ANALYSIS_PROMPT_PATH = PROMPTS_DIR / "session_analysis.txt"  # v1: ai/session_analysis.py

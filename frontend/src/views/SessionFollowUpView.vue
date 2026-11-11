@@ -25,7 +25,6 @@ import {
   making,
   outputFor,
   outputGroups,
-  outputReady,
   outputText,
   pdfUrl,
   toggleOptions,
@@ -39,6 +38,7 @@ import { createFaq } from "../followup/useFaq";
 import { createFigureChecks } from "../followup/useFigureChecks";
 import { createOutputVersions } from "../followup/useOutputVersions";
 import { createQuestionDesk } from "../followup/useQuestionDesk";
+import { createSurpriseShow } from "../followup/useSurpriseShow";
 import { aiSteps } from "../report/progress";
 import { elapsedLabel, formatLength, formatSessionStart } from "../report/format";
 import { createSessionReport } from "../report/useSessionReport";
@@ -69,6 +69,9 @@ const figures = createFigureChecks();
 const versions = createOutputVersions();
 // The FAQ is edited in place (`FaqEditor`), drafted from the desk; no AI.
 const faq = createFaq();
+// Surprise me's show (`SurprisePlayer`): read while the organization has it
+// on; made only from its "Make the show" click.
+const surprise = createSurpriseShow();
 
 watch(
   () => props.sessionId,
@@ -89,6 +92,7 @@ onBeforeUnmount(() => {
   figures.close();
   faq.close();
   versions.close();
+  surprise.close();
 });
 
 const DESK = "desk";
@@ -146,9 +150,21 @@ const listKey = computed(() => toggles.value[0]?.key || output.value.key);
 // Surprise me shows only while the organization has it on (`state.org`,
 // set by a StormIQ admin; the server refuses a take when it is off).
 const surpriseOn = computed(() => state.org.surpriseEnabled);
+watch(
+  [() => props.sessionId, surpriseOn],
+  ([id, on]) => (on ? surprise.open(id) : surprise.close()),
+  { immediate: true },
+);
+const showState = computed(() => surprise.state.body?.state || "");
+const showMaking = computed(() => surprise.state.starting || showState.value === "pending" || showState.value === "running");
 const corner = computed(() =>
   surpriseOn.value
-    ? CORNER_OUTPUTS.map((item) => ({ key: item.key, label: item.label, ready: outputReady(outputs.value, item, language.value) }))
+    ? CORNER_OUTPUTS.map((item) => ({
+        key: item.key,
+        label: item.label,
+        ready: showState.value === "ready",
+        making: showMaking.value,
+      }))
     : [],
 );
 const body = computed(() => outputText(outputs.value, output.value, language.value));
@@ -216,11 +232,23 @@ watch(
 watch(() => output.value.key, () => (busyStarted.value = busy.value.busy ? Date.now() : null));
 onBeforeUnmount(() => clearInterval(busyTicker));
 const busyElapsed = computed(() => (busyStarted.value === null ? "" : elapsedLabel(busyStarted.value, busyNow.value)));
-// Surprise me, played (`SurprisePlayer`): opened from its "Play it", closed
-// when another output is shown. Its key words come from the chapters' titles;
-// its voice is made only when the user presses Play inside it.
-const playOpen = ref(false);
-watch(() => output.value.key, () => (playOpen.value = false));
+// Surprise me, the show (`SurprisePlayer`): first and big; the take itself
+// behind "Show transcript". Its key words come from the chapters' titles.
+const transcriptOpen = ref(false);
+watch(() => output.value.key, () => (transcriptOpen.value = false));
+const takeText = computed(() => (output.value.corner ? body.value || surprise.state.body?.take || "" : ""));
+// The take as a Markdown file, made in the browser from the text on screen.
+function downloadTake() {
+  const blob = new Blob([`${takeText.value.trim()}\n`], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `stormiq-surprise-${props.sessionId}.md`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
 const chapterTitles = computed(() => (chapters.state.body?.chapters || []).map((chapter) => chapter.title).filter(Boolean));
 // Its scenes draw the audience chat per minute from the record (the Pulse).
 const pulseMinutes = computed(() => record.value?.record?.pulse?.minutes || []);
@@ -253,7 +281,6 @@ function make() {
 }
 
 const makeLabel = computed(() => {
-  if (output.value.corner) return "Write a surprise take";
   if (output.value.key === "decisions") return `List the decisions${language.value === "French" ? " in French" : ""}`;
   if (output.value.key === "team-digest") return `Write the team digest${language.value === "French" ? " in French" : ""}`;
   if (output.value.key === "attendee-followup") return `Write the attendee follow-up${language.value === "French" ? " in French" : ""}`;
@@ -306,9 +333,9 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
       <span class="f-surprise-icon" aria-hidden="true"><Icon name="star" :size="20" /></span>
       <span class="f-corner-text">
         <span class="f-corner-title">{{ item.label }}</span>
-        <span class="f-muted">The session as a short show: an unexpected take, told with its own numbers.</span>
+        <span class="f-muted">The session as a short show: an unexpected take, performed over its own numbers and chat.</span>
       </span>
-      <span v-if="isWriting(item)" class="f-writing" role="status"><span class="f-spinner" aria-hidden="true" />Making it</span>
+      <span v-if="item.making" class="f-writing" role="status"><span class="f-spinner" aria-hidden="true" />Making it</span>
       <span v-else class="f-surprise-go">{{ item.ready ? "Watch" : "Open" }}<Icon name="chevron-right" :size="16" /></span>
     </button>
 
@@ -328,7 +355,7 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
             </optgroup>
             <optgroup v-if="corner.length" label="Just for fun">
               <option v-for="item in corner" :key="item.key" :value="item.key">
-                {{ item.label }}{{ isWriting(item) ? " · writing" : item.ready ? " · ready" : "" }}
+                {{ item.label }}{{ item.making ? " · making" : item.ready ? " · ready" : "" }}
               </option>
             </optgroup>
           </select>
@@ -385,6 +412,62 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
         <p class="f-text">Surprise me is turned off for your organization. A StormIQ admin can turn it back on.</p>
       </Card>
 
+      <Card v-else-if="workspace && output.corner" class="f-output">
+        <CardHeader icon="star" :title="output.label" :subtitle="output.about" :level="2" />
+        <SurprisePlayer
+          :show="surprise"
+          :session-id="sessionId"
+          :take="body"
+          :chapter-titles="chapterTitles"
+          :minutes="pulseMinutes"
+          :can-write="hasTranscript"
+        />
+        <template v-if="takeText">
+          <div class="f-actions">
+            <UiButton
+              variant="secondary"
+              small
+              :icon="transcriptOpen ? 'chevron-up' : 'file-text'"
+              :aria-expanded="transcriptOpen ? 'true' : 'false'"
+              aria-controls="f-take"
+              @click="transcriptOpen = !transcriptOpen"
+            >
+              {{ transcriptOpen ? "Hide transcript" : "Show transcript" }}
+            </UiButton>
+            <span class="f-muted f-ai">Written by AI from this session. Check it before you share it.</span>
+          </div>
+          <div v-if="transcriptOpen" id="f-take" class="f-take">
+            <div class="f-actions">
+              <UiButton variant="secondary" small :icon="copied === 'all' ? 'check' : 'copy'" @click="copy(takeText)">
+                {{ copied === "all" ? "Copied" : "Copy" }}
+              </UiButton>
+              <UiButton variant="ghost" small icon="download" @click="downloadTake">Download (.md)</UiButton>
+            </div>
+            <MarkdownBlocks :text="takeText" />
+            <Collapsible v-if="earlier.length" variant="link" icon="refresh-cw" :title="`Earlier takes (${earlier.length})`" class="f-versions">
+              <p class="f-muted">Kept as they were saved, newest first. Read-only.</p>
+              <ul class="f-version-list">
+                <li v-for="version in earlier" :key="version.id" class="f-version">
+                  <button
+                    type="button"
+                    class="f-version-head siq-fx"
+                    :aria-expanded="picked === version.id ? 'true' : 'false'"
+                    @click="picked = picked === version.id ? null : version.id"
+                  >
+                    <span class="f-version-when">{{ version.when }}</span>
+                    <span v-if="version.models" class="f-muted">{{ version.models }}</span>
+                    <Icon :name="picked === version.id ? 'chevron-up' : 'chevron-down'" :size="14" class="f-version-chevron" />
+                  </button>
+                  <div v-if="picked === version.id" class="f-version-body">
+                    <MarkdownBlocks :text="version.text" />
+                  </div>
+                </li>
+              </ul>
+            </Collapsible>
+          </div>
+        </template>
+      </Card>
+
       <Card v-else-if="workspace && !hasTranscript && !output.archived" class="f-output">
         <CardHeader icon="file-text" title="This one is written from the transcript" :level="2" />
         <p class="f-text">This session has no transcript yet. Make it on the Transcript tab, then come back to write it.</p>
@@ -436,28 +519,11 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
               {{ copied === "all" ? "Copied" : sections.length > 1 ? "Copy all" : "Copy" }}
             </UiButton>
             <UiButton v-if="pdf" variant="ghost" small icon="download" :href="pdf">PDF</UiButton>
-            <UiButton
-              v-if="output.corner"
-              variant="ghost"
-              small
-              :icon="playOpen ? 'x' : 'play'"
-              :aria-expanded="playOpen ? 'true' : 'false'"
-              @click="playOpen = !playOpen"
-            >
-              {{ playOpen ? "Close the player" : "Play it" }}
-            </UiButton>
             <span class="f-muted f-ai">Written by AI from this session. Check it before you share it.</span>
             <span v-if="uncheckedNote(figures.state.body)" class="f-unchecked">
               <Icon name="shield" :size="14" /> {{ uncheckedNote(figures.state.body) }}
             </span>
           </div>
-          <SurprisePlayer
-            v-if="output.corner && playOpen"
-            :session-id="sessionId"
-            :take="body"
-            :chapter-titles="chapterTitles"
-            :minutes="pulseMinutes"
-          />
           <div v-if="sections.length > 1" class="f-sections">
             <section v-for="(section, index) in sections" :key="index" class="f-section">
               <div class="f-section-head">
@@ -787,6 +853,14 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
   line-height: var(--siq-text-small-lh);
   font-weight: var(--siq-weight-medium);
   font-variant-numeric: tabular-nums;
+}
+
+/* Surprise me's take, behind "Show transcript". */
+.f-take {
+  display: flex;
+  flex-direction: column;
+  gap: var(--siq-space-3);
+  margin-top: var(--siq-space-3);
 }
 
 /* Surprise me: its own card above the list and the output. */

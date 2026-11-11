@@ -76,9 +76,11 @@ ANTHROPIC_CUSTOM_HEADERS      # Leave unset. The SDK would add its headers to ev
                               # every Anthropic call fails before it is sent.
                               # ANTHROPIC_API_KEY and ANTHROPIC_BASE_URL are ignored: llm_client passes the key and
                               # the host to the SDK explicitly.
-OPENAI_API_KEY                # Required for cover images and Surprise me's voice (worker)
-TTS_MODEL                     # Optional. Surprise me's speech model (default gpt-4o-mini-tts)
-TTS_VOICE                     # Optional. Its voice when Admin set none (default cedar)
+OPENAI_API_KEY                # Required for cover images and Surprise me's backup voice (worker)
+ELEVENLABS_API_KEY            # Worker. Surprise me's main voice (ElevenLabs eleven_v3). Unset: every show is
+                              # recorded with the OpenAI backup voice and says so. Never logged or sent to the page.
+TTS_MODEL                     # Optional. Surprise me's OpenAI speech model (default gpt-4o-mini-tts)
+TTS_VOICE                     # Optional. Its OpenAI voice when Admin set none (default cedar)
 ORG_DAILY_LLM_BUDGET_USD      # Optional, worker. Daily spend cap per org for automatic text jobs (none exists yet), in
                               # dollars, per UTC day. Unset: no limit. Never applies to jobs a user starts or to covers.
 

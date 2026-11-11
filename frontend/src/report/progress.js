@@ -45,19 +45,21 @@ export function transcriptSteps(progress) {
   return stepsAt(TRANSCRIPT_STEPS, progress?.stage || "queued", progress?.message || "");
 }
 
-// Surprise me's voice, as the worker reports it (SURPRISE_VOICE_STAGE_FLOORS).
-export const VOICE_STEPS = [
+// Surprise me's show, as the worker reports it (SURPRISE_SHOW_STAGE_FLOORS):
+// one job, one loader, from the take to the voice.
+export const SHOW_STEPS = [
   { stage: "queued", label: "Waiting for a free worker" },
-  { stage: "reading", label: "Reading the take" },
+  { stage: "take", label: "Writing the take" },
+  { stage: "script", label: "Writing the script" },
   { stage: "storyboard", label: "Planning the scenes" },
-  { stage: "speaking", label: "Recording the voice" },
+  { stage: "voice", label: "Recording the voice" },
 ];
 
-/** The voice job's steps: `progress` is the job's `{stage, done, total}`
- * (clips made so far, on the current step). */
-export function voiceSteps(progress) {
+/** The show job's steps: `progress` is the job's `{stage, done, total}`
+ * (lines recorded so far, on the voice step). */
+export function showSteps(progress) {
   const total = Number(progress?.total);
   const done = Number(progress?.done) || 0;
-  const detail = progress?.stage === "speaking" && total > 0 ? `${done} of ${total} sentences` : "";
-  return stepsAt(VOICE_STEPS, progress?.stage || "queued", detail);
+  const detail = progress?.stage === "voice" && total > 0 ? `${done} of ${total} lines` : "";
+  return stepsAt(SHOW_STEPS, progress?.stage || "queued", detail);
 }

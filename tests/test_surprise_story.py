@@ -1,13 +1,15 @@
 """Surprise me's storyboard (`ai/surprise_story.py`, `api_logic._make_surprise_storyboard`,
 the `surprise_storyboards` table): one scene per beat, a headline lifted
 word for word from the beat, a number it says or one of the room's own
-lines, checked in code before it is saved; made on the Play click before
-the clips, once per take; a failed call never fails the Play.
+lines, checked in code before it is saved; made in the show job (after the
+script, before the clips), once per take; a failed call never fails the show.
 
 Never calls Claude: `write_storyboard` (or `llm_client.generate_json`) is
 replaced."""
 
 from __future__ import annotations
+
+from unittest import mock
 
 import pytest
 from test_access_control import SESSION_ID  # noqa: F401
@@ -148,6 +150,7 @@ def test_an_effect_without_what_it_needs_falls_back_to_the_headline():
 # ── The run ──
 
 
+KEYS = {"claude": "claude-key", "openai": "sk-openai", "elevenlabs": ""}
 TAKE = "# Title\nFifty messages and a working SSO\n# Description\nThe chat sent 50 messages in three minutes! Nobody believed it."
 
 
@@ -164,11 +167,18 @@ def story_env(monkeypatch):
     room = ROOM + [{"id": "R3", "kind": "chat", "t": 1600.0, "text": "[name] loved it", "votes": None}]
     monkeypatch.setattr(api_logic, "fetch_session_fields", lambda sid, fields, *, organization_id: dict(row))
     monkeypatch.setattr(api_logic, "fetch_surprise_enabled", lambda org: True)
-    monkeypatch.setattr(api_logic, "voice_settings", lambda: {"model": "gpt-4o-mini-tts", "voice": "cedar", "instructions": "Dry."})
+    monkeypatch.setattr(
+        api_logic, "voice_plan", lambda: ({"provider": "openai", "model": "gpt-4o-mini-tts", "voice": "cedar", "notes": "Dry."}, None)
+    )
+    scripts = {}
+    monkeypatch.setattr(api_logic, "fetch_surprise_script", lambda sid, key, *, organization_id: scripts.get(key))
+    monkeypatch.setattr(api_logic, "save_surprise_script", lambda sid, key, script: scripts.__setitem__(key, script))
+    monkeypatch.setattr(api_logic, "write_script", mock.Mock(side_effect=RuntimeError("no script in these tests")))
+    monkeypatch.setattr(api_logic, "_public_redactor", lambda sid, cached, roster=None: Redactor())
     monkeypatch.setattr(api_logic, "fetch_surprise_voice_clips", lambda sid, keys, *, organization_id: {})
     monkeypatch.setattr(api_logic, "save_surprise_voice_clip", lambda *args, **kwargs: calls.append("clip"))
     monkeypatch.setattr(api_logic, "prune_surprise_voice_clips", lambda sid, keep: 0)
-    monkeypatch.setattr(api_logic, "synthesize_speech", lambda key, text, settings: b"\xff\xfb\x90\x00" + b"\x00" * 413)
+    monkeypatch.setattr(api_logic, "record_line", lambda line, settings, keys: b"\xff\xfb\x90\x00" + b"\x00" * 413)
     monkeypatch.setattr(api_logic, "fetch_surprise_storyboard", lambda sid, key, *, organization_id: stored.get(key))
     monkeypatch.setattr(api_logic, "_require_cached_payloads", lambda sid, *, organization_id: {"session_id": sid})
     monkeypatch.setattr(
@@ -192,8 +202,8 @@ def story_env(monkeypatch):
     return env
 
 
-def test_play_makes_the_storyboard_before_the_clips_checked_and_saved_whole(story_env):
-    result = api_logic.run_surprise_voice("sk-openai", SESSION_ID, llm_key="claude-key")
+def test_the_show_makes_the_storyboard_before_the_clips_checked_and_saved_whole(story_env):
+    result = api_logic.run_surprise_show(KEYS, SESSION_ID)
     assert result["story"] == "made"
     assert story_env["calls"][0] == "storyboard" and story_env["calls"].count("clip") == 3, "the storyboard comes first"
     ((session_id, key, saved),) = story_env["saved"]
@@ -204,30 +214,30 @@ def test_play_makes_the_storyboard_before_the_clips_checked_and_saved_whole(stor
     assert "[name]" not in story_env["payload"] and "R1 23:05 chat" in story_env["payload"]
     ctx = story_env["ctx"]
     assert (ctx.job_kind, ctx.session_id, ctx.organization_id, ctx.job_id) == (
-        "surprise_storyboard", SESSION_ID, "org-a", f"surprise_voice:{SESSION_ID}"
+        "surprise_storyboard", SESSION_ID, "org-a", f"surprise_show:{SESSION_ID}"
     )
 
 
 def test_a_storyboard_is_made_once_per_take(story_env):
-    api_logic.run_surprise_voice("sk-openai", SESSION_ID, llm_key="claude-key")
+    api_logic.run_surprise_show(KEYS, SESSION_ID)
     story_env["calls"].clear()
-    assert api_logic.run_surprise_voice("sk-openai", SESSION_ID, llm_key="claude-key")["story"] == "kept"
+    assert api_logic.run_surprise_show(KEYS, SESSION_ID)["story"] == "kept"
     assert "storyboard" not in story_env["calls"]
 
 
 @pytest.mark.parametrize("error", [LLMRefused("refused"), RuntimeError("the record failed")])
-def test_a_failed_storyboard_saves_nothing_and_never_fails_the_play(story_env, monkeypatch, error):
+def test_a_failed_storyboard_saves_nothing_and_never_fails_the_show(story_env, monkeypatch, error):
     def fail(payload, *, api_key, ctx):
         raise error
 
     monkeypatch.setattr(api_logic, "write_storyboard", fail)
-    result = api_logic.run_surprise_voice("sk-openai", SESSION_ID, llm_key="claude-key")
+    result = api_logic.run_surprise_show(KEYS, SESSION_ID)
     assert result["story"] == "failed" and story_env["saved"] == []
     assert story_env["calls"].count("clip") == 3, "the voice is still made"
 
 
 def test_without_a_claude_key_no_call_is_made(story_env):
-    assert api_logic.run_surprise_voice("sk-openai", SESSION_ID)["story"] == "skipped"
+    assert api_logic.run_surprise_show({"openai": "sk-openai"}, SESSION_ID)["story"] == "skipped"
     assert "storyboard" not in story_env["calls"] and story_env["saved"] == []
 
 
@@ -237,7 +247,7 @@ def test_a_failed_save_fails_the_run(story_env, monkeypatch):
 
     monkeypatch.setattr(api_logic, "save_surprise_storyboard", broken)
     with pytest.raises(RuntimeError, match="Could not save the storyboard"):
-        api_logic.run_surprise_voice("sk-openai", SESSION_ID, llm_key="claude-key")
+        api_logic.run_surprise_show(KEYS, SESSION_ID)
 
 
 # ── Stored ──

@@ -1,4 +1,4 @@
-"""AI outputs: start a job, poll it, and download the PDF, for each of the four flows; Surprise me read aloud."""
+"""AI outputs: start a job, poll it, and download the PDF, for each of the four flows; Surprise me's show."""
 
 from __future__ import annotations
 
@@ -14,9 +14,9 @@ from livestorm_app.api_logic import (
     SurpriseOffError,
     SurpriseVoiceNoTakeError,
     UnknownOutputKindError,
-    get_surprise_voice,
+    get_surprise_show,
     get_surprise_voice_clip,
-    start_surprise_voice,
+    start_surprise_show,
     get_session_output_versions,
     build_analysis_pdf,
     build_content_repurposing_pdf,
@@ -237,7 +237,7 @@ def smart_recap(session_id: SessionId, request: SmartRecapRequest, caller: Calle
         raise
 
 
-VOICE_RESOURCE = "Surprise me voice"
+VOICE_RESOURCE = "Surprise me show"
 
 
 def _voice_error(exc: Exception) -> None:
@@ -247,41 +247,43 @@ def _voice_error(exc: Exception) -> None:
         raise HTTPException(status_code=403, detail={"resource": VOICE_RESOURCE, "message": str(exc)}) from exc
     if isinstance(exc, SurpriseVoiceNoTakeError):
         raise HTTPException(status_code=409, detail={"resource": VOICE_RESOURCE, "message": str(exc)}) from exc
-    logger.exception("Surprise voice request failed for a session")
+    logger.exception("Surprise show request failed for a session")
     raise HTTPException(
-        status_code=500, detail={"resource": VOICE_RESOURCE, "message": "The voice could not be read. Please try again."}
+        status_code=500, detail={"resource": VOICE_RESOURCE, "message": "The show could not be read. Please try again."}
     ) from exc
 
 
-@router.post("/api/sessions/{session_id}/surprise-voice")
-def surprise_voice_start(session_id: SessionId, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
-    """The user clicked Play: queue the take's missing clips in the worker
-    (paid, OpenAI), or return the voice when it is made. No body: the beats
-    come from the saved take, never from the browser."""
+@router.post("/api/sessions/{session_id}/surprise-show")
+def surprise_show_start(session_id: SessionId, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
+    """The user clicked "Make the show": queue the one worker job that makes
+    what the show is missing (the take, the script, the storyboard, the
+    voice; paid), or return the show when it is made. No body: everything
+    comes from the session as saved, never from the browser."""
     try:
-        return start_surprise_voice(session_id, organization_id=caller.read_scope)
+        return start_surprise_show(session_id, organization_id=caller.read_scope)
     except Exception as exc:
         _voice_error(exc)
         raise
 
 
-@router.get("/api/sessions/{session_id}/surprise-voice")
-def surprise_voice_status(session_id: SessionId, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
-    """The take's beats, which clips are made, and the job's progress. Calls no provider."""
+@router.get("/api/sessions/{session_id}/surprise-show")
+def surprise_show_status(session_id: SessionId, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
+    """The show: the take and its beats, the script's lines by beat and clip
+    (never their words), the voice, and the job's progress. Calls no provider."""
     try:
-        return get_surprise_voice(session_id, organization_id=caller.read_scope)
+        return get_surprise_show(session_id, organization_id=caller.read_scope)
     except Exception as exc:
         _voice_error(exc)
         raise
 
 
-@router.get("/api/sessions/{session_id}/surprise-voice/clip")
+@router.get("/api/sessions/{session_id}/surprise-show/clip")
 def surprise_voice_clip(
     session_id: SessionId,
     caller: Caller = Depends(get_caller),
     key: str = Query(..., pattern=CLIP_KEY_PATTERN),
 ) -> Response:
-    """One beat's mp3, by its cache key. Private: never kept by a shared cache."""
+    """One line's mp3, by its cache key. Private: never kept by a shared cache."""
     try:
         clip = get_surprise_voice_clip(session_id, key, organization_id=caller.read_scope)
     except Exception as exc:

@@ -13,8 +13,9 @@ import {
   ruleScene,
   storyScene,
 } from "../src/followup/surpriseScenes";
-import { createSurpriseVoice } from "../src/followup/useSurpriseVoice";
-import { voiceSteps } from "../src/report/progress";
+import { createSurpriseShow } from "../src/followup/useSurpriseShow";
+import { BEAT_GAP_MS, LINE_GAP_MS, beatFill, beatSpanMs, firstUnitOf, gapAfter, showUnits, unitMs } from "../src/followup/surpriseShow";
+import { showSteps } from "../src/report/progress";
 
 // A 30-minute session: a quiet chat with its busiest minute at 23.
 const MINUTES = Array.from({ length: 30 }, (_, minute) => ({ minute, audienceChat: minute === 23 ? 50 : minute % 4 }));
@@ -136,13 +137,68 @@ describe("timing without the voice", () => {
   });
 });
 
-describe("the voice loader's steps", () => {
-  it("plans the scenes, then says how many sentences are recorded", () => {
-    expect(voiceSteps({ stage: "storyboard" }).map((step) => step.state)).toEqual(["done", "done", "current", "todo"]);
-    const steps = voiceSteps({ stage: "speaking", done: 3, total: 12 });
-    expect(steps.map((step) => step.state)).toEqual(["done", "done", "done", "current"]);
-    expect(steps[3].detail).toBe("3 of 12 sentences");
-    expect(voiceSteps(null)[0].state).toBe("current");
+describe("the show's one loader", () => {
+  it("goes from the take to the voice, and says how many lines are recorded", () => {
+    expect(showSteps(null).map((step) => step.label)).toEqual([
+      "Waiting for a free worker",
+      "Writing the take",
+      "Writing the script",
+      "Planning the scenes",
+      "Recording the voice",
+    ]);
+    expect(showSteps({ stage: "script" }).map((step) => step.state)).toEqual(["done", "done", "current", "todo", "todo"]);
+    const steps = showSteps({ stage: "voice", done: 3, total: 12 });
+    expect(steps.map((step) => step.state)).toEqual(["done", "done", "done", "done", "current"]);
+    expect(steps[4].detail).toBe("3 of 12 lines");
+    expect(showSteps(null)[0].state).toBe("current");
+  });
+});
+
+describe("the show's timeline", () => {
+  const beats = [{ text: "One two three" }, { text: "Four five six" }, { text: "Seven" }];
+  const body = {
+    lines: [
+      { index: 0, beat: 0, clip: "a", ready: true, durationS: 1.5 },
+      { index: 1, beat: 1, clip: "b", ready: true, durationS: 2 },
+      { index: 2, beat: 1, clip: "c", ready: true, durationS: 1 },
+      { index: 3, beat: 2, clip: "d", ready: true, durationS: null },
+      { index: 4, beat: 7, clip: "e", ready: true, durationS: 1 },
+    ],
+  };
+
+  it("plays the script's lines on their beats, never their words", () => {
+    const units = showUnits(body, beats);
+    expect(units.map((unit) => unit.beat)).toEqual([0, 1, 1, 2]);
+    expect(units.every((unit) => !("say" in unit))).toBe(true);
+    expect(showUnits({ lines: [] }, beats).map((unit) => unit.beat), "one unit per beat before the show").toEqual([0, 1, 2]);
+  });
+
+  it("leaves a short gap within a beat and a longer one between beats", () => {
+    const units = showUnits(body, beats);
+    expect([gapAfter(units, 0), gapAfter(units, 1), gapAfter(units, 2), gapAfter(units, 3)]).toEqual([
+      BEAT_GAP_MS,
+      LINE_GAP_MS,
+      BEAT_GAP_MS,
+      0,
+    ]);
+    expect([LINE_GAP_MS, BEAT_GAP_MS]).toEqual([220, 380]);
+  });
+
+  it("times a line by its clip, else its share of the beat", () => {
+    const units = showUnits(body, beats);
+    expect(unitMs(units, 1, beats)).toBe(2000);
+    expect(unitMs(units, 3, beats)).toBe(1800);
+    expect(beatSpanMs(units, 1, beats)).toBe(2000 + LINE_GAP_MS + 1000);
+  });
+
+  it("fills a beat's segment line by line and steps by beat", () => {
+    const units = showUnits(body, beats);
+    expect(beatFill(units, 2, 0.5, 0)).toBe(1);
+    expect(beatFill(units, 2, 0.5, 1)).toBe(0.75);
+    expect(beatFill(units, 2, 0.5, 2)).toBe(0);
+    expect(beatFill(units, -1, 0, 0)).toBe(0);
+    expect(firstUnitOf(units, 1)).toBe(1);
+    expect(firstUnitOf(units, 9)).toBe(-1);
   });
 });
 
@@ -156,14 +212,14 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-describe("the voice's data", () => {
-  it("reads the voice and starts nothing on its own", async () => {
-    const api = { getSurpriseVoice: vi.fn(async () => ({ state: "missing", beats: [] })), startSurpriseVoice: vi.fn() };
-    const voice = createSurpriseVoice({ api });
+describe("the show's data", () => {
+  it("reads the show and starts nothing on its own", async () => {
+    const api = { getSurpriseShow: vi.fn(async () => ({ state: "missing", beats: [] })), startSurpriseShow: vi.fn() };
+    const voice = createSurpriseShow({ api });
     voice.open("s1");
     await vi.waitFor(() => expect(voice.state.body?.state).toBe("missing"));
-    expect(api.getSurpriseVoice).toHaveBeenCalledWith("s1", expect.objectContaining({ signal: expect.any(AbortSignal) }));
-    expect(api.startSurpriseVoice).not.toHaveBeenCalled();
+    expect(api.getSurpriseShow).toHaveBeenCalledWith("s1", expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(api.startSurpriseShow).not.toHaveBeenCalled();
     voice.close();
   });
 
@@ -172,23 +228,23 @@ describe("the voice's data", () => {
     try {
       const answers = [{ state: "running", progress: { stage: "speaking", done: 1, total: 3 } }, { state: "ready", beats: [{ clip: "k" }] }];
       const api = {
-        getSurpriseVoice: vi.fn(async () => answers.shift() || { state: "ready" }),
-        startSurpriseVoice: vi.fn(async () => ({ state: "pending" })),
+        getSurpriseShow: vi.fn(async () => answers.shift() || { state: "ready" }),
+        startSurpriseShow: vi.fn(async () => ({ state: "pending" })),
       };
-      const voice = createSurpriseVoice({ api });
+      const voice = createSurpriseShow({ api });
       voice.open("s1");
       await vi.waitFor(() => expect(voice.state.body?.state).toBe("running"));
-      api.getSurpriseVoice.mockClear();
+      api.getSurpriseShow.mockClear();
       answers.splice(0, answers.length, { state: "running" }, { state: "ready", beats: [] });
       await voice.start();
-      expect(api.startSurpriseVoice).toHaveBeenCalledTimes(1);
+      expect(api.startSurpriseShow).toHaveBeenCalledTimes(1);
       expect(voice.state.body.state).toBe("pending");
       await vi.advanceTimersByTimeAsync(1500);
       expect(voice.state.body.state).toBe("running");
       await vi.advanceTimersByTimeAsync(1500);
       expect(voice.state.body.state).toBe("ready");
       await vi.advanceTimersByTimeAsync(10000);
-      expect(api.getSurpriseVoice, "no poll once ready").toHaveBeenCalledTimes(2);
+      expect(api.getSurpriseShow, "no poll once ready").toHaveBeenCalledTimes(2);
       voice.close();
     } finally {
       vi.useRealTimers();
@@ -201,15 +257,15 @@ describe("the voice's data", () => {
       const blip = Object.assign(new Error("Bad gateway"), { status: 502 });
       const gone = Object.assign(new Error("No cached session"), { status: 404 });
       const api = {
-        getSurpriseVoice: vi
+        getSurpriseShow: vi
           .fn()
           .mockResolvedValueOnce({ state: "running" })
           .mockRejectedValueOnce(blip)
           .mockResolvedValueOnce({ state: "running" })
           .mockRejectedValueOnce(gone),
-        startSurpriseVoice: vi.fn(),
+        startSurpriseShow: vi.fn(),
       };
-      const voice = createSurpriseVoice({ api });
+      const voice = createSurpriseShow({ api });
       voice.open("s1");
       await vi.waitFor(() => expect(voice.state.body?.state).toBe("running"));
       await vi.advanceTimersByTimeAsync(1500);
@@ -217,9 +273,9 @@ describe("the voice's data", () => {
       await vi.advanceTimersByTimeAsync(3000);
       await vi.advanceTimersByTimeAsync(1500);
       expect(voice.state.error).toBe("No cached session");
-      const calls = api.getSurpriseVoice.mock.calls.length;
+      const calls = api.getSurpriseShow.mock.calls.length;
       await vi.advanceTimersByTimeAsync(30000);
-      expect(api.getSurpriseVoice.mock.calls.length).toBe(calls);
+      expect(api.getSurpriseShow.mock.calls.length).toBe(calls);
       voice.close();
     } finally {
       vi.useRealTimers();
@@ -229,14 +285,14 @@ describe("the voice's data", () => {
   it("says why Play failed, and drops late answers for a session it left", async () => {
     const late = deferred();
     const api = {
-      getSurpriseVoice: vi.fn((id) => (id === "s1" ? late.promise : Promise.resolve({ state: "missing" }))),
-      startSurpriseVoice: vi.fn(async () => {
+      getSurpriseShow: vi.fn((id) => (id === "s1" ? late.promise : Promise.resolve({ state: "missing" }))),
+      startSurpriseShow: vi.fn(async () => {
         throw Object.assign(new Error("Surprise me is turned off for your organization."), { status: 403 });
       }),
     };
-    const voice = createSurpriseVoice({ api });
+    const voice = createSurpriseShow({ api });
     voice.open("s1");
-    const signal = api.getSurpriseVoice.mock.calls[0][1].signal;
+    const signal = api.getSurpriseShow.mock.calls[0][1].signal;
     voice.open("s2");
     expect(signal.aborted).toBe(true);
     await vi.waitFor(() => expect(voice.state.body?.state).toBe("missing"));

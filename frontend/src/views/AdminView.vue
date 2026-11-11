@@ -211,9 +211,32 @@ const ANTHROPIC_TEXT_MODELS = [
 // gpt-image-1 was shut down on 2026-10-23. A saved gpt-image-1 setting is
 // sent as gpt-image-2 (cover_image.resolve_image_model), so show that.
 const IMAGE_MODELS = [{ value: "gpt-image-2", label: "gpt-image-2 (recommended)" }];
-// Surprise me's voice (OpenAI gpt-4o-mini-tts): the server refuses any other
-// (livestorm_app/ai/surprise_voice.py TTS_VOICES) and reads DEFAULT_TTS_VOICE
-// (cedar, a dry male voice) when unset; tests/test_surprise_voice.py checks both.
+// Surprise me's voice. The provider (`voice_provider`): ElevenLabs, with
+// OpenAI as its backup when ElevenLabs refuses the account, or OpenAI alone
+// (livestorm_app/ai/surprise_voice.py VOICE_PROVIDERS, DEFAULT_VOICE_PROVIDER).
+// ElevenLabs' voice (`elevenlabs_voice`): any voice id, Finley by default
+// (ai/voice_elevenlabs.py VOICE_LABELS). OpenAI's (`tts_voice`, gpt-4o-mini-tts):
+// the server refuses any other than TTS_VOICES and reads DEFAULT_TTS_VOICE
+// (cedar) when unset. tests/test_surprise_voice.py checks these lists.
+const VOICE_PROVIDERS = [
+  { value: "elevenlabs", label: "ElevenLabs (OpenAI as the backup)" },
+  { value: "openai", label: "OpenAI only" },
+];
+const DEFAULT_VOICE_PROVIDER = "elevenlabs";
+const ELEVENLABS_VOICES = [
+  { id: "fnYMz3F5gMEDGMWcH1ex", label: "Finley (British, deep)" },
+  { id: "iP95p4xoKVk53GoZ742B", label: "Chris (American)" },
+];
+const ELEVENLABS_VOICE_ID = /^[A-Za-z0-9]{10,40}$/;
+const activeProvider = computed(() =>
+  VOICE_PROVIDERS.some((item) => item.value === settings.value.voice_provider) ? settings.value.voice_provider : DEFAULT_VOICE_PROVIDER,
+);
+const activeElevenVoice = computed(() =>
+  ELEVENLABS_VOICE_ID.test(settings.value.elevenlabs_voice || "") ? settings.value.elevenlabs_voice : ELEVENLABS_VOICES[0].id,
+);
+const elevenPreset = computed(() => (ELEVENLABS_VOICES.some((item) => item.id === activeElevenVoice.value) ? activeElevenVoice.value : "other"));
+const otherVoiceId = ref("");
+const otherVoiceOk = computed(() => ELEVENLABS_VOICE_ID.test(otherVoiceId.value.trim()));
 const TTS_VOICES = ["alloy", "ash", "ballad", "cedar", "coral", "echo", "fable", "marin", "nova", "onyx", "sage", "shimmer", "verse"];
 const DEFAULT_TTS_VOICE = "cedar";
 // How each voice sounds, in a word or two, for the picker.
@@ -562,21 +585,68 @@ onMounted(() => {
           </Card>
 
           <Card>
-            <CardHeader icon="play" title="Surprise me voice" subtitle="OpenAI's gpt-4o-mini-tts reads the take aloud, dry and wry. A new voice records again on the next play." :level="2" />
-            <label class="adm-field adm-select-field">
-              <span class="siq-sr-only">Surprise me voice</span>
-              <select
-                class="adm-input adm-select"
-                :value="activeVoice"
-                :disabled="savingKey !== null"
-                @change="saveSetting('tts_voice', $event.target.value)"
-              >
-                <option v-for="name in TTS_VOICES" :key="name" :value="name">
-                  {{ name }} · {{ VOICE_LABELS[name] }}{{ name === DEFAULT_TTS_VOICE ? " (default)" : "" }}
-                </option>
-              </select>
-              <Icon name="chevron-down" :size="16" class="adm-select-icon" />
-            </label>
+            <CardHeader
+              icon="play"
+              title="Surprise me voice"
+              subtitle="Who performs the show. A new voice records again on the next “Make the show”; a show already made keeps its voice."
+              :level="2"
+            />
+            <div class="adm-voice">
+              <label class="adm-field adm-select-field">
+                <span class="adm-label">Provider</span>
+                <select
+                  class="adm-input adm-select"
+                  :value="activeProvider"
+                  :disabled="savingKey !== null"
+                  @change="saveSetting('voice_provider', $event.target.value)"
+                >
+                  <option v-for="item in VOICE_PROVIDERS" :key="item.value" :value="item.value">
+                    {{ item.label }}{{ item.value === DEFAULT_VOICE_PROVIDER ? " (default)" : "" }}
+                  </option>
+                </select>
+                <Icon name="chevron-down" :size="16" class="adm-select-icon" />
+              </label>
+              <label class="adm-field adm-select-field">
+                <span class="adm-label">ElevenLabs voice (eleven_v3)</span>
+                <select
+                  class="adm-input adm-select"
+                  :value="elevenPreset"
+                  :disabled="savingKey !== null"
+                  @change="$event.target.value !== 'other' && saveSetting('elevenlabs_voice', $event.target.value)"
+                >
+                  <option v-for="(item, i) in ELEVENLABS_VOICES" :key="item.id" :value="item.id">
+                    {{ item.label }}{{ i === 0 ? " (default)" : "" }}
+                  </option>
+                  <option value="other">Another voice id{{ elevenPreset === "other" ? `: ${activeElevenVoice}` : "" }}</option>
+                </select>
+                <Icon name="chevron-down" :size="16" class="adm-select-icon" />
+              </label>
+              <form class="adm-voice-other" @submit.prevent="otherVoiceOk && saveSetting('elevenlabs_voice', otherVoiceId.trim())">
+                <label class="adm-field">
+                  <span class="adm-label">Another ElevenLabs voice id <span class="adm-muted">(from its voice library)</span></span>
+                  <input v-model="otherVoiceId" type="text" class="adm-input" autocomplete="off" spellcheck="false" placeholder="e.g. fnYMz3F5gMEDGMWcH1ex" />
+                </label>
+                <UiButton type="submit" variant="secondary" small :disabled="savingKey !== null || !otherVoiceOk">Use this voice</UiButton>
+              </form>
+              <label class="adm-field adm-select-field">
+                <span class="adm-label">OpenAI voice (gpt-4o-mini-tts){{ activeProvider === "elevenlabs" ? ", the backup" : "" }}</span>
+                <select
+                  class="adm-input adm-select"
+                  :value="activeVoice"
+                  :disabled="savingKey !== null"
+                  @change="saveSetting('tts_voice', $event.target.value)"
+                >
+                  <option v-for="name in TTS_VOICES" :key="name" :value="name">
+                    {{ name }} · {{ VOICE_LABELS[name] }}{{ name === DEFAULT_TTS_VOICE ? " (default)" : "" }}
+                  </option>
+                </select>
+                <Icon name="chevron-down" :size="16" class="adm-select-icon" />
+              </label>
+              <p class="adm-muted">
+                ElevenLabs needs ELEVENLABS_API_KEY on the worker. Without it, or when ElevenLabs refuses the account (quota,
+                payment, key), the show is recorded with the OpenAI voice and says so.
+              </p>
+            </div>
           </Card>
         </div>
       </template>
@@ -585,6 +655,24 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.adm-voice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--siq-space-3);
+}
+
+.adm-voice-other {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--siq-space-2);
+}
+
+.adm-voice-other .adm-field {
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+
 .adm-page {
   display: flex;
   flex-direction: column;
