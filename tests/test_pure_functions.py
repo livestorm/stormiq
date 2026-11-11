@@ -966,8 +966,8 @@ def _fake_livestorm(monkeypatch, pages: dict, *, included: dict | None = None) -
 
 LIVESTORM_PAGERS = pytest.mark.parametrize(
     "pager",
-    [livestorm_client.fetch_chat_messages, livestorm_client.fetch_session_questions, livestorm_client.fetch_event_past_sessions],
-    ids=["chat", "questions", "event-sessions"],
+    [livestorm_client.fetch_chat_messages, livestorm_client.fetch_session_questions],
+    ids=["chat", "questions"],
 )
 
 
@@ -1016,9 +1016,77 @@ def test_no_pager_asks_livestorm_for_more_than_50(monkeypatch, requested, sent):
     calls = _fake_livestorm(monkeypatch, {0: (0, None)})
     livestorm_client.fetch_chat_messages("Bearer t", "s1", page_size=requested)
     livestorm_client.fetch_session_questions("Bearer t", "s1", page_size=requested)
-    livestorm_client.fetch_event_past_sessions("Bearer t", "e1", page_size=requested)
     livestorm_client.fetch_workspace_events_page("Bearer t", page_size=requested)
-    assert [call["page[size]"] for call in calls] == [sent] * 4
+    assert [call["page[size]"] for call in calls] == [sent] * 3
+
+
+# ── An event's sessions, a page at a time ──
+
+
+def _event_pages(monkeypatch, pages: dict, total):
+    """Serve an event's finished sessions: `pages[number]` lists start times."""
+    calls: list = []
+
+    def fake_page(key, event, page_number=0):
+        calls.append(page_number)
+        data = [
+            {"id": f"s{page_number}-{i}", "attributes": {"name": f"S {page_number}-{i}", "started_at": started, "attendees_count": 3}}
+            for i, started in enumerate(pages[page_number])
+        ]
+        return {"data": data, "meta": {"record_count": total}}
+
+    monkeypatch.setattr(api_logic, "fetch_event_sessions_page", fake_page)
+    return calls
+
+
+def test_one_page_of_sessions_is_all_there_is(monkeypatch):
+    calls = _event_pages(monkeypatch, {0: [1_700_000_000, 1_700_100_000]}, 2)
+    body = api_logic.fetch_event_sessions("Bearer t", " e1 ")
+    assert calls == [0]
+    assert [o["startedAt"] for o in body["options"]] == [1_700_100_000, 1_700_000_000], "newest first"
+    assert (body["eventId"], body["total"], body["next"]) == ("e1", 2, None)
+    assert "payload" not in body, "never Livestorm's raw payload"
+
+
+def test_many_sessions_start_from_the_newest_end_and_walk_one_page_at_a_time(monkeypatch):
+    pages = {0: [1_600_000_000], 1: [1_650_000_000], 2: [1_700_000_000]}
+    calls = _event_pages(monkeypatch, pages, 120)
+    first = api_logic.fetch_event_sessions("Bearer t", "e1")
+    assert calls == [0, 2], "the first page, then the last to see which end is newest"
+    assert first["options"][0]["startedAt"] == 1_700_000_000
+    assert first["next"] == {"page": 1, "step": -1, "pages": 3}
+    second = api_logic.fetch_event_sessions("Bearer t", "e1", first["next"])
+    assert second["options"][0]["startedAt"] == 1_650_000_000 and second["next"] == {"page": 0, "step": -1, "pages": 3}
+    third = api_logic.fetch_event_sessions("Bearer t", "e1", second["next"])
+    assert third["next"] is None and calls == [0, 2, 1, 0]
+
+
+def test_newest_first_pages_walk_forward(monkeypatch):
+    calls = _event_pages(monkeypatch, {0: [1_700_000_000], 1: [1_600_000_000]}, 60)
+    body = api_logic.fetch_event_sessions("Bearer t", "e1")
+    assert calls == [0, 1] and body["options"][0]["startedAt"] == 1_700_000_000
+    assert body["next"] == {"page": 1, "step": 1, "pages": 2}
+
+
+def test_a_cursor_outside_the_event_is_refused(monkeypatch):
+    _event_pages(monkeypatch, {0: []}, 0)
+    with pytest.raises(ValueError):
+        api_logic.fetch_event_sessions("Bearer t", "e1", {"page": 5, "step": 1, "pages": 2})
+    with pytest.raises(ValueError):
+        api_logic.fetch_event_sessions("Bearer t", "e1", {"page": 0, "step": 3, "pages": 2})
+
+
+def test_the_page_fetch_asks_for_50_finished_sessions(monkeypatch):
+    seen = {}
+
+    def fake_get(url, *, headers, params=None):
+        seen.update(url=url, params=params)
+        return _FakeLivestormResponse({"data": []})
+
+    monkeypatch.setattr(livestorm_client, "livestorm_get", fake_get)
+    livestorm_client.fetch_event_sessions_page("Bearer t", "e1", 3)
+    assert seen["url"].endswith("/events/e1/sessions")
+    assert seen["params"] == {"page[number]": 3, "page[size]": 50, "filter[status]": "past"}
 
 
 # ── Gladia: the speaker cap ────────────────────────────────────────────────

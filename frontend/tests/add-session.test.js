@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { EVENT_STATUSES, addedSessionIds, eventRow, idFromInput, sessionChoice, statusLabel } from "../src/sessions/add";
+import { EVENT_STATUSES, addedSessionIds, eventRow, finishedLine, idFromInput, sessionChoice, statusLabel } from "../src/sessions/add";
 
 const ID = "3f2a1b4c-5d6e-4f70-8a9b-0c1d2e3f4a5b";
 const OTHER = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
@@ -19,6 +19,7 @@ describe("the events", () => {
       title: "Monthly webinar",
       status: "Ended",
       sessions: "12 sessions",
+      count: 12,
     });
     expect(eventRow({ id: "e2", title: "", sessions_count: "1" }).sessions).toBe("1 session");
     expect(eventRow({ id: "e2", title: "" }).title).toBe("Untitled event");
@@ -27,6 +28,15 @@ describe("the events", () => {
 });
 
 describe("an event's sessions", () => {
+  it("say how many finished, out of all the event has", () => {
+    expect(finishedLine(2, 6)).toBe(
+      "2 finished sessions of 6: the others are still to come, never started, cancelled or drafts, and can't be added.",
+    );
+    expect(finishedLine(6, 6)).toBe("6 finished sessions");
+    expect(finishedLine(1, null)).toBe("1 finished session");
+    expect(finishedLine(null, 6)).toBe("");
+  });
+
   it("word a session from the route's raw fields", () => {
     const row = sessionChoice({ id: ID, name: "Spring launch", startedAt: 1_700_000_000, attendees: 42 }, new Set(), {
       timeZone: "UTC",

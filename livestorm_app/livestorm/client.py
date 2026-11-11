@@ -377,51 +377,19 @@ def fetch_event_details(key: str, event_id: str) -> Dict[str, Any]:
     return payload if isinstance(payload, dict) else {"data": payload}
 
 
-def fetch_event_past_sessions(key: str, event: str, page_size: int = DEFAULT_PAGE_SIZE) -> Dict[str, Any]:
-    url = f"{API_BASE}/events/{event}/sessions"
-    headers = build_headers(key)
-    page_size = _page_size(page_size)
-
-    page_number = START_PAGE_NUMBER
-    pages_fetched = 0
-    seen_pages = set()
-    all_sessions: List[Dict[str, Any]] = []
-    final_payload: Dict[str, Any] = {}
-
-    while pages_fetched < MAX_PAGES:
-        if page_number in seen_pages:
-            break
-        seen_pages.add(page_number)
-
-        resp = livestorm_get(
-            url,
-            headers=headers,
-            params={"page[number]": page_number, "page[size]": page_size, "filter[status]": "past"},
-        )
-        resp.raise_for_status()
-        payload = resp.json()
-        if not isinstance(payload, dict):
-            payload = {"data": extract_sessions(payload)}
-
-        final_payload = payload
-        page_sessions = extract_sessions(payload)
-        all_sessions.extend(page_sessions)
-        pages_fetched += 1
-
-        next_page = _extract_next_page(payload)
-        if next_page is not None:
-            if next_page in seen_pages:
-                break
-            page_number = next_page
-            continue
-        if _states_last_page(payload) or len(page_sessions) < page_size:
-            break
-        page_number += 1
-
-    final_payload["data"] = all_sessions
-    final_payload["pages_fetched"] = pages_fetched
-    final_payload["requested_page_size"] = page_size
-    return final_payload
+def fetch_event_sessions_page(key: str, event: str, page_number: int = START_PAGE_NUMBER) -> Dict[str, Any]:
+    """One page of an event's finished sessions (`filter[status]=past`), the
+    largest page Livestorm serves. The Add session page reads an event's
+    sessions a page at a time (`api_logic.fetch_event_sessions`): an event
+    can hold hundreds."""
+    resp = livestorm_get(
+        f"{API_BASE}/events/{event}/sessions",
+        headers=build_headers(key),
+        params={"page[number]": int(page_number), "page[size]": LIVESTORM_MAX_PAGE_SIZE, "filter[status]": "past"},
+    )
+    resp.raise_for_status()
+    payload = resp.json()
+    return payload if isinstance(payload, dict) else {"data": extract_sessions(payload)}
 
 
 def fetch_workspace_events_page(

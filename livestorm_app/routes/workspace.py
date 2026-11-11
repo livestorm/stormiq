@@ -42,7 +42,8 @@ def workspace_sessions(caller: Optional[Caller] = Depends(get_optional_caller)) 
 def event_sessions(request: EventSessionsRequest, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
     try:
         api_key = caller.livestorm_auth(request.api_key)
-        return fetch_event_sessions(api_key, request.event_id)
+        cursor = request.cursor.model_dump() if request.cursor else None
+        return fetch_event_sessions(api_key, request.event_id, cursor)
     except Exception as exc:
         raise_http_error("Event sessions", exc)
         raise

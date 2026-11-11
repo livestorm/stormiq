@@ -4,6 +4,7 @@ What has shipped, newest first. What's next is in [roadmap.md](roadmap.md).
 
 ## November 2026: "StormIQ for Livestorm"
 
+- **An event's sessions, a page at a time.** Opening an event on Add session reads its finished sessions 50 at a time, newest first, with "Show more", instead of every page of a large event at once, and no longer sends Livestorm's raw list to the browser. A line says how many have finished out of all the event has, since only finished ones can be added ("2 finished sessions of 6").
 - **What stood out, in French, with what to do next time.** The findings card has an English · Français switch, for pasting into a report or an email. Each finding ends with a "Next time" tip from a curated library of event craft (wait ten seconds after asking the room something, run a sound check with every speaker, bring the room in every six to eight minutes…), never written by AI.
 - **Clearer findings.** The chapter chart says what it shows (the room's own chat, in messages a minute, against the usual chapter), titles wrap instead of being cut, and sound or connection complaints no longer count as the room's interest: they belong to production friction. A finding no longer says "0 people" when the chat's authors couldn't be matched.
 - **Where the room leaned in.** "What stood out" finds the minutes the audience wrote far more than its usual, on its own (not a reply to a question from the stage, not a wave of greetings), numbers them on the Pulse, and quotes what the speaker was saying at the time when the clock is checked to the second.
