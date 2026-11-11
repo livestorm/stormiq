@@ -4,6 +4,7 @@ Your task is to produce a short high-energy recap of the session.
 
 Requirements:
 - Use only the transcript text.
+- [name], [email], [phone] and [link] mark an attendee's details that StormIQ removed. Never write them or guess what they hid; write around them ("an attendee asked…").
 - Do not use chat, questions, or outside context.
 - Keep the tone bold, exciting, confident, and dynamic without becoming vague.
 - Make the recap feel fast, modern, and memorable.
