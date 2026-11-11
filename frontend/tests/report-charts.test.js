@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import record from "./fixtures/record-v1.json";
-import { busiestMinute, clockLabel, minuteTicks, ridgePaths } from "../src/report/chartGeometry";
+import { busiestMinute, clockLabel, minuteCenter, minuteTicks, ridgePaths, secondsLeft } from "../src/report/chartGeometry";
 
 const minutes = record.record.pulse.minutes;
 
@@ -38,8 +38,9 @@ describe("ridgePaths", () => {
   it("draws one point per minute, the busiest at the top", () => {
     const { line, area } = ridgePaths(minutes.map((row) => row.audienceChat));
     const points = line.slice(1).split(" L").map((pair) => pair.split(",").map(Number));
-    expect(points).toHaveLength(minutes.length);
-    expect(points[0][0]).toBe(0);
+    expect(points).toHaveLength(minutes.length + 2);
+    expect(points[0]).toEqual([0, points[1][1]]);
+    expect(points[1][0]).toBe(Number(((0.5 / minutes.length) * 1000).toFixed(1)));
     expect(points.at(-1)[0]).toBe(1000);
     expect(Math.min(...points.map(([, y]) => y))).toBe(6);
     expect(area.startsWith(line)).toBe(true);
@@ -50,11 +51,23 @@ describe("ridgePaths", () => {
     const { line } = ridgePaths([0, 0, 0]);
     expect(new Set(line.slice(1).split(" L").map((pair) => pair.split(",")[1]))).toEqual(new Set(["99.0"]));
     expect(ridgePaths([])).toEqual({ line: "", area: "" });
-    expect(ridgePaths([4]).line).toBe("M500.0,6.0");
+    expect(ridgePaths([4]).line).toBe("M0.0,6.0 L500.0,6.0 L1000.0,6.0");
   });
 
   it("treats a missing or negative value as 0", () => {
     expect(ridgePaths([null, -2, 3]).line).toBe(ridgePaths([0, 0, 3]).line);
+  });
+});
+
+describe("minuteCenter and secondsLeft", () => {
+  it("place a minute in its middle and a time on the same axis", () => {
+    expect(minuteCenter(0, 10)).toBe(5);
+    expect(minuteCenter(9, 10)).toBe(95);
+    expect(minuteCenter(0, 0)).toBe(0);
+    expect(secondsLeft(300, 10)).toBe(50);
+    expect(secondsLeft(-5, 10)).toBe(0);
+    expect(secondsLeft(9999, 10)).toBe(100);
+    expect(secondsLeft(null, 10)).toBe(0);
   });
 });
 

@@ -607,16 +607,22 @@ def _chapter_list(session_id: str, inputs: Any, *, organization_id: OrgScope) ->
 
 
 def get_session_chapters(session_id: str, *, organization_id: OrgScope) -> Dict[str, Any]:
-    """The session's chapters and their show notes, for the Follow-up tab:
-    `{sessionId, updatedAt, state, chapters, showNotes: {text, youtube}}`
-    (`record.understanding.chapter_list`, `show_notes`). No model call: it
-    reads what the session analysis stored. Read on demand with the
-    caller's scope."""
+    """The session's chapters and their show notes, for the Follow-up tab
+    and the Report's cover: `{sessionId, updatedAt, state, placed, chapters,
+    showNotes: {text, youtube}}` (`record.understanding.chapter_list`,
+    `show_notes`). When `placed`, each chapter also carries its place on the
+    session clock and what the audience did in it (`record.assemble.
+    chapter_marks`: `t`, `tEnd`, `audienceChat`, `questions`,
+    `chatPerMinute`). No model call: it reads what the session analysis
+    stored. Read on demand with the caller's scope."""
     inputs, row = _transcript_inputs(session_id, organization_id=organization_id)
+    from livestorm_app.record.assemble import chapter_marks
     from livestorm_app.record.understanding import show_notes
 
     chapters, state = _chapter_list(session_id, inputs, organization_id=organization_id)
-    body = {"state": state, "chapters": chapters, "showNotes": show_notes(chapters)}
+    marks = chapter_marks(inputs, chapters)
+    placed = [{**chapter, **mark} for chapter, mark in zip(chapters, marks["marks"], strict=True)] if marks["placed"] else chapters
+    body = {"state": state, "placed": marks["placed"], "chapters": placed, "showNotes": show_notes(chapters)}
     return {"sessionId": session_id, "updatedAt": row.get("updated_at"), **_sanitize_json_value(body)}
 
 

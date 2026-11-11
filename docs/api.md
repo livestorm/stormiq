@@ -115,11 +115,12 @@ The record carries no message text: a count of chat messages lists their evidenc
 `GET /api/sessions/{id}/record/chapters` (`api_logic.get_session_chapters`) reads the chapters the understanding job stored (`record.understanding.chapter_list`), read on demand and not cached:
 
 ```
-{sessionId, updatedAt, state, chapters: [{title, kind, first, last, r, rEnd}], showNotes: {text, youtube}}
+{sessionId, updatedAt, state, placed, chapters: [{title, kind, first, last, r, rEnd, t?, tEnd?, audienceChat?, questions?, chatPerMinute?}], showNotes: {text, youtube}}
 ```
 
 - `state`: `ready`, `none` (never read, or no transcript) or `stale` (read from the session as it was: no chapters). Chapters are used only while the stored reading came from the session's dossier as it is now, as the question desk's located answers are ([ai-outputs.md](ai-outputs.md#the-understanding-v1)).
 - `chapters` in order, without overlap: `kind` is `opening`, `content`, `demo`, `qa`, `close` or `other`; `r` is the first utterance's start and `rEnd` the last one's end, in seconds on the recording's clock (the replay's), so they need no alignment.
+- `placed` (`record.assemble.chapter_marks`): true when the chapters could be put on the session clock, where the Pulse shows speech (the alignment allows findings in minutes). Then each chapter also has `t` and `tEnd` (its spoken span, seconds on the session clock, held inside the live session), `audienceChat` and `questions` (the audience's live chat messages and questions from its start to the next chapter's start) and `chatPerMinute` (null for a span under 2 minutes) for the Report's cover chart ([product.md](product.md#session-clock-v1-report)). The Report also reads `state` to offer "Analyse session" again when the chat is labelled but the session isn't read.
 - `showNotes` (`record.understanding.show_notes`): `text` has one line per chapter, "04:12 Title", on the recording's clock, the first at 00:00, hours shown when the replay runs past one; `youtube` is true when YouTube would read them as chapters (at least three, each at least ten seconds long).
 
 ### The question desk

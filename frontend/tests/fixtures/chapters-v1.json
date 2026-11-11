@@ -2,6 +2,7 @@
   "sessionId": "synthetic-webinar",
   "updatedAt": "2026-10-02T08:30:00Z",
   "state": "ready",
+  "placed": true,
   "chapters": [
     {
       "title": "Welcome and agenda",
@@ -9,7 +10,12 @@
       "first": "U0001",
       "last": "U0005",
       "r": 3.0,
-      "rEnd": 51.55
+      "rEnd": 51.55,
+      "t": 21.9,
+      "tEnd": 70.45,
+      "audienceChat": 3,
+      "questions": 0,
+      "chatPerMinute": null
     },
     {
       "title": "The dashboard, view by view",
@@ -17,7 +23,12 @@
       "first": "U0006",
       "last": "U0027",
       "r": 60.0,
-      "rEnd": 281.55
+      "rEnd": 281.55,
+      "t": 78.9,
+      "tEnd": 300.45,
+      "audienceChat": 2,
+      "questions": 1,
+      "chatPerMinute": 0.5
     },
     {
       "title": "Pricing for larger teams",
@@ -25,7 +36,12 @@
       "first": "U0028",
       "last": "U0073",
       "r": 288.0,
-      "rEnd": 751.55
+      "rEnd": 751.55,
+      "t": 306.9,
+      "tEnd": 770.45,
+      "audienceChat": 2,
+      "questions": 1,
+      "chatPerMinute": 0.3
     },
     {
       "title": "Exports and questions",
@@ -33,7 +49,12 @@
       "first": "U0074",
       "last": "U0165",
       "r": 760.0,
-      "rEnd": 1691.55
+      "rEnd": 1691.55,
+      "t": 778.9,
+      "tEnd": 1710.45,
+      "audienceChat": 3,
+      "questions": 1,
+      "chatPerMinute": 0.2
     },
     {
       "title": "Goodbye",
@@ -41,7 +62,12 @@
       "first": "U0166",
       "last": "U0166",
       "r": 1700.0,
-      "rEnd": 1703.05
+      "rEnd": 1703.05,
+      "t": 1718.9,
+      "tEnd": 1721.95,
+      "audienceChat": 1,
+      "questions": 0,
+      "chatPerMinute": null
     }
   ],
   "showNotes": {

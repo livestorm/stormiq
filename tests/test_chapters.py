@@ -123,7 +123,8 @@ def test_the_chapters_route_serves_the_show_notes():
     response = _get("/api/sessions/{id}/record/chapters")
     assert response.status_code == 200, response.text
     body = response.json()
-    assert list(body) == ["sessionId", "updatedAt", "state", "chapters", "showNotes"]
+    assert list(body) == ["sessionId", "updatedAt", "state", "placed", "chapters", "showNotes"]
+    assert body["placed"] is True and {"t", "tEnd", "audienceChat", "questions", "chatPerMinute"} <= set(body["chapters"][0])
     assert body["showNotes"]["text"].splitlines()[0] == "00:00 Welcome and agenda"
     assert body["showNotes"]["youtube"] is False, "the synthetic goodbye is three seconds long"
     empty = _get("/api/sessions/{id}/record/chapters", stored=False).json()
@@ -145,3 +146,40 @@ def test_the_frontend_fixture_is_the_route_response():
     it: `.venv/bin/python tests/synthetic_session.py`."""
     committed = synthetic.CHAPTERS_FIXTURE.read_text(encoding="utf-8")
     assert synthetic.dump(synthetic.chapters_response()) == committed
+
+
+# ── The chapters on the session clock (the Report's cover) ──
+
+
+def test_each_chapter_is_placed_on_the_session_clock_with_what_the_audience_did_in_it():
+    from livestorm_app.record.assemble import chapter_marks
+    from livestorm_app.record.clock import event_lane, phase
+
+    inputs = _inputs()
+    chapters, _ = chapter_list(_stored(), inputs)
+    marks = chapter_marks(inputs, chapters)
+    assert marks["placed"] is True and len(marks["marks"]) == len(chapters)
+    offset = inputs.alignment.offset_s
+    first = marks["marks"][0]
+    assert first["t"] == round(chapters[0]["r"] + offset, 3), "t = r + offsetS"
+    assert [m["t"] for m in marks["marks"]] == sorted(m["t"] for m in marks["marks"])
+    live = [
+        lane
+        for kind, is_team, t in inputs.events[["kind", "is_team", "t"]].itertuples(index=False, name=None)
+        if phase(t, inputs.clock) == "live" and (lane := event_lane(kind, is_team)) in ("audience_chat", "questions")
+    ]
+    assert sum(m["audienceChat"] for m in marks["marks"]) == live.count("audience_chat"), "every live message in one chapter"
+    assert sum(m["questions"] for m in marks["marks"]) == live.count("questions")
+    second, third = marks["marks"][1], marks["marks"][2]
+    assert second["chatPerMinute"] == round(second["audienceChat"] * 60 / (third["t"] - second["t"]), 1)
+    assert first["chatPerMinute"] is None, "a 57-second welcome has no rate to compare"
+
+
+def test_chapters_stay_off_the_session_clock_without_speech_on_it():
+    from livestorm_app.record.assemble import chapter_marks
+
+    inputs = _inputs()
+    chapters, _ = chapter_list(_stored(), inputs)
+    assert chapter_marks(inputs, []) == {"placed": False, "marks": []}
+    with mock.patch("livestorm_app.record.assemble.alignment_allows", lambda alignment, resolution: False):
+        assert chapter_marks(inputs, chapters) == {"placed": False, "marks": []}
