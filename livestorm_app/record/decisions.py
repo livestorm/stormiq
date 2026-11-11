@@ -21,6 +21,7 @@ Pure functions: no database, network or web framework.
 from __future__ import annotations
 
 import math
+import re
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from livestorm_app.record.transcript_view import speaker_name
@@ -160,3 +161,30 @@ def decisions_markdown(
         if bullets:
             sections.append("\n".join([f"## {title}", "", *bullets]))
     return "\n\n".join(sections)
+
+
+_BULLET = re.compile(r"^- \*\*(?P<text>.+?)\*\*(?P<rest>.*)$")
+_DUE = re.compile(r"(?:^| )Due: (?P<due>.+?)\.(?= |$)")
+
+
+def decision_lines(markdown: str) -> List[Dict[str, Any]]:
+    """What `decisions_markdown` listed, without who: `[{kind, text, due}]`
+    in its order, `kind` "decision" or "commitment", `due` None when none
+    was said. The owner, the speaker and the quote are left out, for the
+    team digest's brief (`record.digest_brief`), which never names anyone."""
+    kinds = {f"## {title}": kind for kind, title in KIND_TITLES.items()}
+    kind: Optional[str] = None
+    found: List[Dict[str, Any]] = []
+    for line in str(markdown or "").splitlines():
+        line = line.strip()
+        if line in kinds:
+            kind = kinds[line]
+            continue
+        match = _BULLET.match(line)
+        if kind is None or not match:
+            continue
+        # The due date sits before the speaker's words ("…: *“quote”*").
+        rest = match.group("rest").split(": *“", 1)[0]
+        due = _DUE.search(rest)
+        found.append({"kind": kind, "text": match.group("text").strip(), "due": due.group("due").strip() if due else None})
+    return found

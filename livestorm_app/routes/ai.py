@@ -17,6 +17,7 @@ from livestorm_app.api_logic import (
     get_overall_analysis_job_data,
     get_session_analysis_job,
     get_smart_recap_job_data,
+    get_team_digest_job_data,
     start_content_repurposing,
     start_session_analysis,
     start_deep_analysis,
@@ -24,6 +25,7 @@ from livestorm_app.api_logic import (
     start_faq,
     start_overall_analysis,
     start_smart_recap,
+    start_team_digest,
 )
 from livestorm_app.auth import (
     Caller,
@@ -105,6 +107,25 @@ def decisions_job(session_id: SessionId, caller: Caller = Depends(get_caller), j
         return get_decisions_job_data(session_id, jobId, language, organization_id=caller.read_scope, outputs_only=outputsOnly)
     except Exception as exc:
         raise_http_error("Decisions", exc)
+        raise
+
+
+@router.post("/api/sessions/{session_id}/team-digest")
+def team_digest(session_id: SessionId, request: AnalysisRequest, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
+    """Start a "Team digest" job. See `overall_analysis` for the contract; poll `/team-digest/job`."""
+    try:
+        return start_team_digest(session_id, request.output_language, organization_id=caller.read_scope)
+    except Exception as exc:
+        raise_http_error("Team digest", exc)
+        raise
+
+
+@router.get("/api/sessions/{session_id}/team-digest/job")
+def team_digest_job(session_id: SessionId, caller: Caller = Depends(get_caller), jobId: str = Query(""), language: str = Query("English"), outputsOnly: bool = Query(False)) -> Dict[str, Any]:
+    try:
+        return get_team_digest_job_data(session_id, jobId, language, organization_id=caller.read_scope, outputs_only=outputsOnly)
+    except Exception as exc:
+        raise_http_error("Team digest", exc)
         raise
 
 

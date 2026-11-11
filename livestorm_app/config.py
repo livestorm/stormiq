@@ -47,6 +47,7 @@ UNDERSTANDING_PROMPT_PATH = PROMPTS_DIR / "understanding.txt"  # v1: ai/understa
 SESSION_ANALYSIS_PROMPT_PATH = PROMPTS_DIR / "session_analysis.txt"  # v1: ai/session_analysis.py
 FAQ_PROMPT_PATH = PROMPTS_DIR / "faq.txt"  # v1: ai/faq.py
 DECISIONS_PROMPT_PATH = PROMPTS_DIR / "decisions.txt"  # v1: ai/decisions.py
+TEAM_DIGEST_PROMPT_PATH = PROMPTS_DIR / "team_digest.txt"  # v1: ai/team_digest.py
 
 ENV_PATH = Path(".env")
 

@@ -7,6 +7,7 @@ function emptyAiJobs() {
     overall_analysis: null,
     faq: null,
     decisions: null,
+    team_digest: null,
     deep_analysis: null,
     smart_recap: null,
     content_repurposing: null,
@@ -57,6 +58,7 @@ const state = reactive({
     analysis: false,
     faq: false,
     decisions: false,
+    teamDigest: false,
     deepAnalysis: false,
     smartRecap: false,
     contentRepurposing: false,
@@ -825,6 +827,17 @@ async function runDecisions(outputLanguage = state.outputLanguage) {
   });
 }
 
+async function runTeamDigest(outputLanguage = state.outputLanguage) {
+  await runAiFlow({
+    flag: "teamDigest",
+    jobKind: "team_digest",
+    flow: "team-digest",
+    start: (id, signal) => api.runTeamDigest(id, { apiKey: state.apiKey, outputLanguage }, { signal }),
+    query: { language: outputLanguage },
+    slot: { language: outputLanguage },
+  });
+}
+
 async function runDeepAnalysis(outputLanguage = state.outputLanguage) {
   await runAiFlow({
     flag: "deepAnalysis",
@@ -932,6 +945,7 @@ export function useWorkspace() {
     runAnalysis,
     runFaq,
     runDecisions,
+    runTeamDigest,
     runDeepAnalysis,
     runSmartRecap,
     runContentRepurposing,

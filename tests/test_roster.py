@@ -1045,6 +1045,8 @@ RECORD_ENTRY_POINTS = {
         "_write_faq",
         # The Follow-up's decisions and commitments: the understanding's dossier (`record.understanding.build_dossier`), checked by `record.decisions`.
         "_write_decisions",
+        # The Follow-up's team digest: its brief (`record.digest_brief`) from the record's measures, moments, chapters, desk and listed decisions.
+        "_write_team_digest",
         # Before you share: the figure checks (`record.figure_checks`).
         "_figure_check_list", "get_session_figure_checks", "save_session_figure_check",
         # The analysis's second step: the dossier, its checks and the result's version.

@@ -50,6 +50,7 @@ Every route is a FastAPI handler in [`livestorm_app/routes/`](../livestorm_app/r
 | `/api/sessions/{id}/session-analysis/job` | GET | caller | v1 Report only: the analysis run's status, `{jobId, jobStatus, error?, progress}`; the job id is derived from the session. `progress` is the run's latest stage from Redis, `{kind, stage, percent, started_at_ms, updated_at_ms}` or null ([jobs.md](jobs.md#the-session-analysis-v1)) |
 | `/api/sessions/{id}/analysis` | POST | caller | Start the overall analysis (English or French) |
 | `/api/sessions/{id}/decisions` | POST | caller | Start "Decisions and commitments" (English or French), read from the transcript ([ai-outputs.md](ai-outputs.md#decisions-and-commitments)); poll `GET …/decisions/job?jobId=&language=` |
+| `/api/sessions/{id}/team-digest` | POST | caller | Start the team digest (English or French), about 100 words marked internal ([ai-outputs.md](ai-outputs.md#team-digest)); poll `GET …/team-digest/job?jobId=&language=` |
 | `/api/sessions/{id}/faq` | POST | caller | Start the FAQ (English or French), from the question desk ([ai-outputs.md](ai-outputs.md#faq)); poll `GET …/faq/job?jobId=&language=` |
 | `/api/sessions/{id}/deep-analysis` | POST | caller | Start the deep analysis (English or French) |
 | `/api/sessions/{id}/smart-recap` | POST | caller | Start a Smart Recap (`professional`, `hype` or `surprise`) |
