@@ -122,9 +122,21 @@ const hasTranscript = computed(() => Boolean(workspace.value) && store.hasTransc
 const output = computed(() => outputFor(String(route.query.output || "")));
 const language = computed(() => (route.query.lang === "French" ? "French" : "English"));
 
+// The list and the output side by side: once the page is scrolled past the
+// output's top, picking another one brings its top back into view.
+const layoutEl = ref(null);
+
+function toOutputTop() {
+  const el = layoutEl.value;
+  if (!el || el.getBoundingClientRect().top >= 0) return;
+  const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  el.scrollIntoView({ block: "start", behavior: reduce ? "auto" : "smooth" });
+}
+
 function show(key, lang = language.value) {
   const french = key !== DESK && key !== CHAPTERS && lang === "French";
   router.replace({ query: { ...route.query, output: key, lang: french ? "French" : undefined } });
+  toOutputTop();
 }
 
 const groups = computed(() => outputGroups(outputs.value, language.value));
@@ -241,7 +253,7 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
 
     <BeforeYouShare :figures="figures" />
 
-    <div class="f-layout">
+    <div ref="layoutEl" class="f-layout">
       <nav class="f-nav" aria-label="Follow-up">
         <label class="f-pick">
           <span class="siq-sr-only">Show</span>
@@ -572,14 +584,21 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
   grid-template-columns: 15rem minmax(0, 1fr);
   gap: var(--siq-space-6);
   align-items: start;
+  scroll-margin-top: var(--siq-space-4);
 }
 
+/* The list stays in view and scrolls on its own when it is taller than the
+   window, so the page never has to. */
 .f-nav {
   display: flex;
   flex-direction: column;
   gap: var(--siq-space-4);
   position: sticky;
   top: var(--siq-space-6);
+  max-height: calc(100dvh - 2 * var(--siq-space-6));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 
 .f-pick {
@@ -832,6 +851,8 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
   }
   .f-nav {
     position: static;
+    max-height: none;
+    overflow: visible;
   }
   .f-pick {
     display: flex;
