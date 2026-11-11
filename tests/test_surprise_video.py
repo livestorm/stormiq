@@ -33,12 +33,12 @@ from livestorm_app.ai import surprise_director as director
 from livestorm_app.ai import surprise_images as images
 from livestorm_app.ai import surprise_timing as timing
 from livestorm_app.ai.schemas import is_registered
-from livestorm_app.video import film, keys, mix, render
+from livestorm_app.video import film, keys, mix, punch, render
 
 LINES = [
-    {"beat": 1, "say": "Okay, so the chat went quiet.", "tone": "deadpan"},
-    {"beat": 1, "say": "Then 96% stayed — for pricing.", "tone": "building"},
-    {"beat": 2, "say": "Nobody asked why.", "tone": "punchline"},
+    {"beat": 1, "say": "Okay, so the chat went quiet.", "tone": "deadpan", "punchline": False},
+    {"beat": 1, "say": "Then 96% stayed — for pricing.", "tone": "building", "punchline": False},
+    {"beat": 2, "say": "Nobody asked why.", "tone": "punchline", "punchline": True},
 ]
 CLIPS = [{"key": "a" * 64, "duration_s": 2.0}, {"key": "b" * 64, "duration_s": 2.5}, {"key": "c" * 64, "duration_s": 1.2}]
 
@@ -62,11 +62,22 @@ def test_the_clips_follow_the_intro_with_the_rehearsals_gaps_and_the_outro_close
     starts = [placed["start"] for placed in tl["voice"]]
     assert starts[0] == timing.INTRO_S == 4.0
     assert starts[1] == pytest.approx(4.0 + 2.0 + 0.22), "0.22 s within a beat"
-    assert starts[2] == pytest.approx(starts[1] + 2.5 + 0.75), "0.75 s held before a punchline line"
+    window = starts[1] + 2.5 + 0.75
+    assert starts[2] == pytest.approx(window + 0.2), "0.75 s held, then the picture lands, then the punchline is said"
     assert tl["voice_end"] == pytest.approx(starts[2] + 1.2)
-    assert tl["end_card"] == pytest.approx(tl["voice_end"] + 0.5)
+    assert tl["end_card"] == pytest.approx(window + timing.PUNCH_WINDOW_S), "the punchline's window closes the show"
     assert tl["total"] == pytest.approx(tl["end_card"] + timing.OUTRO_S) and timing.OUTRO_S == 6.0
-    assert tl["timed"] == 0
+    assert tl["timed"] == 0 and tl["dropped"] == [] and [v["line"] for v in tl["voice"]] == [0, 1, 2]
+
+
+def test_a_line_after_the_last_punchline_ends_the_show():
+    lines = [*LINES, {"beat": 3, "say": "Proud of you.", "tone": "warm", "punchline": False}]
+    clips = [*CLIPS, {"key": "d" * 64, "duration_s": 1.0}]
+    tl = timing.build_timeline(lines, clips, [None] * 4)
+    punch = tl["punches"][0]
+    assert tl["voice"][3]["start"] == pytest.approx(punch["end"] + timing.GAP_AFTER_PUNCH)
+    assert tl["shots"][-1]["start"] == punch["end"], "the next shot takes the screen when the window ends"
+    assert tl["end_card"] == pytest.approx(tl["voice"][3]["start"] + 1.0 + 0.5)
 
 
 def test_a_new_beat_waits_0_38_s():
@@ -103,20 +114,77 @@ def test_a_clause_shorter_than_0_3_s_joins_the_next_one():
     assert all(shot["dur"] >= timing.MIN_CLAUSE_S for shot in tl["shots"][:-1])
 
 
-def test_the_clause_before_a_punchline_holds():
+def test_the_clause_before_a_punchline_freezes_and_the_punchline_gets_its_window():
     tl = timing.build_timeline(LINES, CLIPS, [None, None, None])
-    shots = tl["shots"]
-    punch = next(n for n, shot in enumerate(shots) if shot["tone"] == "punchline")
-    assert shots[punch - 1]["hold_after"] == 0.75
+    shots, (punch,) = tl["shots"], tl["punches"]
+    assert all(shot["line"] != 2 for shot in shots), "a punchline is never cut into clauses"
+    assert shots[-1]["hold_after"] == 0.75 and shots[-1]["end"] == punch["start"]
     assert sum(1 for shot in shots if shot.get("hold_after")) == 1
     assert [shot["id"] for shot in shots] == list(range(len(shots)))
+    assert (punch["n"], punch["line"], punch["text"], punch["dur"]) == (0, 2, "Nobody asked why.", 2.5)
+    assert tl["segments"] == [
+        {"kind": "kinetic", "start": 4.0, "end": punch["start"]},
+        {"kind": "punch", "n": 0, "start": punch["start"], "end": punch["end"]},
+    ]
 
 
-def test_the_timeline_key_follows_the_clips_the_beats_and_the_tones():
+def test_a_long_punchline_keeps_its_picture_until_it_is_said():
+    clips = [*CLIPS[:2], {"key": "c" * 64, "duration_s": 3.4}]
+    punch = timing.build_timeline(LINES, clips, [None] * 3)["punches"][0]
+    assert punch["dur"] == pytest.approx(timing.PUNCH_LEAD_S + 3.4 + timing.PUNCH_TAIL_S)
+
+
+def test_two_punchlines_in_a_row_hold_on_the_first_picture_and_a_first_one_has_no_hold():
+    lines = [{"beat": 1, "say": "Hello is not a question.", "tone": "punchline", "punchline": True},
+             {"beat": 2, "say": "Nobody asked why.", "tone": "punchline", "punchline": True}]
+    tl = timing.build_timeline(lines, CLIPS[:2], [None, None])
+    first, second = tl["punches"]
+    assert first["start"] == 4.0, "nothing before it to freeze"
+    assert first["end"] == second["start"] == pytest.approx(4.0 + max(2.5, 0.2 + 2.0 + 0.3) + 0.75)
+    assert tl["shots"] == [] and [seg["kind"] for seg in tl["segments"]] == ["punch", "punch"]
+
+
+def _long_script(lines_per_beat=4, beats=6, seconds=3.0):
+    lines, clips = [], []
+    for beat in range(1, beats + 1):
+        for k in range(lines_per_beat):
+            last = k == lines_per_beat - 1 and 1 < beat < beats
+            lines.append({"beat": beat, "say": f"Line {beat} {k}.", "tone": "punchline" if last else "deadpan", "punchline": last})
+            clips.append({"key": f"{len(clips):064x}", "duration_s": seconds})
+    return lines, clips
+
+
+def test_past_the_ceiling_whole_lines_are_dropped_in_a_fixed_order_never_a_punchline():
+    lines, clips = _long_script()
+    every = list(range(len(lines)))
+    assert timing._layout(lines, clips, [None] * len(lines), every)["total"] > timing.MAX_TOTAL_S
+    tl = timing.build_timeline(lines, clips, [None] * len(lines))
+    assert tl["total"] <= timing.MAX_TOTAL_S == 75.0
+    dropped = tl["dropped"]
+    assert dropped and not any(lines[i]["punchline"] for i in dropped)
+    assert 0 not in dropped and len(lines) - 1 not in dropped, "the first and last lines stay"
+    assert dropped == sorted(timing.drop_order(lines)[: len(dropped)])
+    heard = {placed["line"] for placed in tl["voice"]}
+    assert heard.isdisjoint(dropped) and len(tl["punches"]) == 4
+    assert all(shot["line"] not in dropped for shot in tl["shots"])
+
+
+def test_the_drop_order_takes_the_middle_beats_from_the_end_then_the_last_then_the_first_setups_last():
+    lines, _ = _long_script()
+    order = timing.drop_order(lines)
+    # Beats 2 to 5 are the middle: lines 4 to 19; 7, 11, 15 and 19 are punchlines; 6, 10, 14, 18 their setups.
+    assert order[:8] == [17, 16, 13, 12, 9, 8, 5, 4]
+    assert order[8:12] == [18, 14, 10, 6], "a punchline's setup goes last in its group"
+    assert order[12:] == [22, 21, 20, 3, 2, 1]
+    assert timing.drop_order(lines[:2]) == []
+
+
+def test_the_timeline_key_follows_the_clips_the_beats_the_tones_and_the_punchlines():
     base = timing.timeline_key(LINES, [c["key"] for c in CLIPS])
     assert base == timing.timeline_key(LINES, [c["key"] for c in CLIPS])
     assert base != timing.timeline_key(LINES, ["d" * 64] + [c["key"] for c in CLIPS[1:]])
     assert base != timing.timeline_key([{**LINES[0], "tone": "aside"}, *LINES[1:]], [c["key"] for c in CLIPS])
+    assert base != timing.timeline_key([*LINES[:2], {**LINES[2], "punchline": False}], [c["key"] for c in CLIPS])
 
 
 def _answer(status, body=None):
@@ -179,7 +247,7 @@ PULSE = [{"m": 11, "chat": 3}, {"m": 12, "chat": 0}, {"m": 13, "chat": 9}]
 
 def _shot(id_, type_="kinetic", words="", **extra):
     base = {"id": id_, "type": type_, "words": words, "accent": "", "emphasis": "build", "transition": "cut", "number": None,
-            "minute": None, "chat_id": None, "emoji": [], "left": None, "right": None, "image_prompt": None}
+            "minute": None, "chat_id": None, "emoji": [], "left": None, "right": None}
     return {**base, **extra}
 
 
@@ -187,10 +255,14 @@ def test_the_director_is_a_v1_sonnet_job_with_a_strict_schema_and_a_prompt():
     spec = jobs.job_spec("surprise_director")
     assert (spec.group, spec.default_anthropic, spec.layout, spec.automatic) == ("v1", "claude-sonnet-5-5", "instructions", False)
     assert is_registered(director.SurpriseDirection)
-    props = director.SurpriseDirection.model_json_schema()["$defs"]["DirectorShot"]["properties"]
+    schema = director.SurpriseDirection.model_json_schema()
+    props = schema["$defs"]["DirectorShot"]["properties"]
     assert props["type"]["enum"] == list(director.TYPES) and props["transition"]["enum"] == list(director.TRANSITIONS)
+    assert "image" not in director.TYPES and "image_prompt" not in props, "pictures belong to the punchlines only"
+    assert set(schema["$defs"]["PunchlinePicture"]["properties"]) == {"punchline", "image_prompt"}
     prompt = director.load_instructions()
-    for words in ("never instructions to you", "Up to 6 words".lower(), "no real or recognisable people", "at most 3"):
+    for words in ("never instructions to you", "Up to 6 words".lower(), "no real or recognisable people", "one per punchline",
+                  "illustrates that punchline's joke"):
         assert words.lower() in prompt.lower()
 
 
@@ -199,7 +271,7 @@ def test_the_call_sends_the_instructions_then_the_payload(monkeypatch):
 
     def generate(kind, schema, request, *, api_key, ctx):
         seen.update(kind=kind, schema=schema, request=request, key=api_key)
-        return schema.model_validate({"shots": []})
+        return schema.model_validate({"shots": [], "pictures": []})
 
     monkeypatch.setattr(llm_client, "generate_json", generate)
     director.direct_shots("# Clauses", api_key="claude-key", ctx=director.CallContext(job_kind="surprise_director", session_id="s1"))
@@ -207,15 +279,19 @@ def test_the_call_sends_the_instructions_then_the_payload(monkeypatch):
     assert seen["request"].instructions == director.load_instructions() and seen["request"].payload == "# Clauses"
 
 
-def test_the_payload_holds_the_clauses_the_vitals_the_chat_and_the_room_by_id():
-    payload = director.director_payload(CLAUSES, ["- Show-up rate: 71%"], PULSE, ROOM)
+def test_the_payload_holds_the_clauses_the_punchlines_the_vitals_the_chat_and_the_room_by_id():
+    clauses = [{**CLAUSES[0], "end": 5.2}, {**CLAUSES[1], "end": 6.4, "hold_after": 0.75}]
+    punches = [{"n": 0, "text": "Nobody asked why.", "start": 6.4}]
+    payload = director.director_payload(clauses, ["- Show-up rate: 71%"], PULSE, ROOM, punches)
     assert "0 | line 0 | deadpan | 1.2s | The chat went quiet at minute 12." in payload
-    assert "2 | line 1 | punchline | 0.9s | Nobody asked why.  [held pause before this line]" in payload
+    assert "1 | line 0 | deadpan | 1.0s | Then 96% stayed for pricing.  [freezes here: a punchline follows]" in payload
+    assert "P1 | 1 | Nobody asked why." in payload
     assert "11:3, 12:0, 13:9" in payload and "R2 (question): SSO?" in payload and "- Show-up rate: 71%" in payload
+    assert "# Punchlines (number | after clause | punchline)\n- none" in director.director_payload(clauses, [], [], [])
 
 
-def _check(answer, banned=frozenset()):
-    return director.check_shots(CLAUSES, {"shots": answer}, room=ROOM, minutes=[m["m"] for m in PULSE], banned=set(banned))
+def _check(answer):
+    return director.check_shots(CLAUSES, {"shots": answer}, room=ROOM, minutes=[m["m"] for m in PULSE])
 
 
 def test_on_screen_words_are_at_most_six_copied_in_a_row_from_their_clause():
@@ -252,7 +328,7 @@ def test_chat_lines_come_only_from_our_list_by_id_once():
 def test_a_minute_comes_only_from_the_pulse_and_a_pulse_needs_one():
     shots = _check([_shot(0, "pulse", "chat went quiet", minute=12), _shot(1, "pulse", "96% stayed", minute=99)])
     assert shots[0]["minute"] == 12 and shots[1]["type"] == "pulse" and shots[1]["minute"] is None
-    no_pulse = director.check_shots(CLAUSES[:1], {"shots": [_shot(0, "pulse", "chat went quiet", minute=12)]}, room=ROOM, minutes=[], banned=set())
+    no_pulse = director.check_shots(CLAUSES[:1], {"shots": [_shot(0, "pulse", "chat went quiet", minute=12)]}, room=ROOM, minutes=[])
     assert no_pulse[0]["type"] == "kinetic"
 
 
@@ -263,12 +339,24 @@ def test_a_split_copies_both_sides_from_the_clause():
     assert by_id[2]["type"] == "kinetic"
 
 
-def test_at_most_three_pictures_and_never_a_name_in_their_prompt():
-    clauses = [{**CLAUSES[0], "id": n} for n in range(5)]
-    answer = [_shot(n, "image", "chat went quiet", image_prompt=f"a sleeping microphone number {n}") for n in range(4)]
-    answer.append(_shot(4, "image", "chat went quiet", image_prompt="Sarah holding a sign"))
-    shots = director.check_shots(clauses, {"shots": answer}, room=ROOM, minutes=[], banned={"sarah"})
-    assert [shot["type"] for shot in shots] == ["image", "image", "image", "kinetic", "kinetic"]
+def test_one_picture_per_punchline_by_its_number_and_never_a_name_in_its_prompt():
+    punches = [{"n": n} for n in range(5)]
+    answer = {"pictures": [
+        {"punchline": 2, "image_prompt": "a sleeping microphone"},
+        {"punchline": 1, "image_prompt": "a tumbleweed in a chat window"},
+        {"punchline": 1, "image_prompt": "a second try for the same punchline"},
+        {"punchline": 3, "image_prompt": "Sarah holding a sign"},
+        {"punchline": 9, "image_prompt": "a punchline we never gave"},
+        {"punchline": True, "image_prompt": "not a number"},
+    ]}
+    pictures = director.check_pictures(punches, answer, banned={"sarah"})
+    assert pictures == [
+        {"n": 0, "image_prompt": "a tumbleweed in a chat window"},
+        {"n": 1, "image_prompt": "a sleeping microphone"},
+        {"n": 2, "image_prompt": None},
+        {"n": 3, "image_prompt": None},
+    ], "the first prompt for a number counts, a name or none gives the deadpan card, four at most"
+    assert director.check_shots(CLAUSES[:1], {"shots": [_shot(0, "image", "chat went quiet")]}, room=ROOM, minutes=[])[0]["type"] == "kinetic"
     assert not director.image_prompt_ok("a cat at https://example.com", set())
     assert not director.image_prompt_ok("a cat emailing bob@example.com", set())
     assert director.image_prompt_ok("a tumbleweed rolling across an empty chat window", {"sarah"})
@@ -393,20 +481,27 @@ def _timeline():
 def test_the_shot_list_is_the_directors_checked_and_saved_before_the_pictures(steps, monkeypatch):
     tl = _timeline()
     shots = [_shot(shot["id"], words=shot["text"].split()[0]) for shot in tl["shots"]]
-    shots[0] = _shot(0, "image", tl["shots"][0]["text"].split()[0], image_prompt="Sarah waving at a laptop")
     sent = {}
 
     def direct(payload, *, api_key, ctx):
         sent.update(payload=payload, ctx=ctx)
-        return director.SurpriseDirection.model_validate({"shots": shots})
+        return director.SurpriseDirection.model_validate({"shots": shots, "pictures": [
+            {"punchline": 1, "image_prompt": "Sarah waving at a laptop"}]})
 
     monkeypatch.setattr(api_logic.director, "direct_shots", direct)
     key, shotlist, how = api_logic._make_surprise_shotlist("claude-key", SESSION_ID, ROW, "take", "tl-key", tl)
     assert how == "made" and shotlist["stage"] == "directed" and shotlist["source"] == "model"
     assert shotlist["pulse"] == PULSE and shotlist["timeline_key"] == "tl-key" and steps.shotlists[key] == shotlist
-    assert shotlist["shots"][0]["type"] == "kinetic", "an image prompt with a name in it is never sent"
+    assert len(shotlist["shots"]) == len(tl["shots"])
+    assert shotlist["punches"] == [{"n": 0, "image_prompt": None}], "a picture prompt with a name in it is never sent"
     assert sent["ctx"].job_kind == "surprise_director" and sent["ctx"].job_id == f"surprise_show:{SESSION_ID}"
     assert "R1 (chat): is it free?" in sent["payload"]
+    assert f"P1 | {tl['shots'][-1]['id']} | Nobody asked why." in sent["payload"], "after the clause that freezes"
+    steps.shotlists.clear()
+    monkeypatch.setattr(api_logic.director, "direct_shots", lambda payload, **kw: director.SurpriseDirection.model_validate(
+        {"shots": shots, "pictures": [{"punchline": 1, "image_prompt": "a tumbleweed in a chat window"}]}))
+    _, shotlist, _ = api_logic._make_surprise_shotlist("claude-key", SESSION_ID, ROW, "take", "tl-key", tl)
+    assert shotlist["punches"] == [{"n": 0, "image_prompt": "a tumbleweed in a chat window"}]
     monkeypatch.setattr(api_logic.director, "direct_shots", mock.Mock(side_effect=AssertionError("kept")))
     assert api_logic._make_surprise_shotlist("claude-key", SESSION_ID, ROW, "take", "tl-key", tl)[2] == "kept"
 
@@ -416,6 +511,7 @@ def test_a_bad_director_answer_never_fails_the_show(steps, monkeypatch, failure)
     monkeypatch.setattr(api_logic.director, "direct_shots", mock.Mock(side_effect=failure))
     _, shotlist, how = api_logic._make_surprise_shotlist("claude-key", SESSION_ID, ROW, "take", "tl-key", _timeline())
     assert how == "fallback" and shotlist["source"] == "rules" and len(shotlist["shots"]) == len(_timeline()["shots"])
+    assert shotlist["punches"] == [{"n": 0, "image_prompt": None}], "the rules draw no picture: the deadpan card"
 
 
 def test_without_a_claude_key_the_rules_direct_with_no_call(steps, monkeypatch):
@@ -424,12 +520,11 @@ def test_without_a_claude_key_the_rules_direct_with_no_call(steps, monkeypatch):
 
 
 def _directed(*prompts):
-    shots = [{"id": n, "type": "image", "words": "x", "image_prompt": prompt} for n, prompt in enumerate(prompts)]
-    shots.append({"id": len(prompts), "type": "kinetic", "words": "y"})
-    return {"version": 1, "stage": "directed", "shots": shots, "pulse": []}
+    punches = [{"n": n, "image_prompt": prompt} for n, prompt in enumerate(prompts)]
+    return {"version": 2, "stage": "directed", "shots": [{"id": 0, "type": "kinetic", "words": "y"}], "pulse": [], "punches": punches}
 
 
-def test_the_pictures_are_made_once_saved_whole_and_a_failed_one_becomes_type(steps, monkeypatch):
+def test_one_picture_per_punchline_made_at_once_saved_whole_and_a_failed_one_keeps_the_deadpan_card(steps, monkeypatch):
     made = []
 
     def generate(key, prompt):
@@ -439,20 +534,22 @@ def test_the_pictures_are_made_once_saved_whole_and_a_failed_one_becomes_type(st
         return b"jpeg:" + prompt.encode()
 
     monkeypatch.setattr(api_logic.show_images, "generate_image", generate)
-    final, count = api_logic._make_surprise_pictures("sk-test", SESSION_ID, "sh-key", _directed("a cat", "a broken dog"))
-    assert count == 1 and sorted(made) == ["a broken dog", "a cat"]
+    directed = _directed("a cat", "a broken dog", None, "a fish", "a fifth one")
+    final, count = api_logic._make_surprise_pictures("sk-test", SESSION_ID, "sh-key", directed)
+    assert count == 2 and sorted(made) == ["a broken dog", "a cat", "a fish"], "four punchlines at most, none without a prompt"
     assert final["stage"] == "final" and steps.shotlists["sh-key"] == final
-    assert final["shots"][0]["image"] == images.image_key("a cat") and steps.images[images.image_key("a cat")] == b"jpeg:a cat"
-    assert final["shots"][1]["type"] == "kinetic" and not final["shots"][1].get("image")
+    assert [entry["image"] for entry in final["punches"]] == [images.image_key("a cat"), None, None, images.image_key("a fish")]
+    assert steps.images[images.image_key("a cat")] == b"jpeg:a cat"
+    assert api_logic._show_image_keys(final) == [images.image_key("a cat"), images.image_key("a fish")]
     made.clear()
-    again, _ = api_logic._make_surprise_pictures("sk-test", SESSION_ID, "sh-key", {**_directed("a cat"), "stage": "directed"})
-    assert made == [] and again["shots"][0]["image"] == images.image_key("a cat"), "a saved picture is never made again"
+    again, _ = api_logic._make_surprise_pictures("sk-test", SESSION_ID, "sh-key", _directed("a cat"))
+    assert made == [] and again["punches"][0]["image"] == images.image_key("a cat"), "a saved picture is never made again"
 
 
-def test_without_an_openai_key_every_picture_shot_becomes_type(steps, monkeypatch):
+def test_without_an_openai_key_every_punchline_keeps_the_deadpan_card(steps, monkeypatch):
     monkeypatch.setattr(api_logic.show_images.requests, "post", mock.Mock(side_effect=AssertionError("no call")))
     final, count = api_logic._make_surprise_pictures("", SESSION_ID, "sh-key", _directed("a cat"))
-    assert count == 0 and final["shots"][0]["type"] == "kinetic"
+    assert count == 0 and final["punches"][0]["image"] is None
 
 
 def test_the_show_job_queues_no_render_when_the_video_is_already_made(monkeypatch):
@@ -488,11 +585,11 @@ def _film_inputs():
     return tl, shots
 
 
-def test_the_film_escapes_the_rooms_words_and_freezes_the_held_punchline():
+def test_the_film_escapes_the_rooms_words_and_leaves_the_punchline_to_its_window():
     tl, shots = _film_inputs()
-    page, effects = film.build_film(tl, shots, pulse=PULSE, images={}, css="body{}")
+    page, effects = film.build_film(tl, shots, pulse=PULSE, css="body{}")
     assert "<script>alert(1)</script>" not in page and "&lt;script&gt;alert(1)&lt;/script&gt;" in page
-    assert 'class="deadpan"' in page and "NOBODY ASKED WHY." in page, "the held punchline in condensed capitals"
+    assert "Nobody" not in page and "NOBODY" not in page, "the punchline is drawn in its window, not by Chrome"
     assert 'data-width="1280" data-height="720"' in page and "window.__timelines" in page
     files = {event["file"] for event in effects}
     assert {"jingle-bass-meant-jazz-in.flac", "jingle-bass-meant-jazz-out.flac", "dun.flac"} <= files
@@ -500,30 +597,68 @@ def test_the_film_escapes_the_rooms_words_and_freezes_the_held_punchline():
     assert effects == sorted(effects, key=lambda event: event["t"])
 
 
+def test_the_page_holds_the_kinetic_parts_alone_each_on_a_keyframe():
+    lines = [*LINES, {"beat": 3, "say": "Proud of you, room.", "tone": "warm", "punchline": False}]
+    tl = timing.build_timeline(lines, [*CLIPS, {"key": "d" * 64, "duration_s": 1.5}], [None] * 4)
+    shots = director.fallback_shots(tl["shots"], [12])
+    plan = film.layout(tl)
+    kinds = [seg["kind"] for seg in plan["segments"]]
+    assert kinds == ["kinetic", "punch", "kinetic"]
+    assert plan["segments"][0]["f0"] == 0 and plan["segments"][-1]["f1"] == plan["middle_frames"]
+    assert all(a["f1"] == b["f0"] for a, b in zip(plan["segments"][:-1], plan["segments"][1:], strict=True)), "end to end, on whole frames"
+    first, second = plan["segments"][0], plan["segments"][2]
+    assert first["c0"] == 0 and second["c0"] % keys.KEYFRAME_FRAMES == 0 and second["c0"] >= first["frames"]
+    assert second["c0"] - first["frames"] < keys.KEYFRAME_FRAMES, "only the frames up to the next keyframe are thrown away"
+    assert plan["page_frames"] == second["c0"] + second["frames"]
+    page, effects = film.build_film(tl, shots, pulse=PULSE, css="")
+    assert f'data-composition-id="main" data-start="0" data-duration="{plan["page_frames"] / keys.FPS:.3f}"' in page
+    after = next(shot for shot in tl["shots"] if shot["start"] == tl["punches"][0]["end"])
+    assert f'id="s{after["id"]}" class="clip shot" data-start="{second["c0"] / keys.FPS:.3f}"' in page, \
+        "a shot after a punchline starts at its part's place on the page"
+    dun = [event["t"] for event in effects if event["file"] == "dun.flac"]
+    assert dun == [round(film.spans(tl)["intro"] + plan["segments"][1]["f0"] / keys.FPS + 0.09, 3)], \
+        "the dun as the punchline's picture lands, on the whole video's clock"
+
+
 def test_the_film_is_the_middle_alone_its_times_shifted_to_start_at_zero():
     tl, shots = _film_inputs()
     parts = film.spans(tl)
-    page, effects = film.build_film(tl, shots, pulse=PULSE, images={}, css="")
-    assert f'data-composition-id="main" data-start="0" data-duration="{parts["middle"]:.3f}"' in page
+    page, effects = film.build_film(tl, shots, pulse=PULSE, css="")
     first = tl["shots"][0]
     assert f'id="s0" class="clip shot" data-start="{first["start"] - tl["intro_s"]:.3f}"' in page
     assert 'id="it-0"' not in page and film.TAGLINE not in page and 'id="so-w0"' not in page, "no intro or outro in it"
-    progress = {"scaleX": 1, "duration": round(parts["middle"], 3), "ease": "none"}
-    assert f'tl.fromTo("#progress",{{"scaleX": 0}},{json.dumps(progress)},0.000);' in page, "the bar runs over the middle only"
+    plan = film.layout(tl)
+    seg = plan["segments"][0]
+    share = seg["f1"] / plan["middle_frames"]
+    assert (f'tl.fromTo("#progress",{{scaleX:0.00000}},{{scaleX:{share:.5f},duration:{seg["frames"] / keys.FPS:.3f},'
+            'ease:"none",immediateRender:true},0.000);') in page, "the bar runs over the middle only, the windows take it on"
     assert '"#glow"' not in page, "the glow is still: the joins can't be seen"
     jingles = {event["file"]: event["t"] for event in effects if event["file"].startswith("jingle-")}
     assert jingles["jingle-bass-meant-jazz-in.flac"] == 0.15, "the sound stays on the whole video's clock"
     assert jingles["jingle-bass-meant-jazz-out.flac"] == round(parts["join"] + film.SIGNOFF_S - 0.35, 3)
-    dun = [event["t"] for event in effects if event["file"] == "dun.flac"]
-    assert dun and dun[0] > tl["intro_s"], "a shot's sound at its time in the whole video"
+
+
+def test_the_freeze_before_a_punchline_is_set_back_at_the_window():
+    tl, shots = _film_inputs()
+    page, _ = film.build_film(tl, shots, pulse=PULSE, css="")
+    end = film.layout(tl)["segments"][0]["frames"] / keys.FPS
+    assert f'tl.set("#hold",{{"opacity": 0}},{end:.3f});' in page
+    assert f'tl.set("#camera",{{"filter": "grayscale(0) brightness(1)"}},{end:.3f});' in page
 
 
 def test_the_middle_moves_with_transforms_and_opacity_never_a_blur():
     tl, shots = _film_inputs()
-    for n, transition in enumerate(("whip", "zoom", "blur")):
+    for n, transition in enumerate(("whip", "zoom", "blur")[: len(shots)]):
         shots[n] = {**shots[n], "transition": transition}
-    page, _ = film.build_film(tl, shots, pulse=PULSE, images={}, css="")
+    page, _ = film.build_film(tl, shots, pulse=PULSE, css="")
     assert "blur(" not in page, "a CSS blur is redrawn by the CPU on every frame"
+
+
+def test_a_middle_of_punchlines_alone_has_no_page():
+    lines = [{"beat": 1, "say": "Hello is not a question.", "tone": "punchline", "punchline": True}]
+    tl = timing.build_timeline(lines, CLIPS[:1], [None])
+    page, effects = film.build_film(tl, [], pulse=[], css="")
+    assert page is None and any(event["file"] == "dun.flac" for event in effects)
 
 
 def test_the_parts_are_whole_frames_and_meet_at_the_end_card():
@@ -553,14 +688,56 @@ def test_the_intro_and_outro_hold_nothing_from_a_show_and_are_the_same_every_tim
 def test_the_film_needs_one_shot_per_clause():
     tl, shots = _film_inputs()
     with pytest.raises(ValueError):
-        film.build_film(tl, shots[:-1], pulse=[], images={}, css="")
+        film.build_film(tl, shots[:-1], pulse=[], css="")
 
 
-def test_a_picture_shot_without_its_picture_is_drawn_as_type():
+def test_an_older_picture_shot_is_drawn_as_type():
     tl, shots = _film_inputs()
     shots[1] = {**shots[1], "type": "image", "image": "k"}
-    page, _ = film.build_film(tl, shots, pulse=[], images={}, css="")
+    page, _ = film.build_film(tl, shots, pulse=[], css="")
     assert "<img" not in page
+
+
+# ── The punchline windows (`video/punch.py`) ──
+
+
+def _jpeg(size=(1280, 853), colour=(46, 230, 201)):
+    from PIL import Image
+
+    out = io.BytesIO()
+    Image.new("RGB", size, colour).save(out, format="JPEG")
+    return out.getvalue()
+
+
+def test_a_window_is_its_picture_zooming_with_the_caption_over_it():
+    from PIL import Image
+
+    frames = list(punch.frames(_jpeg(), "Nobody asked why.", 30, progress=(0.25, 0.5)))
+    assert len(frames) == 30
+    first, last = (Image.open(io.BytesIO(data)) for data in (frames[0], frames[-1]))
+    assert first.format == "JPEG" and first.size == (keys.WIDTH, keys.HEIGHT)
+    assert first.getpixel((640, 100))[1] > 180, "the picture covers the frame"
+    assert last.getpixel((int(keys.WIDTH * 0.45), keys.HEIGHT - 2))[2] > 150, "the progress bar runs on"
+    assert last.getpixel((int(keys.WIDTH * 0.6), keys.HEIGHT - 2))[2] < 150
+
+
+def test_a_window_without_a_picture_is_the_deadpan_card():
+    from PIL import Image
+
+    for picture in (None, b"not a picture"):
+        frame = Image.open(io.BytesIO(next(punch.frames(picture, "Nobody asked why.", 5))))
+        assert max(frame.getpixel((20, 20))) < 20, "black around the caption"
+
+
+def test_the_caption_is_upper_case_fits_and_drops_what_the_font_lacks():
+    assert punch.drawable("nobody  asked 🙃 why…") == "NOBODY ASKED WHY…"
+    lines, size = punch.caption_lines("And the chat went: is it free? " * 3, max_width=1160, sizes=range(150, 59, -6), max_lines=3)
+    assert len(lines) <= 3 and size < 150
+    short, big = punch.caption_lines("Pricing!", max_width=1160, sizes=range(150, 59, -6), max_lines=3)
+    assert short == ["PRICING!"] and big == 150
+    long = "Honestly, the software was the calmest person there."
+    lines, size = punch.caption_lines(long, max_width=1180, sizes=range(220, 59, -6), max_lines=4, max_height=560)
+    assert punch.caption_height(len(lines), size) <= 560, "a long deadpan card fits the frame's height"
 
 
 def test_the_mix_places_each_clip_brings_the_voice_to_16_lufs_and_starts_fast(tmp_path):
@@ -582,9 +759,10 @@ PROBE = {"codec_name": "h264", "profile": "High", "level": 31, "width": 1280, "h
 BUMPERS = {"intro": b"INTRO", "outro": b"OUTRO"}
 
 
-def _fake_runner(calls, *, fail=None, timeout=None, probes=None):
+def _fake_runner(calls, *, fail=None, timeout=None, probes=None, frames=None):
     """Fakes the CLI, ffprobe (the same encoding for every part, or
-    `probes` in turn) and ffmpeg (writes its last argument)."""
+    `probes` in turn; `frames` packets in a joined file) and ffmpeg (writes
+    its last argument)."""
     probes = list(probes or [])
 
     def run(args, **kwargs):
@@ -593,6 +771,8 @@ def _fake_runner(calls, *, fail=None, timeout=None, probes=None):
             raise subprocess.TimeoutExpired(args, 1)
         if fail and fail in " ".join(args):
             return subprocess.CompletedProcess(args, 1, stdout="", stderr="chrome crashed")
+        if args[0] == "ffprobe" and "-count_packets" in args:
+            return subprocess.CompletedProcess(args, 0, stdout=json.dumps({"streams": [{"nb_read_packets": str(frames)}]}), stderr="")
         if args[0] == "ffprobe":
             stream = probes.pop(0) if probes else PROBE
             return subprocess.CompletedProcess(args, 0, stdout=json.dumps({"streams": [stream]}), stderr="")
@@ -616,7 +796,11 @@ def gsap(tmp_path, monkeypatch):
     return path
 
 
-def test_the_render_draws_the_middle_joins_the_stored_bumpers_by_copy_then_mixes(gsap):
+def _expected_frames(tl):
+    return round(film.spans(tl)["total"] * keys.FPS)
+
+
+def test_the_render_draws_the_kinetic_parts_once_the_punchlines_by_ffmpeg_joins_by_copy_then_mixes(gsap):
     tl, shots = _film_inputs()
     calls, stages = [], []
     clips = {clip["key"]: b"mp3" for clip in CLIPS}
@@ -630,37 +814,78 @@ def test_the_render_draws_the_middle_joins_the_stored_bumpers_by_copy_then_mixes
             work = Path(kwargs["cwd"])
             seen["list"] = (work / "parts.txt").read_text()
             seen["intro"], seen["outro"] = (work / "intro.mp4").read_bytes(), (work / "outro.mp4").read_bytes()
-        return _fake_runner(calls)(args, **kwargs)
+        if "image2pipe" in args:
+            seen["stdin"] = kwargs["input"]
+        return _fake_runner(calls, frames=_expected_frames(tl))(args, **kwargs)
 
-    made = render.render_video(tl, shots, pulse=PULSE, clips=clips, images={1: b"jpeg"}, bumpers=BUMPERS, run=run,
+    made = render.render_video(tl, shots, pulse=PULSE, clips=clips, images={0: _jpeg()}, bumpers=BUMPERS, run=run,
                                on_stage=stages.append, job="session_id=s1")
-    parts = film.spans(tl)
+    parts, plan = film.spans(tl), film.layout(tl)
     assert made["size"] == len(made["mp4"]) and made["duration_s"] == round(parts["total"], 3)
     tools = [args[0] for args, _ in calls]
-    assert tools == ["npx", "ffprobe", "ffprobe", "ffprobe", "ffmpeg", "ffmpeg"], "the middle, three probes, the join, the mix"
-    picture, join, sound = calls[0][0], calls[4][0], calls[5][0]
+    assert tools == ["npx", "ffmpeg", "ffprobe", "ffprobe", "ffprobe", "ffprobe", "ffmpeg", "ffprobe", "ffmpeg"], \
+        "Chrome once, the punchline, four probes, the join, its frame count, the mix"
+    picture, encode, join, sound = calls[0][0], calls[1][0], calls[6][0], calls[8][0]
     assert picture[:4] == ["npx", "-y", "hyperframes@0.9.34", "render"] and picture[picture.index("--fps") + 1] == "24"
-    assert picture[picture.index("--crf") + 1] == render.PICTURE_CRF
-    assert calls[0][1]["timeout"] == render.picture_timeout(parts["middle"]) and calls[0][1]["env"]["HYPERFRAMES_NO_TELEMETRY"] == "1"
-    assert "-show_data_hash" in calls[1][0], "the parameters compared include the SPS and PPS"
+    assert picture[picture.index("--crf") + 1] == render.PICTURE_CRF and picture[picture.index("--quality") + 1] == "draft"
+    assert picture[picture.index("--keyframe-interval") + 1] == keys.KEYFRAME_INTERVAL_S == "0.5"
+    assert calls[0][1]["timeout"] == render.picture_timeout(plan["page_frames"] / keys.FPS)
+    assert calls[0][1]["env"]["HYPERFRAMES_NO_TELEMETRY"] == "1"
+    assert encode == render.encode_command("ffmpeg", Path(encode[-1])) and calls[1][1]["timeout"] == render.PUNCH_TIMEOUT_S
+    assert seen["stdin"].startswith(b"\xff\xd8") and seen["stdin"].count(b"\xff\xd9") >= plan["segments"][1]["frames"], \
+        "the window's frames, as JPEGs on stdin: nothing from the session on the command line"
+    assert "-show_data_hash" in calls[2][0], "the parameters compared include the SPS and PPS"
     assert join[join.index("-f") + 1] == "concat" and join[join.index("-c:v") + 1] == "copy", "joined by copy, never encoded again"
-    assert seen["list"] == "file 'intro.mp4'\nfile 'middle.mp4'\nfile 'outro.mp4'\n"
+    kinetic = plan["segments"][0]
+    assert seen["list"] == (f"file 'intro.mp4'\nfile 'kinetic.mp4'\noutpoint {render._seconds(kinetic['frames'])}\n"
+                            "file 'punch_0.mp4'\nfile 'outro.mp4'\n")
+    assert "-count_packets" in calls[7][0], "the joined file's frames are counted"
     assert (seen["intro"], seen["outro"]) == (b"INTRO", b"OUTRO")
     assert sound[0] == "ffmpeg" and "+faststart" in sound and sound[sound.index("-i") + 1].endswith("picture.mp4")
     assert sound[sound.index("-t") + 1] == f"{parts['total']:.3f}" and stages == ["mixing"]
     assert {"index.html", "hyperframes.json", "assets/gsap.min.js", "assets/fonts/Sora.woff2",
-            "assets/fonts/LeagueGothic.ttf", "assets/background.png", "assets/img_001.jpg"} <= set(seen["files"])
+            "assets/fonts/LeagueGothic.ttf", "assets/background.png"} <= set(seen["files"])
+
+
+def test_the_punchline_encode_repeats_hyperframes_own():
+    args = render.encode_command("ffmpeg", Path("out.mp4"))
+    pairs = {args[i]: args[i + 1] for i in range(len(args) - 1) if args[i].startswith("-")}
+    assert (pairs["-f"], pairs["-vcodec"], pairs["-i"]) == ("image2pipe", "mjpeg", "-")
+    assert (pairs["-preset"], pairs["-threads"], pairs["-crf"], pairs["-bf"]) == ("ultrafast", "1", render.PICTURE_CRF, "0")
+    assert (pairs["-g"], pairs["-keyint_min"], pairs["-force_key_frames"]) == ("12", "12", "expr:eq(mod(n,12),0)")
+    assert pairs["-x264-params"] == "aq-mode=3:colorprim=bt709:transfer=bt709:colormatrix=bt709:scenecut=0:open-gop=0:repeat-headers=1"
+    assert (pairs["-maxrate"], pairs["-bufsize"], pairs["-video_track_timescale"]) == ("1200000", "2400000", "12288")
+    assert args[-1] == "out.mp4"
+
+
+def test_the_concat_list_cuts_kinetic_parts_on_their_keyframes():
+    listing = render.concat_list([("intro.mp4", None, None), ("kinetic.mp4", 0, 25), ("punch_0.mp4", None, None),
+                                  ("kinetic.mp4", 36, 13), ("outro.mp4", None, None)])
+    assert listing == ("file 'intro.mp4'\nfile 'kinetic.mp4'\noutpoint 1.041666\nfile 'punch_0.mp4'\n"
+                       "file 'kinetic.mp4'\ninpoint 1.500000\noutpoint 2.041666\nfile 'outro.mp4'\n"), \
+        "an out point rounded down: the frame there is the next part's"
+
+
+def test_a_join_missing_a_frame_is_encoded_again(gsap, caplog):
+    tl, shots = _film_inputs()
+    calls = []
+    run = _fake_runner(calls, frames=_expected_frames(tl) - 1)
+    render.render_video(tl, shots, pulse=[], clips={c["key"]: b"m" for c in CLIPS}, images={}, bumpers=BUMPERS, run=run)
+    joins = [args for args, _ in calls if "concat" in args]
+    assert [args[args.index("-c:v") + 1] for args in joins] == ["copy", "libx264"]
+    assert "expected; encoding the join" in caplog.text
 
 
 @pytest.mark.parametrize("differ", [{"level": 40}, {"extradata_hash": "SHA256:def"}, {"extradata_hash": None}])
 def test_parts_encoded_differently_are_joined_by_one_encode_with_the_same_settings(gsap, differ, caplog):
     tl, shots = _film_inputs()
     calls = []
-    run = _fake_runner(calls, probes=[PROBE, {**PROBE, **differ}, PROBE])
+    run = _fake_runner(calls, probes=[PROBE, {**PROBE, **differ}, PROBE, PROBE])
     render.render_video(tl, shots, pulse=[], clips={c["key"]: b"m" for c in CLIPS}, images={}, bumpers=BUMPERS, run=run)
-    join = calls[4][0]
+    (join,) = [args for args, _ in calls if "concat" in args]
     assert join[join.index("-c:v") + 1] == "libx264" and join[join.index("-crf") + 1] == render.PICTURE_CRF
     assert join[join.index("-r") + 1] == str(keys.FPS) and "encoding the join" in caplog.text
+    assert not any("-count_packets" in args for args, _ in calls), "an encoded join isn't counted"
     assert render.same_encoding([PROBE, dict(PROBE), PROBE]) and not render.same_encoding([])
 
 
@@ -677,16 +902,18 @@ def test_a_bumper_is_rendered_from_its_own_page_with_the_middles_settings(gsap):
     assert ">StormIQ<" in seen["page"] and 'data-duration="6.000"' in seen["page"]
     args = calls[0][0]
     assert args[args.index("--crf") + 1] == render.PICTURE_CRF and args[args.index("--max-bitrate") + 1] == render.PICTURE_MAX_BITRATE
-    assert args[args.index("--fps") + 1] == str(keys.FPS)
+    assert args[args.index("--fps") + 1] == str(keys.FPS) and args[args.index("--quality") + 1] == render.PICTURE_QUALITY
+    assert args[args.index("--keyframe-interval") + 1] == keys.KEYFRAME_INTERVAL_S
 
 
 def test_a_bumpers_key_covers_its_kind_length_page_encode_and_renderer(monkeypatch):
     key = render.bumper_key("intro", 4.0)
     assert key == render.bumper_key("intro", 4.0) and len(key) == 64
     assert len({key, render.bumper_key("outro", 6.0), render.bumper_key("intro", 5.0)}) == 3
-    monkeypatch.setattr(render, "PICTURE_CRF", "18")
-    assert render.bumper_key("intro", 4.0) != key, "a new encode makes new bumpers"
-    monkeypatch.undo()
+    for name, value in (("PICTURE_CRF", "18"), ("PICTURE_QUALITY", "standard"), ("KEYFRAME_INTERVAL_S", "1")):
+        monkeypatch.setattr(render, name, value)
+        assert render.bumper_key("intro", 4.0) != key, f"a new encode makes new bumpers ({name})"
+        monkeypatch.undo()
     monkeypatch.setattr(render, "_css", lambda: "body{color:red}")
     assert render.bumper_key("intro", 4.0) != key, "a new design makes new bumpers"
 
@@ -701,7 +928,8 @@ def test_the_picture_timeout_grows_with_the_video_and_the_job_outlasts_it():
     assert render.PICTURE_TIMEOUT_BASE_S < short < long <= render.PICTURE_TIMEOUT_MAX_S
     assert render.picture_timeout(10_000) == render.PICTURE_TIMEOUT_MAX_S
     bumpers = render.picture_timeout(4) + render.picture_timeout(6)
-    worst = bumpers + render.PICTURE_TIMEOUT_MAX_S + 3 * render.PROBE_TIMEOUT_S + render.JOIN_TIMEOUT_S + render.MIX_TIMEOUT_S
+    worst = (bumpers + render.PICTURE_TIMEOUT_MAX_S + 4 * render.PUNCH_TIMEOUT_S + 8 * render.PROBE_TIMEOUT_S
+             + 2 * render.JOIN_TIMEOUT_S + render.MIX_TIMEOUT_S)
     assert render_worker.RENDER_JOB_TIMEOUT_SECONDS > worst
 
 
@@ -715,7 +943,7 @@ def test_the_capture_workers_follow_render_workers_within_bounds(monkeypatch):
 
 def test_the_film_page_is_made_at_the_videos_frame_rate():
     tl, shots = _film_inputs()
-    page, _effects = film.build_film(tl, shots, pulse=PULSE, images={}, css="")
+    page, _effects = film.build_film(tl, shots, pulse=PULSE, css="")
     assert f'data-fps="{keys.FPS}"' in page and keys.FPS == 24
 
 
@@ -751,16 +979,16 @@ def test_without_gsap_the_render_stops_before_any_tool(tmp_path, monkeypatch):
 # ── The render worker ──
 
 
-def _saved_show(monkeypatch, *, enabled=True, meta=None):
-    tl = _timeline()
+def _saved_show(monkeypatch, *, enabled=True, meta=None, timeline=None):
+    tl = timeline or _timeline()
     shots = director.fallback_shots(tl["shots"], [])
-    shots[0] = {**shots[0], "image": "img-key"}
+    punches = [{"n": 0, "image_prompt": "a cat", "image": "img-key"}]
     saved = []
     monkeypatch.setattr(render_worker, "fetch_session_fields", lambda sid, fields, *, organization_id: {"organization_id": "org-a"})
     monkeypatch.setattr(render_worker, "fetch_surprise_enabled", lambda org: enabled)
     monkeypatch.setattr(render_worker, "fetch_surprise_timeline", lambda sid, key, *, organization_id: {"key": "tl", "body": tl})
     monkeypatch.setattr(render_worker, "fetch_surprise_shotlist", lambda sid, key, *, organization_id: {
-        "key": "sh", "body": {"stage": "final", "timeline_key": "tl", "pulse": PULSE, "shots": shots}})
+        "key": "sh", "body": {"stage": "final", "timeline_key": "tl", "pulse": PULSE, "shots": shots, "punches": punches}})
     monkeypatch.setattr(render_worker, "fetch_surprise_images", lambda sid, wanted, *, organization_id: {"img-key": b"jpeg"})
     monkeypatch.setattr(render_worker, "fetch_surprise_voice_clip", lambda sid, key, *, organization_id: {"bytes": b"mp3", "mime": "audio/mpeg"})
     monkeypatch.setattr(render_worker, "fetch_surprise_video_meta", lambda sid, *, organization_id: meta)
@@ -817,6 +1045,13 @@ def test_the_render_worker_keeps_a_video_made_from_the_same_show_and_refuses_whe
     assert render_worker.render_and_save(SESSION_ID)["status"] == "kept" and saved == []
     _saved_show(monkeypatch, enabled=False)
     with pytest.raises(render_worker.VideoFailed, match="turned off"):
+        render_worker.render_and_save(SESSION_ID)
+
+
+def test_the_render_worker_refuses_a_timeline_made_before_the_punchline_windows(monkeypatch):
+    _saved_show(monkeypatch, timeline={**_timeline(), "version": 1})
+    monkeypatch.setattr(render, "render_video", mock.Mock(side_effect=AssertionError("no render")))
+    with pytest.raises(render_worker.VideoFailed, match="Make the show again"):
         render_worker.render_and_save(SESSION_ID)
 
 

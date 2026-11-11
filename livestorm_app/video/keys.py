@@ -8,12 +8,16 @@ from typing import Iterable
 
 # Bump when the templates, the film's design, the mix or the encode change:
 # every video key changes with it, and the next click renders again.
-RENDER_VERSION = 3
+RENDER_VERSION = 4
 
 VIDEO_MIME = "video/mp4"
 # 24 fps: a fifth fewer frames to capture than 30, and kinetic type and
 # stills look the same.
 WIDTH, HEIGHT, FPS = 1280, 720, 24
+# Every encode puts a keyframe every half second, so the Chrome page's
+# kinetic parts (each starting on one) are cut out by copy.
+KEYFRAME_INTERVAL_S = "0.5"
+KEYFRAME_FRAMES = 12
 
 
 def video_key(timeline_key: str, shots_key: str, image_keys: Iterable[str]) -> str:

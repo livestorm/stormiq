@@ -1,28 +1,30 @@
 """Surprise me's director: what the video shows for each clause of the
-timed script (`ai/surprise_timing.py`), as a shot list (prompt:
-`prompts/surprise_director.txt`).
+timed script (`ai/surprise_timing.py`), as a shot list, and the picture for
+each punchline (prompt: `prompts/surprise_director.txt`).
 
 - **When.** In the show job only (`api_logic.run_surprise_show`), after the
   timing; cached by `shots_key` (the timeline's key and
   `DIRECTOR_VERSION`) in `surprise_shotlists`, so a replay costs nothing.
 - **The call** (`direct_shots`): a v1 job (`ai.jobs`, kind
   `surprise_director`, Sonnet 5.5, the `instructions` layout), one call:
-  the instructions, then the payload (`director_payload`): the clauses (the
-  script, already checked against the take: every figure the session's, no
-  attendee named), the vitals, the audience chat per minute and the room's
-  redacted lines by id. Never a name or an email.
-- **The checks** (`check_shots`, pure): one shot per clause, by id; the
-  on-screen words at most `MAX_WORDS`, copied in a row from that clause;
-  a number only one the clause writes; a chat line only one of our ids,
-  its text copied from our list, never the model's; a minute only one of
-  the Pulse's; a split's sides copied from the clause; at most
-  `MAX_IMAGES` images, each prompt free of names (`image_prompt_ok`);
+  the instructions, then the payload (`director_payload`): the clauses and
+  the punchlines (the script, already checked against the take: every
+  figure the session's, no attendee named), the vitals, the audience chat
+  per minute and the room's redacted lines by id. Never a name or an email.
+- **The checks** (`check_shots`, `check_pictures`, pure): one shot per
+  clause, by id; the on-screen words at most `MAX_WORDS`, copied in a row
+  from that clause; a number only one the clause writes; a chat line only
+  one of our ids, its text copied from our list, never the model's; a
+  minute only one of the Pulse's; a split's sides copied from the clause;
   emoji without letters or digits. A shot that fails becomes kinetic type
-  with the clause's own words (`fallback_words`).
+  with the clause's own words (`fallback_words`). One picture per
+  punchline (at most `PICTURES`), by its number, its prompt free of names
+  (`image_prompt_ok`); a punchline without one keeps the deadpan card (its
+  caption on black).
 - **The fallback** (`fallback_shots`): when the call fails, there is no
   Claude key or the answer is unusable, a shot list from rules (a
-  percentage fills a ring, a number counts up, the rest is kinetic type),
-  so the show never fails on a bad director answer.
+  percentage fills a ring, a number counts up, the rest is kinetic type)
+  and no pictures, so the show never fails on a bad director answer.
 
 No database, no web framework.
 """
@@ -43,18 +45,18 @@ from livestorm_app.config import SURPRISE_DIRECTOR_PROMPT_PATH
 KIND = "surprise_director"
 
 # Bump when the shots' shape, the checks or the prompt's contract change.
-DIRECTOR_VERSION = 1
+DIRECTOR_VERSION = 2
 
-TYPES = ("kinetic", "count", "ring", "pulse", "emoji", "chat", "image", "split", "stamp")
+TYPES = ("kinetic", "count", "ring", "pulse", "emoji", "chat", "split", "stamp")
 EMPHASES = ("setup", "build", "punchline", "aside", "beat")
 TRANSITIONS = ("cut", "whip", "zoom", "flash", "shake", "drop", "blur")
 MAX_WORDS = 6
 MAX_SIDE_WORDS = 4
-MAX_IMAGES = 3
+PICTURES = 4  # one per punchline (`surprise_performance.PUNCHLINES`)
 MAX_EMOJI = 3
 MAX_PROMPT_CHARS = 400
 
-ShotType = Literal["kinetic", "count", "ring", "pulse", "emoji", "chat", "image", "split", "stamp"]
+ShotType = Literal["kinetic", "count", "ring", "pulse", "emoji", "chat", "split", "stamp"]
 Emphasis = Literal["setup", "build", "punchline", "aside", "beat"]
 Transition = Literal["cut", "whip", "zoom", "flash", "shake", "drop", "blur"]
 
@@ -72,12 +74,17 @@ class DirectorShot(BaseModel):
     emoji: List[str] = Field(description="For emoji: 1 to 3 emoji; else an empty list.")
     left: Optional[str] = Field(description="For split: 1 to 4 words copied from the clause; else null.")
     right: Optional[str] = Field(description="For split: 1 to 4 words copied from the clause; else null.")
-    image_prompt: Optional[str] = Field(description="For image: a concrete visual gag, objects only, no names, text, people or logos; else null.")
+
+
+class PunchlinePicture(BaseModel):
+    punchline: int = Field(description="The punchline's number: 1 for P1, 2 for P2, and so on.")
+    image_prompt: str = Field(description="A concrete visual gag for that punchline's joke: objects only, no names, text, people or logos.")
 
 
 @json_schema
 class SurpriseDirection(BaseModel):
     shots: List[DirectorShot] = Field(description="One shot per clause, in the clauses' order.")
+    pictures: List[PunchlinePicture] = Field(description="One picture per punchline, in their order.")
 
 
 # ── The key ──
@@ -96,17 +103,27 @@ def director_payload(
     vitals: Sequence[str],
     pulse: Sequence[Mapping[str, Any]],
     room: Sequence[Mapping[str, Any]],
+    punches: Sequence[Mapping[str, Any]] = (),
 ) -> str:
     """What the model reads after its instructions: the clauses (`{id, line,
-    tone, dur, text}`, a held pause marked), the vitals, the chat per minute
-    (`{m, chat}`) and the room's lines (`{id, kind, text}`)."""
+    tone, dur, text}`, the freeze before a punchline marked), the
+    punchlines (`{n, text, start}`, P1…, each after the clause it follows),
+    the vitals, the chat per minute (`{m, chat}`) and the room's lines
+    (`{id, kind, text}`)."""
     lines = ["# Clauses (id | script line | voice tone | seconds on screen | clause)"]
-    for index, shot in enumerate(shots):
-        held = "  [held pause before this line]" if index and shot.get("k") == 0 and shot.get("tone") == "punchline" else ""
+    for shot in shots:
+        held = "  [freezes here: a punchline follows]" if shot.get("hold_after") else ""
         lines.append(
             f"{shot['id']} | line {shot.get('line')} | {shot.get('tone') or '-'} | {float(shot.get('dur') or 0):.1f}s | "
             f"{' '.join(str(shot.get('text') or '').split())}{held}"
         )
+    lines += ["", "# Punchlines (number | after clause | punchline)"]
+    for punch in punches:
+        before = [shot["id"] for shot in shots if float(shot.get("end") or 0) <= float(punch["start"]) + 1e-6]
+        after = str(before[-1]) if before else "-"
+        lines.append(f"P{int(punch['n']) + 1} | {after} | {' '.join(str(punch.get('text') or '').split())}")
+    if not punches:
+        lines.append("- none")
     lines += ["", "# What StormIQ measured", *(list(vitals) or ["- none measured"])]
     lines += ["", "# Audience chat messages per minute (minute: count)"]
     lines.append(", ".join(f"{int(row['m'])}:{int(row.get('chat') or 0)}" for row in pulse) or "- no chat")
@@ -202,8 +219,7 @@ def image_prompt_ok(prompt: Optional[str], banned: Set[str]) -> bool:
 
 
 def _kinetic(shot: Dict[str, Any], clause: str) -> Dict[str, Any]:
-    shot.update({"type": "kinetic", "number": None, "minute": None, "chat": None, "left": None, "right": None,
-                 "image_prompt": None, "emoji": []})
+    shot.update({"type": "kinetic", "number": None, "minute": None, "chat": None, "left": None, "right": None, "emoji": []})
     if not verbatim(shot.get("words") or "", clause):
         shot["words"] = fallback_words(clause)
     return shot
@@ -215,13 +231,11 @@ def check_shot(
     *,
     room: Mapping[str, Mapping[str, Any]],
     minutes: Set[int],
-    banned: Set[str],
-    images: List[int],
     used_chat: Set[str],
 ) -> Dict[str, Any]:
     """One checked shot, `{type, words, accent, emphasis, transition, number,
-    minute, chat: {id, kind, text} | None, emoji, left, right, image_prompt,
-    fixed}`; what fails falls back to kinetic type."""
+    minute, chat: {id, kind, text} | None, emoji, left, right, fixed}`; what
+    fails falls back to kinetic type."""
     shot: Dict[str, Any] = {
         "type": item.get("type") if item.get("type") in TYPES else "kinetic",
         "words": " ".join(str(item.get("words") or "").split()),
@@ -234,7 +248,6 @@ def check_shot(
         "emoji": [],
         "left": None,
         "right": None,
-        "image_prompt": None,
     }
     fixed = item.get("type") not in TYPES
     if not verbatim(shot["words"], clause):
@@ -266,12 +279,6 @@ def check_shot(
         if not (verbatim(left, clause, MAX_SIDE_WORDS) and verbatim(right, clause, MAX_SIDE_WORDS)):
             return {**_kinetic(shot, clause), "fixed": True}
         shot["left"], shot["right"] = " ".join(left.split()), " ".join(right.split())
-    elif kind == "image":
-        prompt = " ".join(str(item.get("image_prompt") or "").split())
-        if images[0] >= MAX_IMAGES or not image_prompt_ok(prompt, banned):
-            return {**_kinetic(shot, clause), "fixed": True}
-        images[0] += 1
-        shot["image_prompt"] = prompt
     elif kind == "emoji":
         emoji = [str(e) for e in item.get("emoji") or [] if str(e).strip() and not _ALNUM.search(str(e)) and len(str(e)) <= 8]
         if not emoji:
@@ -287,7 +294,6 @@ def check_shots(
     *,
     room: Sequence[Mapping[str, Any]],
     minutes: Iterable[int],
-    banned: Set[str],
 ) -> List[Dict[str, Any]]:
     """One checked shot per clause, by id (the first given for an id counts);
     a clause the model skipped gets the rules' shot."""
@@ -297,7 +303,6 @@ def check_shots(
         if isinstance(item, Mapping) and isinstance(item.get("id"), int) and not isinstance(item.get("id"), bool):
             given.setdefault(item["id"], item)
     minute_set = {int(m) for m in minutes}
-    images = [0]
     used_chat: Set[str] = set()
     out = []
     for shot in timeline_shots:
@@ -306,8 +311,29 @@ def check_shots(
         if item is None:
             checked = {**rule_shot(shot, minute_set), "fixed": True}
         else:
-            checked = check_shot(item, clause, room=by_room, minutes=minute_set, banned=banned, images=images, used_chat=used_chat)
+            checked = check_shot(item, clause, room=by_room, minutes=minute_set, used_chat=used_chat)
         out.append({"id": int(shot["id"]), **checked})
+    return out
+
+
+def check_pictures(
+    punches: Sequence[Mapping[str, Any]],
+    answer: Mapping[str, Any],
+    *,
+    banned: Set[str],
+) -> List[Dict[str, Any]]:
+    """One entry per punchline, `{n, image_prompt}`: the first prompt given
+    for its number (P1 is 1) when it passes `image_prompt_ok`, else None (the
+    deadpan card). At most `PICTURES`."""
+    given: Dict[int, str] = {}
+    for item in (answer or {}).get("pictures") or []:
+        number = item.get("punchline") if isinstance(item, Mapping) else None
+        if isinstance(number, int) and not isinstance(number, bool):
+            given.setdefault(number - 1, " ".join(str(item.get("image_prompt") or "").split()))
+    out = []
+    for punch in list(punches)[:PICTURES]:
+        prompt = given.get(int(punch["n"]))
+        out.append({"n": int(punch["n"]), "image_prompt": prompt if prompt and image_prompt_ok(prompt, banned) else None})
     return out
 
 
@@ -328,7 +354,7 @@ def rule_shot(shot: Mapping[str, Any], minutes: Set[int]) -> Dict[str, Any]:
         "type": "kinetic", "words": fallback_words(clause), "accent": "",
         "emphasis": "punchline" if shot.get("tone") == "punchline" and shot.get("k") == 0 else "build",
         "transition": _TRANSITION_CYCLE[int(shot.get("id") or 0) % len(_TRANSITION_CYCLE)],
-        "number": None, "minute": None, "chat": None, "emoji": [], "left": None, "right": None, "image_prompt": None,
+        "number": None, "minute": None, "chat": None, "emoji": [], "left": None, "right": None,
     }
     percent = _PERCENT.search(clause)
     count = _COUNT.search(clause)

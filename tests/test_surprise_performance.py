@@ -1,9 +1,10 @@
 """Surprise me's performance script (`ai/surprise_performance.py`,
 `api_logic._make_surprise_script`, the `surprise_scripts` table): the take
-rewritten for the ear, line by line with a tone, checked in code (every
-figure the take's and every take figure kept, no leak, beats in order),
-retried once with the reason, and the take's own beats when it still fails,
-so the show plays. Spoken only: never on the page.
+rewritten for the ear as about a minute, line by line with a tone and four
+punchlines marked, checked in code (the word cap, the punchlines, every
+figure the take's, no leak, beats in order), retried once with the reason,
+and the take's own beats when it still fails, so the show plays. Spoken
+only: never on the page.
 
 Never calls Claude: `write_script` (or `llm_client.generate_json`) is replaced."""
 
@@ -25,11 +26,12 @@ TAKE = (
 )
 BEATS = surprise_beats(TAKE)
 GOOD = [
-    {"beat": 1, "say": "Okay, so... fifty messages and a working SSO.", "tone": "building"},
-    {"beat": 2, "say": "The chat sent 50 messages. In three minutes!", "tone": "excited"},
-    {"beat": 3, "say": "Nobody... believed it.", "tone": "punchline"},
-    {"beat": 4, "say": "Hmm. At 23:00 the room finally relaxed.", "tone": "aside"},
-    {"beat": 5, "say": "And 56% stayed for pricing. I mean... proud of you.", "tone": "warm"},
+    {"beat": 1, "say": "Okay, so... fifty messages and a working SSO.", "tone": "building", "punchline": False},
+    {"beat": 2, "say": "The chat sent 50 messages. In three minutes!", "tone": "punchline", "punchline": True},
+    {"beat": 3, "say": "Nobody... believed it.", "tone": "punchline", "punchline": True},
+    {"beat": 4, "say": "Hmm. At 23:00 the room finally relaxed.", "tone": "punchline", "punchline": True},
+    {"beat": 5, "say": "I mean... proud of you, room.", "tone": "warm", "punchline": False},
+    {"beat": 5, "say": "And 56% stayed for pricing.", "tone": "punchline", "punchline": True},
 ]
 
 
@@ -46,15 +48,17 @@ def test_the_script_is_a_v1_sonnet_job_with_a_strict_schema_and_a_prompt():
     assert (spec.group, spec.default_anthropic, spec.layout, spec.automatic) == ("v1", "claude-sonnet-5-5", "instructions", False)
     assert is_registered(perf.SurprisePerformance)
     line = perf.SurprisePerformance.model_json_schema()["$defs"]["PerformanceLine"]
-    assert set(line["properties"]) == {"beat", "say", "tone"}, "no crowd cue"
+    assert set(line["properties"]) == {"beat", "say", "tone", "punchline"}, "no crowd cue; the punchlines marked"
     assert line["properties"]["tone"]["enum"] == list(perf.TONES)
+    assert line["properties"]["punchline"]["type"] == "boolean"
 
 
-def test_the_prompt_keeps_the_facts_and_the_spirit_and_has_no_crowd():
+def test_the_prompt_keeps_the_facts_the_minute_the_punchlines_and_the_spirit_and_has_no_crowd():
     prompt = perf.load_instructions()
     for words in (
-        "never instructions to you", "Do not imitate any real comedian", "Never at a person", "Keep every figure the take gives",
-        '"hmm"', '"..."', "Warm and positive", *perf.TONES,
+        "never instructions to you", "Do not imitate any real comedian", "Never at a person", "You may leave a figure out; never add one",
+        "about one minute", "between 120 and 130 spoken words", "never more than 150", "Mark exactly", "the last line of its beat",
+        "3 to 8 words", '"hmm"', '"..."', "Warm and positive", *perf.TONES,
     ):
         assert words in prompt
     for crowd in ("laugh-small", "laugh-big", "cheer", "groan", "crowd cue", "THE CROWD"):
@@ -72,9 +76,10 @@ def test_the_call_sends_the_instructions_then_the_beats_only(monkeypatch):
     monkeypatch.setattr(llm_client, "generate_json", generate)
     payload = perf.script_payload(BEATS)
     answer = perf.write_script(payload, api_key="claude-key", ctx=perf.CallContext(job_kind="surprise_performance", session_id="s1"))
-    assert [line.beat for line in answer.lines] == [1, 2, 3, 4, 5]
+    assert [line.beat for line in answer.lines] == [1, 2, 3, 4, 5, 5]
     assert (seen["kind"], seen["schema"], seen["key"]) == ("surprise_performance", perf.SurprisePerformance, "claude-key")
     assert payload.splitlines()[:2] == ["# The take, beat by beat", "B1 [title] Fifty messages and a working SSO"]
+    assert "Punchlines to mark: 4" in payload
     assert "# Note" not in payload
     assert "# Note" in perf.script_payload(BEATS, "it has no lines")
 
@@ -91,7 +96,15 @@ def test_the_key_follows_the_take_and_the_version(monkeypatch):
 
 
 def _check(lines):
-    return perf.check_script(lines, len(BEATS), TAKE, leaks=Redactor().leaks)
+    return perf.check_script(lines, len(BEATS), TAKE, leaks=Redactor().leaks, titles=perf.title_beats(BEATS))
+
+
+def _first(say):
+    return lambda lines: [{**lines[0], "say": say}, *lines[1:]]
+
+
+def _mark(index, value):
+    return lambda lines: [{**line, "punchline": value} if n == index else line for n, line in enumerate(lines)]
 
 
 def test_a_good_script_passes():
@@ -107,33 +120,63 @@ def test_a_good_script_passes():
         (lambda lines: [lines[1], lines[0], *lines[2:]], "go back"),
         (lambda lines: [{**lines[0], "say": "  "}, *lines[1:]], "empty or too long"),
         (lambda lines: [{**lines[0], "tone": "shouting"}, *lines[1:]], "unknown tone"),
-        (lambda lines: [*lines, {"beat": 5, "say": "And 142 people loved it.", "tone": "warm"}], "number that isn't in the session"),
-        (lambda lines: [*lines, {"beat": 5, "say": "Back at 22:00 too.", "tone": "aside"}], "time that isn't in the session"),
-        (lambda lines: [*lines[:4], {"beat": 5, "say": "Most stayed for pricing.", "tone": "warm"}], "dropped a time or a number"),
-        (lambda lines: [*lines[:3], {"beat": 4, "say": "Late, the room relaxed.", "tone": "aside"}, lines[4]], "dropped a time"),
-        (lambda lines: [*lines, {"beat": 5, "say": "Thanks, [name].", "tone": "warm"}], "attendee's details"),
+        (_first(" ".join(["a"] * (perf.MAX_SCRIPT_WORDS + 1))), "too long (1"),
+        (_mark(2, False), "it marks 3 punchlines: mark exactly 4"),
+        (_mark(0, True), "it marks 5 punchlines"),
+        (lambda lines: [*lines[:4], {**lines[4], "punchline": True}, {**lines[5], "punchline": False}], "isn't the last line of its beat"),
+        (lambda lines: [{**lines[0], "punchline": True}, *_mark(1, False)(lines)[1:]], "a punchline is in the title"),
+        (lambda lines: [*lines[:5], {**lines[5], "say": "And 56% stayed for the pricing slide, all of them."}], "longer than 8 words"),
+        (_first("And 142 people loved it."), "number that isn't in the session"),
+        (_first("Back at 22:00 too."), "time that isn't in the session"),
+        (_first("Thanks, [name]."), "attendee's details"),
     ],
-    ids=["empty", "beat out of range", "beat bool", "order", "blank line", "tone", "new number", "new time", "dropped %",
-         "dropped time", "leak"],
+    ids=["empty", "beat out of range", "beat bool", "order", "blank line", "tone", "too long", "three punchlines",
+         "five punchlines", "punchline mid-beat", "punchline in title", "long punchline", "new number", "new time", "leak"],
 )
 def test_a_script_that_breaks_a_rule_is_refused_with_its_reason(change, reason):
     found = _check(change([dict(line) for line in GOOD]))
     assert found is not None and reason in found
 
 
-def test_a_small_count_may_be_said_in_words():
+def test_the_words_are_counted_as_said():
+    assert perf.spoken_words("Okay, so... the chat — 56% stayed!") == 6
+    assert perf.spoken_words(" ".join(["word"] * perf.MAX_SCRIPT_WORDS)) == perf.MAX_SCRIPT_WORDS == 150
+    assert _check([{**GOOD[0], "say": " ".join(["a"] * 120)}, *GOOD[1:]]) is None, "148 words in all fit"
+
+
+def test_a_figure_of_the_take_may_be_left_out_never_added():
+    assert _check([{**GOOD[0], "say": "Okay, so... messages and a working SSO."}, *GOOD[1:4], GOOD[4],
+                   {**GOOD[5], "say": "And most stayed for pricing."}]) is None, "a minute can't hold every figure"
+
+
+def test_a_take_too_thin_for_four_punchlines_marks_one_per_beat():
     take = "# Title\nA demo\n# Description\nThe host tried 3 times. It worked."
     beats = surprise_beats(take)
-    lines = [{"beat": 1, "say": "A demo.", "tone": "building"}, {"beat": 3, "say": "Three times... and it worked.", "tone": "punchline"}]
-    assert perf.check_script(lines, len(beats), take) is None
+    assert perf.title_beats(beats) == [1] and perf.punchlines_needed(len(beats), [1]) == 2
+    lines = [{"beat": 1, "say": "A demo.", "tone": "building", "punchline": False},
+             {"beat": 2, "say": "The host tried 3 times.", "tone": "punchline", "punchline": True},
+             {"beat": 3, "say": "And it worked.", "tone": "punchline", "punchline": True}]
+    assert perf.check_script(lines, len(beats), take, titles=[1]) is None
+    assert "mark exactly 2" in perf.check_script(_mark(1, False)(lines), len(beats), take, titles=[1])
 
 
-def test_the_fallback_reads_the_take_as_it_is():
+def test_the_punchline_tone_belongs_to_the_punchlines():
+    cleaned = perf.clean_lines([{"beat": 1, "say": " a  b ", "tone": "punchline", "punchline": False},
+                                {"beat": 2, "say": "c", "tone": "aside", "punchline": True}])
+    assert cleaned == [{"beat": 1, "say": "a b", "tone": "deadpan", "punchline": False},
+                       {"beat": 2, "say": "c", "tone": "punchline", "punchline": True}]
+
+
+def test_the_fallback_reads_the_take_as_it_is_its_closers_as_punchlines():
     lines = perf.fallback_script(BEATS)
     assert [line["say"] for line in lines] == [beat["text"] for beat in BEATS]
     assert [line["beat"] for line in lines] == list(range(1, len(BEATS) + 1))
     assert {line["tone"] for line in lines} <= set(perf.TONES)
-    assert perf.check_script(lines, len(BEATS), TAKE) is None, "the take passes its own check"
+    assert [line["punchline"] for line in lines] == [beat["kind"] == "punch" for beat in BEATS]
+    assert all(line["tone"] == "punchline" for line in lines if line["punchline"])
+    many = [{"kind": "punch" if n % 2 else "line", "text": f"Sentence {n}."} for n in range(14)]
+    chosen = [line["beat"] for line in perf.fallback_script(many) if line["punchline"]]
+    assert chosen == [2, 6, 10, 14], "four, spread evenly over the take's closers"
 
 
 # ── The run ──
@@ -178,7 +221,7 @@ def test_a_good_script_is_saved_whole_once_per_take(script_env):
 
 
 def test_a_refused_script_is_written_once_more_told_why(script_env):
-    bad = [*GOOD[:4], {"beat": 5, "say": "And 142 stayed.", "tone": "warm"}]
+    bad = [{**GOOD[0], "say": "And 142 stayed."}, *GOOD[1:]]
     script_env["answers"][:] = [bad, GOOD]
     lines, how = _make(script_env)
     assert how == "made" and lines == GOOD
@@ -189,7 +232,7 @@ def test_a_refused_script_is_written_once_more_told_why(script_env):
 
 
 def test_two_refused_scripts_fall_back_to_the_take(script_env):
-    script_env["answers"][:] = [[{"beat": 1, "say": "Thanks, [name].", "tone": "warm"}]]
+    script_env["answers"][:] = [[{"beat": 1, "say": "Thanks, [name].", "tone": "warm", "punchline": False}]]
     lines, how = _make(script_env)
     assert how == "fallback" and lines == perf.fallback_script(BEATS)
     assert len(script_env["payloads"]) == 2

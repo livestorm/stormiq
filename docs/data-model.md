@@ -331,14 +331,14 @@ Surprise me's voice ([jobs.md](jobs.md#surprise-me-show)): one row per line of t
 ```sql
 surprise_timelines (
   session_id    TEXT PRIMARY KEY REFERENCES session_cache (session_id) ON DELETE CASCADE,
-  timeline_key  TEXT NOT NULL,     -- sha256 of TIMING_VERSION and each line's clip key, beat and tone (surprise_timing.timeline_key)
-  timeline      JSONB NOT NULL,    -- {version, intro_s, outro_s, voice: [{clip, start, dur}], shots: [{id, line, k, beat, tone, text, start, end, dur, spoken, hold_after?}], voice_end, end_card, total, timed}
+  timeline_key  TEXT NOT NULL,     -- sha256 of TIMING_VERSION and each line's clip key, beat, tone and punchline mark (surprise_timing.timeline_key)
+  timeline      JSONB NOT NULL,    -- {version, intro_s, outro_s, voice: [{clip, start, dur, line}], shots: [{id, line, k, beat, tone, text, start, end, dur, spoken, hold_after?}], punches: [{n, line, beat, text, start, end, dur, voice_start, voice_dur}], segments: [{kind, start, end, n?}], dropped, voice_end, end_card, total, timed}
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )
 surprise_shotlists (
   session_id  TEXT PRIMARY KEY REFERENCES session_cache (session_id) ON DELETE CASCADE,
   shots_key   TEXT NOT NULL,       -- sha256 of DIRECTOR_VERSION and the timeline's key (surprise_director.shots_key)
-  shotlist    JSONB NOT NULL,      -- {version, stage: directed | final, source: model | rules, timeline_key, pulse: [{m, chat}], shots: [{id, type, words, accent, emphasis, transition, number, minute, chat, emoji, left, right, image_prompt, image?, fixed}]}
+  shotlist    JSONB NOT NULL,      -- {version, stage: directed | final, source: model | rules, timeline_key, pulse: [{m, chat}], shots: [{id, type, words, accent, emphasis, transition, number, minute, chat, emoji, left, right, fixed}], punches: [{n, image_prompt, image?}]} (one picture per punchline; a version 1 list had image shots instead)
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )
 surprise_show_images (
@@ -359,7 +359,7 @@ surprise_videos (
 )
 ```
 
-Surprise me's video ([jobs.md](jobs.md#surprise-me-show)). The show job writes the timeline, the shot list (whole, at stage `directed` before the pictures, then `final`) and each picture whole as it is made (`save_surprise_timeline`, `save_surprise_shotlist`, `save_surprise_image`, which raise); a new script or voice replaces the timeline and the shot list, and the pictures the final shot list no longer uses are dropped (`prune_surprise_images`). Only the render worker writes a video, whole, replacing the older one (`save_surprise_video`, which raises); about 8 MB for a two-minute show. None has an org column: the reads (`fetch_surprise_timeline`, `fetch_surprise_shotlist` by their key, or the session's current one for the render worker; `fetch_surprise_images` by key; `fetch_surprise_video_meta`, never the bytes; `fetch_surprise_video_range`, a byte range read with `substring` for the MP4 route) join `session_cache` on its org, and a blank scope reads nothing. A shot's `chat` is one of the room's redacted lines (id, kind, text), never who wrote it; `spoken` holds the heard words with their times, and stays on the server. All four are deleted with their session and emptied by the AI outputs' reset. The in-browser player's `surprise_storyboards` table is dropped (`DROP TABLE IF EXISTS`, in `_ensure_surprise_video_schema`): the director replaced it.
+Surprise me's video ([jobs.md](jobs.md#surprise-me-show)). The show job writes the timeline, the shot list (whole, at stage `directed` before the pictures, then `final`) and each picture whole as it is made (`save_surprise_timeline`, `save_surprise_shotlist`, `save_surprise_image`, which raise); a new script or voice replaces the timeline and the shot list, and the pictures the final shot list no longer uses are dropped (`prune_surprise_images`). Only the render worker writes a video, whole, replacing the older one (`save_surprise_video`, which raises); about 11 MB for a show of about a minute. None has an org column: the reads (`fetch_surprise_timeline`, `fetch_surprise_shotlist` by their key, or the session's current one for the render worker; `fetch_surprise_images` by key; `fetch_surprise_video_meta`, never the bytes; `fetch_surprise_video_range`, a byte range read with `substring` for the MP4 route) join `session_cache` on its org, and a blank scope reads nothing. A shot's `chat` is one of the room's redacted lines (id, kind, text), never who wrote it; `spoken` holds the heard words with their times, and stays on the server. All four are deleted with their session and emptied by the AI outputs' reset. The in-browser player's `surprise_storyboards` table is dropped (`DROP TABLE IF EXISTS`, in `_ensure_surprise_video_schema`): the director replaced it.
 
 ## `surprise_bumpers`
 

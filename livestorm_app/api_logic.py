@@ -78,6 +78,7 @@ from livestorm_app.ai.surprise_performance import (
     fallback_script,
     script_key,
     script_payload,
+    title_beats,
     write_script,
 )
 from livestorm_app.ai.surprise_voice import (
@@ -2744,17 +2745,19 @@ def build_analysis_pdf(session_id: str, analysis_kind: str, language: str, *, or
 # One click ("Make the show", `start_surprise_show`) queues one worker job
 # (`run_surprise_show`) that makes, in order, what the session doesn't have
 # yet: the take (the Smart Recap's `surprise` tone, `run_smart_recap`, with
-# its number check and retry), the performance script (Claude, checked
-# against the take, or the take's own beats), the voice (one clip per line of
-# the script, by ElevenLabs, or by OpenAI when ElevenLabs refuses the
-# account), the timing (each clip's words from OpenAI whisper-1, else an
-# estimate), the shot list (Claude, checked in code, else shots from rules)
-# and up to three pictures (OpenAI Images). Then it queues the render
-# (`render_surprise_video` on `RENDER_QUEUE`), which the render worker
-# (`render_worker.py`) turns into one MP4 and saves. Each piece is saved
-# whole as it is made, keyed by what it was made from, so a replay costs
-# nothing and a retry makes only what is missing. The script is never sent
-# to the page as text: the video shows at most six of a clause's words at a time.
+# its number check and retry), the performance script (Claude, about a
+# minute with four punchlines, checked against the take, or the take's own
+# beats), the voice (one clip per line of the script, by ElevenLabs, or by
+# OpenAI when ElevenLabs refuses the account), the timing (each clip's words
+# from OpenAI whisper-1, else an estimate; the punchlines' windows; lines
+# dropped past the 75 s ceiling), the shot list (Claude, checked in code,
+# else shots from rules) and one picture per punchline (OpenAI Images, four
+# at most). Then it queues the render (`render_surprise_video` on
+# `RENDER_QUEUE`), which the render worker (`render_worker.py`) turns into
+# one MP4 and saves. Each piece is saved whole as it is made, keyed by what
+# it was made from, so a replay costs nothing and a retry makes only what is
+# missing. The script is never sent to the page as text: the video shows at
+# most six of a clause's words at a time, and each punchline as its caption.
 
 SURPRISE_SHOW_KIND = "surprise_show"
 SURPRISE_VIDEO_KIND = "surprise_video"
@@ -2792,11 +2795,12 @@ def _show_take(row: Mapping[str, Any]) -> Tuple[str, List[Dict[str, Any]]]:
 
 
 def _show_lines(script: Optional[Mapping[str, Any]], beat_count: int) -> List[Dict[str, Any]]:
-    """The saved script's lines, `{beat, say, tone}`, those that fit the take."""
+    """The saved script's lines, `{beat, say, tone, punchline}`, those that fit the take."""
     lines = []
     for line in (script or {}).get("lines") or []:
         if isinstance(line, Mapping) and isinstance(line.get("beat"), int) and 1 <= line["beat"] <= beat_count and line.get("say"):
-            lines.append({"beat": line["beat"], "say": str(line["say"]), "tone": str(line.get("tone") or "")})
+            lines.append({"beat": line["beat"], "say": str(line["say"]), "tone": str(line.get("tone") or ""),
+                          "punchline": line.get("punchline") is True})
     return lines
 
 
@@ -2825,8 +2829,7 @@ def _video_parts(
     if saved_shots is None or saved_shots["body"].get("stage") != "final":
         return parts
     parts["shotlist"] = saved_shots["body"]
-    image_keys = [str(shot["image"]) for shot in saved_shots["body"].get("shots") or [] if shot.get("image")]
-    parts["video_key"] = surprise_video_key(tl_key, shots_key, image_keys)
+    parts["video_key"] = surprise_video_key(tl_key, shots_key, _show_image_keys(saved_shots["body"]))
     meta = fetch_surprise_video_meta(session_id, organization_id=organization_id)
     parts["meta"] = meta
     parts["ready"] = bool(meta) and meta["video_key"] == parts["video_key"]
@@ -3040,7 +3043,7 @@ def _make_surprise_script(
                     script_payload(beats, note), api_key=llm_key, ctx=_show_context("surprise_performance", session_id, row)
                 )
                 candidate = [line.model_dump() for line in answer.lines]
-                reason = check_script(candidate, len(beats), take, leaks=redactor.leaks)
+                reason = check_script(candidate, len(beats), take, leaks=redactor.leaks, titles=title_beats(beats))
                 if reason is None:
                     lines = clean_lines(candidate)
                     break
@@ -3128,37 +3131,43 @@ def _make_surprise_shotlist(
 ) -> Tuple[str, Dict[str, Any], str]:
     """The video's shot list (`ai/surprise_director.py`), made once per
     timeline: `(key, shotlist, how)`, `how` being `kept`, `made` (the
-    model's, checked) or `fallback` (shots from rules: no Claude key, a
-    failed call or an unusable answer, logged by kind only). Saved whole at
-    stage `directed` (the pictures not made yet); a failed write raises."""
+    model's, checked) or `fallback` (shots from rules and no pictures: no
+    Claude key, a failed call or an unusable answer, logged by kind only).
+    Saved whole at stage `directed` (the pictures not made yet), with one
+    entry per punchline (`punches: [{n, image_prompt}]`); a failed write
+    raises."""
     key = director.shots_key(tl_key)
     saved = fetch_surprise_shotlist(session_id, key, organization_id=ALL_ORGS)
     if saved is not None and saved["body"].get("stage") in ("directed", "final"):
         return key, saved["body"], "kept"
     clauses = list(timeline.get("shots") or [])
+    punchlines = list(timeline.get("punches") or [])
     facts = _video_facts(session_id, take)
     minutes = [row_["m"] for row_ in facts["pulse"]]
     shots: Optional[List[Dict[str, Any]]] = None
+    pictures: List[Dict[str, Any]] = [{"n": int(punch["n"]), "image_prompt": None} for punch in punchlines[: director.PICTURES]]
     if not str(llm_key or "").strip():
         logger.warning("[surprise director] session_id=%s skipped: no Claude key on the worker", session_id)
     else:
         try:
             answer = director.direct_shots(
-                director.director_payload(clauses, facts["vitals"], facts["pulse"], facts["room"]),
+                director.director_payload(clauses, facts["vitals"], facts["pulse"], facts["room"], punchlines),
                 api_key=llm_key,
                 ctx=_show_context(director.KIND, session_id, row),
             )
-            shots = director.check_shots(clauses, answer.model_dump(), room=facts["room"], minutes=minutes, banned=facts["banned"])
+            body = answer.model_dump()
+            shots = director.check_shots(clauses, body, room=facts["room"], minutes=minutes)
+            pictures = director.check_pictures(punchlines, body, banned=facts["banned"])
         except Exception as exc:  # never fails the show: the rules direct it
             logger.warning("[surprise director] session_id=%s not made (%s); shots from rules", session_id, type(exc).__name__)
     how = "made" if shots is not None else "fallback"
     if shots is None:
         shots = director.fallback_shots(clauses, minutes)
     redactor = facts["redactor"]
-    for shot in shots:
-        # An image prompt holding an attendee's name or a placeholder is never sent.
-        if shot.get("type") == "image" and redactor is not None and redactor.leaks(shot.get("image_prompt") or ""):
-            shot.update(type="kinetic", image_prompt=None, fixed=True)
+    for picture in pictures:
+        # A picture prompt holding an attendee's name or a placeholder is never sent.
+        if picture["image_prompt"] and (redactor is None or redactor.leaks(picture["image_prompt"])):
+            picture["image_prompt"] = None
     shotlist = {
         "version": director.DIRECTOR_VERSION,
         "stage": "directed",
@@ -3166,39 +3175,44 @@ def _make_surprise_shotlist(
         "timeline_key": tl_key,
         "pulse": facts["pulse"],
         "shots": shots,
+        "punches": pictures,
     }
     save_surprise_shotlist(session_id, key, shotlist)
     return key, shotlist, how
 
 
+def _show_image_keys(shotlist: Mapping[str, Any]) -> List[str]:
+    """The pictures a final shot list draws: one per punchline that has one."""
+    return [str(entry["image"]) for entry in shotlist.get("punches") or [] if entry.get("image")]
+
+
 def _make_surprise_pictures(openai_key: str, session_id: str, key: str, shotlist: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
-    """The shot list's pictures (`ai/surprise_images.py`), at most three:
-    each made once by its prompt and saved whole; a shot whose picture
-    fails (or has no OpenAI key) becomes kinetic type. Then the shot list is
-    saved again at stage `final`: `(shotlist, pictures made)`."""
+    """The punchlines' pictures (`ai/surprise_images.py`), one per
+    punchline with a checked prompt, four at most, made at once: each made
+    once by its prompt and saved whole; a punchline whose picture fails (or
+    with no OpenAI key) keeps the deadpan card. Then the shot list is saved
+    again at stage `final`: `(shotlist, pictures made)`."""
     from concurrent.futures import ThreadPoolExecutor
 
     if shotlist.get("stage") == "final":
         return shotlist, 0
-    shots = [dict(shot) for shot in shotlist.get("shots") or []]
-    wanted = [shot for shot in shots if shot.get("type") == "image" and shot.get("image_prompt")][: director.MAX_IMAGES]
-    for shot in shots:
-        if shot.get("type") == "image" and shot not in wanted:
-            shot.update(type="kinetic", image_prompt=None)
-    keys = {id(shot): show_images.image_key(shot["image_prompt"]) for shot in wanted}
+    entries = [dict(entry) for entry in shotlist.get("punches") or []][: director.PICTURES]
+    wanted = [entry for entry in entries if entry.get("image_prompt")]
+    keys = {entry["n"]: show_images.image_key(entry["image_prompt"]) for entry in wanted}
     have = fetch_surprise_images(session_id, list(keys.values()), organization_id=ALL_ORGS) if wanted else {}
-    todo = [shot for shot in wanted if keys[id(shot)] not in have]
+    todo = [entry for entry in wanted if keys[entry["n"]] not in have]
 
-    def make(shot: Dict[str, Any]) -> bool:
+    def make(entry: Dict[str, Any]) -> bool:
         try:
-            picture = show_images.generate_image(openai_key, shot["image_prompt"])
+            picture = show_images.generate_image(openai_key, entry["image_prompt"])
         except show_images.ImageFailed as exc:
-            logger.warning("[surprise pictures] session_id=%s a picture failed (%s); kinetic type instead", session_id, exc)
+            logger.warning("[surprise pictures] session_id=%s a picture failed (%s); the deadpan card instead", session_id, exc)
             return False
         except Exception as exc:
-            logger.warning("[surprise pictures] session_id=%s a picture failed (%s); kinetic type instead", session_id, type(exc).__name__)
+            logger.warning("[surprise pictures] session_id=%s a picture failed (%s); the deadpan card instead",
+                           session_id, type(exc).__name__)
             return False
-        save_surprise_image(session_id, keys[id(shot)], picture, show_images.IMAGE_MIME)
+        save_surprise_image(session_id, keys[entry["n"]], picture, show_images.IMAGE_MIME)
         return True
 
     made = 0
@@ -3206,15 +3220,12 @@ def _make_surprise_pictures(openai_key: str, session_id: str, key: str, shotlist
         with ThreadPoolExecutor(max_workers=len(todo)) as pool:
             results = list(pool.map(make, todo))
         made = sum(results)
-        for shot, done in zip(todo, results, strict=True):
+        for entry, done in zip(todo, results, strict=True):
             if done:
-                have[keys[id(shot)]] = b""
-    for shot in wanted:
-        if keys[id(shot)] in have:
-            shot["image"] = keys[id(shot)]
-        else:
-            shot.update(type="kinetic", image_prompt=None, image=None)
-    final = {**shotlist, "stage": "final", "shots": shots}
+                have[keys[entry["n"]]] = b""
+    for entry in entries:
+        entry["image"] = keys[entry["n"]] if entry["n"] in keys and keys[entry["n"]] in have else None
+    final = {**shotlist, "stage": "final", "punches": entries}
     save_surprise_shotlist(session_id, key, final)
     return final, made
 
@@ -3321,7 +3332,7 @@ def run_surprise_show(
     shots_key, shotlist, director_how = _make_surprise_shotlist(llm_key, session_id, row, take, tl_key, timeline)
     publish("pictures", {})
     shotlist, pictures = _make_surprise_pictures(openai_key, session_id, shots_key, shotlist)
-    image_keys = [str(shot["image"]) for shot in shotlist.get("shots") or [] if shot.get("image")]
+    image_keys = _show_image_keys(shotlist)
     prune_surprise_images(session_id, image_keys)
     wanted = surprise_video_key(tl_key, shots_key, image_keys)
     meta = fetch_surprise_video_meta(session_id, organization_id=ALL_ORGS)
@@ -3343,6 +3354,7 @@ def run_surprise_show(
         "fellBack": fell_back,
         "timing": timing_how,
         "timed": int(timeline.get("timed") or 0),
+        "dropped": len(timeline.get("dropped") or []),
         "director": director_how,
         "pictures": pictures,
         "video": video,
