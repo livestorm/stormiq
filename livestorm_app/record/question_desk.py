@@ -297,32 +297,93 @@ def _clock(seconds: Optional[float]) -> str:
 
 
 CSV_COLUMNS = ("Question", "Asked by", "Company", "Where", "When")
+# What the download holds: the questions still open (open, and covered in
+# the talk but not confirmed), every question with its status, or every
+# question with its status and its answer (for a follow-up email).
+CSV_OPEN = "open"
+CSV_ALL = "all"
+CSV_ANSWERS = "answers"
+CSV_SCOPES = (CSV_OPEN, CSV_ALL, CSV_ANSWERS)
+
+_STATUS_WORDS = {
+    WRITTEN: "Answered in writing",
+    ALOUD: "Answered aloud",
+    HERE: "Answered here",
+    COVERED: "Covered in the talk, not marked",
+    OPEN: "Still open",
+}
 
 
-def open_questions_csv(inputs: Any, saved: Mapping[str, Mapping[str, Any]]) -> str:
-    """The open questions as CSV text (a located answer the host hasn't
-    confirmed is still open: the CSV doesn't read the understanding), with
-    who asked each one: name and
+def csv_columns(scope: str) -> Tuple[str, ...]:
+    """The CSV's header row for a scope."""
+    if scope == CSV_ANSWERS:
+        return CSV_COLUMNS + ("Status", "Answer")
+    if scope == CSV_ALL:
+        return CSV_COLUMNS + ("Status",)
+    return CSV_COLUMNS
+
+
+def _answer_text(row: Mapping[str, Any]) -> str:
+    """A row's answer for the CSV: Livestorm's written answer, the host's
+    reply, or the passage of the talk (said as such: "In the talk at 5:19"),
+    or "" for an open question."""
+    status = row["desk_status"]
+    passage = row.get("located") or None
+    spoken = f"In the talk at {_clock(passage['t'])}: {passage['quote']}" if passage else ""
+    if status == WRITTEN:
+        return str(row.get("answer") or "")
+    if status == HERE:
+        return " ".join(part for part in (str(row.get("reply") or ""), spoken) if part)
+    if status == ALOUD:
+        return spoken or "Answered aloud"
+    if status == COVERED:
+        return f"Not confirmed. {spoken}" if spoken else ""
+    return ""
+
+
+def questions_csv(
+    inputs: Any,
+    saved: Mapping[str, Mapping[str, Any]],
+    located: Optional[Mapping[str, Mapping[str, Any]]] = None,
+    scope: str = CSV_OPEN,
+) -> str:
+    """The desk's questions as CSV text, with who asked each one: name and
     company through `roster.export_people`, on every session (internal ones
-    included), never an email. "When" is the time since the session's start
-    ("" without a clock). Cells that a spreadsheet would read as a formula
-    get a leading apostrophe."""
-    rows, _ = _desk_rows(inputs, saved)
+    included), never an email. `scope`: `open` (the questions still open:
+    open, and covered in the talk but not confirmed), `all` (every question,
+    with a Status column) or `answers` (every question, with its Status and
+    its Answer: Livestorm's written answer, the host's reply, or the passage
+    of the talk, `_answer_text`). `located` as `question_desk` reads it.
+    "When" is the time since the session's start ("" without a clock).
+    Cells that a spreadsheet would read as a formula get a leading
+    apostrophe."""
+    if scope not in CSV_SCOPES:
+        raise ValueError(f"scope is one of {CSV_SCOPES}.")
+    rows, _ = _desk_rows(inputs, saved, located)
     people = export_people(inputs.roster)
     out = io.StringIO()
     writer = csv.writer(out, lineterminator="\r\n")
-    writer.writerow(CSV_COLUMNS)
+    writer.writerow(csv_columns(scope))
     for row in rows:
-        if row["desk_status"] != OPEN:
+        if scope == CSV_OPEN and row["desk_status"] not in UNANSWERED:
             continue
         person = people.get(row["authorRef"]) if row["authorRef"] else None
-        writer.writerow(
-            [
-                _cell(row["text"]),
-                _cell((person or {}).get("name") or ""),
-                _cell((person or {}).get("company") or ""),
-                "Q&A" if row["source"] == QA else "Chat",
-                _clock(row["t"]),
-            ]
-        )
+        cells = [
+            row["text"],
+            (person or {}).get("name") or "",
+            (person or {}).get("company") or "",
+            "Q&A" if row["source"] == QA else "Chat",
+            _clock(row["t"]),
+        ]
+        if scope in (CSV_ALL, CSV_ANSWERS):
+            cells.append(_STATUS_WORDS[row["desk_status"]])
+        if scope == CSV_ANSWERS:
+            cells.append(_answer_text(row))
+        writer.writerow([_cell(cell) for cell in cells])
     return out.getvalue()
+
+
+def open_questions_csv(inputs: Any, saved: Mapping[str, Mapping[str, Any]]) -> str:
+    """The questions still open as CSV (`questions_csv` with scope `open`,
+    without located answers: a covered question is then open)."""
+    return questions_csv(inputs, saved, None, CSV_OPEN)

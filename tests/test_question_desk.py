@@ -12,6 +12,7 @@ import io
 from contextlib import ExitStack
 from unittest import mock
 
+import pytest
 import synthetic_session as synthetic
 
 from livestorm_app import api_logic
@@ -29,6 +30,7 @@ from livestorm_app.record.question_desk import (
     find_question,
     open_questions_csv,
     question_desk,
+    questions_csv,
 )
 from livestorm_app.record.transcript_view import ATTENDEE, TEAM
 from livestorm_app.record.understanding import NONE, READY, STALE, located_answers
@@ -227,6 +229,42 @@ def test_a_question_answered_in_stormiq_leaves_the_csv():
     assert "Is there an API?" not in text
 
 
+def test_the_csv_can_hold_the_open_questions_all_of_them_or_all_with_their_answers():
+    inputs, (located, _) = _located()
+    pricing = find_question(inputs, "C0010", {}, located)
+    api = find_question(inputs, _by_text(question_desk(inputs, {}))["Is there an API?"]["id"])
+    saved = {f"qa:{api['livestormId']}": {"answered": True, "reply": "Yes: docs.example.test/api"}}
+
+    open_rows = _csv_rows(questions_csv(inputs, {}, located, "open"))
+    assert tuple(open_rows[0]) == CSV_COLUMNS
+    assert {row[0] for row in open_rows[1:]} == {"What about pricing?", "Is there an API?"}, "covered but not confirmed is still open"
+
+    all_rows = _csv_rows(questions_csv(inputs, saved, located, "all"))
+    assert tuple(all_rows[0]) == CSV_COLUMNS + ("Status",)
+    status = {row[0]: row[5] for row in all_rows[1:]}
+    assert status == {
+        "Will the slides be shared?": "Answered in writing",
+        "What about pricing?": "Covered in the talk, not marked",
+        "How does pricing work for larger teams with several hundred seats?": "Answered aloud",
+        "Can we export to CSV?": "Answered in writing",
+        "Is there an API?": "Answered here",
+    }
+
+    answers = _csv_rows(questions_csv(inputs, saved, located, "answers"))
+    assert tuple(answers[0]) == CSV_COLUMNS + ("Status", "Answer")
+    answer = {row[0]: row[6] for row in answers[1:]}
+    assert answer["Is there an API?"] == "Yes: docs.example.test/api", "the host's reply"
+    assert answer["How does pricing work for larger teams with several hundred seats?"] == "In the talk at 5:18: pricing works per team"
+    assert answer["What about pricing?"] == "Not confirmed. In the talk at 5:18: Pricing works per team and scales with seats."
+    assert answer["Will the slides be shared?"], "Livestorm's written answer"
+    confirmed = {f"chat:{pricing['livestormId']}": {"answered": True, "reply": "Per team.", "located": CONFIRMED}}
+    rows = {row[0]: row for row in _csv_rows(questions_csv(inputs, confirmed, located, "answers"))[1:]}
+    assert rows["What about pricing?"][5:] == ["Answered here", "Per team. In the talk at 5:18: Pricing works per team and scales with seats."]
+    assert all(row[1] for row in answers[1:]) and "@" not in "".join(map(str, answers)), "names, never an email"
+    with pytest.raises(ValueError):
+        questions_csv(inputs, {}, located, "everything")
+
+
 def test_csv_cells_that_look_like_formulas_are_neutralised():
     row = synthetic.cached_row()
     row["questions_payload"]["data"][3]["attributes"]["question"] = '=HYPERLINK("http://x")'
@@ -329,6 +367,20 @@ def test_the_csv_route_is_a_private_download():
     assert response.headers["cache-control"] == "private, no-store"
     assert "attachment" in response.headers["content-disposition"]
     assert response.text.startswith("﻿" + ",".join(CSV_COLUMNS))
+
+
+def test_the_csv_route_takes_a_scope():
+    row = synthetic.cached_row()
+    stack, client = _client(row, {}, synthetic.understanding(row))
+    with stack:
+        path = f"/api/sessions/{row['session_id']}/record/questions.csv"
+        answers = client.get(path, params={"scope": "answers"})
+        everything = client.get(path, params={"scope": "all"})
+        wrong = client.get(path, params={"scope": "everything"})
+    assert answers.status_code == 200 and answers.text.startswith("\ufeff" + ",".join(CSV_COLUMNS + ("Status", "Answer")))
+    assert "stormiq-questions-and-answers-" in answers.headers["content-disposition"]
+    assert "stormiq-questions-" in everything.headers["content-disposition"]
+    assert wrong.status_code == 422
 
 
 def test_the_frontend_fixture_is_the_route_response():

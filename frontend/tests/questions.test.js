@@ -4,6 +4,7 @@ import {
   FILTERS,
   canMark,
   chatNotice,
+  csvChoices,
   filterCounts,
   filterQuestions,
   locatedActions,
@@ -94,6 +95,24 @@ function deferred() {
   const promise = new Promise((done) => (resolve = done));
   return { promise, resolve };
 }
+
+describe("the question desk's download", () => {
+  it("offers the open questions, all of them, or all with their answers", () => {
+    expect(csvChoices({ open: 2, all: 5 }).map((choice) => [choice.scope, choice.label, choice.disabled])).toEqual([
+      ["open", "Open questions", false],
+      ["all", "All questions", false],
+      ["answers", "All questions with answers", false],
+    ]);
+    expect(csvChoices({ open: 0, all: 5 })[0].disabled).toBe(true);
+    expect(csvChoices({}).every((choice) => choice.disabled)).toBe(true);
+  });
+
+  it("asks the server for one scope at a time", async () => {
+    const { api } = await import("../src/api");
+    expect(api.getQuestionsCsvUrl("s 1", "answers")).toBe("/api/sessions/s%201/record/questions.csv?scope=answers");
+    expect(api.getQuestionsCsvUrl("s1")).toBe("/api/sessions/s1/record/questions.csv?scope=open");
+  });
+});
 
 describe("the question desk's data", () => {
   it("loads the desk of the session it opens", async () => {

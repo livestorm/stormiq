@@ -777,13 +777,16 @@ def save_session_question_reply(
     return get_session_question_desk(session_id, organization_id=organization_id)
 
 
-def get_session_open_questions_csv(session_id: str, *, organization_id: OrgScope) -> str:
-    """The open questions as CSV, with who asked each one (name and company,
-    on every session; never an email): `record.question_desk.open_questions_csv`."""
+def get_session_open_questions_csv(session_id: str, *, organization_id: OrgScope, scope: str = "open") -> str:
+    """The desk's questions as CSV, with who asked each one (name and
+    company, on every session; never an email): `scope` `open`, `all` or
+    `answers` (`record.question_desk.questions_csv`). Statuses and answers
+    are the desk's, located answers included."""
     inputs, _ = _question_desk_inputs(session_id, organization_id=organization_id)
-    from livestorm_app.record.question_desk import open_questions_csv
+    from livestorm_app.record.question_desk import questions_csv
 
-    return open_questions_csv(inputs, fetch_question_replies(session_id, organization_id))
+    located, _ = _located_answers(session_id, inputs, organization_id=organization_id)
+    return questions_csv(inputs, fetch_question_replies(session_id, organization_id), located, scope)
 
 
 def get_session_chat_messages(session_id: str, *, organization_id: OrgScope) -> Dict[str, Any]:

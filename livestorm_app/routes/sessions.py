@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict
+from typing import Any, Dict, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
@@ -243,13 +243,22 @@ def decide_located_answer(
         raise _question_desk_failed(session_id, exc, "saved") from exc
 
 
+_CSV_FILE_NAMES = {"open": "open-questions", "all": "questions", "answers": "questions-and-answers"}
+
+
 @router.get("/api/sessions/{session_id}/record/questions.csv")
-def download_open_questions_csv(session_id: SessionId, caller: Caller = Depends(get_caller)) -> Response:
-    """The open questions with who asked them, as a CSV download
-    (`api_logic.get_session_open_questions_csv`): name and company on every
-    session, never an email. Private, never cached."""
+def download_open_questions_csv(
+    session_id: SessionId,
+    caller: Caller = Depends(get_caller),
+    scope: Literal["open", "all", "answers"] = Query("open"),
+) -> Response:
+    """The desk's questions with who asked them, as a CSV download
+    (`api_logic.get_session_open_questions_csv`): `scope` `open` (default),
+    `all` (with each one's status) or `answers` (with its status and its
+    answer, for a follow-up email). Name and company on every session, never
+    an email. Private, never cached."""
     try:
-        text = get_session_open_questions_csv(session_id, organization_id=caller.read_scope)
+        text = get_session_open_questions_csv(session_id, organization_id=caller.read_scope, scope=scope)
     except SessionNotFoundError as exc:
         raise HTTPException(status_code=404, detail={"resource": QUESTION_DESK_RESOURCE, "message": str(exc)}) from exc
     except Exception as exc:
@@ -259,7 +268,7 @@ def download_open_questions_csv(session_id: SessionId, caller: Caller = Depends(
         content="﻿" + text,
         media_type="text/csv; charset=utf-8",
         headers={
-            "Content-Disposition": f'attachment; filename="stormiq-open-questions-{session_id}.csv"',
+            "Content-Disposition": f'attachment; filename="stormiq-{_CSV_FILE_NAMES[scope]}-{session_id}.csv"',
             "Cache-Control": "private, no-store",
         },
     )
