@@ -156,10 +156,13 @@ watch(() => output.value.key, () => (busyStarted.value = busy.value.busy ? Date.
 onBeforeUnmount(() => clearInterval(busyTicker));
 const busyElapsed = computed(() => (busyStarted.value === null ? "" : elapsedLabel(busyStarted.value, busyNow.value)));
 // Surprise me, played (`SurprisePlayer`): opened from its "Play it", closed
-// when another output is shown. Its key words come from the chapters' titles.
+// when another output is shown. Its key words come from the chapters' titles;
+// its voice is made only when the user presses Play inside it.
 const playOpen = ref(false);
 watch(() => output.value.key, () => (playOpen.value = false));
 const chapterTitles = computed(() => (chapters.state.body?.chapters || []).map((chapter) => chapter.title).filter(Boolean));
+// Its scenes draw the audience chat per minute from the record (the Pulse).
+const pulseMinutes = computed(() => record.value?.record?.pulse?.minutes || []);
 const anyBusy = computed(() => OUTPUTS.some((item) => item.flow && state.loading[item.flow]));
 
 // ── Earlier versions: what was saved before the output on screen ──
@@ -397,7 +400,13 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
               <Icon name="shield" :size="14" /> {{ uncheckedNote(figures.state.body) }}
             </span>
           </div>
-          <SurprisePlayer v-if="output.corner && playOpen" :take="body" :chapter-titles="chapterTitles" />
+          <SurprisePlayer
+            v-if="output.corner && playOpen"
+            :session-id="sessionId"
+            :take="body"
+            :chapter-titles="chapterTitles"
+            :minutes="pulseMinutes"
+          />
           <div v-if="sections.length > 1" class="f-sections">
             <section v-for="(section, index) in sections" :key="index" class="f-section">
               <div class="f-section-head">

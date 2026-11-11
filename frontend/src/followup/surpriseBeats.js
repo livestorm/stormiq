@@ -1,11 +1,16 @@
 // Surprise me, played: the take cut into beats the player shows one at a
-// time and the browser reads aloud (`components/report/SurprisePlayer.vue`).
+// time, each read aloud by its own clip (`components/report/SurprisePlayer.vue`).
 // Pure functions over the take's text (already checked by the server: its
 // numbers are the session's, no attendee is named) and the session's
 // chapter titles. No model call.
 //
 // - A beat is a sentence. The title opens; the last sentence of each
 //   paragraph is its punchline (the prompt writes setup → twist → punch).
+//   The server cuts the saved take the same way for its clips
+//   (`livestorm_app/ai/surprise_voice.py` `surprise_beats`); both are tested
+//   against `tests/fixtures/surprise-beats-v1.json`, so a clip and a beat on
+//   screen are the same sentence. Once the server sent its beats, the player
+//   uses them (`beatsWithParts`).
 // - Each beat's words are split into parts: `number` (a figure, "56%",
 //   "23:00", "1,200"), `keyword` (a word of a chapter title, or an acronym
 //   like SSO; at most MAX_KEYWORDS a beat, so it stays a highlight), `plain`.
@@ -106,6 +111,13 @@ export function surpriseBeats(take, chapterTitles = []) {
   }
   flush();
   return beats;
+}
+
+/** The server's beats (`[{kind, text, …}]` from `GET /surprise-voice`) with
+ * their parts, cut as `surpriseBeats` cuts its own. Every other field is kept. */
+export function beatsWithParts(beats = [], chapterTitles = []) {
+  const keywords = keywordsFrom(chapterTitles);
+  return (beats || []).map((beat) => ({ ...beat, parts: partsOf(String(beat?.text ?? ""), keywords) }));
 }
 
 /** A number part's value to count up to, and how to print it on the way:

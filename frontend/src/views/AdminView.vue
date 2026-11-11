@@ -211,6 +211,10 @@ const ANTHROPIC_TEXT_MODELS = [
 // gpt-image-1 was shut down on 2026-10-23. A saved gpt-image-1 setting is
 // sent as gpt-image-2 (cover_image.resolve_image_model), so show that.
 const IMAGE_MODELS = [{ value: "gpt-image-2", label: "gpt-image-2 (recommended)" }];
+// Surprise me's voice (OpenAI gpt-4o-mini-tts): the server refuses any other
+// (livestorm_app/ai/surprise_voice.py TTS_VOICES) and reads marin when unset.
+const TTS_VOICES = ["alloy", "ash", "ballad", "cedar", "coral", "echo", "fable", "marin", "nova", "onyx", "sage", "shimmer", "verse"];
+const activeVoice = computed(() => (TTS_VOICES.includes(settings.value.tts_voice) ? settings.value.tts_voice : "marin"));
 const activeImageModel = computed(() => {
   const saved = settings.value.image_model;
   return IMAGE_MODELS.some((model) => model.value === saved) ? saved : "gpt-image-2";
@@ -526,7 +530,7 @@ onMounted(() => {
           </Card>
 
           <Card>
-            <CardHeader icon="presentation" title="Cover image model" subtitle="OpenAI Images: the only call StormIQ makes to OpenAI." :level="2" />
+            <CardHeader icon="presentation" title="Cover image model" subtitle="OpenAI Images, for the session covers." :level="2" />
             <p class="adm-text adm-after">{{ IMAGE_MODELS.find((model) => model.value === activeImageModel)?.label || activeImageModel }}</p>
             <UiButton
               v-if="settings.image_model && settings.image_model !== activeImageModel"
@@ -537,6 +541,22 @@ onMounted(() => {
             >
               Save {{ activeImageModel }}
             </UiButton>
+          </Card>
+
+          <Card>
+            <CardHeader icon="play" title="Surprise me voice" subtitle="OpenAI's gpt-4o-mini-tts reads the take aloud. A new voice records again on the next play." :level="2" />
+            <label class="adm-field adm-select-field">
+              <span class="siq-sr-only">Surprise me voice</span>
+              <select
+                class="adm-input adm-select"
+                :value="activeVoice"
+                :disabled="savingKey !== null"
+                @change="saveSetting('tts_voice', $event.target.value)"
+              >
+                <option v-for="name in TTS_VOICES" :key="name" :value="name">{{ name }}{{ name === "marin" ? " (default)" : "" }}</option>
+              </select>
+              <Icon name="chevron-down" :size="16" class="adm-select-icon" />
+            </label>
           </Card>
         </div>
       </template>

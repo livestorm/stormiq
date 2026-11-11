@@ -289,6 +289,22 @@ org_settings (
 
 - Written only by `db.save_surprise_enabled` (`POST /api/admin/organizations/settings`, admins only). Read by `db.fetch_surprise_enabled`, which raises on a failed read: a surprise take's start (`api_logic.start_smart_recap`) and its worker run (`run_smart_recap`) then fail, and `/api/bootstrap` hides Surprise me. A blank organization (a session cached without one, local development) has no setting and is on. Listed for Admin by `db.admin_list_organizations`, with each organization's cached sessions.
 
+## `surprise_voice_clips`
+
+```sql
+surprise_voice_clips (
+  session_id  TEXT NOT NULL REFERENCES session_cache (session_id) ON DELETE CASCADE,
+  clip_key    TEXT NOT NULL,          -- sha256 of the version, model, voice, delivery notes and the beat's text
+  mime        TEXT NOT NULL,          -- audio/mpeg
+  audio       BYTEA NOT NULL,         -- one beat's whole mp3
+  duration_s  DOUBLE PRECISION,       -- read from the mp3's frames (surprise_voice.mp3_duration_s)
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (session_id, clip_key)
+)
+```
+
+Surprise me read aloud ([jobs.md](jobs.md#surprise-me-voice)): one row per beat of the take, written by the worker only, one whole clip at a time, as OpenAI answers (`save_surprise_voice_clip`, which raises). The same sentence twice is one row. A successful run removes the session's clips the current take no longer uses (`prune_surprise_voice_clips`). It has no org column: the reads (`fetch_surprise_voice_clips`, which returns lengths and sizes, never audio, and `fetch_surprise_voice_clip`) join `session_cache` on its org, and a blank scope reads nothing. Deleted with its session.
+
 ## `oauth_connections`
 
 ```sql
@@ -327,7 +343,7 @@ Admins are this table plus the `ADMIN_EMAILS` env var (bootstrap admins, who can
 
 ```sql
 system_settings (
-  key        TEXT PRIMARY KEY,                 -- allow-listed in routes/admin.py: image_model, llm_default_model, llm_smart_recap_model, llm_model.anthropic.<kind> (an older llm_provider row is ignored)
+  key        TEXT PRIMARY KEY,                 -- allow-listed in routes/admin.py: image_model, tts_voice, llm_default_model, llm_smart_recap_model, llm_model.anthropic.<kind> (an older llm_provider row is ignored)
   value      TEXT NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )

@@ -35,6 +35,14 @@ COVER_IMAGE_MODEL = os.getenv("IMAGE_MODEL", "gpt-image-2")
 COVER_IMAGE_SIZE = os.getenv("IMAGE_SIZE", "1536x1024")
 COVER_IMAGE_QUALITY = os.getenv("IMAGE_QUALITY", "high")
 
+# Surprise me, read aloud (`ai/surprise_voice.py`): one OpenAI speech clip
+# per beat of the take, made in the worker when the user clicks Play.
+#   TTS_MODEL — default gpt-4o-mini-tts
+#   TTS_VOICE — default marin; the `tts_voice` setting (Admin) wins
+OPENAI_SPEECH_URL = "https://api.openai.com/v1/audio/speech"
+TTS_MODEL = os.getenv("TTS_MODEL", "gpt-4o-mini-tts")
+TTS_VOICE = os.getenv("TTS_VOICE", "marin")
+
 PROMPTS_DIR = Path("prompts")
 ANALYSIS_DEEP_PROMPT_PATH = PROMPTS_DIR / "analysis_deep_prompt.txt"
 CONTENT_REPURPOSE_BUNDLE_PROMPT_PATH = PROMPTS_DIR / "content_repurpose_bundle_prompt.txt"
@@ -42,6 +50,7 @@ SMART_RECAP_PROFESSIONAL_PROMPT_PATH = PROMPTS_DIR / "smart_recap_professional_p
 SMART_RECAP_HYPE_PROMPT_PATH = PROMPTS_DIR / "smart_recap_hype_prompt.txt"
 SMART_RECAP_SURPRISE_PROMPT_PATH = PROMPTS_DIR / "smart_recap_surprise_prompt.txt"
 COVER_IMAGE_PROMPT_PATH = PROMPTS_DIR / "cover_image_prompt.txt"
+SURPRISE_VOICE_PROMPT_PATH = PROMPTS_DIR / "surprise_voice.txt"  # how the voice reads the take (ai/surprise_voice.py)
 CHAT_LABELS_PROMPT_PATH = PROMPTS_DIR / "chat_labels.txt"  # v1: ai/chat_labelling.py
 UNDERSTANDING_PROMPT_PATH = PROMPTS_DIR / "understanding.txt"  # v1: ai/understanding.py
 SESSION_ANALYSIS_PROMPT_PATH = PROMPTS_DIR / "session_analysis.txt"  # v1: ai/session_analysis.py

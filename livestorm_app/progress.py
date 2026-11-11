@@ -94,8 +94,21 @@ SESSION_ANALYSIS_STAGE_FLOORS: Dict[str, int] = {
 }
 
 
+# Surprise me, read aloud (`worker.run_surprise_voice_job`, keyed by
+# session): read the take, then one OpenAI clip per beat. While it speaks,
+# the payload also carries `done` and `total` (clips) and a `percent` that
+# moves with them.
+SURPRISE_VOICE_STAGE_FLOORS: Dict[str, int] = {
+    "queued": 0,
+    "reading": 5,
+    "speaking": 10,
+    "done": 100,
+}
+
+
 STAGE_TABLE: Dict[str, Dict[str, int]] = {
     "transcript": TRANSCRIPT_STAGE_FLOORS,
+    "surprise_voice": SURPRISE_VOICE_STAGE_FLOORS,
     "roster": ROSTER_STAGE_FLOORS,
     "session_analysis": SESSION_ANALYSIS_STAGE_FLOORS,
     "overall_analysis": ANALYSIS_STAGE_FLOORS,

@@ -121,6 +121,10 @@ The v1 Report's analysis, started by a user's action: "Analyse session" on the R
 
 `run_cover_image_job` renders a landscape cover (1536×1024 by default) from the session's Professional Smart Recap (prompt: `prompts/cover_image_prompt.txt`) and stores the PNG in `session_cache.cover_image_bytes`. It runs in exactly two cases: after a Professional Smart Recap completes (the worker chains it, unless the session already has a cover), and from `scripts/backfill_cover_images.py`. Reading a session never starts one. The arq id is `cover_image:{session_id}`, so a cover that is queued, running, or failed within the last hour is not started again. Failures are logged and swallowed, so a broken image generator never fails the recap. Its paid OpenAI Images call goes through `cover_image.generate_cover_image_with_openai`, not `llm_client.call_llm`, so it leaves no `llm_usage` row and isn't held to the daily budget ([roadmap](roadmap.md#4-models)).
 
+## Surprise me voice
+
+`run_surprise_voice_job` reads the session's Surprise me take aloud: one OpenAI speech clip (mp3, `gpt-4o-mini-tts`) per beat. It is queued only by `POST /api/sessions/{id}/surprise-voice`, the click on Play (`api_logic.start_surprise_voice`), never on its own. Its only argument is the session id; the arq id is `surprise_voice:{session_id}`, so two clicks share one job, and the worker reads `OPENAI_API_KEY` from its own environment. When it runs it reads the take as saved (`api_logic.run_surprise_voice`), checks the organization's Surprise me switch again, cuts the take into beats (`ai/surprise_voice.surprise_beats`, the player's own cut) and makes the clips the take doesn't have yet, four at a time (`SURPRISE_VOICE_WORKERS`). Only a beat's text is sent. Each clip is saved whole as soon as OpenAI answers (`db.save_surprise_voice_clip`), keyed by a hash of its text, the model, the voice and the delivery notes (`clip_key`): a failed run keeps the clips it made, and the user's retry makes only the missing ones. A successful run then drops the session's clips the take no longer uses (`db.prune_surprise_voice_clips`). Progress (kind `surprise_voice`): `reading`, then `speaking` with `done`, `total` and a `percent` that moves with them. A failure raises `SpeechFailed` (or `SurpriseOffError`, `SurpriseVoiceNoTakeError`), whose message the player shows; it never holds the key or OpenAI's answer.
+
 ## Timeouts and failures
 
 | Job | Timeout |
@@ -130,10 +134,11 @@ The v1 Report's analysis, started by a user's action: "Analyse session" on the R
 | AI flows | 15 min |
 | The session analysis | 25 min: the chat labels' batches, then the understanding call and its 10-minute stream deadline |
 | Cover image | 5 min |
+| Surprise me voice | 10 min: one speech call per beat, four at a time, 60 s read timeout each |
 | `ping` | 5 min (arq default) |
 
 - A timeout fails the job. The thread it started is not killed, which is why every HTTP call also has its own timeout ([providers.md](providers.md)).
-- arq retries nothing (`max_tries=1`): failures are mostly deterministic, and re-runs cost money. A transcription marks its `transcript_jobs` row `error`, and a people sync its `livestorm_sync_jobs` row. AI and cover jobs log and re-raise; arq keeps the error in the job's result for an hour, and the poll returns it. The worker stores only the error's message there, never the exception object (`queue.job_result_serializer`, set as `WorkerSettings.job_serializer`). The user retries from the UI.
+- arq retries nothing (`max_tries=1`): failures are mostly deterministic, and re-runs cost money. A transcription marks its `transcript_jobs` row `error`, and a people sync its `livestorm_sync_jobs` row. AI, cover and voice jobs log and re-raise; arq keeps the error in the job's result for an hour, and the poll returns it. The worker stores only the error's message there, never the exception object (`queue.job_result_serializer`, set as `WorkerSettings.job_serializer`). The user retries from the UI.
 - If the worker process is killed mid-job (OOM, not a normal shutdown), arq keeps reporting that job as running until its in-progress key expires: the longest job timeout plus 10 s, about 2 hours. Until then the same output can't be regenerated. Deleting `arq:in-progress:{job id}` in Redis frees it.
 - `ping` returns `"pong"`. Enqueue it to check the web → Redis → worker path after a deploy.
 

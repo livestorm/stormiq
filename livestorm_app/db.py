@@ -490,6 +490,7 @@ def ensure_database_schema() -> None:
             _ensure_understanding_schema(cursor)
             _ensure_output_versions_schema(cursor)
             _ensure_org_settings_schema(cursor)
+            _ensure_surprise_voice_schema(cursor)
         connection.commit()
 
 
@@ -744,6 +745,28 @@ def _ensure_figure_checks_schema(cursor: Any) -> None:
             updated_by  TEXT,
             updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             PRIMARY KEY (session_id, check_key)
+        )
+        """
+    )
+
+
+def _ensure_surprise_voice_schema(cursor: Any) -> None:
+    """Surprise me, read aloud (`ai/surprise_voice.py`): one mp3 per beat of
+    the take, keyed by `clip_key` (a hash of the beat's text, the model, the
+    voice and the delivery notes), so a replay or a reload costs nothing.
+    Each row is a whole clip, written once it is made. References
+    `session_cache` (deleted with it) and has no org column: every read joins
+    `session_cache` on its org."""
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS surprise_voice_clips (
+            session_id  TEXT NOT NULL REFERENCES session_cache (session_id) ON DELETE CASCADE,
+            clip_key    TEXT NOT NULL,
+            mime        TEXT NOT NULL,
+            audio       BYTEA NOT NULL,
+            duration_s  DOUBLE PRECISION,
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (session_id, clip_key)
         )
         """
     )
@@ -2692,6 +2715,131 @@ def save_figure_check(
         logger.error("Failed to save a figure check for session_id=%s (%s)", session_id_value, _error_label(exc))
         raise RuntimeError("Could not save the figure check.") from exc
     return True
+
+
+# ── Surprise me's voice clips (ai/surprise_voice.py) ──────────────────────
+#
+# One row per beat's clip. Reads join `session_cache` on its org, so an
+# out-of-scope session reads nothing. Only the worker writes, after OpenAI
+# answered with the whole clip.
+
+
+def fetch_surprise_voice_clips(
+    session_id: str, clip_keys: Sequence[str], *, organization_id: OrgScope
+) -> Dict[str, Dict[str, Any]]:
+    """Which of `clip_keys` this session has, by key: `{duration_s, size}`
+    (never the audio). Empty when none, the session isn't in the scope, or
+    the scope is blank (never queries). Raises when the database can't be read."""
+    session_id_value = str(session_id or "").strip()
+    keys = sorted({str(key) for key in clip_keys if str(key or "").strip()})
+    if not database_enabled() or not session_id_value or not keys:
+        return {}
+    try:
+        org_filter = _org_filter(organization_id)
+    except ScopeMatchesNothing:
+        return {}
+    scope_clause = " AND c.organization_id = %s" if org_filter is not None else ""
+    params = (session_id_value, keys) + ((org_filter,) if org_filter is not None else ())
+    with get_db_connection() as connection:
+        rows = connection.execute(
+            f"""
+            SELECT v.clip_key, v.duration_s, octet_length(v.audio) AS size
+            FROM surprise_voice_clips v
+            JOIN session_cache c ON c.session_id = v.session_id
+            WHERE v.session_id = %s AND v.clip_key = ANY(%s){scope_clause}
+            """,
+            params,
+        ).fetchall()
+    return {
+        row["clip_key"]: {
+            "duration_s": float(row["duration_s"]) if row["duration_s"] is not None else None,
+            "size": int(row["size"] or 0),
+        }
+        for row in rows
+    }
+
+
+def fetch_surprise_voice_clip(session_id: str, clip_key: str, *, organization_id: OrgScope) -> Optional[Dict[str, Any]]:
+    """One clip's `{bytes, mime}`, or None when the session or the clip isn't
+    there or isn't in the scope (a blank scope never queries). Raises when
+    the database can't be read."""
+    session_id_value = str(session_id or "").strip()
+    key_value = str(clip_key or "").strip()
+    if not database_enabled() or not session_id_value or not key_value:
+        return None
+    try:
+        org_filter = _org_filter(organization_id)
+    except ScopeMatchesNothing:
+        return None
+    scope_clause = " AND c.organization_id = %s" if org_filter is not None else ""
+    params = (session_id_value, key_value) + ((org_filter,) if org_filter is not None else ())
+    with get_db_connection() as connection:
+        row = connection.execute(
+            f"""
+            SELECT v.audio, v.mime
+            FROM surprise_voice_clips v
+            JOIN session_cache c ON c.session_id = v.session_id
+            WHERE v.session_id = %s AND v.clip_key = %s{scope_clause}
+            LIMIT 1
+            """,
+            params,
+        ).fetchone()
+    if not row or row.get("audio") is None:
+        return None
+    return {"bytes": bytes(row["audio"]), "mime": str(row.get("mime") or "audio/mpeg")}
+
+
+def save_surprise_voice_clip(
+    session_id: str, clip_key: str, *, audio: bytes, mime: str, duration_s: Optional[float]
+) -> None:
+    """Save one whole clip (the worker, after OpenAI answered). The same key
+    saved twice keeps one row. Raises RuntimeError when the write fails, or
+    when the session is gone (its row is the foreign key's target)."""
+    session_id_value = str(session_id or "").strip()
+    key_value = str(clip_key or "").strip()
+    if not session_id_value or not key_value or not audio:
+        raise ValueError("save_surprise_voice_clip requires a session id, a clip key and the audio.")
+    if not database_enabled():
+        raise RuntimeError("Database is not configured.")
+    try:
+        with get_db_connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO surprise_voice_clips (session_id, clip_key, mime, audio, duration_s, created_at)
+                VALUES (%s, %s, %s, %s, %s, NOW())
+                ON CONFLICT (session_id, clip_key) DO UPDATE SET
+                    mime = EXCLUDED.mime,
+                    audio = EXCLUDED.audio,
+                    duration_s = EXCLUDED.duration_s,
+                    created_at = NOW()
+                """,
+                (session_id_value, key_value, str(mime), bytes(audio), duration_s),
+            )
+            connection.commit()
+    except Exception as exc:
+        logger.error("Failed to save a voice clip for session_id=%s (%s)", session_id_value, _error_label(exc))
+        raise RuntimeError("Could not save the voice clip.") from exc
+
+
+def prune_surprise_voice_clips(session_id: str, keep: Sequence[str]) -> int:
+    """Remove this session's clips that the current take no longer uses (an
+    older take or voice), keeping `keep`. Returns how many went. Raises
+    RuntimeError when the write fails."""
+    session_id_value = str(session_id or "").strip()
+    if not database_enabled() or not session_id_value:
+        return 0
+    keys = sorted({str(key) for key in keep if str(key or "").strip()})
+    try:
+        with get_db_connection() as connection:
+            removed = connection.execute(
+                "DELETE FROM surprise_voice_clips WHERE session_id = %s AND NOT (clip_key = ANY(%s))",
+                (session_id_value, keys),
+            ).rowcount
+            connection.commit()
+    except Exception as exc:
+        logger.error("Failed to prune voice clips for session_id=%s (%s)", session_id_value, _error_label(exc))
+        raise RuntimeError("Could not tidy the voice clips.") from exc
+    return int(removed or 0)
 
 
 # ── The question desk's saved replies (record/question_desk.py) ───────────

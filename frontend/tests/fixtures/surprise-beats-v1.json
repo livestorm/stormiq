@@ -1,0 +1,93 @@
+[
+  {
+    "take": "# Title\nFifty messages and a working SSO\n# Description\nAmara clicked connect. The chat sent 50 messages in three minutes! Nobody believed it.\n\nAt 23:00 the room finally relaxed. 56% stayed for pricing.",
+    "beats": [
+      {
+        "kind": "title",
+        "text": "Fifty messages and a working SSO"
+      },
+      {
+        "kind": "line",
+        "text": "Amara clicked connect."
+      },
+      {
+        "kind": "line",
+        "text": "The chat sent 50 messages in three minutes!"
+      },
+      {
+        "kind": "punch",
+        "text": "Nobody believed it."
+      },
+      {
+        "kind": "line",
+        "text": "At 23:00 the room finally relaxed."
+      },
+      {
+        "kind": "punch",
+        "text": "56% stayed for pricing."
+      }
+    ]
+  },
+  {
+    "take": "# Title\n**Pricing**, live\n# Description\nThe host said \"one more slide.\" Then said it again… and again?! The room_count went up.\r\n\r\nOne sentence only\r\n\r\n## Act two\nAt 1:02:05 someone typed \"finally\". It was 1,200 messages (or so). Wow!",
+    "beats": [
+      {
+        "kind": "title",
+        "text": "Pricing, live"
+      },
+      {
+        "kind": "line",
+        "text": "The host said \"one more slide.\""
+      },
+      {
+        "kind": "line",
+        "text": "Then said it again…"
+      },
+      {
+        "kind": "line",
+        "text": "and again?!"
+      },
+      {
+        "kind": "punch",
+        "text": "The roomcount went up."
+      },
+      {
+        "kind": "line",
+        "text": "One sentence only"
+      },
+      {
+        "kind": "title",
+        "text": "Act two"
+      },
+      {
+        "kind": "line",
+        "text": "At 1:02:05 someone typed \"finally\"."
+      },
+      {
+        "kind": "line",
+        "text": "It was 1,200 messages (or so)."
+      },
+      {
+        "kind": "punch",
+        "text": "Wow!"
+      }
+    ]
+  },
+  {
+    "take": "## Already clean\n\nNo punctuation at the end",
+    "beats": [
+      {
+        "kind": "title",
+        "text": "Already clean"
+      },
+      {
+        "kind": "line",
+        "text": "No punctuation at the end"
+      }
+    ]
+  },
+  {
+    "take": "",
+    "beats": []
+  }
+]
