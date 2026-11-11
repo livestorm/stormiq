@@ -87,6 +87,9 @@ const hasTranscript = computed(() => {
   const health = record.value?.transcriptHealth?.state;
   return Boolean(health) && health !== "unavailable";
 });
+// The chat has messages and none of their authors resolved (the measure says
+// `unresolved`): typically a chat saved before messages carried their authors.
+const authorsUnknown = computed(() => record.value?.measures?.["m.author_resolution"]?.state === "unresolved");
 const summary = computed(() => analysisSummary(record.value?.chatLabels, state.analysis, { transcript: hasTranscript.value }));
 
 // The run's elapsed time, ticking once a second while it is in flight.
@@ -134,7 +137,27 @@ const short = computed(() => inShort(record.value?.measures || {}));
           <span v-if="length"> · {{ length }}</span>
           <span v-if="teamExcluded" class="r-muted"> · excludes your team: {{ teamExcluded }}</span>
         </p>
-        <p v-if="sources.length" class="r-sources">{{ sources.join(" · ") }}</p>
+        <p v-if="sources.length" class="r-sources">
+          <span>{{ sources.join(" · ") }}</span>
+          <UiButton
+            variant="ghost"
+            small
+            icon="refresh-cw"
+            :disabled="state.refetch.status === 'running'"
+            @click="report.refetch()"
+          >
+            {{ state.refetch.status === "running" ? "Fetching…" : "Fetch again from Livestorm" }}
+          </UiButton>
+        </p>
+        <p v-if="authorsUnknown && state.refetch.status !== 'running'" class="r-hint">
+          <Icon name="info" :size="16" />
+          <span>
+            The chat's authors couldn't be matched to people, so the chat shows "Team" or "Attendee". This session's chat was
+            saved before StormIQ read who wrote each message: fetch it again from Livestorm to name them (free, the transcript
+            stays).
+          </span>
+        </p>
+        <p v-if="state.refetch.status === 'error'" class="r-hint" role="alert">{{ state.refetch.error }}</p>
       </header>
 
       <Card class="r-analysis" :aria-busy="summary.busy ? 'true' : 'false'">
@@ -263,6 +286,30 @@ const short = computed(() => inShort(record.value?.measures || {}));
 .r-muted,
 .r-sources,
 .r-status {
+  color: var(--siq-muted);
+}
+
+.r-sources {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--siq-space-1) var(--siq-space-3);
+}
+
+.r-hint {
+  display: flex;
+  gap: var(--siq-space-2);
+  align-items: flex-start;
+  max-width: 72ch;
+  margin: var(--siq-space-2) 0 0;
+  font-size: var(--siq-text-small);
+  line-height: var(--siq-text-small-lh);
+  color: var(--siq-ink-2);
+}
+
+.r-hint :deep(svg) {
+  flex: none;
+  margin-top: 1px;
   color: var(--siq-muted);
 }
 

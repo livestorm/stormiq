@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
+import BeforeYouShare from "../components/report/BeforeYouShare.vue";
 import ChapterNotes from "../components/report/ChapterNotes.vue";
 import MarkdownBlocks from "../components/report/MarkdownBlocks.vue";
 import QuestionDesk from "../components/report/QuestionDesk.vue";
@@ -26,7 +27,9 @@ import {
 } from "../followup/outputs";
 import { markdownSections, plainText } from "../followup/markdown";
 import { filterCounts } from "../followup/desk";
+import { uncheckedNote } from "../followup/figures";
 import { createChapters } from "../followup/useChapters";
+import { createFigureChecks } from "../followup/useFigureChecks";
 import { createQuestionDesk } from "../followup/useQuestionDesk";
 import { formatLength, formatSessionStart } from "../report/format";
 import { createSessionReport } from "../report/useSessionReport";
@@ -53,6 +56,7 @@ const { state } = store;
 const report = createSessionReport();
 const desk = createQuestionDesk();
 const chapters = createChapters();
+const figures = createFigureChecks();
 
 watch(
   () => props.sessionId,
@@ -60,6 +64,7 @@ watch(
     report.open(id);
     desk.open(id);
     chapters.open(id);
+    figures.open(id);
     store.loadSessionById(id).catch(() => {});
   },
   { immediate: true },
@@ -68,6 +73,7 @@ onBeforeUnmount(() => {
   report.close();
   desk.close();
   chapters.close();
+  figures.close();
 });
 
 const DESK = "desk";
@@ -173,6 +179,8 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
     </header>
 
     <SessionTabs :session-id="sessionId" current="follow-up" />
+
+    <BeforeYouShare :figures="figures" />
 
     <div class="f-layout">
       <nav class="f-nav" aria-label="Follow-up">
@@ -316,6 +324,9 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
             </UiButton>
             <UiButton v-if="pdf" variant="ghost" small icon="download" :href="pdf">PDF</UiButton>
             <span class="f-muted f-ai">Written by AI from this session. Check it before you share it.</span>
+            <span v-if="uncheckedNote(figures.state.body)" class="f-unchecked">
+              <Icon name="shield" :size="14" /> {{ uncheckedNote(figures.state.body) }}
+            </span>
           </div>
           <div v-if="sections.length > 1" class="f-sections">
             <section v-for="(section, index) in sections" :key="index" class="f-section">
@@ -742,5 +753,15 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
   line-height: var(--siq-text-card-title-lh);
   font-weight: var(--siq-weight-semibold);
   color: var(--siq-ink);
+}
+
+.f-unchecked {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--siq-space-1);
+  flex-basis: 100%;
+  font-size: var(--siq-text-small);
+  line-height: var(--siq-text-small-lh);
+  color: var(--siq-ink-2);
 }
 </style>

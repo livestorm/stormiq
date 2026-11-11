@@ -51,6 +51,9 @@ export function createSessionReport({ api = defaultApi } = {}) {
     // the run's latest stage from the server (`{stage, percent, started_at_ms}`), or null.
     analysis: { status: "idle", error: "", progress: null },
     chat: emptyChat(), // the chat's text by id, read on demand
+    // "Fetch again from Livestorm": the session, chat and questions read again
+    // (free, no transcript), then the record. idle | running | done | error.
+    refetch: { status: "idle", error: "" },
   });
   let scope = null;
 
@@ -158,6 +161,7 @@ export function createSessionReport({ api = defaultApi } = {}) {
     state.error = "";
     state.analysis = { status: "idle", error: "", progress: null };
     state.chat = emptyChat();
+    state.refetch = { status: "idle", error: "" };
     if (!id) return;
     await loadRecord(own);
     if (isCurrent(own) && state.record) await checkRunInFlight(own);
@@ -198,5 +202,27 @@ export function createSessionReport({ api = defaultApi } = {}) {
     }
   }
 
-  return { state, open, close, startAnalysis, loadChat };
+  /** Reads the session, its chat and its questions from Livestorm again
+   * (`POST /fetch-base` with `forceRefresh`: no transcript, nothing paid),
+   * then the record. A chat cached before its messages carried their
+   * authors' people links names nobody until this runs. */
+  async function refetch() {
+    const own = scope;
+    if (!own || state.refetch.status === "running") return false;
+    state.refetch = { status: "running", error: "" };
+    try {
+      await api.fetchSessionBase(own.sessionId, { apiKey: "", forceRefresh: true }, { signal: own.controller.signal });
+      if (!isCurrent(own)) return false;
+      await loadRecord(own, { quiet: true });
+      if (!isCurrent(own)) return false;
+      state.refetch = { status: "done", error: "" };
+      return true;
+    } catch (error) {
+      if (!isCurrent(own) || isAbort(error)) return false;
+      state.refetch = { status: "error", error: error?.message || "The session could not be fetched again." };
+      return false;
+    }
+  }
+
+  return { state, open, close, startAnalysis, loadChat, refetch };
 }

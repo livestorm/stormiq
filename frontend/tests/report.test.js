@@ -79,6 +79,23 @@ describe("createSessionReport", () => {
     expect(report.state.analysis.progress).toEqual(progress);
   });
 
+  it("fetches the session again from Livestorm, then reads the record", async () => {
+    const api = fakeApi({ fetchSessionBase: vi.fn(async () => ({})) });
+    const report = createSessionReport({ api });
+    await report.open("sess-1");
+    expect(await report.refetch()).toBe(true);
+    expect(api.fetchSessionBase).toHaveBeenCalledWith(
+      "sess-1",
+      { apiKey: "", forceRefresh: true },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(api.getSessionRecord).toHaveBeenCalledTimes(2);
+    expect(report.state.refetch).toEqual({ status: "done", error: "" });
+    api.fetchSessionBase.mockRejectedValueOnce(new Error("Livestorm is unreachable."));
+    expect(await report.refetch()).toBe(false);
+    expect(report.state.refetch).toEqual({ status: "error", error: "Livestorm is unreachable." });
+  });
+
   it("ignores a second click while a run is in flight", async () => {
     const api = fakeApi({ getSessionAnalysisJob: vi.fn(async () => ({ jobStatus: "running" })) });
     const report = createSessionReport({ api });

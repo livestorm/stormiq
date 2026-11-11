@@ -241,6 +241,22 @@ def test_a_located_answers_decision_is_scoped_and_keeps_what_the_host_wrote(test
         _decide("sess-a", "org-a", "maybe")
 
 
+def test_figure_checks_are_scoped_replaced_reopened_and_deleted_with_their_session(test_database):
+    _seed()
+    check = {"check_key": "acronym:U0001:nps 42", "updated_by": "user-a"}
+    assert db.save_figure_check("sess-a", organization_id="org-b", choice="NPS", **check) is False, "another org writes nothing"
+    assert db.save_figure_check("sess-a", organization_id="", choice="NPS", **check) is False, "a blank scope writes nothing"
+    assert db.save_figure_check("sess-a", organization_id="org-a", choice="NPS", **check) is True
+    assert db.save_figure_check("sess-a", organization_id="org-a", choice="NRR", **check) is True
+    assert {k: v["choice"] for k, v in db.fetch_figure_checks("sess-a", "org-a").items()} == {"acronym:U0001:nps 42": "NRR"}
+    assert db.fetch_figure_checks("sess-a", "org-b") == {} and db.fetch_figure_checks("sess-a", "") == {}
+    assert db.save_figure_check("sess-a", organization_id="org-a", choice=None, **check) is True
+    assert db.fetch_figure_checks("sess-a", ALL_ORGS) == {}, "reopened"
+    db.save_figure_check("sess-a", organization_id="org-a", choice="NPS", **check)
+    assert db.admin_delete_session("sess-a") is True
+    assert db.fetch_figure_checks("sess-a", ALL_ORGS) == {}
+
+
 def test_chat_labels_are_scoped_by_org(test_database):
     _seed()
     db.upsert_cached_session("key-x", "sess-legacy", session_payload={"name": "L"})

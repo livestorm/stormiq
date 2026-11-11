@@ -158,6 +158,18 @@ export const api = {
   getSessionQuestionDesk(sessionId, { signal } = {}) {
     return request(sessionPath(sessionId, "/record/questions"), { signal });
   },
+  // Before you share: the figures said on stage to check, with the host's answers.
+  getFigureChecks(sessionId, { signal } = {}) {
+    return request(sessionPath(sessionId, "/record/figures"), { signal });
+  },
+  // Answers one figure check (`choice` null reopens it); returns the checks.
+  saveFigureCheck(sessionId, { key, choice }, { signal } = {}) {
+    return request(sessionPath(sessionId, "/record/figures"), {
+      method: "PUT",
+      body: JSON.stringify({ key, choice: choice ?? null }),
+      signal,
+    });
+  },
   // The chapters the session analysis found, with their show notes.
   getSessionChapters(sessionId, { signal } = {}) {
     return request(sessionPath(sessionId, "/record/chapters"), { signal });

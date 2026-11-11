@@ -183,6 +183,23 @@ session_chat_labels (
 - **Replaced whole.** `db.replace_chat_labels` checks the set (`check_labels`: known classes, a kind on questions only, unique ids; errors name ids, never text) before it writes, then upserts the row. A failed write raises and keeps the previous labels.
 - **Scoped and deleted through the session**, like the people tables: `db.fetch_chat_labels` joins `session_cache` and filters on its org (a blank scope never queries), and `ON DELETE CASCADE` removes the labels with the session.
 
+## `session_figure_checks`
+
+Before you share (Follow-up tab, `record/figure_checks.py`): the host's answer to each check on a figure said on stage.
+
+```sql
+session_figure_checks (
+  session_id  TEXT NOT NULL REFERENCES session_cache (session_id) ON DELETE CASCADE,
+  check_key   TEXT NOT NULL,          -- acronym:<U id>:<span> or values:<metric>, never a figure id
+  choice      TEXT NOT NULL,          -- one of the check's options' values
+  updated_by  TEXT,                   -- the Livestorm user id, never an email
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (session_id, check_key)
+)
+```
+
+- **One row per answered check.** `db.save_figure_check` upserts it, or deletes it when the host reopens the check; it writes only when the session is in the caller's scope, and a failed write raises. `db.fetch_figure_checks` joins `session_cache` on its org.
+
 ## `session_question_replies`
 
 What the host saved in the question desk (Follow-up tab, `record/question_desk.py`): one row per question they marked answered, unmarked or replied to.

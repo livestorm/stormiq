@@ -184,10 +184,17 @@ def _one_line(value: Any, limit: Optional[int] = None) -> str:
     return text
 
 
-def understanding_lines(result: Mapping[str, Any], times: Mapping[str, Any]) -> Dict[str, List[str]]:
+def understanding_lines(
+    result: Mapping[str, Any],
+    times: Mapping[str, Any],
+    notes: Optional[Mapping[Any, str]] = None,
+) -> Dict[str, List[str]]:
     """The chapters, the prompts to the room and the figures said on stage,
     from a current understanding result; `times` maps an utterance id to its
-    time in the brief."""
+    time in the brief. `notes` (`figure_checks.figure_notes`) is what the
+    host answered about a flagged figure, by `(utterance id, span)`; without
+    one, a flagged figure is marked "do not state it as a fact"."""
+    notes = notes or {}
     chapters = [
         f"- {clock(times.get(c.get('first')))} {c['title']} ({c.get('kind') or 'other'})"
         for c in result.get("chapters") or []
@@ -207,7 +214,8 @@ def understanding_lines(result: Mapping[str, Any], times: Mapping[str, Any]) -> 
             flags.append("the same metric was said with two values: do not state it as a fact")
         if "acronym" in (f.get("flags") or []):
             flags.append("its acronym is unclear in the recording: do not state it as a fact")
-        note = f" [{'; '.join(flags)}]" if flags else ""
+        checked = notes.get((str(f.get("utterance")), str(f.get("span"))))
+        note = f" [{checked}]" if checked else f" [{'; '.join(flags)}]" if flags else ""
         figures.append(f"- {clock(times.get(f.get('utterance')))} \"{_one_line(f['span'])}\"{note}")
     return {"chapters": chapters, "prompts": prompts, "figures": figures}
 
@@ -239,6 +247,7 @@ def build_brief(
     understanding: Mapping[str, Any],
     utterances: Sequence[Mapping[str, Any]],
     questions: Sequence[Mapping[str, Any]],
+    figure_notes: Optional[Mapping[Any, str]] = None,
 ) -> Dossier:
     """The brief for one session. `record` is the record block
     (`assemble.assemble_record(...)["record"]`), `understanding` a current
@@ -247,7 +256,7 @@ def build_brief(
     on_clock = bool(understanding.get("onClock")) and any(u.get("t") is not None for u in utterances)
     when = "t" if on_clock else "r"
     times = {u.get("id"): u.get(when) for u in utterances}
-    parts = understanding_lines(understanding, times)
+    parts = understanding_lines(understanding, times, figure_notes)
     sections = [
         "\n".join(
             [

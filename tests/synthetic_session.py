@@ -64,6 +64,7 @@ RECORD_CROWD_FIXTURE = REPO_ROOT / "frontend" / "tests" / "fixtures" / "record-v
 TRANSCRIPT_FIXTURE = REPO_ROOT / "frontend" / "tests" / "fixtures" / "transcript-v1.json"
 QUESTIONS_FIXTURE = REPO_ROOT / "frontend" / "tests" / "fixtures" / "questions-v1.json"
 CHAPTERS_FIXTURE = REPO_ROOT / "frontend" / "tests" / "fixtures" / "chapters-v1.json"
+FIGURES_FIXTURE = REPO_ROOT / "frontend" / "tests" / "fixtures" / "figures-v1.json"
 
 # How the synthetic chat is labelled for the question desk (`chat_labels`):
 # every message "social", except these (class, question kind).
@@ -720,6 +721,17 @@ def transcript_response(row: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         return _get_json(row, f"/api/sessions/{row['session_id']}/record/transcript")
 
 
+def figures_response(row: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """What `GET /api/sessions/{id}/record/figures` sends for `row`
+    (default: `cached_row()`), its understanding stored and nothing checked,
+    through the real route."""
+    from livestorm_app import api_logic
+
+    row = cached_row() if row is None else row
+    with with_understanding(row), mock.patch.object(api_logic, "fetch_figure_checks", lambda session_id, organization_id: {}):
+        return _get_json(row, f"/api/sessions/{row['session_id']}/record/figures")
+
+
 def chapters_response(row: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """What `GET /api/sessions/{id}/record/chapters` sends for `row`
     (default: `cached_row()`), its understanding stored, through the real
@@ -771,6 +783,18 @@ UNDERSTANDING_CHAPTERS = (
 )
 
 
+# Figures said on stage, in the talk's order, flagged as the understanding's
+# checks flag them: an unclear acronym, and the same metric said with two values.
+UNDERSTANDING_FIGURES = (
+    {"utterance": "U0028", "span": "several hundred seats", "value": "300 seats", "number": 300.0, "unit": "seats",
+     "metric": "seats per team", "flags": ["two_values"]},
+    {"utterance": "U0029", "span": "pricing works per team", "value": "110%", "number": 110.0, "unit": "%",
+     "metric": "NRR", "flags": ["acronym"], "confusable": {"NRR": "NPS"}},
+    {"utterance": "U0074", "span": "export everything", "value": "500 seats", "number": 500.0, "unit": "seats",
+     "metric": "seats per team", "flags": ["two_values"]},
+)
+
+
 def understanding(row: Dict[str, Any]) -> Dict[str, Any]:
     """A stored understanding for `row`, as `db.fetch_understanding` returns
     it, read from its dossier now (its chat labelled by `chat_labels`) and
@@ -785,11 +809,19 @@ def understanding(row: Dict[str, Any]) -> Dict[str, Any]:
         utterance = next(u for u in utterances if u["text"].startswith(item["utterance_text"]))
         answers.append({"question_id": question["id"], "utterance_ids": [utterance["id"]], "quote": item["quote"]})
     answer = {"chapters": list(UNDERSTANDING_CHAPTERS), "answers": answers, "prompts": [], "figures": [], "groups": []}
+    result = check_understanding(answer, utterances, questions)
+    # The synthetic talk says no number, so its flagged figures are added as
+    # the checks would store them, on real utterances (Before you share).
+    by_id = {u["id"]: u for u in utterances}
+    result["figures"] = [
+        {**figure, "t": by_id[figure["utterance"]]["t"], "id": f"F{index:02d}"}
+        for index, figure in enumerate(UNDERSTANDING_FIGURES, start=1)
+    ]
     return {
         "version": UNDERSTANDING_VERSION,
         "dossier_hash": dossier.sha256,
         "model": "synthetic-understanding",
-        "result": check_understanding(answer, utterances, questions),
+        "result": result,
         "created_at": None,
     }
 
@@ -815,6 +847,8 @@ def write_record_fixture() -> None:
     print(f"wrote {QUESTIONS_FIXTURE.relative_to(REPO_ROOT)}")
     CHAPTERS_FIXTURE.write_text(dump(chapters_response()), encoding="utf-8")
     print(f"wrote {CHAPTERS_FIXTURE.relative_to(REPO_ROOT)}")
+    FIGURES_FIXTURE.write_text(dump(figures_response()), encoding="utf-8")
+    print(f"wrote {FIGURES_FIXTURE.relative_to(REPO_ROOT)}")
 
 
 def write_classic_snapshot() -> None:
