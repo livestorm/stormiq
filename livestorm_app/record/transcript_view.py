@@ -15,8 +15,9 @@ is read on demand, when someone opens the tab.
 - **Speakers** are keyed as Gladia keys them; their names are the ones the
   user saved (`transcript_speaker_names`), else "Speaker 1", "Speaker 2"…
 - **Authors** are shown shortened, "Priya S.", and only through
-  `roster.display_people`, which fails closed: an internal session, or an
-  author who doesn't resolve to a person, gets no name. Such a line says
+  `roster.display_people`, which fails closed: an author who doesn't
+  resolve to a person gets no name. An internal session names its people
+  too (the owner's decision, November 2026). Such a line says
   "Team" (the message's own team or guest-speaker flag) or "Attendee".
   Never an email address, a people id or a `P-` ref.
 - **Unclear words**: each utterance lists the character spans of its words
@@ -43,14 +44,13 @@ import pandas as pd
 
 from livestorm_app.record.alignment import SECONDS, alignment_allows
 from livestorm_app.record.evidence import ANSWER, CHAT, QUESTION
-from livestorm_app.record.roster import PUBLIC_PROFILE, display_people
+from livestorm_app.record.roster import INTERNAL_PROFILE, PUBLIC_PROFILE, display_people
 from livestorm_app.record.transcript_health import LOW_CONFIDENCE
 
 VIEW_VERSION = 1
 
 TEAM = "Team"
 ATTENDEE = "Attendee"
-INTERNAL_PROFILE = "internal"
 
 # Whatever the session's size, a name list this long covers it.
 _ALL_PEOPLE = 1_000_000

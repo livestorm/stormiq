@@ -1,5 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from "vue";
+import { gifUrl } from "../../utils/gif";
+import ChatGif from "./ChatGif.vue";
 import UiButton from "../ui/UiButton.vue";
 import { clockLabel } from "../../report/chartGeometry";
 
@@ -48,7 +50,8 @@ function timeTitle(message) {
       <ol class="r-messages-list" :aria-label="label">
         <li v-for="message in shown" :key="message.id" class="r-message">
           <span class="r-message-time" :title="timeTitle(message)">{{ time(message) }}</span>
-          <span class="r-message-text">{{ message.text || "(no text)" }}</span>
+          <ChatGif v-if="gifUrl(message.text)" :src="gifUrl(message.text)" />
+          <span v-else class="r-message-text">{{ message.text || "(no text)" }}</span>
         </li>
       </ol>
       <p v-if="missing" class="r-messages-note">

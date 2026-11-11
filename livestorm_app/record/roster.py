@@ -94,6 +94,10 @@ PERSON_REF_PREFIX = "P-"
 PERSON_REF_HEX = 8
 
 PUBLIC_PROFILE = "public"
+# An internal session (everyone is a team member). Named on screen too: the
+# owner's decision (November 2026), as the open-questions CSV already does.
+INTERNAL_PROFILE = "internal"
+NAMED_PROFILES = (PUBLIC_PROFILE, INTERNAL_PROFILE)
 ROLE_UNKNOWN = "role unknown"
 
 ROSTER_COLUMNS = (
@@ -807,12 +811,14 @@ def prompt_view(roster: Roster) -> List[Dict[str, str]]:
 def display_people(roster: Roster, *, profile: Optional[str], limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
     """People with their names, for a person list in the app.
 
-    Fails closed: only a session whose profile is exactly "public" gets
-    anyone. An internal session, an unknown profile or no profile gets [].
+    Fails closed: only a session whose profile is exactly "public" or
+    "internal" (`NAMED_PROFILES`) gets anyone; an unknown profile or no
+    profile gets []. Internal sessions are named since the owner's decision
+    of November 2026 (they used to name nobody).
     Ordered by name, then ref; `offset` and `limit` page through it.
     `attended` is None when attendance is unknown, never a guessed False.
     """
-    if profile != PUBLIC_PROFILE:
+    if profile not in NAMED_PROFILES:
         return []
     people = roster.people
     rows = [
@@ -842,9 +848,8 @@ def display_people(roster: Roster, *, profile: Optional[str], limit: int = 50, o
 def export_people(roster: Roster) -> Dict[str, Dict[str, Optional[str]]]:
     """Names and companies by `P-` ref, for the open-questions CSV only
     (`record.question_desk.open_questions_csv`), on every session, internal
-    ones included: the owner's decision (November 2026), a deliberate
-    exception to `display_people`, which names nobody on an internal
-    session. Never an email (a row has none), a people id or a role. No page
+    ones included: the owner's decision (November 2026). Full names, where
+    `display_people`'s callers show short ones. Never an email (a row has none), a people id or a role. No page
     and no prompt reads it."""
     people = roster.people
     return {

@@ -39,10 +39,10 @@ session is fetched again; `saved_key(row)` is that key. A row without a
 Livestorm id can't be saved (`canSave` false).
 
 Authors are short names through `roster.display_people`, which fails closed
-(an internal session names nobody), as on the Transcript tab. The CSV
-(`open_questions_csv`) is the one exception: it names askers on every
-session through `roster.export_people` (the owner's decision), and never
-carries an email.
+(an author who doesn't resolve gets no name), on every session, internal ones
+included, as on the Transcript tab. The CSV (`open_questions_csv`) gives full
+names and companies through `roster.export_people`, and never carries an
+email.
 
 Pure functions: no database, network or web framework.
 """
@@ -55,8 +55,8 @@ import math
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from livestorm_app.record.evidence import CHAT, QUESTION, question_items
-from livestorm_app.record.roster import PUBLIC_PROFILE, display_people, export_people
-from livestorm_app.record.transcript_view import ATTENDEE, INTERNAL_PROFILE, TEAM, short_name
+from livestorm_app.record.roster import INTERNAL_PROFILE, PUBLIC_PROFILE, display_people, export_people
+from livestorm_app.record.transcript_view import ATTENDEE, TEAM, short_name
 
 DESK_VERSION = 1
 

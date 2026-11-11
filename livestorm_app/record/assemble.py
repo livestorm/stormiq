@@ -46,7 +46,7 @@ from livestorm_app.record.inputs import RecordInputs
 from livestorm_app.record.measures import METRICS_VERSION, compute_measures, validate_measures
 from livestorm_app.record.roster import Roster
 
-RECORD_VERSION = 9
+RECORD_VERSION = 10
 
 # Where the measures come from: computed from the cached payloads when the
 # block is built (the caller caches the block per process; nothing is
@@ -186,6 +186,17 @@ def measures_for_read(inputs: RecordInputs) -> Dict[str, Any]:
     return {"metricsVersion": METRICS_VERSION, "measuresSource": MEASURES_LIVE, "measures": measures}
 
 
+def pulse_events(inputs: RecordInputs) -> Any:
+    """The events the Pulse bins. On an internal session everyone is
+    audience, as the measures count it (`measures._Facts.audience`), so every
+    message goes in the audience's lanes (`audienceChat`), never in
+    `teamChat`: the ridge and the Pulse then show the room's chat."""
+    events = inputs.events
+    if inputs.roster.meta.internal and events is not None and not events.empty and "is_team" in events:
+        return events.assign(is_team=False)
+    return events
+
+
 def assemble_record(inputs: RecordInputs) -> Dict[str, Any]:
     """The computed block of the record response: `{meta: {clock}, record}`.
     The clock, the roster, the authors, the events and the alignment come
@@ -198,7 +209,7 @@ def assemble_record(inputs: RecordInputs) -> Dict[str, Any]:
         "record": {
             "version": RECORD_VERSION,
             "roster": roster_header(inputs.roster),
-            "pulse": pulse(minute_bins(inputs.events, speech_df, base=inputs.clock), speech),
+            "pulse": pulse(minute_bins(pulse_events(inputs), speech_df, base=inputs.clock), speech),
             "transcriptHealth": inputs.transcript_health,
             "chatLabels": dict(inputs.chat_labels_info),
             **measures_for_read(inputs),

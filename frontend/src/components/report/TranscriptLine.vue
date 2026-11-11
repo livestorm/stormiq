@@ -1,5 +1,6 @@
 <script setup>
 import StatusWord from "../ui/StatusWord.vue";
+import ChatGif from "./ChatGif.vue";
 
 // One line of the Transcript tab (`transcript/lines.js` words it): a line
 // of speech, full width, or a chat, Q&A or answer line, indented with a rule
@@ -34,7 +35,8 @@ defineProps({
         <span v-if="line.kind !== 'speech'" class="tl-source"> · {{ line.source }}</span>
         <StatusWord v-if="line.status === 'Answered in writing'" status="measured" :label="line.status" class="tl-status" />
       </p>
-      <p class="tl-text">
+      <ChatGif v-if="line.gif" :src="line.gif" />
+      <p v-else class="tl-text">
         <template v-for="(part, index) in line.parts" :key="index">
           <span v-if="part.unclear" class="tl-unclear">{{ part.text }}<span class="siq-sr-only"> (low confidence)</span></span>
           <template v-else>{{ part.text }}</template>
