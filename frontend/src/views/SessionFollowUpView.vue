@@ -7,6 +7,7 @@ import MarkdownBlocks from "../components/report/MarkdownBlocks.vue";
 import QuestionDesk from "../components/report/QuestionDesk.vue";
 import SessionTabs from "../components/report/SessionTabs.vue";
 import Card from "../components/ui/Card.vue";
+import Collapsible from "../components/ui/Collapsible.vue";
 import CardHeader from "../components/ui/CardHeader.vue";
 import Icon from "../components/ui/Icon.vue";
 import StatusWord from "../components/ui/StatusWord.vue";
@@ -17,6 +18,7 @@ import {
   LANGUAGES,
   OUTPUTS,
   canMake,
+  earlierVersions,
   making,
   outputFor,
   outputGroups,
@@ -24,12 +26,14 @@ import {
   outputText,
   pdfUrl,
   toggleOptions,
+  versionsQuery,
 } from "../followup/outputs";
 import { markdownSections, plainText } from "../followup/markdown";
 import { filterCounts } from "../followup/desk";
 import { uncheckedNote } from "../followup/figures";
 import { createChapters } from "../followup/useChapters";
 import { createFigureChecks } from "../followup/useFigureChecks";
+import { createOutputVersions } from "../followup/useOutputVersions";
 import { createQuestionDesk } from "../followup/useQuestionDesk";
 import { formatLength, formatSessionStart } from "../report/format";
 import { createSessionReport } from "../report/useSessionReport";
@@ -57,6 +61,7 @@ const report = createSessionReport();
 const desk = createQuestionDesk();
 const chapters = createChapters();
 const figures = createFigureChecks();
+const versions = createOutputVersions();
 
 watch(
   () => props.sessionId,
@@ -74,6 +79,7 @@ onBeforeUnmount(() => {
   desk.close();
   chapters.close();
   figures.close();
+  versions.close();
 });
 
 const DESK = "desk";
@@ -121,7 +127,19 @@ const body = computed(() => outputText(outputs.value, output.value, language.val
 const busy = computed(() => making(state, output.value, language.value));
 const allowed = computed(() => canMake(outputs.value, output.value, language.value));
 const pdf = computed(() => (body.value ? pdfUrl(api, props.sessionId, output.value, language.value) : ""));
-const anyBusy = computed(() => OUTPUTS.some((item) => state.loading[item.flow]));
+const anyBusy = computed(() => OUTPUTS.some((item) => item.flow && state.loading[item.flow]));
+
+// ── Earlier versions: what was saved before the output on screen ──
+const versionsFor = computed(() => (onOwn.value ? null : versionsQuery(output.value, language.value)));
+watch([() => props.sessionId, versionsFor], ([id, query]) => versions.open(id, query), { immediate: true });
+// A new version was saved: the one on screen changed, so list it again.
+watch(body, (next, previous) => {
+  if (next && previous && next !== previous) versions.reload();
+});
+const earlier = computed(() => earlierVersions(versions.state.body, output.value, body.value));
+const picked = ref(null); // the id of the earlier version open, or null
+watch([output, language], () => (picked.value = null));
+const bodyLang = computed(() => (language.value === "French" && output.value.by === "language" ? "fr" : undefined));
 
 function make() {
   const { flow, tone } = output.value;
@@ -269,7 +287,7 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
 
       <p v-else-if="loading" class="f-muted" role="status">Loading the session…</p>
 
-      <Card v-else-if="workspace && !hasTranscript && output.key !== 'faq'" class="f-output">
+      <Card v-else-if="workspace && !hasTranscript && output.key !== 'faq' && !output.archived" class="f-output">
         <CardHeader icon="file-text" title="This one is written from the transcript" :level="2" />
         <p class="f-text">This session has no transcript yet. Make it on the Transcript tab, then come back to write it.</p>
         <div class="f-row">
@@ -339,20 +357,55 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
                   {{ copied === index ? "Copied" : "Copy" }}
                 </UiButton>
               </div>
-              <MarkdownBlocks
-                :text="section.text"
-                :top="4"
-                :lang="language === 'French' && output.by === 'language' ? 'fr' : undefined"
-              />
+              <MarkdownBlocks :text="section.text" :top="4" :lang="bodyLang" />
             </section>
           </div>
-          <MarkdownBlocks v-else :text="body" :lang="language === 'French' && output.by === 'language' ? 'fr' : undefined" />
+          <MarkdownBlocks v-else :text="body" :lang="bodyLang" />
+
+          <Collapsible v-if="earlier.length" variant="link" icon="refresh-cw" :title="`Earlier versions (${earlier.length})`" class="f-versions">
+            <p class="f-muted">Kept as they were saved, newest first. Read-only.</p>
+            <ul class="f-version-list">
+              <li v-for="version in earlier" :key="version.id" class="f-version">
+                <button
+                  type="button"
+                  class="f-version-head siq-fx"
+                  :aria-expanded="picked === version.id ? 'true' : 'false'"
+                  @click="picked = picked === version.id ? null : version.id"
+                >
+                  <span class="f-version-when">{{ version.when }}</span>
+                  <span v-if="version.models" class="f-muted">{{ version.models }}</span>
+                  <Icon :name="picked === version.id ? 'chevron-up' : 'chevron-down'" :size="14" class="f-version-chevron" />
+                </button>
+                <div v-if="picked === version.id" class="f-version-body">
+                  <div class="f-actions">
+                    <UiButton
+                      variant="secondary"
+                      small
+                      :icon="copied === `v${version.id}` ? 'check' : 'copy'"
+                      @click="copy(version.text, `v${version.id}`)"
+                    >
+                      {{ copied === `v${version.id}` ? "Copied" : "Copy this version" }}
+                    </UiButton>
+                  </div>
+                  <MarkdownBlocks :text="version.text" :lang="bodyLang" />
+                </div>
+              </li>
+            </ul>
+          </Collapsible>
+          <p v-else-if="versions.state.error" class="f-muted">{{ versions.state.error }}</p>
         </template>
 
         <div v-else-if="busy.busy" class="f-empty" role="status">
           <p class="f-text">
             Writing{{ busy.progress != null ? `: ${busy.progress}%` : "…" }} This takes a minute or two; it keeps going if you
             leave the page.
+          </p>
+        </div>
+
+        <div v-else-if="output.archived" class="f-empty">
+          <p class="f-text">
+            No {{ output.label.toLowerCase() }} was saved for this session{{ language === "French" ? " in French" : "" }}.
+            StormIQ no longer makes it.
           </p>
         </div>
 
@@ -722,6 +775,68 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
 }
 
 /* A post or an email list: one block per part, each with its own Copy. */
+.f-versions {
+  margin-top: var(--siq-space-6);
+  padding-top: var(--siq-space-4);
+  box-shadow: inset 0 1px 0 var(--siq-hairline-row);
+}
+
+.f-version-list {
+  margin: var(--siq-space-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.f-version + .f-version {
+  box-shadow: inset 0 1px 0 var(--siq-hairline-row);
+}
+
+.f-version-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--siq-space-1) var(--siq-space-3);
+  width: 100%;
+  min-height: var(--siq-target);
+  margin: 0;
+  padding: var(--siq-space-2) 0;
+  border: 0;
+  background: transparent;
+  color: var(--siq-ink);
+  font: inherit;
+  font-size: var(--siq-text-small);
+  line-height: var(--siq-text-small-lh);
+  text-align: left;
+  cursor: pointer;
+}
+
+.f-version-when {
+  font-weight: var(--siq-weight-medium);
+  font-variant-numeric: tabular-nums;
+}
+
+.f-version-chevron {
+  margin-left: auto;
+  align-self: center;
+  color: var(--siq-muted);
+}
+
+.f-version-body {
+  margin: 0 0 var(--siq-space-4);
+  padding: var(--siq-space-4);
+  border-radius: var(--siq-radius-tile);
+  background: var(--siq-surface-2);
+}
+
+.f-version-body .f-actions {
+  margin-top: 0;
+}
+
+/* The version's own lists, not nested under the version list's items. */
+.f-version-body :deep(ul) {
+  list-style-type: disc;
+}
+
 .f-sections {
   display: flex;
   flex-direction: column;

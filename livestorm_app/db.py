@@ -2527,6 +2527,61 @@ def fetch_understanding(session_id: str, organization_id: OrgScope) -> Optional[
 # on its org, so an out-of-scope session reads nothing and writes nothing.
 
 
+MAX_OUTPUT_VERSIONS = 20
+
+
+def list_output_versions(
+    session_id: str,
+    output_column: str,
+    entry_key: str,
+    *,
+    organization_id: OrgScope,
+    limit: int = MAX_OUTPUT_VERSIONS,
+) -> List[Dict[str, Any]]:
+    """The saved versions of one AI output (`output_versions`), newest
+    first: `{id, content, models, job_kinds, calls, created_at}`, at most
+    `limit`. Never the hashes or the job's id. Empty when there are none,
+    the session isn't in the scope, or the scope is blank (never queries).
+    Raises when the database can't be read."""
+    if output_column not in _BUNDLE_COLUMNS:
+        raise ValueError(f"Not a bundle column: {output_column!r}")
+    session_id_value = str(session_id or "").strip()
+    entry = str(entry_key or "").strip()
+    if not database_enabled() or not session_id_value or not entry:
+        return []
+    try:
+        org_filter = _org_filter(organization_id)
+    except ScopeMatchesNothing:
+        return []
+    where_clause = "v.session_id = %s AND v.output_column = %s AND v.entry_key = %s" + (
+        " AND c.organization_id = %s" if org_filter is not None else ""
+    )
+    params = (session_id_value, output_column, entry) + ((org_filter,) if org_filter is not None else ())
+    with get_db_connection() as connection:
+        rows = connection.execute(
+            f"""
+            SELECT v.id, v.content, v.models, v.job_kinds, v.calls, v.created_at
+            FROM output_versions v
+            JOIN session_cache c ON c.session_id = v.session_id
+            WHERE {where_clause}
+            ORDER BY v.created_at DESC, v.id DESC
+            LIMIT %s
+            """,
+            params + (max(1, int(limit)),),
+        ).fetchall()
+    return [
+        {
+            "id": int(row["id"]),
+            "content": row["content"],
+            "models": list(row["models"] or []),
+            "job_kinds": list(row["job_kinds"] or []),
+            "calls": int(row["calls"] or 0),
+            "created_at": row["created_at"],
+        }
+        for row in rows
+    ]
+
+
 def fetch_figure_checks(session_id: str, organization_id: OrgScope) -> Dict[str, Dict[str, Any]]:
     """A session's answered figure checks by key: `{choice, updated_at}`.
     Empty when there are none, the session isn't in the scope, or the scope

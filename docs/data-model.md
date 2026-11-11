@@ -271,7 +271,7 @@ output_versions (
 ```
 
 - **What made it.** The worker runs each AI job inside `ai.usage.collect_calls()`; every answered call recorded there (`record_call`) adds its job kind, job id, model and hashes, and the runner passes `ai.usage.run_provenance()` when it saves. Lists keep the order first seen, without repeats or blanks. The same run's calls are in `llm_usage` too, but those rows hold no content and can't tell two runs of the same job apart (the job id repeats).
-- **Holds the outputs' text**, like the bundle columns: scoped and deleted through the session (no org column; `ON DELETE CASCADE`). Nothing reads it yet; the Follow-up's earlier versions will.
+- **Holds the outputs' text**, like the bundle columns: scoped and deleted through the session (no org column; `ON DELETE CASCADE`). Read only by `db.list_output_versions` (one output's versions, newest first, at most 20, joined to `session_cache` on the caller's org; never the hashes or the job id), for Follow-up's "Earlier versions" (`GET /output-versions`, [api.md](api.md)).
 
 ## `oauth_connections`
 

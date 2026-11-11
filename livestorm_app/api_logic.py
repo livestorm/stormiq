@@ -28,6 +28,7 @@ from livestorm_app.db import (
     fetch_session_roster,
     fetch_understanding,
     get_transcript_job_for_session,
+    list_output_versions,
     list_workspace_sessions,
     merge_cached_bundle_entry,
     save_figure_check,
@@ -867,6 +868,71 @@ def _figure_check_list(session_id: str, inputs: Any, *, organization_id: OrgScop
 
     result, state, _ = current_reading(fetch_understanding(session_id, organization_id), inputs)
     return figure_checks(result, fetch_figure_checks(session_id, organization_id)), state
+
+
+# "Earlier versions" on Follow-up: each output's bundle column and what its
+# entries are keyed by. `deep` is the Deep analysis, off the list since
+# November 2026 and kept readable under "Earlier outputs".
+OUTPUT_VERSION_KINDS: Dict[str, Tuple[str, str]] = {
+    "overall": ("analysis_bundle", "language"),
+    "deep": ("deep_analysis_bundle", "language"),
+    "smart_recap": ("smart_recap_bundle", "tone"),
+    "content": ("content_repurpose_bundle", "language"),
+    "faq": ("faq_bundle", "language"),
+    "decisions": ("decisions_bundle", "language"),
+    "team_digest": ("team_digest_bundle", "language"),
+}
+
+
+class UnknownOutputKindError(ValueError):
+    """Not an output with saved versions."""
+
+
+def _iso(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    return value.isoformat() if hasattr(value, "isoformat") else str(value)
+
+
+def get_session_output_versions(
+    session_id: str,
+    kind: str,
+    *,
+    language: str = "English",
+    tone: str = "professional",
+    organization_id: OrgScope,
+) -> Dict[str, Any]:
+    """The saved versions of one output, for Follow-up's "Earlier versions":
+    `{sessionId, kind, entry, versions}`, newest first, each `{id,
+    createdAt, models, current, content}` (`db.list_output_versions`, at most
+    `db.MAX_OUTPUT_VERSIONS`). `current` marks the newest version whose
+    content is the one saved now. Outputs saved before versions were kept
+    (November 2026) have none. Read-only, no model call; another org's
+    session looks missing (`SessionNotFoundError`)."""
+    if kind not in OUTPUT_VERSION_KINDS:
+        raise UnknownOutputKindError(f"There are no saved versions for {kind!r}.")
+    column, keyed_by = OUTPUT_VERSION_KINDS[kind]
+    entry = str((tone if keyed_by == "tone" else language) or "").strip()
+    row = fetch_session_fields(session_id, [column], organization_id=organization_id)
+    if row is None:
+        raise SessionNotFoundError("This session isn't available.")
+    saved = row.get(column) if isinstance(row.get(column), dict) else {}
+    now = saved.get(entry)
+    versions = []
+    current_found = False
+    for version in list_output_versions(session_id, column, entry, organization_id=organization_id):
+        current = not current_found and now is not None and version["content"] == now
+        current_found = current_found or current
+        versions.append(
+            {
+                "id": version["id"],
+                "createdAt": _iso(version["created_at"]),
+                "models": version["models"],
+                "current": current,
+                "content": version["content"],
+            }
+        )
+    return {"sessionId": session_id, "kind": kind, "entry": entry, "versions": _sanitize_json_value(versions)}
 
 
 def get_session_figure_checks(session_id: str, *, organization_id: OrgScope) -> Dict[str, Any]:

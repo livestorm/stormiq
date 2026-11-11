@@ -172,6 +172,7 @@ def backend(monkeypatch):
     monkeypatch.setattr(api_logic, "save_located_decision", fake.save_located_decision)
     monkeypatch.setattr(api_logic, "save_figure_check", fake.save_figure_check)
     monkeypatch.setattr(api_logic, "fetch_figure_checks", lambda session_id, organization_id: {})
+    monkeypatch.setattr(api_logic, "list_output_versions", lambda *args, **kwargs: [])
     # One figure to check, so a figure check has something to answer.
     monkeypatch.setattr(
         api_logic,

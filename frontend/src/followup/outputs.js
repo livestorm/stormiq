@@ -15,8 +15,10 @@ export const LANGUAGES = [
 // item inside a language. Entries that share a `toggle` are one item in the
 // list, switched by a toggle on the output (`toggleLabel`): the Smart
 // Recap's Formal and Hype. `sections`: each top-level section (a post, an
-// email) gets its own Copy. The Deep analysis is off the list for now (the
-// owner's decision, November 2026); its server side stays.
+// email) gets its own Copy. `archived`: an output StormIQ no longer makes,
+// kept readable under "Earlier outputs" when one was saved (the Deep
+// analysis, off the list since November 2026: the owner's decision); it has
+// no flow and no button, and shows in the list only when it exists.
 export const OUTPUTS = [
   {
     key: "overall",
@@ -133,6 +135,16 @@ export const OUTPUTS = [
     bundle: "faqBundle",
     by: "language",
   },
+  {
+    key: "deep",
+    group: "Earlier outputs",
+    label: "Deep analysis",
+    about: "The detailed analysis StormIQ used to write. It is no longer made; this is the one saved for this session.",
+    bundle: "deepAnalysisBundle",
+    by: "language",
+    pdf: { kind: "deep" },
+    archived: true,
+  },
 ];
 
 const BY_KEY = new Map(OUTPUTS.map((output) => [output.key, output]));
@@ -200,6 +212,7 @@ export function outputText(outputs, output, language) {
  * once the English one exists (the server writes the French version from
  * it, as the classic view did). A recap has no language. */
 export function canMake(outputs, output, language) {
+  if (output.archived) return false;
   if (output.by === "tone" || language === "English") return true;
   return Boolean(outputText(outputs, output, "English"));
 }
@@ -207,7 +220,7 @@ export function canMake(outputs, output, language) {
 /** Whether this output is being made now, and its progress (0–100 or
  * null), from the store's loading flag and job slot. */
 export function making(state, output, language) {
-  if (!state?.loading?.[output.flow]) return { busy: false, progress: null };
+  if (!output.flow || !state?.loading?.[output.flow]) return { busy: false, progress: null };
   const job = state.aiJobs?.[JOB_KIND[output.flow]];
   const sameSlot = output.by === "tone" ? !job?.tone || job.tone === output.tone : !job?.language || job.language === language;
   if (!sameSlot) return { busy: false, progress: null };
@@ -241,6 +254,7 @@ export function outputGroups(outputs, language) {
   const groups = [];
   for (const output of OUTPUTS) {
     if (output.corner) continue;
+    if (output.archived && !LANGUAGES.some((option) => outputText(outputs, output, option.value))) continue;
     let group = groups.find((item) => item.name === output.group);
     if (!group) {
       group = { name: output.group, items: [] };
@@ -256,4 +270,74 @@ export function outputGroups(outputs, language) {
     group.items.push({ key: output.key, label: output.label, ready, keys: [output.key], toggle: output.toggle || "" });
   }
   return groups;
+}
+
+// ── Earlier versions (`GET /output-versions`) ──
+
+// The server's kind for each flow (`api_logic.OUTPUT_VERSION_KINDS`).
+const VERSION_KIND = {
+  analysis: "overall",
+  smartRecap: "smart_recap",
+  contentRepurposing: "content",
+  faq: "faq",
+  decisions: "decisions",
+  teamDigest: "team_digest",
+};
+
+/** The query for an output's saved versions, or null for one without:
+ * `{kind, language}`, or `{kind, tone}` for a recap. */
+export function versionsQuery(output, language) {
+  const kind = output.archived && output.key === "deep" ? "deep" : VERSION_KIND[output.flow];
+  if (!kind) return null;
+  return output.by === "tone" ? { kind, tone: output.tone } : { kind, language };
+}
+
+/** One saved version's text, as the output shows it: a repurposing item
+ * from its bundle, a recap cleaned as the classic view did. */
+export function versionText(output, content) {
+  if (output.item) return text(content && typeof content === "object" ? content[output.item] : "");
+  if (output.by === "tone") return cleanRecap(content);
+  return text(typeof content === "string" ? content : "");
+}
+
+const MODEL_NAME = /^claude-([a-z]+)-(\d+)-(\d+)$/;
+
+/** "claude-sonnet-5-5" as "Claude Sonnet 5.5"; another id as it is. */
+export function modelLabel(id) {
+  const found = MODEL_NAME.exec(String(id || ""));
+  if (!found) return String(id || "");
+  return `Claude ${found[1][0].toUpperCase()}${found[1].slice(1)} ${found[2]}.${found[3]}`;
+}
+
+/** When a version was saved, as "14 Oct 2026, 15:02" in the viewer's time. */
+export function versionWhen(iso, locale = "en-GB") {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString(locale, { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+/** The versions to list under an output: every saved one but the one on
+ * screen (`currentText`), newest first, without a repeat of the version
+ * just after it (a content bundle saves its four parts at once, so an item
+ * can be the same across saves) or an empty one. Each `{id, when, models,
+ * text}`. */
+export function earlierVersions(body, output, currentText) {
+  const shown = text(currentText);
+  const out = [];
+  let previous = null;
+  for (const version of body?.versions || []) {
+    const versionBody = versionText(output, version.content);
+    if (!versionBody || versionBody === shown || versionBody === previous) {
+      previous = versionBody || previous;
+      continue;
+    }
+    previous = versionBody;
+    out.push({
+      id: version.id,
+      when: versionWhen(version.createdAt),
+      models: [...new Set((version.models || []).map(modelLabel).filter(Boolean))].join(", "),
+      text: versionBody,
+    });
+  }
+  return out;
 }
