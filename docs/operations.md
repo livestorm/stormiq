@@ -78,7 +78,7 @@ Without this service, shows are made up to their pictures and then wait on "Rend
 
 ### Worker environment
 
-The render worker needs only `DATABASE_URL`, `REDIS_URL` and `ADMIN_EMAILS` (the same value as the web app's: it checks that Surprise me is on for the session's organization, which by default means the admins' organization, `db.fetch_surprise_enabled`). It calls no provider and reads no key; without `ADMIN_EMAILS`, every video of an organization that has no saved Surprise me setting fails with "Surprise me is turned off". Its image sets `HYPERFRAMES_BIN`, `GSAP_JS_PATH`, `FFMPEG_BIN`, `HYPERFRAMES_NO_TELEMETRY` and `DO_NOT_TRACK` itself; don't add AI keys to it.
+The render worker needs only `DATABASE_URL`, `REDIS_URL` and `ADMIN_EMAILS` (the same value as the web app's: it checks that Surprise me is on for the session's organization, which by default means the admins' organization, `db.fetch_surprise_enabled`). It calls no provider and reads no key; without `ADMIN_EMAILS`, every video of an organization that has no saved Surprise me setting fails with "Surprise me is turned off". Its image sets `HYPERFRAMES_BIN`, `GSAP_JS_PATH`, `FFMPEG_BIN`, `HYPERFRAMES_NO_TELEMETRY` and `DO_NOT_TRACK` itself; don't add AI keys to it. On a plan with more than one CPU, set `RENDER_WORKERS` to its CPU count: frames are captured that many at a time.
 
 The worker resolves every credential itself, because job arguments never carry secrets. It needs `DATABASE_URL`, `REDIS_URL`, `GLADIA_KEY`, `CLAUDE_API_KEY` for every text job, `OPENAI_API_KEY` for Surprise me only (its backup voice, its video's word timings and illustrations; without it the timing is estimated and the shots drawn as type), `ELEVENLABS_API_KEY` for its main voice, and `LIVESTORM_OAUTH_CLIENT_ID` / `LIVESTORM_OAUTH_CLIENT_SECRET` to refresh a user's token when a queued transcription or people sync starts close to its expiry. It logs a warning at startup when `GLADIA_KEY` is missing.
 
@@ -102,6 +102,7 @@ TTS_VOICE                     # Optional. Its OpenAI voice when Admin set none (
 
 # Surprise me's render worker (set by docker/Dockerfile.render; locally, see Local development)
 HYPERFRAMES_BIN               # The hyperframes CLI (default "hyperframes"; make render-worker: "npx -y hyperframes@0.9.34")
+RENDER_WORKERS                # Render worker only. Headless Chrome workers capturing frames at once (default 1, at most 4): one per CPU of its plan
 GSAP_JS_PATH                  # gsap.min.js 3.15.0 (default /opt/stormiq-render/node_modules/gsap/dist/gsap.min.js)
 FFMPEG_BIN                    # ffmpeg (default "ffmpeg")
 ORG_DAILY_LLM_BUDGET_USD      # Optional, worker. Daily spend cap per org for automatic text jobs (none exists yet), in

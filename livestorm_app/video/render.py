@@ -9,7 +9,8 @@ process or the main worker.
    pictures as JPEGs. Everything is a local file: the render needs no network.
 2. The pinned `hyperframes` CLI (`HYPERFRAMES_BIN`, 0.9.34 in
    `docker/Dockerfile.render`) renders the silent picture headless at
-   1280x720, 30 fps.
+   1280x720, 24 fps, with `RENDER_WORKERS` capture workers (1 by default:
+   one per CPU of the render worker's plan).
 3. ffmpeg (`FFMPEG_BIN`) mixes the voice, the effects and the jingle and
    muxes the file (`mix.mix_command`).
 
@@ -43,6 +44,7 @@ REPO = HERE.parents[1]
 SORA_FONT = REPO / "frontend" / "public" / "fonts" / "Sora-Variable-latin.woff2"
 MARK_SVG = REPO / "frontend" / "public" / "favicon.svg"
 DEFAULT_GSAP = "/opt/stormiq-render/node_modules/gsap/dist/gsap.min.js"
+MAX_WORKERS = 4
 
 PICTURE_TIMEOUT_S = 16 * 60
 MIX_TIMEOUT_S = 3 * 60
@@ -63,6 +65,17 @@ def hyperframes_command() -> list:
 
 def ffmpeg_binary() -> str:
     return os.environ.get("FFMPEG_BIN", "ffmpeg") or "ffmpeg"
+
+
+def capture_workers() -> int:
+    """`RENDER_WORKERS`: how many headless Chrome workers capture frames at
+    once. One per CPU of the render worker's plan; more only fight over it.
+    1 when unset or not a number, at most `MAX_WORKERS`."""
+    try:
+        wanted = int(str(os.environ.get("RENDER_WORKERS", "1")).strip())
+    except ValueError:
+        return 1
+    return max(1, min(wanted, MAX_WORKERS))
 
 
 def gsap_path() -> Path:
@@ -147,7 +160,7 @@ def render_video(
         _run(run, [
             *hyperframes_command(), "render", str(project), "--output", str(picture),
             "--fps", str(FPS), "--crf", PICTURE_CRF, "--max-bitrate", PICTURE_MAX_BITRATE,
-            "--workers", "1", "--quiet",
+            "--workers", str(capture_workers()), "--quiet",
         ], PICTURE_TIMEOUT_S, "render its pictures", cwd=project)
         if not picture.is_file() or picture.stat().st_size == 0:
             raise RenderFailed("The video could not render its pictures. Please try again.")

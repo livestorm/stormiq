@@ -566,11 +566,25 @@ def test_the_render_writes_a_project_runs_the_pinned_cli_at_720p_then_mixes(gsap
     made = render.render_video(tl, shots, pulse=PULSE, clips=clips, images={1: b"jpeg"}, run=run, on_stage=stages.append)
     assert made["size"] == len(made["mp4"]) and made["duration_s"] == tl["total"]
     picture, sound = calls[0][0], calls[1][0]
-    assert picture[:4] == ["npx", "-y", "hyperframes@0.9.34", "render"] and picture[picture.index("--fps") + 1] == "30"
+    assert picture[:4] == ["npx", "-y", "hyperframes@0.9.34", "render"] and picture[picture.index("--fps") + 1] == "24"
     assert calls[0][1]["timeout"] == render.PICTURE_TIMEOUT_S and calls[0][1]["env"]["HYPERFRAMES_NO_TELEMETRY"] == "1"
     assert sound[0] == "ffmpeg" and "+faststart" in sound and stages == ["mixing"]
     assert {"index.html", "hyperframes.json", "assets/gsap.min.js", "assets/fonts/Sora.woff2",
             "assets/fonts/LeagueGothic.ttf", "assets/img_001.jpg"} <= set(seen["files"])
+
+
+def test_the_capture_workers_follow_render_workers_within_bounds(monkeypatch):
+    monkeypatch.delenv("RENDER_WORKERS", raising=False)
+    assert render.capture_workers() == 1
+    for raw, expected in (("2", 2), (" 3 ", 3), ("0", 1), ("-5", 1), ("99", render.MAX_WORKERS), ("two", 1), ("", 1)):
+        monkeypatch.setenv("RENDER_WORKERS", raw)
+        assert render.capture_workers() == expected, raw
+
+
+def test_the_film_page_is_made_at_the_videos_frame_rate():
+    tl, shots = _film_inputs()
+    page, _effects = film.build_film(tl, shots, pulse=PULSE, images={}, mark_svg="<svg/>", css="")
+    assert f'data-fps="{keys.FPS}"' in page and keys.FPS == 24
 
 
 def test_a_failed_or_slow_render_says_so_without_the_tools_output(gsap, caplog):
