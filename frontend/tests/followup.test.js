@@ -10,8 +10,9 @@ import {
   outputGroups,
   outputText,
   pdfUrl,
+  toggleOptions,
 } from "../src/followup/outputs";
-import { inlineParts, markdownBlocks } from "../src/followup/markdown";
+import { inlineParts, markdownBlocks, markdownSections, plainText } from "../src/followup/markdown";
 
 const outputs = {
   analysisBundle: { English: "## Summary\nIt went well." },
@@ -30,7 +31,6 @@ describe("the Follow-up outputs", () => {
   it("read each output from where the workspace keeps it", () => {
     expect(outputText(outputs, outputFor("overall"), "English")).toBe("## Summary\nIt went well.");
     expect(outputText(outputs, outputFor("overall"), "French")).toBe("");
-    expect(outputText(outputs, outputFor("deep"), "English")).toBe("");
     expect(outputText(outputs, outputFor("email"), "English")).toBe("Hi all,");
     expect(outputText(outputs, outputFor("recap-professional"), "French")).toBe("## Spring launch recap\nThe session, in short.");
     expect(outputText(outputs, outputFor("recap-hype"), "English")).toBe("");
@@ -43,8 +43,8 @@ describe("the Follow-up outputs", () => {
 
   it("let French be written only once the English one exists", () => {
     expect(canMake(outputs, outputFor("overall"), "French")).toBe(true);
-    expect(canMake(outputs, outputFor("deep"), "French")).toBe(false);
-    expect(canMake(outputs, outputFor("deep"), "English")).toBe(true);
+    expect(canMake({}, outputFor("blog"), "French")).toBe(false);
+    expect(canMake({}, outputFor("blog"), "English")).toBe(true);
     expect(canMake({}, outputFor("recap-hype"), "French")).toBe(true);
   });
 
@@ -52,36 +52,66 @@ describe("the Follow-up outputs", () => {
     const state = { loading: { analysis: true }, aiJobs: { overall_analysis: { language: "French", progress: { percent: 42.6 } } } };
     expect(making(state, outputFor("overall"), "French")).toEqual({ busy: true, progress: 43 });
     expect(making(state, outputFor("overall"), "English")).toEqual({ busy: false, progress: null });
-    expect(making(state, outputFor("deep"), "French")).toEqual({ busy: false, progress: null });
+    expect(making(state, outputFor("summary"), "French")).toEqual({ busy: false, progress: null });
     const recap = { loading: { smartRecap: true }, aiJobs: { smart_recap: { tone: "hype" } } };
     expect(making(recap, outputFor("recap-hype"), "English").busy).toBe(true);
     expect(making(recap, outputFor("recap-professional"), "English").busy).toBe(false);
   });
 
   it("point each output at its PDF", () => {
-    expect(pdfUrl(fakeApi, "s1", outputFor("deep"), "French")).toBe("/a/s1/deep/French");
+    expect(pdfUrl(fakeApi, "s1", outputFor("overall"), "French")).toBe("/a/s1/overall/French");
     expect(pdfUrl(fakeApi, "s1", outputFor("recap-surprise"), "English")).toBe("/r/s1/surprise");
     expect(pdfUrl(fakeApi, "s1", outputFor("social"), "English")).toBe("/c/s1/English/social_media");
-    expect(pdfUrl(fakeApi, "", outputFor("deep"), "English")).toBe("");
+    expect(pdfUrl(fakeApi, "", outputFor("overall"), "English")).toBe("");
   });
 
-  it("list every output in its group, marking the ready ones", () => {
+  it("list every output in its group, the recap's two tones as one item", () => {
     const groups = outputGroups(outputs, "English");
-    expect(groups.map((group) => group.name)).toEqual(["Analysis", "Smart Recap", "Repurposing"]);
+    expect(groups.map((group) => group.name)).toEqual(["Analysis", "Repurposing"]);
     // Surprise me sits in its own corner, not in a group.
     expect(CORNER_OUTPUTS.map((output) => output.key)).toEqual(["recap-surprise"]);
-    expect(groups.flatMap((group) => group.items).length).toBe(OUTPUTS.length - CORNER_OUTPUTS.length);
     expect(groups.flatMap((group) => group.items).some((item) => item.key === "recap-surprise")).toBe(false);
     expect(groups[0].items).toEqual([
-      { key: "overall", label: "Overall analysis", ready: true },
-      { key: "deep", label: "Deep analysis", ready: false },
+      { key: "overall", label: "Session analysis", ready: true, keys: ["overall"], toggle: "" },
+      { key: "recap-professional", label: "Smart Recap", ready: true, keys: ["recap-professional", "recap-hype"], toggle: "recap" },
     ]);
+    expect(groups[1].items.map((item) => item.label)).toEqual(["Summary", "Blog post", "Follow-up email", "Social posts"]);
+  });
+
+  it("switch the recap between Formal and Hype, and leave the Deep analysis off the list", () => {
+    expect(toggleOptions(outputFor("recap-hype")).map((item) => [item.key, item.toggleLabel])).toEqual([
+      ["recap-professional", "Formal"],
+      ["recap-hype", "Hype"],
+    ]);
+    expect(toggleOptions(outputFor("overall"))).toEqual([]);
+    expect(OUTPUTS.some((output) => output.key === "deep")).toBe(false);
+    expect(outputFor("deep").key).toBe("overall", "an old link opens the Session analysis");
+    expect(OUTPUTS.filter((output) => output.sections).map((output) => output.key)).toEqual(["email", "social"]);
   });
 
   it("open the first output for an unknown key, and map the old routes", () => {
     expect(outputFor("nope").key).toBe("overall");
     expect(LEGACY_OUTPUTS).toEqual({ analysis: "overall", "smart-recap": "recap-professional", "content-repurposing": "summary" });
     expect(Object.values(LEGACY_OUTPUTS).every((key) => outputFor(key).key === key)).toBe(true);
+  });
+});
+
+describe("the outputs' sections and plain text", () => {
+  const social = "# LinkedIn\nWe walked **70 people** through it.\n\n#SaaS #Webinar\n\n# X / Twitter\nNew dashboard. #SaaS";
+
+  it("cut a post list at its top-level headings", () => {
+    expect(markdownSections(social)).toEqual([
+      { title: "LinkedIn", text: "We walked **70 people** through it.\n\n#SaaS #Webinar" },
+      { title: "X / Twitter", text: "New dashboard. #SaaS" },
+    ]);
+    expect(markdownSections("Intro\n## A\none\n### deeper\ntwo\n## B\nthree").map((s) => s.title)).toEqual(["", "A", "B"]);
+    expect(markdownSections("No headings.")).toEqual([{ title: "", text: "No headings." }]);
+    expect(markdownSections("  ")).toEqual([]);
+  });
+
+  it("copy a part as plain text, without Markdown marks", () => {
+    expect(plainText("We walked **70 people** through it.\n\n#SaaS #Webinar")).toBe("We walked 70 people through it.\n\n#SaaS #Webinar");
+    expect(plainText("Hi,\nthanks.\n\n- one\n- _two_\n\n1. a\n2. b")).toBe("Hi,\nthanks.\n\n• one\n• two\n\n1. a\n2. b");
   });
 });
 

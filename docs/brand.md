@@ -63,6 +63,7 @@ Rules: on light surfaces CTAs and links are Livestorm Blue; on dark surfaces CTA
 | `--siq-text-stat` | 32/40 | stat callouts |
 | `--siq-text-card-title` | 18/24, 500 | card titles |
 | `--siq-text-body` | 18/30 | summaries |
+| `--siq-text-prose` | 16/28, `--siq-prose-weight` (400 light, 350 dark), in `--siq-prose` | AI text read at length (Follow-up's outputs): softer than `--siq-ink`, lighter in dark mode, because Sora at body size in pure white reads as bold |
 | `--siq-text-lead` | 16/24 | lead lines |
 | `--siq-text-ui` | 14/20 | UI text |
 | `--siq-text-small` | 13/18 | labels, sub-lines |

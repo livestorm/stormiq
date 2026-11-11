@@ -4,6 +4,7 @@ What has shipped, newest first. What's next is in [roadmap.md](roadmap.md).
 
 ## November 2026: "StormIQ for Livestorm"
 
+- **Follow-up, easier to read and to use.** AI text is set for reading: 16px in a softer ink, lighter in dark mode, with headings that clearly stand out from the text. "Overall analysis" is now **Session analysis**; the Deep analysis is off the list for now. The Smart Recap is one item with a **Formal · Hype** switch. Each social post, each follow-up email and the subject lines have their own **Copy**, which copies clean text.
 - **Internal sessions read like any other.** The Transcript tab and the question desk show who wrote each message ("Priya S.") on internal sessions too, instead of "Team" everywhere (still never an email, and names never go to a model). The Report's ridge and the Pulse count everyone's chat as the audience's, as the measures already did, so an internal session's ridge is no longer flat.
 - **GIFs in the chat.** A message that is only a GIPHY or Tenor GIF link shows the GIF on the Transcript tab and in the Report's message lists (loaded when scrolled into view, with no referrer). Any other link stays text.
 - **A clearer "Analysing the session".** While the analysis runs, the Report shows its two steps (label the chat, read the transcript) with done, in progress and next marks, a progress bar, how long it has been running, and that it keeps going if you leave the page. The worker reports each step as it starts.

@@ -45,21 +45,27 @@ function tag(level) {
 </template>
 
 <style scoped>
+/* A reading style for AI text: 16px prose in a softer ink (lighter in dark
+   mode), clear steps between headings and text, room between blocks. */
 .md {
   display: flex;
   flex-direction: column;
-  gap: var(--siq-space-3);
-  max-width: 72ch;
-  color: var(--siq-ink);
-  font-size: var(--siq-text-body);
-  line-height: var(--siq-text-body-lh);
+  gap: var(--siq-space-4);
+  max-width: 68ch;
+  color: var(--siq-prose);
+  font-size: var(--siq-text-prose);
+  line-height: var(--siq-text-prose-lh);
+  font-weight: var(--siq-prose-weight);
   overflow-wrap: anywhere;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 .md-h {
-  margin: var(--siq-space-3) 0 0;
+  margin: var(--siq-space-5) 0 calc(var(--siq-space-2) * -1);
   color: var(--siq-ink);
-  font-weight: var(--siq-weight-medium);
+  font-weight: var(--siq-weight-semibold);
+  letter-spacing: -0.005em;
 }
 
 .md-h:first-child {
@@ -67,8 +73,15 @@ function tag(level) {
 }
 
 .md-h1 {
+  padding-top: var(--siq-space-5);
+  box-shadow: inset 0 1px 0 var(--siq-hairline);
   font-size: var(--siq-text-section);
   line-height: var(--siq-text-section-lh);
+}
+
+.md-h1:first-child {
+  padding-top: 0;
+  box-shadow: none;
 }
 
 .md-h2 {
@@ -77,8 +90,11 @@ function tag(level) {
 }
 
 .md-h3 {
-  font-size: var(--siq-text-ui);
-  line-height: var(--siq-text-ui-lh);
+  font-size: var(--siq-text-small);
+  line-height: var(--siq-text-small-lh);
+  text-transform: uppercase;
+  letter-spacing: var(--siq-label-tracking);
+  color: var(--siq-muted);
 }
 
 .md-p {
@@ -88,11 +104,19 @@ function tag(level) {
 
 .md-list {
   margin: 0;
-  padding-left: var(--siq-space-6);
+  padding-left: var(--siq-space-5);
+}
+
+.md-list li {
+  padding-left: var(--siq-space-1);
+}
+
+.md-list li::marker {
+  color: var(--siq-muted);
 }
 
 .md-list li + li {
-  margin-top: var(--siq-space-1);
+  margin-top: var(--siq-space-2);
 }
 
 .md code {
@@ -103,6 +127,13 @@ function tag(level) {
 }
 
 .md strong {
-  font-weight: var(--siq-weight-medium);
+  color: var(--siq-ink);
+  font-weight: var(--siq-weight-semibold);
+}
+
+@media (forced-colors: active) {
+  .md-h1 {
+    border-top: 1px solid CanvasText;
+  }
 }
 </style>
