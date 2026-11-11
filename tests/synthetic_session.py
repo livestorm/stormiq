@@ -62,6 +62,16 @@ CREATED_AT = datetime(2026, 10, 1, 10, 0, tzinfo=timezone.utc)
 RECORD_FIXTURE = REPO_ROOT / "frontend" / "tests" / "fixtures" / "record-v1.json"
 RECORD_CROWD_FIXTURE = REPO_ROOT / "frontend" / "tests" / "fixtures" / "record-v1-crowd.json"
 TRANSCRIPT_FIXTURE = REPO_ROOT / "frontend" / "tests" / "fixtures" / "transcript-v1.json"
+QUESTIONS_FIXTURE = REPO_ROOT / "frontend" / "tests" / "fixtures" / "questions-v1.json"
+
+# How the synthetic chat is labelled for the question desk (`chat_labels`):
+# every message "social", except these (class, question kind).
+CHAT_LABELS = {
+    "What about pricing?": ("question", "content"),
+    "Is there a replay?": ("question", "logistics"),
+    "Can you hear us?": ("tech", None),
+    "Happy to cover pricing later": ("question", "content"),  # a guest speaker's: team, left out
+}
 CLASSIC_SNAPSHOT = REPO_ROOT / "tests" / "fixtures" / "classic-workspace.json"
 
 # Values a v1 record response must never carry: names, emails and their
@@ -694,6 +704,41 @@ def transcript_response(row: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     return _get_json(row, f"/api/sessions/{row['session_id']}/record/transcript")
 
 
+def chat_labels(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Stored labels for `row`'s chat, as `db.fetch_chat_labels` returns
+    them, made from `CHAT_LABELS` (no model call)."""
+    from livestorm_app.record.chat_labels import LABEL_VERSION, chat_hash
+    from livestorm_app.record.inputs import load_record_inputs
+
+    events = load_record_inputs(row).events
+    chat = events[events["kind"] == "chat"]
+    rows = [{**item, "livestorm_id": item["livestorm_id"] or None} for item in chat[["eid", "livestorm_id", "text"]].to_dict("records")]
+    labels = []
+    for item in rows:
+        label_class, question = CHAT_LABELS.get(item["text"], ("social", None))
+        labels.append({"id": item["eid"], "livestorm_id": item["livestorm_id"], "class": label_class, "question": question, "language": "en"})
+    return {
+        "label_version": LABEL_VERSION,
+        "chat_hash": chat_hash(rows),
+        "model": "synthetic-labels",
+        "message_count": len(labels),
+        "labels": labels,
+        "created_at": None,
+    }
+
+
+def question_desk_response(row: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """What `GET /api/sessions/{id}/record/questions` sends for `row`
+    (default: `cached_row()`), its chat labelled by `chat_labels` and no
+    reply saved, through the real route."""
+    from livestorm_app import api_logic
+
+    row = cached_row() if row is None else row
+    labels = chat_labels(row)
+    with mock.patch.object(api_logic, "fetch_chat_labels", lambda session_id, organization_id: labels):
+        return _get_json(row, f"/api/sessions/{row['session_id']}/record/questions")
+
+
 def write_record_fixture() -> None:
     for path, row in ((RECORD_FIXTURE, cached_row()), (RECORD_CROWD_FIXTURE, crowd_row())):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -701,6 +746,8 @@ def write_record_fixture() -> None:
         print(f"wrote {path.relative_to(REPO_ROOT)}")
     TRANSCRIPT_FIXTURE.write_text(dump(transcript_response()), encoding="utf-8")
     print(f"wrote {TRANSCRIPT_FIXTURE.relative_to(REPO_ROOT)}")
+    QUESTIONS_FIXTURE.write_text(dump(question_desk_response()), encoding="utf-8")
+    print(f"wrote {QUESTIONS_FIXTURE.relative_to(REPO_ROOT)}")
 
 
 def write_classic_snapshot() -> None:

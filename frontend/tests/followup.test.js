@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  CORNER_OUTPUTS,
   LEGACY_OUTPUTS,
   OUTPUTS,
   canMake,
@@ -67,7 +68,10 @@ describe("the Follow-up outputs", () => {
   it("list every output in its group, marking the ready ones", () => {
     const groups = outputGroups(outputs, "English");
     expect(groups.map((group) => group.name)).toEqual(["Analysis", "Smart Recap", "Repurposing"]);
-    expect(groups.flatMap((group) => group.items).length).toBe(OUTPUTS.length);
+    // Surprise me sits in its own corner, not in a group.
+    expect(CORNER_OUTPUTS.map((output) => output.key)).toEqual(["recap-surprise"]);
+    expect(groups.flatMap((group) => group.items).length).toBe(OUTPUTS.length - CORNER_OUTPUTS.length);
+    expect(groups.flatMap((group) => group.items).some((item) => item.key === "recap-surprise")).toBe(false);
     expect(groups[0].items).toEqual([
       { key: "overall", label: "Overall analysis", ready: true },
       { key: "deep", label: "Deep analysis", ready: false },

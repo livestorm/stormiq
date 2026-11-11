@@ -57,12 +57,14 @@ export const OUTPUTS = [
   {
     key: "recap-surprise",
     group: "Smart Recap",
-    label: "Recap: surprise me",
-    about: "An unexpected angle that still stays grounded in the transcript.",
+    label: "Surprise me",
+    about: "An unexpected take on the session, still grounded in the transcript. Opt-in, just for fun.",
     flow: "smartRecap",
     bundle: "smartRecapBundle",
     by: "tone",
     tone: "surprise",
+    // In its own small corner of the list, not with the outputs to share.
+    corner: true,
   },
   {
     key: "summary",
@@ -187,11 +189,21 @@ export function pdfUrl(api, sessionId, output, language) {
   return "";
 }
 
+/** The outputs shown in the list's corner (Surprise me), apart from the groups. */
+export const CORNER_OUTPUTS = OUTPUTS.filter((output) => output.corner);
+
+/** Whether an output exists, for the list's "Ready". */
+export function outputReady(outputs, output, language) {
+  return Boolean(outputText(outputs, output, language));
+}
+
 /** The list on the left: groups of `{key, label, ready}`, `ready` when the
- * output exists in `language` (a recap in any). */
+ * output exists in `language` (a recap in any). The corner's outputs are
+ * not in a group (`CORNER_OUTPUTS`). */
 export function outputGroups(outputs, language) {
   const groups = [];
   for (const output of OUTPUTS) {
+    if (output.corner) continue;
     let group = groups.find((item) => item.name === output.group);
     if (!group) {
       group = { name: output.group, items: [] };

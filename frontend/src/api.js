@@ -154,6 +154,18 @@ export const api = {
   getSessionTranscriptView(sessionId, { signal } = {}) {
     return request(sessionPath(sessionId, "/record/transcript"), { signal });
   },
+  // The Follow-up tab's question desk: every audience question and its status.
+  getSessionQuestionDesk(sessionId, { signal } = {}) {
+    return request(sessionPath(sessionId, "/record/questions"), { signal });
+  },
+  // Marks one desk question answered (or not), with an optional reply; returns the desk.
+  saveSessionQuestion(sessionId, { questionId, answered, reply = "" }, { signal } = {}) {
+    return request(sessionPath(sessionId, "/record/questions"), {
+      method: "PUT",
+      body: JSON.stringify({ questionId, answered: Boolean(answered), reply: String(reply ?? "") }),
+      signal,
+    });
+  },
   startSessionAnalysis(sessionId, { signal } = {}) {
     return request(sessionPath(sessionId, "/session-analysis"), { method: "POST", signal });
   },
@@ -172,6 +184,10 @@ export const api = {
   getContentRepurposingPdfUrl(sessionId, language, item) {
     const params = new URLSearchParams({ language, item });
     return `${sessionPath(sessionId, "/content-repurposing-pdf")}?${params.toString()}`;
+  },
+  // The open questions with who asked them (name, company; no email), as CSV.
+  getOpenQuestionsCsvUrl(sessionId) {
+    return sessionPath(sessionId, "/record/questions.csv");
   },
   // Full raw transcript; the workspace payload only carries what the UI renders.
   getTranscriptJsonUrl(sessionId) {
