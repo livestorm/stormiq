@@ -37,11 +37,6 @@ COVER_IMAGE_SIZE = os.getenv("IMAGE_SIZE", "1536x1024")
 COVER_IMAGE_QUALITY = os.getenv("IMAGE_QUALITY", "high")
 
 PROMPTS_DIR = Path("prompts")
-ANALYSIS_BASE_PROMPT_PATH = PROMPTS_DIR / "analysis_base_prompt.txt"
-ANALYSIS_CHAT_PROMPT_PATH = PROMPTS_DIR / "analysis_chat_prompt.txt"
-ANALYSIS_QUESTIONS_PROMPT_PATH = PROMPTS_DIR / "analysis_questions_prompt.txt"
-ANALYSIS_TRANSCRIPT_PROMPT_PATH = PROMPTS_DIR / "analysis_transcript_prompt.txt"
-ANALYSIS_ALL_SOURCES_PROMPT_PATH = PROMPTS_DIR / "analysis_all_sources_prompt.txt"
 ANALYSIS_DEEP_PROMPT_PATH = PROMPTS_DIR / "analysis_deep_prompt.txt"
 CONTENT_REPURPOSE_BUNDLE_PROMPT_PATH = PROMPTS_DIR / "content_repurpose_bundle_prompt.txt"
 SMART_RECAP_PROFESSIONAL_PROMPT_PATH = PROMPTS_DIR / "smart_recap_professional_prompt.txt"
@@ -50,6 +45,7 @@ SMART_RECAP_SURPRISE_PROMPT_PATH = PROMPTS_DIR / "smart_recap_surprise_prompt.tx
 COVER_IMAGE_PROMPT_PATH = PROMPTS_DIR / "cover_image_prompt.txt"
 CHAT_LABELS_PROMPT_PATH = PROMPTS_DIR / "chat_labels.txt"  # v1: ai/chat_labelling.py
 UNDERSTANDING_PROMPT_PATH = PROMPTS_DIR / "understanding.txt"  # v1: ai/understanding.py
+SESSION_ANALYSIS_PROMPT_PATH = PROMPTS_DIR / "session_analysis.txt"  # v1: ai/session_analysis.py
 
 ENV_PATH = Path(".env")
 

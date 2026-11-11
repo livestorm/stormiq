@@ -229,7 +229,8 @@ def test_cost_estimate(model, tokens, micros):
 # ── Recording every answered call ──────────────────────────────────────────
 
 
-CTX = CallContext("overall_analysis", "sess-1", "org-a", "overall_analysis:sess-1:English")
+# A classic output's call (the Deep analysis: a legacy job that retries a cut-off answer once).
+CTX = CallContext("deep_analysis", "sess-1", "org-a", "deep_analysis:sess-1:English")
 
 
 def test_call_llm_records_every_answered_call(http, rows, anthropic):
@@ -245,7 +246,7 @@ def test_call_llm_records_every_answered_call(http, rows, anthropic):
     assert [row["request_id"] for row in rows] == ["req_1", "req_2"]
     row = rows[1]
     assert (row["job_kind"], row["session_id"], row["organization_id"], row["job_id"]) == (
-        "overall_analysis", "sess-1", "org-a", "overall_analysis:sess-1:English",
+        "deep_analysis", "sess-1", "org-a", "deep_analysis:sess-1:English",
     )
     assert (row["provider"], row["model_requested"], row["model_served"]) == ("anthropic", "claude-haiku-4-5-20251001", "claude-haiku-4-5-20251001")
     assert (row["input_tokens"], row["output_tokens"], row["cost_usd_micros"]) == (1200, 300, 2700)
@@ -391,7 +392,7 @@ def test_the_log_line_carries_the_row_and_no_content(http, rows, anthropic, capl
     lines = [record.getMessage() for record in caplog.records if record.getMessage().startswith("llm_usage ")]
     assert len(lines) == 1
     line = lines[0]
-    for part in ("job=overall_analysis", "purpose=main", "org=org-a", "session=sess-1", "model=claude-haiku-4-5-20251001",
+    for part in ("job=deep_analysis", "purpose=main", "org=org-a", "session=sess-1", "model=claude-haiku-4-5-20251001",
                  "stop=end_turn", "outcome=ok", "in=1200", "out=300", "usd=0.002700", "request_id=req_1", "refusal=-"):
         assert part in line, part
     for leaked in ("confidential", "Prompt text", SECRET):
@@ -414,7 +415,7 @@ def test_a_failed_insert_is_logged_and_the_answer_returned(http, anthropic, monk
     assert len(errors) == 1
     message = errors[0].getMessage()
     assert "llm_usage insert failed (UndefinedTable sqlstate=42P01)" in message
-    assert "llm_usage job=overall_analysis" in message and "in=1200" in message
+    assert "llm_usage job=deep_analysis" in message and "in=1200" in message
     assert SECRET not in caplog.text, "the exception's message is never logged"
 
 
@@ -445,7 +446,6 @@ GENERATED_BUNDLE = {"summary": "S", "blog": "B", "email": "E", "social_media": "
 @pytest.mark.parametrize(
     ("run", "dimension", "generator", "kind", "flow"),
     [
-        (api_logic.run_overall_analysis, "English", "analyze_with_openai", "overall_analysis", "overall_analysis"),
         (api_logic.run_overall_analysis, "French", "translate_markdown_with_openai", "translation", "overall_analysis"),
         (api_logic.run_deep_analysis, "English", "analyze_with_openai", "deep_analysis", "deep_analysis"),
         (api_logic.run_deep_analysis, "French", "translate_markdown_with_openai", "translation", "deep_analysis"),

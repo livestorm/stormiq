@@ -35,11 +35,11 @@ The OpenAI rows are unverified until a live check; their `temperature` and token
 
 | Job kind | Used for | Default model (Anthropic · OpenAI) | Effort | Answer tokens |
 |---|---|---|---|---|
-| `overall_analysis` | Overall Analysis | `claude-haiku-4-5-20251001` · `gpt-4o-mini` | low | 2,500 |
+| `overall_analysis` | v1: the Session analysis, over the session's brief | `claude-sonnet-5-5` · none yet | medium | 6,000 |
 | `deep_analysis` | Deep Analysis | `claude-haiku-4-5-20251001` · `gpt-4o-mini` | medium | 5,000 |
 | `smart_recap` | Smart Recap, every tone | `claude-sonnet-4-6` · `gpt-5.4-mini` | low | 900 |
 | `content_repurposing` | Content Repurposing | `claude-haiku-4-5-20251001` · `gpt-4o-mini` | medium | 12,000 |
-| `translation` | the French versions of Overall Analysis, Deep Analysis and Content Repurposing | `claude-haiku-4-5-20251001` · `gpt-4o-mini` | low | 6,000, 8,000 (deep) or 12,000 (content) |
+| `translation` | the French versions of the Session analysis, Deep Analysis and Content Repurposing | `claude-haiku-4-5-20251001` · `gpt-4o-mini` | low | 6,000, 8,000 (deep) or 12,000 (content) |
 | `profile` | v1: the session profile | `claude-haiku-5-5` · none yet | low | 2,000 |
 | `chat_labels` | v1: chat labels, per batch | `claude-haiku-5-5` · none yet | low | 8,000 |
 | `understanding` | v1: the understanding job, one call per session analysis | `claude-sonnet-5-5` · none yet | medium | 32,000 |

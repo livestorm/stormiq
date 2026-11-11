@@ -598,7 +598,6 @@ def test_the_content_bundle_loop_stops_on_a_refusal(http, rows, anthropic, gener
 @pytest.mark.parametrize(
     ("run", "dimension"),
     [
-        (api_logic.run_overall_analysis, "English"),
         (api_logic.run_deep_analysis, "English"),
         (api_logic.run_smart_recap, "hype"),
         (api_logic.run_content_repurposing, "English"),

@@ -148,16 +148,15 @@ Removed in November 2026: the [Report](#measures-v1-report) ("The room", "The qu
 
 Two AI-generated reports, available in **English** or **French**, downloadable as PDF. Both depend on a completed transcript.
 
-### Overall Analysis
+### Session analysis
 
-A concise stakeholder-facing report. Inputs: session payload, chat, questions, transcript.
+The team's read of the session, the day after. Written on a click, once the session has been analysed ("Analyse session", on the Report), from what StormIQ measured and checked: the Report's numbers, the chat's busiest minutes and topics, the chapters, the questions and where the talk answered them, and the transcript. Never with a name. Sections:
+1. What happened
+2. What landed with the audience
+3. Questions
+4. What to do next
 
-Sections:
-1. Executive Summary
-2. Key Themes
-3. Engagement Insights
-4. Risks / Friction Signals
-5. Actionable Recommendations
+Every number is quoted from the Report; the model computes none. Details: [ai-outputs.md](ai-outputs.md#session-analysis).
 
 ### Deep Analysis
 
@@ -292,7 +291,7 @@ All four assets are generated together. English is generated first; French is tr
 | Session payload, people, country, role, attendance distribution, engagement top, chat, questions, contributors, pause types, pause timeline, speaker airtime, speaker turns, words count, speaking segments, utterance duration, cross-source reaction moments | CSV |
 | Full transcript | JSON |
 | Subtitles | SRT (and other formats provided by the transcription engine) |
-| Overall Analysis, Deep Analysis | PDF (per language) |
+| Session analysis, Deep Analysis | PDF (per language) |
 | Smart Recap | PDF (per tone) |
 | Content Repurposing bundle | PDF (per asset, per language) |
 
@@ -307,7 +306,7 @@ Every PDF is headed by the "StormIQ for Livestorm" lockup and ends each page wit
 ## 12. Language support
 
 - **Interface:** English by default; the Analysis and Content Repurposing views switch UI labels when French is selected for their output.
-- **AI outputs:** Overall Analysis, Deep Analysis, and Content Repurposing assets are available in English and French. English is generated first; French is translated from the English version.
+- **AI outputs:** the Session analysis, Deep Analysis, and Content Repurposing assets are available in English and French. English is generated first; French is translated from the English version.
 - **Transcription:** the underlying transcription engine handles many languages; the transcript itself is captured in the spoken language.
 - **Smart Recap:** generated in English.
 

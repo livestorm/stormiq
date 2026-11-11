@@ -151,7 +151,6 @@ def test_empty_recap_is_an_error_not_a_silent_success(runner_backend, monkeypatc
 @pytest.mark.parametrize(
     ("run", "label"),
     [
-        (lambda: api_logic.run_overall_analysis("llm-key", "s1", "English"), "empty overall analysis"),
         (lambda: api_logic.run_deep_analysis("llm-key", "s1", "English"), "empty deep analysis"),
         (lambda: api_logic.run_smart_recap("llm-key", "s1", "hype"), "empty smart recap"),
     ],

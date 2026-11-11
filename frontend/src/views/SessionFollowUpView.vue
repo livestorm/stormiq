@@ -355,7 +355,11 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
         </div>
 
         <div v-else class="f-empty">
-          <p class="f-text">Not written yet. It runs only when you ask, with AI, from the transcript and the chat.</p>
+          <p v-if="output.key === 'overall'" class="f-text">
+            Not written yet. It runs only when you ask, with AI, from what "Analyse session" found and the transcript, so run
+            "Analyse session" on the Report first.
+          </p>
+          <p v-else class="f-text">Not written yet. It runs only when you ask, with AI, from the transcript and the chat.</p>
           <p v-if="output.flow === 'contentRepurposing'" class="f-muted">
             The summary, blog post, follow-up email and social posts are written together.
           </p>

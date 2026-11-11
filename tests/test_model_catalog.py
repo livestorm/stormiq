@@ -17,8 +17,9 @@ from livestorm_app import api_logic, llm_client
 from livestorm_app.ai import jobs, models
 
 ROOT = Path(__file__).resolve().parents[1]
-CLASSIC_KINDS = {"overall_analysis", "deep_analysis", "smart_recap", "content_repurposing", "translation"}
-V1_KINDS = {"profile", "chat_labels", "understanding", "verify_meaning"}
+CLASSIC_KINDS = {"deep_analysis", "smart_recap", "content_repurposing", "translation"}
+# The Session analysis keeps the kind `overall_analysis` (its queue, bundle and PDF) but is a v1 job.
+V1_KINDS = {"profile", "chat_labels", "understanding", "verify_meaning", "overall_analysis"}
 
 # Every id Admin offered or the config defaulted to before the catalog existed.
 IDS_IN_USE_BEFORE_THE_CATALOG = {
@@ -132,7 +133,6 @@ def test_every_default_is_a_catalog_model_offered_for_its_job():
 
 def test_classic_outputs_keep_their_defaults_and_settings():
     expected = {
-        "overall_analysis": ("claude-haiku-4-5-20251001", "gpt-4o-mini", "llm_default_model"),
         "deep_analysis": ("claude-haiku-4-5-20251001", "gpt-4o-mini", "llm_default_model"),
         "content_repurposing": ("claude-haiku-4-5-20251001", "gpt-4o-mini", "llm_default_model"),
         "translation": ("claude-haiku-4-5-20251001", "gpt-4o-mini", "llm_default_model"),
@@ -142,6 +142,16 @@ def test_classic_outputs_keep_their_defaults_and_settings():
         spec = jobs.job_spec(kind)
         assert (spec.default_anthropic, spec.default_openai, spec.legacy_setting) == (anthropic, openai, legacy_key)
     assert all(jobs.job_spec(kind).legacy_setting is None for kind in V1_KINDS)
+
+
+def test_the_session_analysis_is_a_v1_job_on_sonnet(settings):
+    """The Follow-up's Session analysis (kind `overall_analysis`) reads the
+    session's brief on Sonnet 5.5; the classic `llm_default_model` setting
+    no longer picks its model."""
+    spec = jobs.job_spec("overall_analysis")
+    assert (spec.group, spec.default_anthropic, spec.default_openai, spec.layout) == ("v1", "claude-sonnet-5-5", None, "dossier")
+    settings["llm_default_model"] = "claude-haiku-4-5-20251001"
+    assert jobs.resolve_model("overall_analysis", "anthropic").model_id == "claude-sonnet-5-5"
 
 
 @pytest.mark.parametrize(
@@ -179,18 +189,18 @@ def settings(monkeypatch):
 
 
 def test_resolve_order_is_per_job_setting_then_legacy_setting_then_default(settings):
-    choice = jobs.resolve_model("overall_analysis", "anthropic")
+    choice = jobs.resolve_model("deep_analysis", "anthropic")
     assert (choice.model_id, choice.source) == ("claude-haiku-4-5-20251001", "default")
     assert choice.caps is models.catalog_model("claude-haiku-4-5-20251001")
 
     settings["llm_default_model"] = "claude-sonnet-4-6"
-    choice = jobs.resolve_model("overall_analysis", "anthropic")
+    choice = jobs.resolve_model("deep_analysis", "anthropic")
     assert (choice.model_id, choice.source) == ("claude-sonnet-4-6", "legacy_setting")
     # The recap reads its own legacy key.
     assert jobs.resolve_model("smart_recap", "anthropic").source == "default"
 
-    settings["llm_model.anthropic.overall_analysis"] = "claude-opus-4-8"
-    choice = jobs.resolve_model("overall_analysis", "anthropic")
+    settings["llm_model.anthropic.deep_analysis"] = "claude-opus-4-8"
+    choice = jobs.resolve_model("deep_analysis", "anthropic")
     assert (choice.model_id, choice.source) == ("claude-opus-4-8", "setting")
     # Another job still follows the legacy key.
     assert jobs.resolve_model("translation", "anthropic").model_id == "claude-sonnet-4-6"
@@ -253,7 +263,7 @@ def test_resolve_uses_the_active_provider(settings, monkeypatch):
     # an OpenAI setting applies, and a v1 job fails as it does on OpenAI.
     monkeypatch.setattr(llm_client, "get_provider", lambda: "azure")
     settings["llm_default_model"] = "gpt-4o"
-    choice = jobs.resolve_model("overall_analysis")
+    choice = jobs.resolve_model("deep_analysis")
     assert (choice.provider, choice.model_id, choice.source) == ("openai", "gpt-4o", "legacy_setting")
     with pytest.raises(jobs.NoModelForJob, match="No OpenAI model"):
         jobs.resolve_model("understanding")
@@ -266,7 +276,7 @@ def test_an_unreadable_setting_falls_back_to_the_default(monkeypatch):
         raise RuntimeError("database down")
 
     monkeypatch.setattr("livestorm_app.db.get_setting", broken)
-    assert jobs.resolve_model("overall_analysis", "anthropic").model_id == "claude-haiku-4-5-20251001"
+    assert jobs.resolve_model("deep_analysis", "anthropic").model_id == "claude-haiku-4-5-20251001"
 
 
 GENERATED_BUNDLE = {"summary": "S", "blog": "B", "email": "E", "social_media": "M"}
@@ -275,7 +285,6 @@ GENERATED_BUNDLE = {"summary": "S", "blog": "B", "email": "E", "social_media": "
 @pytest.mark.parametrize(
     ("run", "dimension", "generator", "kind"),
     [
-        (api_logic.run_overall_analysis, "English", "analyze_with_openai", "overall_analysis"),
         (api_logic.run_overall_analysis, "French", "translate_markdown_with_openai", "translation"),
         (api_logic.run_deep_analysis, "English", "analyze_with_openai", "deep_analysis"),
         (api_logic.run_deep_analysis, "French", "translate_markdown_with_openai", "translation"),
