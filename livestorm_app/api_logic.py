@@ -21,6 +21,7 @@ from livestorm_app.db import (
     fetch_chat_labels,
     fetch_chat_labels_stamp,
     fetch_figure_checks,
+    fetch_session_faq,
     mark_transcript_job_then_analyse,
     fetch_question_replies,
     fetch_roster_status,
@@ -36,6 +37,7 @@ from livestorm_app.db import (
     merge_cached_bundle_entry,
     prune_surprise_voice_clips,
     save_figure_check,
+    save_session_faq,
     save_located_decision,
     save_question_reply,
     save_surprise_voice_clip,
@@ -1022,6 +1024,132 @@ def get_session_open_questions_csv(session_id: str, *, organization_id: OrgScope
 
     located, _ = _located_answers(session_id, inputs, organization_id=organization_id)
     return questions_csv(inputs, fetch_question_replies(session_id, organization_id), located, scope)
+
+
+# ── The editable FAQ (record/faq_entries.py) ──
+
+
+class FaqInvalidError(ValueError):
+    """The FAQ's entries can't be saved (too many, too long, an unknown
+    source); the message says why, never their text."""
+
+
+def _faq_draft(session_id: str, inputs: Any, row: Mapping[str, Any], *, organization_id: OrgScope) -> List[Dict[str, Any]]:
+    """The FAQ drafted by code from the question desk as it is now
+    (`record.faq_entries.draft_entries`): one entry per desk question, the
+    question and its answer redacted for a public format (`_public_redactor`,
+    with the roster read in the caller's scope). No model call."""
+    from livestorm_app.record.faq_entries import draft_entries
+    from livestorm_app.record.question_desk import desk_keys, question_desk
+
+    saved = fetch_question_replies(session_id, organization_id)
+    located, located_state = _located_answers(session_id, inputs, organization_id=organization_id)
+    desk = question_desk(inputs, saved, located, located_state)
+    redactor = _public_redactor(session_id, row, inputs.roster)
+    # The desk's status as `answered_as`, as the FAQ's brief reads it.
+    questions = [{**q, "answered_as": q["status"]} for q in desk["questions"]]
+    return draft_entries(questions, desk_keys(inputs), redactor.redact)
+
+
+def _faq_state(session_id: str, *, organization_id: OrgScope) -> Tuple[Any, Dict[str, Any], List[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    """(record inputs, session row, the desk's draft, the saved FAQ or None),
+    read with the caller's scope. Raises `SessionNotFoundError`."""
+    inputs, row = _question_desk_inputs(session_id, organization_id=organization_id)
+    draft = _faq_draft(session_id, inputs, row, organization_id=organization_id)
+    from livestorm_app.record.faq_entries import FAQ_LANGUAGE
+
+    return inputs, row, draft, fetch_session_faq(session_id, organization_id, FAQ_LANGUAGE)
+
+
+def get_session_faq(session_id: str, *, organization_id: OrgScope) -> Dict[str, Any]:
+    """The Follow-up tab's editable FAQ: `{sessionId, updatedAt, version,
+    language, saved, entries, deskUpdates, earlier}`. Before the first save
+    the entries are the desk's draft (`saved` false) and nothing is stored;
+    after it, the saved entries with the desk questions answered or added
+    since (`record.faq_entries.desk_updates`). `earlier` is the FAQ the AI
+    wrote before (`faq_bundle`, English), read-only, or None. No model call;
+    another org's session looks missing (`SessionNotFoundError`)."""
+    from livestorm_app.record.faq_entries import FAQ_LANGUAGE, FAQ_VERSION, desk_updates
+
+    _, row, draft, stored = _faq_state(session_id, organization_id=organization_id)
+    bundle_row = fetch_session_fields(session_id, ["faq_bundle"], organization_id=organization_id) or {}
+    bundle = bundle_row.get("faq_bundle") if isinstance(bundle_row.get("faq_bundle"), dict) else {}
+    earlier = str(bundle.get(FAQ_LANGUAGE) or "").strip() or None
+    if stored is None:
+        entries, updates, updated_at = draft, [], None
+    else:
+        entries = stored["entries"]
+        updates = desk_updates(entries, stored["desk_stamp"], draft)
+        updated_at = _iso(stored["updated_at"])
+    body = {
+        "sessionId": session_id,
+        "version": FAQ_VERSION,
+        "language": FAQ_LANGUAGE,
+        "saved": stored is not None,
+        "updatedAt": updated_at,
+        "entries": entries,
+        "deskUpdates": updates,
+        "earlier": {"markdown": earlier} if earlier else None,
+    }
+    return _sanitize_json_value(body)
+
+
+def save_session_faq_entries(
+    session_id: str,
+    entries: Any,
+    *,
+    organization_id: OrgScope,
+    updated_by: Optional[str],
+) -> Dict[str, Any]:
+    """Save the FAQ's entries whole (`record.faq_entries.validate_entries`:
+    `FaqInvalidError` when they can't be), with what the desk looks like
+    now (`desk_stamp`), then return it as `get_session_faq` does. The
+    session must be in the scope (`SessionNotFoundError`); `updated_by` is
+    the caller's Livestorm user id."""
+    from livestorm_app.record.faq_entries import FAQ_LANGUAGE, FaqInvalid, desk_stamp, validate_entries
+
+    try:
+        cleaned = validate_entries(entries)
+    except FaqInvalid as exc:
+        raise FaqInvalidError(str(exc)) from None
+    _, _, draft, stored = _faq_state(session_id, organization_id=organization_id)
+    stamp = desk_stamp(draft, cleaned, (stored or {}).get("desk_stamp"))
+    if not save_session_faq(
+        session_id,
+        organization_id=organization_id,
+        language=FAQ_LANGUAGE,
+        entries=cleaned,
+        desk_stamp=stamp,
+        updated_by=updated_by,
+    ):
+        raise SessionNotFoundError()
+    return get_session_faq(session_id, organization_id=organization_id)
+
+
+FAQ_EXPORT_FORMATS = ("md", "csv", "pdf")
+
+
+def get_session_faq_export(session_id: str, export_format: str, *, organization_id: OrgScope) -> Dict[str, Any]:
+    """The FAQ as saved (or the desk's draft before the first save) as a
+    download: `{filename, content, media_type}`, Markdown, CSV or a PDF with
+    the "StormIQ for Livestorm" lockup and footer. Another org's session
+    looks missing (`SessionNotFoundError`)."""
+    from livestorm_app.record.assemble import session_meta
+    from livestorm_app.record.faq_entries import faq_csv, faq_markdown, faq_title, pdf_body
+
+    if export_format not in FAQ_EXPORT_FORMATS:
+        raise ValueError(f"export_format is one of {FAQ_EXPORT_FORMATS}.")
+    inputs, _, draft, stored = _faq_state(session_id, organization_id=organization_id)
+    entries = stored["entries"] if stored is not None else draft
+    title = session_meta(inputs).get("title") or ""
+    filename = f"stormiq-faq-{session_id}.{export_format}"
+    if export_format == "md":
+        return {"filename": filename, "content": faq_markdown(entries, title).encode("utf-8"), "media_type": "text/markdown; charset=utf-8"}
+    if export_format == "csv":
+        # A BOM, so Excel reads accented text as UTF-8.
+        return {"filename": filename, "content": ("\ufeff" + faq_csv(entries)).encode("utf-8"), "media_type": "text/csv; charset=utf-8"}
+    content = analysis_markdown_to_pdf_bytes(pdf_body(entries), title=faq_title(title), language="English")
+    return {"filename": filename, "content": content, "media_type": "application/pdf"}
 
 
 def get_session_chat_messages(session_id: str, *, organization_id: OrgScope) -> Dict[str, Any]:

@@ -256,6 +256,15 @@ def audience_questions(inputs: Any) -> List[Dict[str, Any]]:
     ]
 
 
+def desk_keys(inputs: Any) -> Dict[str, str]:
+    """Each desk row's id (`Q001`, `C0001`) to its stable key (`saved_key`:
+    source and Livestorm id), for the rows that have one. The editable FAQ
+    (`record.faq_entries`) keeps these keys, which survive a fetch that
+    renumbers the evidence ids."""
+    rows, _ = _desk_rows(inputs, {})
+    return {row["id"]: row["_key"] for row in rows if row["_key"]}
+
+
 def find_question(
     inputs: Any,
     question_id: str,

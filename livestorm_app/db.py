@@ -491,6 +491,7 @@ def ensure_database_schema() -> None:
             _ensure_output_versions_schema(cursor)
             _ensure_org_settings_schema(cursor)
             _ensure_surprise_voice_schema(cursor)
+            _ensure_session_faq_schema(cursor)
         connection.commit()
 
 
@@ -745,6 +746,28 @@ def _ensure_figure_checks_schema(cursor: Any) -> None:
             updated_by  TEXT,
             updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             PRIMARY KEY (session_id, check_key)
+        )
+        """
+    )
+
+
+def _ensure_session_faq_schema(cursor: Any) -> None:
+    """The editable FAQ (`record/faq_entries.py`): the entries the user saved
+    for one session and language, and what the question desk looked like
+    then (`desk_stamp`: each desk id `answered` or `open`), to offer what the
+    desk answered since. References `session_cache` (deleted with it) and has
+    no org column: every read and write joins `session_cache` on its org.
+    `updated_by` is a Livestorm user id, never an email."""
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS session_faq (
+            session_id  TEXT NOT NULL REFERENCES session_cache (session_id) ON DELETE CASCADE,
+            language    TEXT NOT NULL DEFAULT 'English',
+            entries     JSONB NOT NULL,
+            desk_stamp  JSONB,
+            updated_by  TEXT,
+            updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (session_id, language)
         )
         """
     )
@@ -2714,6 +2737,106 @@ def save_figure_check(
     except Exception as exc:
         logger.error("Failed to save a figure check for session_id=%s (%s)", session_id_value, _error_label(exc))
         raise RuntimeError("Could not save the figure check.") from exc
+    return True
+
+
+# ── The editable FAQ (record/faq_entries.py) ──────────────────────────────
+#
+# One row per session and language once the user saved. Reads and writes
+# join `session_cache` on its org, so an out-of-scope session reads nothing
+# and writes nothing.
+
+
+def fetch_session_faq(session_id: str, organization_id: OrgScope, language: str = "English") -> Optional[Dict[str, Any]]:
+    """A session's saved FAQ: `{entries, desk_stamp, updated_by, updated_at}`,
+    or None when it was never saved, the session isn't in the scope, or the
+    scope is blank (never queries). Raises when the database can't be read."""
+    session_id_value = str(session_id or "").strip()
+    language_value = str(language or "").strip() or "English"
+    if not database_enabled() or not session_id_value:
+        return None
+    try:
+        org_filter = _org_filter(organization_id)
+    except ScopeMatchesNothing:
+        return None
+    where_clause = "f.session_id = %s AND f.language = %s" + (" AND c.organization_id = %s" if org_filter is not None else "")
+    params = (session_id_value, language_value) + ((org_filter,) if org_filter is not None else ())
+    with get_db_connection() as connection:
+        row = connection.execute(
+            f"""
+            SELECT f.entries, f.desk_stamp, f.updated_by, f.updated_at
+            FROM session_faq f
+            JOIN session_cache c ON c.session_id = f.session_id
+            WHERE {where_clause}
+            LIMIT 1
+            """,
+            params,
+        ).fetchone()
+    if row is None:
+        return None
+    return {
+        "entries": list(row["entries"] or []),
+        "desk_stamp": dict(row["desk_stamp"] or {}),
+        "updated_by": row["updated_by"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def save_session_faq(
+    session_id: str,
+    *,
+    organization_id: OrgScope,
+    language: str = "English",
+    entries: Sequence[Mapping[str, Any]],
+    desk_stamp: Mapping[str, str],
+    updated_by: Optional[str],
+) -> bool:
+    """Save a session's FAQ whole, replacing the previous one. Written only
+    when the session is in the scope: False when it isn't, or the scope is
+    blank (never queries). `updated_by` is the Livestorm user id, never an
+    email. Raises RuntimeError when the write fails."""
+    session_id_value = str(session_id or "").strip()
+    language_value = str(language or "").strip() or "English"
+    if not session_id_value:
+        raise ValueError("save_session_faq requires a session id.")
+    try:
+        org_filter = _org_filter(organization_id)
+    except ScopeMatchesNothing:
+        return False
+    if not database_enabled():
+        raise RuntimeError("Database is not configured.")
+    scope_clause = " AND c.organization_id = %s" if org_filter is not None else ""
+    scope_params = (org_filter,) if org_filter is not None else ()
+    try:
+        with get_db_connection() as connection:
+            visible = connection.execute(
+                f"SELECT 1 FROM session_cache c WHERE c.session_id = %s{scope_clause} LIMIT 1",
+                (session_id_value,) + scope_params,
+            ).fetchone()
+            if visible is None:
+                return False
+            connection.execute(
+                """
+                INSERT INTO session_faq (session_id, language, entries, desk_stamp, updated_by, updated_at)
+                VALUES (%s, %s, %s::jsonb, %s::jsonb, %s, NOW())
+                ON CONFLICT (session_id, language) DO UPDATE SET
+                    entries = EXCLUDED.entries,
+                    desk_stamp = EXCLUDED.desk_stamp,
+                    updated_by = EXCLUDED.updated_by,
+                    updated_at = NOW()
+                """,
+                (
+                    session_id_value,
+                    language_value,
+                    json.dumps(_without_nul([dict(entry) for entry in entries]), ensure_ascii=False),
+                    json.dumps(_without_nul(dict(desk_stamp or {})), ensure_ascii=False),
+                    str(updated_by or "").strip() or None,
+                ),
+            )
+            connection.commit()
+    except Exception as exc:
+        logger.error("Failed to save the FAQ for session_id=%s (%s)", session_id_value, _error_label(exc))
+        raise RuntimeError("Could not save the FAQ.") from exc
     return True
 
 
