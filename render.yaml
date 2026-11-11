@@ -42,8 +42,10 @@ services:
 
   # Surprise me's video: the render worker (docker/Dockerfile.render). It takes
   # jobs only from the `stormiq:render` queue, one at a time, and needs only
-  # DATABASE_URL (set in the dashboard, linked to the Postgres add-on) and
-  # REDIS_URL: no AI key, it makes no paid call. Headless Chrome plus ffmpeg
+  # DATABASE_URL (set in the dashboard, linked to the Postgres add-on),
+  # REDIS_URL and ADMIN_EMAILS (the same value as the web app's: Surprise me is
+  # on by default for the admins' organization, and the render worker checks
+  # it): no AI key, it makes no paid call. Headless Chrome plus ffmpeg
   # want about 2 GB of RAM: the Standard plan. See docs/operations.md.
   - type: worker
     name: stormiq-render
@@ -57,6 +59,8 @@ services:
           type: keyvalue
           name: stormiq-redis
           property: connectionString
+      - key: ADMIN_EMAILS
+        sync: false
 
   - type: keyvalue
     name: stormiq-redis

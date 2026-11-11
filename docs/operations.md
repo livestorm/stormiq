@@ -78,7 +78,7 @@ Without this service, shows are made up to their pictures and then wait on "Rend
 
 ### Worker environment
 
-The render worker needs only `DATABASE_URL` and `REDIS_URL`: it calls no provider and reads no key. Its image sets `HYPERFRAMES_BIN`, `GSAP_JS_PATH`, `FFMPEG_BIN`, `HYPERFRAMES_NO_TELEMETRY` and `DO_NOT_TRACK` itself; don't add AI keys to it.
+The render worker needs only `DATABASE_URL`, `REDIS_URL` and `ADMIN_EMAILS` (the same value as the web app's: it checks that Surprise me is on for the session's organization, which by default means the admins' organization, `db.fetch_surprise_enabled`). It calls no provider and reads no key; without `ADMIN_EMAILS`, every video of an organization that has no saved Surprise me setting fails with "Surprise me is turned off". Its image sets `HYPERFRAMES_BIN`, `GSAP_JS_PATH`, `FFMPEG_BIN`, `HYPERFRAMES_NO_TELEMETRY` and `DO_NOT_TRACK` itself; don't add AI keys to it.
 
 The worker resolves every credential itself, because job arguments never carry secrets. It needs `DATABASE_URL`, `REDIS_URL`, `GLADIA_KEY`, `CLAUDE_API_KEY` for every text job, `OPENAI_API_KEY` for Surprise me only (its backup voice, its video's word timings and illustrations; without it the timing is estimated and the shots drawn as type), `ELEVENLABS_API_KEY` for its main voice, and `LIVESTORM_OAUTH_CLIENT_ID` / `LIVESTORM_OAUTH_CLIENT_SECRET` to refresh a user's token when a queued transcription or people sync starts close to its expiry. It logs a warning at startup when `GLADIA_KEY` is missing.
 
