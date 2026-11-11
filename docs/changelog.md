@@ -4,6 +4,7 @@ What has shipped, newest first. What's next is in [roadmap.md](roadmap.md).
 
 ## November 2026: "StormIQ for Livestorm"
 
+- **What stood out, in French, with what to do next time.** The findings card has an English · Français switch, for pasting into a report or an email. Each finding ends with a "Next time" tip from a curated library of event craft (wait ten seconds after asking the room something, run a sound check with every speaker, bring the room in every six to eight minutes…), never written by AI.
 - **Clearer findings.** The chapter chart says what it shows (the room's own chat, in messages a minute, against the usual chapter), titles wrap instead of being cut, and sound or connection complaints no longer count as the room's interest: they belong to production friction. A finding no longer says "0 people" when the chat's authors couldn't be matched.
 - **Where the room leaned in.** "What stood out" finds the minutes the audience wrote far more than its usual, on its own (not a reply to a question from the stage, not a wave of greetings), numbers them on the Pulse, and quotes what the speaker was saying at the time when the clock is checked to the second.
 - **Monologues and prompts to the room.** "What stood out" now also finds a long stretch where one speaker talked without bringing the room in while the chat fell off (a band on the Pulse), and the questions from the stage the room answered only after the speaker had moved on, with how long they waited (a triangle under the Pulse's chat for every prompt).
