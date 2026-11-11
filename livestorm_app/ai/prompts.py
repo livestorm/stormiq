@@ -3,13 +3,11 @@ prompts/. The Session analysis has its own (`ai/session_analysis.py`)."""
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 from livestorm_app.config import (
     ANALYSIS_DEEP_PROMPT_PATH,
     CONTENT_REPURPOSE_BUNDLE_PROMPT_PATH,
-    COVER_IMAGE_PROMPT_PATH,
     SMART_RECAP_HYPE_PROMPT_PATH,
     SMART_RECAP_PROFESSIONAL_PROMPT_PATH,
     SMART_RECAP_SURPRISE_PROMPT_PATH,
@@ -53,61 +51,3 @@ def build_smart_recap_prompt(tone: str) -> str:
         "You create short transcript-only session recaps. Return markdown with exactly `# Title` and "
         "`# Description`. Use only the transcript text, avoid outside facts, and match the requested tone."
     )
-
-
-def _extract_recap_title(recap_markdown: str) -> str:
-    """Pull the title line out of a Professional Smart Recap.
-
-    The recap prompt locks the output format to:
-
-        # Title
-        <actual title goes here>
-        # Description
-        <body...>
-
-    This helper finds the first non-empty line *after* a `# Title`
-    header. Falls back to the first H1 line whose content isn't the
-    literal word "title" / "description". Returns "" when nothing
-    sensible is found — caller falls back to a generic placeholder
-    so the image prompt always has something to render.
-    """
-    text = str(recap_markdown or "").strip()
-    if not text:
-        return ""
-    lines = text.replace("\r\n", "\n").split("\n")
-    # Pass 1: find the line right after a `# Title` (or `## Title`) marker.
-    for index, raw in enumerate(lines):
-        line = raw.strip()
-        if not line:
-            continue
-        if re.match(r"^#+\s*title\s*$", line, re.IGNORECASE):
-            for follower in lines[index + 1:]:
-                follower = follower.strip()
-                if not follower:
-                    continue
-                if follower.startswith("#"):
-                    break
-                return follower
-    # Pass 2: first H1 whose content isn't a section marker.
-    for raw in lines:
-        match = re.match(r"^#\s+(.+?)\s*$", raw.strip())
-        if match:
-            candidate = match.group(1).strip()
-            if candidate.lower() not in {"title", "description", "summary"}:
-                return candidate
-    return ""
-
-
-def build_cover_image_prompt(summary_markdown: str) -> str:
-    """Render the cover-image prompt template with the recap title +
-    summary interpolated into the `{title}` and `{summary}` placeholders.
-
-    The template lives in `prompts/cover_image_prompt.txt` — editable
-    without redeploying. The recap's own title is forwarded so the
-    image model has a concrete phrase to render, instead of falling
-    back to a generic "Session Recap" overlay.
-    """
-    template = load_analysis_prompt(COVER_IMAGE_PROMPT_PATH)
-    summary = str(summary_markdown or "").strip() or "(No summary available.)"
-    title = _extract_recap_title(summary_markdown) or "Session Cover"
-    return template.replace("{title}", title).replace("{summary}", summary)

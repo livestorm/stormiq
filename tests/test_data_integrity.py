@@ -610,8 +610,6 @@ def test_rewriting_base_payloads_changes_nothing_else(test_database):
         created_by_email="owner@example.test",
         transcript_payload={"text": "x"},
         analysis_bundle={"English": "EN"},
-        cover_image_bytes=b"png-bytes",
-        cover_image_mime="image/png",
         **_base_payloads(),
     )
     _set_updated_at("sess-a", OLD_UPDATED_AT)

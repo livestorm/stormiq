@@ -2304,10 +2304,7 @@
       "generatedByEmail": "creator@example.test",
       "generatedByName": "Synthetic Creator",
       "generatedAtIso": "2026-10-01T10:00:00+00:00",
-      "generatedAtLabel": "Oct 01, 2026",
-      "hasCoverImage": false,
-      "coverImageMime": "image/png",
-      "coverImageGeneratedAt": ""
+      "generatedAtLabel": "Oct 01, 2026"
     },
     "payloads": {
       "transcript": {

@@ -478,9 +478,6 @@ def cached_row() -> Dict[str, Any]:
         },
         "smart_recap_bundle": {"professional": "# Recap\n\nA synthetic recap."},
         "event_payload": event_payload(),
-        "has_cover_image": False,
-        "cover_image_mime": None,
-        "cover_image_generated_at": None,
         "created_by_user_id": "synthetic-user",
         "created_by_email": "creator@example.test",
         "created_by_name": "Synthetic Creator",
@@ -609,7 +606,7 @@ def crowd_row() -> Dict[str, Any]:
 
 # ── The committed files ─────────────────────────────────────────────────────
 
-DATETIME_COLUMNS = ("created_at", "updated_at", "cover_image_generated_at")
+DATETIME_COLUMNS = ("created_at", "updated_at")
 
 
 def row_to_json(row: Dict[str, Any]) -> Dict[str, Any]:

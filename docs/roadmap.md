@@ -43,7 +43,6 @@ Replace the markdown blob and its regex section parser ([ai-outputs.md](ai-outpu
 - Count what a declined attempt cost when the server-side fallback answers: the usage row's tokens and cost are the answering attempt's alone, and the declined one is only in `usage_raw.iterations`, so the daily budget doesn't count it ([providers.md](providers.md#request-layouts-and-caching)).
 - Record the tokens of an Anthropic stream that fails or passes its deadline after its first event: they may be billed, but the call leaves no `llm_usage` row, so the daily budget doesn't count them ([providers.md](providers.md#the-anthropic-sdk)).
 - Ask the classic content bundle for its JSON with a schema (`llm_client.generate_json`) instead of in the prompt, which would drop the "incomplete JSON" retry ([ai-outputs.md](ai-outputs.md#content-repurposing)).
-- Log the cover image call in `llm_usage` and hold it to the daily budget. The worker already starts it on its own after a Professional Smart Recap, through its own OpenAI Images request ([jobs.md](jobs.md#cover-images)).
 
 ## Maybe later
 

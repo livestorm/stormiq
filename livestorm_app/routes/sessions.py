@@ -1,4 +1,4 @@
-"""One session: cover image, cached workspace, the v1 record, fetches, the transcript job and download, speaker labels, the people sync."""
+"""One session: cached workspace, the v1 record, fetches, the transcript job and download, speaker labels, the people sync."""
 
 from __future__ import annotations
 
@@ -46,9 +46,6 @@ from livestorm_app.auth import (
     Caller,
     get_caller,
 )
-from livestorm_app.db import (
-    fetch_cover_image,
-)
 from livestorm_app.people_sync import (
     PeopleSyncCapReached,
     PeopleSyncUnavailable,
@@ -69,35 +66,6 @@ from livestorm_app.routes.models import (
 router = APIRouter()
 
 _UNSAFE_FILENAME = re.compile(r"[^A-Za-z0-9._-]+")
-
-
-@router.get("/api/sessions/{session_id}/cover.png")
-def get_session_cover_image(session_id: SessionId, caller: Caller = Depends(get_caller)) -> Response:
-    """Serve the OpenAI-generated cover image for the workspace card grid.
-
-    BYTEA columns stay out of `/api/workspace-sessions` so that endpoint
-    is small (no 50× 2 MB payloads). The card looks up `hasCoverImage`
-    there and renders `<img src=".../cover.png">` only when true.
-
-    Org-scoped like every session route. Returns 404 with a small JSON body
-    when the row has no cover yet or isn't visible to the caller (the
-    frontend falls back to the placeholder gradient).
-    """
-    try:
-        cover = fetch_cover_image(session_id, organization_id=caller.read_scope)
-        if not isinstance(cover, dict) or not cover.get("bytes"):
-            return JSONResponse({"message": "Cover image not available."}, status_code=404)
-        # Browser-only cache (`private`): the image is org-scoped, so shared
-        # caches must not store it. The bytes don't change until the worker
-        # rewrites the row; after a regeneration the user can hard-refresh.
-        headers = {
-            "Cache-Control": "private, max-age=86400",
-            "Content-Type": cover.get("mime", "image/png"),
-        }
-        return Response(content=cover["bytes"], media_type=headers["Content-Type"], headers=headers)
-    except Exception:
-        logger.exception("Cover image route failed for session_id=%s", session_id)
-        return JSONResponse({"message": "Cover image lookup failed."}, status_code=500)
 
 
 @router.get("/api/sessions/{session_id}")

@@ -118,15 +118,13 @@ def admin_get_settings(_caller: Caller = Depends(require_admin)) -> Dict[str, An
     return {"settings": get_all_settings()}
 
 
-# Settings saved as given (non-empty). `image_model` is sent as saved, except
-# that an empty or retired id becomes gpt-image-2
-# (cover_image.resolve_image_model). There is no `llm_provider` any more:
+# Settings saved as given (non-empty). There is no `llm_provider` any more:
 # every text job runs on Claude. Surprise me's voice: `voice_provider` is
 # `elevenlabs` (the main voice, OpenAI its backup) or `openai`
 # (`surprise_voice.VOICE_PROVIDERS`); `elevenlabs_voice` is an ElevenLabs
 # voice id (`voice_elevenlabs.VOICE_ID_PATTERN`); `tts_voice` must be one of
 # the voices gpt-4o-mini-tts offers (`surprise_voice.TTS_VOICES`).
-_PLAIN_SETTING_KEYS = {"image_model", "tts_voice", "voice_provider", "elevenlabs_voice"}
+_PLAIN_SETTING_KEYS = {"tts_voice", "voice_provider", "elevenlabs_voice"}
 
 
 @router.post("/api/admin/settings")
