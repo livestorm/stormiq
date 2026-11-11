@@ -233,6 +233,7 @@ def test_finished_ai_job_poll_can_return_only_the_outputs(monkeypatch):
             "deepAnalysisBundle": {},
             "contentRepurposeBundle": {},
             "smartRecapBundle": {"hype": "# Hype"},
+            "faqBundle": {},
         },
     }
     with pytest.raises(api_logic.SessionNotFoundError):

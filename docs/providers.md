@@ -36,6 +36,7 @@ The OpenAI rows are unverified until a live check; their `temperature` and token
 | Job kind | Used for | Default model (Anthropic · OpenAI) | Effort | Answer tokens |
 |---|---|---|---|---|
 | `overall_analysis` | v1: the Session analysis, over the session's brief | `claude-sonnet-5-5` · none yet | medium | 6,000 |
+| `faq` | v1: the FAQ, over the question desk | `claude-haiku-5-5` · none yet | low | 4,000 |
 | `deep_analysis` | Deep Analysis | `claude-haiku-4-5-20251001` · `gpt-4o-mini` | medium | 5,000 |
 | `smart_recap` | Smart Recap, every tone | `claude-sonnet-4-6` · `gpt-5.4-mini` | low | 900 |
 | `content_repurposing` | Content Repurposing | `claude-haiku-4-5-20251001` · `gpt-4o-mini` | medium | 12,000 |

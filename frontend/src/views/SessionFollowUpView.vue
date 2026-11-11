@@ -128,6 +128,7 @@ function make() {
   const lang = language.value;
   const run = {
     analysis: () => store.runAnalysis(lang),
+    faq: () => store.runFaq(lang),
     smartRecap: () => store.runSmartRecap(tone),
     contentRepurposing: () => store.runContentRepurposing(lang),
   }[flow];
@@ -136,6 +137,7 @@ function make() {
 
 const makeLabel = computed(() => {
   if (output.value.corner) return "Write a surprise take";
+  if (output.value.key === "faq") return `Write the FAQ${language.value === "French" ? " in French" : ""}`;
   if (output.value.flow === "contentRepurposing") return `Write the repurposed content${language.value === "French" ? " in French" : ""}`;
   return `Write the ${output.value.label.toLowerCase()}${output.value.by === "language" && language.value === "French" ? " in French" : ""}`;
 });
@@ -272,7 +274,7 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
 
       <p v-else-if="loading" class="f-muted" role="status">Loading the session…</p>
 
-      <Card v-else-if="workspace && !hasTranscript" class="f-output">
+      <Card v-else-if="workspace && !hasTranscript && output.key !== 'faq'" class="f-output">
         <CardHeader icon="file-text" title="This one is written from the transcript" :level="2" />
         <p class="f-text">This session has no transcript yet. Make it on the Transcript tab, then come back to write it.</p>
         <div class="f-row">
@@ -370,6 +372,11 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
           <p v-if="output.key === 'overall'" class="f-text">
             Not written yet. It runs only when you ask, with AI, from what "Analyse session" found and the transcript, so run
             "Analyse session" on the Report first.
+          </p>
+          <p v-else-if="output.key === 'faq'" class="f-text">
+            Not written yet. It runs only when you ask, with AI, from the question desk: every question with its answer
+            (written, from the host, or from the talk), and the ones still open. Who asked is never sent. Run "Analyse
+            session" on the Report first.
           </p>
           <p v-else class="f-text">Not written yet. It runs only when you ask, with AI, from the transcript and the chat.</p>
           <p v-if="output.flow === 'contentRepurposing'" class="f-muted">

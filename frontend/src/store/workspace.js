@@ -5,6 +5,7 @@ function emptyAiJobs() {
   return {
     transcript: null,
     overall_analysis: null,
+    faq: null,
     deep_analysis: null,
     smart_recap: null,
     content_repurposing: null,
@@ -48,6 +49,7 @@ const state = reactive({
     eventSessions: false,
     sessionFetch: false,
     analysis: false,
+    faq: false,
     deepAnalysis: false,
     smartRecap: false,
     contentRepurposing: false,
@@ -756,6 +758,17 @@ async function runAnalysis(outputLanguage = state.outputLanguage) {
   });
 }
 
+async function runFaq(outputLanguage = state.outputLanguage) {
+  await runAiFlow({
+    flag: "faq",
+    jobKind: "faq",
+    flow: "faq",
+    start: (id, signal) => api.runFaq(id, { apiKey: state.apiKey, outputLanguage }, { signal }),
+    query: { language: outputLanguage },
+    slot: { language: outputLanguage },
+  });
+}
+
 async function runDeepAnalysis(outputLanguage = state.outputLanguage) {
   await runAiFlow({
     flag: "deepAnalysis",
@@ -860,6 +873,7 @@ export function useWorkspace() {
     resetWorkspace,
     saveSpeakerLabels,
     runAnalysis,
+    runFaq,
     runDeepAnalysis,
     runSmartRecap,
     runContentRepurposing,
