@@ -34,7 +34,7 @@ const view = computed(() => momentsView(props.moments.body));
       <p v-if="view.empty" class="km-note">{{ view.empty }}</p>
 
       <ol v-if="view.moments.length" class="km-list">
-        <li v-for="moment in view.moments" :key="moment.n" class="km-item">
+        <li v-for="moment in view.moments" :id="`key-moment-${moment.n}`" :key="moment.n" class="km-item">
           <div class="km-head">
             <span class="km-n" aria-hidden="true">{{ moment.n }}</span>
             <span class="km-when">{{ moment.when }}</span>
