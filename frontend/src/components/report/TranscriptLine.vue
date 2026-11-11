@@ -25,6 +25,7 @@ defineProps({
     v-else
     class="tl"
     :class="[line.kind === 'speech' ? 'tl-speech' : 'tl-room', `tl-${line.kind}`, { 'tl-flat': flat, 'tl-team': line.team }]"
+    :style="line.kind === 'speech' ? { '--tl-speaker': `var(--siq-speaker-${line.tone || 1})` } : undefined"
   >
     <span class="tl-time">
       {{ line.time }}<span v-if="line.timeIsRecording" class="siq-sr-only"> into the recording</span>
@@ -116,9 +117,32 @@ defineProps({
   white-space: pre-line;
 }
 
+/* Speech: the reading style (as Follow-up's text), and the speaker's colour
+   on the name and on a bar that runs down their stretch of lines. */
+.tl-speech {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.tl-speech .tl-time {
+  padding-top: calc(var(--siq-space-2) + 4px);
+}
+
+.tl-speech .tl-body {
+  padding: var(--siq-space-2) 0 var(--siq-space-2) var(--siq-space-3);
+  box-shadow: inset 3px 0 0 var(--tl-speaker, var(--siq-border));
+}
+
+.tl-speech .tl-name {
+  color: var(--tl-speaker, var(--siq-ink));
+  font-weight: var(--siq-weight-semibold);
+}
+
 .tl-speech .tl-text {
-  font-size: var(--siq-text-body);
-  line-height: var(--siq-text-body-lh);
+  font-size: var(--siq-text-prose);
+  line-height: var(--siq-text-prose-lh);
+  font-weight: var(--siq-prose-weight);
+  color: var(--siq-prose);
 }
 
 /* The room's lines: indented, with a rule in their series colour. */
@@ -171,7 +195,8 @@ defineProps({
 }
 
 @media (forced-colors: active) {
-  .tl-room .tl-body {
+  .tl-room .tl-body,
+  .tl-speech .tl-body {
     border-left: 2px solid CanvasText;
   }
   .tl-chapter {

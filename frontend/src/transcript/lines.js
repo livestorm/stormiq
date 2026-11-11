@@ -15,6 +15,10 @@ export const VIEWS = [
 
 const KIND_WORDS = { chat: "Chat", question: "Q&A", answer: "Answer" };
 
+// Speakers take a colour each, in order of first appearance, from this many
+// (`--siq-speaker-1` … in tokens.css); a seventh speaker reuses the first.
+export const SPEAKER_TONES = 6;
+
 function text(value) {
   return String(value ?? "").trim();
 }
@@ -25,10 +29,18 @@ function speakerNames(body) {
   return names;
 }
 
-/** A speech line, worded: `{id, kind: "speech", t, time, who, text, parts}`.
- * `time` is the session time when the server placed it, else the recording
- * time, marked as such (`timeIsRecording`). */
-function speechLine(line, names) {
+/** Each speaker's colour, 1 to `SPEAKER_TONES`, in the server's order. */
+function speakerTones(body) {
+  const tones = new Map();
+  (body?.speakers || []).forEach((speaker, index) => tones.set(speaker.key ?? null, (index % SPEAKER_TONES) + 1));
+  return tones;
+}
+
+/** A speech line, worded: `{id, kind: "speech", t, time, who, tone, text,
+ * parts}`. `time` is the session time when the server placed it, else the
+ * recording time, marked as such (`timeIsRecording`); `tone` is the
+ * speaker's colour. */
+function speechLine(line, names, tones) {
   const onClock = typeof line.t === "number";
   return {
     id: line.id,
@@ -37,6 +49,7 @@ function speechLine(line, names) {
     time: onClock ? clockLabel(line.t) : clockLabel(line.r),
     timeIsRecording: !onClock,
     who: names.get(line.speaker ?? null) || "Speaker",
+    tone: tones.get(line.speaker ?? null) || 1,
     speaker: line.speaker ?? null,
     text: line.text,
     parts: textParts(line.text, line.unclear),
@@ -150,6 +163,21 @@ function withChapters(lines, body, speechOrder, { byTime }) {
   return out;
 }
 
+/** The room's authors, most messages first (then by name): `[{name,
+ * count}]`, for the author filter. "Team" and "Attendee" (authors the
+ * people list couldn't name) are kept, last. */
+export function authorsOf(body) {
+  const counts = new Map();
+  for (const line of body?.room || []) {
+    const who = text(line.author) || "Attendee";
+    counts.set(who, (counts.get(who) || 0) + 1);
+  }
+  const generic = (name) => (name === "Team" || name === "Attendee" ? 1 : 0);
+  return [...counts]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => generic(a.name) - generic(b.name) || b.count - a.count || a.name.localeCompare(b.name));
+}
+
 /** What the page shows: `{interleaved, lines, speech, room, counts}`.
  *
  * Chapter headings (`kind: "chapter"`, from the server's `chapters`) sit
@@ -164,19 +192,28 @@ function withChapters(lines, body, speechOrder, { byTime }) {
  *
  * `view` keeps speech, the room or both; `query` keeps lines whose text or
  * author has it (case-insensitive); `speaker` keeps one speaker's lines (the
- * room's lines go when a speaker is picked). */
-export function transcriptLines(body, { view = "all", query = "", speaker = undefined } = {}) {
+ * room's lines go when a speaker is picked); `author` keeps one author's
+ * room lines (speech goes when an author is picked); `roomQuery` searches
+ * the room's lines only (the chat column's own search). */
+export function transcriptLines(body, { view = "all", query = "", speaker = undefined, author = undefined, roomQuery = "" } = {}) {
   const names = speakerNames(body);
+  const tones = speakerTones(body);
   const needle = text(query).toLowerCase();
-  const wantSpeech = view !== "room";
+  const roomNeedle = text(roomQuery).toLowerCase();
+  const wantSpeech = view !== "room" && author === undefined;
   const wantRoom = view !== "speech" && speaker === undefined;
   const speech = wantSpeech
     ? (body?.speech || [])
-        .map((line) => speechLine(line, names))
+        .map((line) => speechLine(line, names, tones))
         .filter((line) => speaker === undefined || line.speaker === speaker)
         .filter((line) => matches(line, needle))
     : [];
-  const room = wantRoom ? (body?.room || []).map(roomLine).filter((line) => matches(line, needle)) : [];
+  const room = wantRoom
+    ? (body?.room || [])
+        .map(roomLine)
+        .filter((line) => author === undefined || line.who === author)
+        .filter((line) => matches(line, needle) && matches(line, roomNeedle))
+    : [];
   const interleaved = Boolean(body?.clock?.interleave);
   const counts = { speech: speech.length, room: room.length };
   const speechOrder = new Map((body?.speech || []).map((line, i) => [line.id, i]));
@@ -227,11 +264,13 @@ export function subtitles(body) {
     .join("\n");
 }
 
-/** The speakers to name, in order: `{key, name, named}`. */
+/** The speakers to name and filter by, in order: `{key, name, named,
+ * tone}` (`tone`: their colour, as on their lines). */
 export function speakersOf(body) {
-  return (body?.speakers || []).map((speaker) => ({
+  return (body?.speakers || []).map((speaker, index) => ({
     key: speaker.key ?? null,
     name: text(speaker.name),
     named: Boolean(speaker.named),
+    tone: (index % SPEAKER_TONES) + 1,
   }));
 }
