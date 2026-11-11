@@ -641,23 +641,42 @@ def get_session_findings(session_id: str, *, organization_id: OrgScope) -> Dict[
     reading's, `ready`, `stale` or `none`). No model call; read on demand
     with the caller's scope and not cached."""
     inputs, row = _transcript_inputs(session_id, organization_id=organization_id)
-    from livestorm_app.record.findings import findings
-    from livestorm_app.record.understanding import chapter_list, current_reading
+    body, _ = _findings_and_desk(session_id, inputs, organization_id=organization_id)
+    return {"sessionId": session_id, "updatedAt": row.get("updated_at"), **_sanitize_json_value(body)}
 
+
+def _findings_and_desk(session_id: str, inputs: Any, *, organization_id: OrgScope) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """The findings' body (`{state, version, found, nothing, notChecked}`)
+    and the question desk's summary, from one set of record inputs. The
+    desk's statuses feed the findings (#5 compares what was asked with what
+    was answered) only while the reading is current."""
+    from livestorm_app.record.findings import findings
     from livestorm_app.record.question_desk import question_desk
-    from livestorm_app.record.understanding import located_answers
+    from livestorm_app.record.understanding import chapter_list, current_reading, located_answers
 
     stored = fetch_understanding(session_id, organization_id)
     result, state, _ = current_reading(stored, inputs)
     chapters, _ = chapter_list(stored, inputs)
-    # Each question's status, as the desk shows it (#5 compares what was
-    # asked with what was answered), only while the reading is current.
-    statuses = None
-    if state == "ready":
-        located, located_state = located_answers(stored, inputs)
-        desk = question_desk(inputs, fetch_question_replies(session_id, organization_id), located, located_state)
-        statuses = {str(q["id"]): str(q["status"]) for q in desk["questions"]}
-    body = {"state": state, **findings(inputs, chapters, result, statuses)}
+    located, located_state = located_answers(stored, inputs)
+    desk = question_desk(inputs, fetch_question_replies(session_id, organization_id), located, located_state)
+    statuses = {str(q["id"]): str(q["status"]) for q in desk["questions"]} if state == "ready" else None
+    return {"state": state, **findings(inputs, chapters, result, statuses)}, desk["summary"]
+
+
+def get_session_library_row(session_id: str, *, organization_id: OrgScope) -> Dict[str, Any]:
+    """One session as a row of the Sessions library: `{sessionId, updatedAt,
+    version, sparkline, peak, attendees, wrote, questions, stillOpen, lead,
+    analysed}` (`record.library.library_row`), from the record (cached, as
+    the Report reads it), the findings and the question desk. No model call;
+    read on demand with the caller's scope, one row at a time as the list
+    scrolls. A row that is missing or outside the scope raises
+    `SessionNotFoundError`."""
+    record = get_session_record(session_id, organization_id=organization_id)
+    inputs, row = _transcript_inputs(session_id, organization_id=organization_id)
+    from livestorm_app.record.library import library_row
+
+    found, desk_summary = _findings_and_desk(session_id, inputs, organization_id=organization_id)
+    body = library_row(record.get("record") or {}, found, desk_summary)
     return {"sessionId": session_id, "updatedAt": row.get("updated_at"), **_sanitize_json_value(body)}
 
 

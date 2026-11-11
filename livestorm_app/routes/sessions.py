@@ -24,6 +24,7 @@ from livestorm_app.api_logic import (
     save_session_figure_check,
     get_session_chapters,
     get_session_findings,
+    get_session_library_row,
     get_session_chat_messages,
     get_session_open_questions_csv,
     get_session_question_desk,
@@ -203,6 +204,22 @@ def session_findings(session_id: SessionId, caller: Caller = Depends(get_caller)
         logger.exception("Session findings failed for session_id=%s", session_id)
         raise HTTPException(
             status_code=500, detail={"resource": "Session findings", "message": "The findings could not be read."}
+        ) from exc
+
+
+@router.get("/api/sessions/{session_id}/record/library")
+def session_library_row(session_id: SessionId, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
+    """One session as a row of the Sessions library: its sparkline, the
+    audience's numbers, the questions still open and the lead finding
+    (`api_logic.get_session_library_row`). No model call."""
+    try:
+        return get_session_library_row(session_id, organization_id=caller.read_scope)
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail={"resource": "Session library", "message": str(exc)}) from exc
+    except Exception as exc:
+        logger.exception("Session library row failed for session_id=%s", session_id)
+        raise HTTPException(
+            status_code=500, detail={"resource": "Session library", "message": "This session's summary could not be read."}
         ) from exc
 
 
