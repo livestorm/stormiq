@@ -481,6 +481,9 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
 }
 
 .f-items {
+  display: flex;
+  flex-direction: column;
+  gap: var(--siq-space-1);
   margin: 0;
   padding: 0;
   list-style: none;
