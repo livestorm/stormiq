@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import MarkdownBlocks from "../components/report/MarkdownBlocks.vue";
+import QuestionDesk from "../components/report/QuestionDesk.vue";
 import SessionTabs from "../components/report/SessionTabs.vue";
 import Card from "../components/ui/Card.vue";
 import CardHeader from "../components/ui/CardHeader.vue";
@@ -9,17 +10,31 @@ import Icon from "../components/ui/Icon.vue";
 import StatusWord from "../components/ui/StatusWord.vue";
 import UiButton from "../components/ui/UiButton.vue";
 import { api } from "../api";
-import { LANGUAGES, OUTPUTS, canMake, making, outputFor, outputGroups, outputText, pdfUrl } from "../followup/outputs";
+import {
+  CORNER_OUTPUTS,
+  LANGUAGES,
+  OUTPUTS,
+  canMake,
+  making,
+  outputFor,
+  outputGroups,
+  outputReady,
+  outputText,
+  pdfUrl,
+} from "../followup/outputs";
+import { createQuestionDesk } from "../followup/useQuestionDesk";
 import { formatLength, formatSessionStart } from "../report/format";
 import { createSessionReport } from "../report/useSessionReport";
 import { useWorkspace } from "../store/workspace";
 
-// The Follow-up tab: the session's AI outputs (Analysis, Smart Recap,
-// Repurposing) on one page, each written only when the user clicks. They live
-// in the classic workspace, so the page loads it through the store
-// (`loadSessionById`) and makes them with the store's AI flows, which keep
-// their scope, poll and save rules. The header reads the record, as the
-// Report does. Model text is rendered as text (`MarkdownBlocks`).
+// The Follow-up tab. It opens on the question desk (every audience question,
+// marked answered here, the open ones as a CSV), which reads the record's
+// routes and needs no transcript. Then the session's AI outputs (Analysis,
+// Smart Recap, Repurposing, and Surprise me in its corner), each written only
+// when the user clicks. They live in the classic workspace, so the page loads
+// it through the store (`loadSessionById`) and makes them with the store's AI
+// flows, which keep their scope, poll and save rules. The header reads the
+// record, as the Report does. Model text is rendered as text (`MarkdownBlocks`).
 
 const props = defineProps({
   sessionId: { type: String, required: true },
@@ -30,16 +45,26 @@ const router = useRouter();
 const store = useWorkspace();
 const { state } = store;
 const report = createSessionReport();
+const desk = createQuestionDesk();
 
 watch(
   () => props.sessionId,
   (id) => {
     report.open(id);
+    desk.open(id);
     store.loadSessionById(id).catch(() => {});
   },
   { immediate: true },
 );
-onBeforeUnmount(() => report.close());
+onBeforeUnmount(() => {
+  report.close();
+  desk.close();
+});
+
+const DESK = "desk";
+const onDesk = computed(() => !route.query.output || route.query.output === DESK);
+const openCount = computed(() => desk.state.body?.summary?.open ?? null);
+const csvUrl = computed(() => api.getOpenQuestionsCsvUrl(props.sessionId));
 
 // ── The header ──
 const record = computed(() => report.state.record);
@@ -59,10 +84,14 @@ const output = computed(() => outputFor(String(route.query.output || "")));
 const language = computed(() => (route.query.lang === "French" ? "French" : "English"));
 
 function show(key, lang = language.value) {
-  router.replace({ query: { ...route.query, output: key, lang: lang === "French" ? "French" : undefined } });
+  const french = key !== DESK && lang === "French";
+  router.replace({ query: { ...route.query, output: key, lang: french ? "French" : undefined } });
 }
 
 const groups = computed(() => outputGroups(outputs.value, language.value));
+const corner = computed(() =>
+  CORNER_OUTPUTS.map((item) => ({ key: item.key, label: item.label, ready: outputReady(outputs.value, item, language.value) })),
+);
 const body = computed(() => outputText(outputs.value, output.value, language.value));
 const busy = computed(() => making(state, output.value, language.value));
 const allowed = computed(() => canMake(outputs.value, output.value, language.value));
@@ -82,6 +111,7 @@ function make() {
 }
 
 const makeLabel = computed(() => {
+  if (output.value.corner) return "Write a surprise take";
   if (output.value.flow === "contentRepurposing") return `Write the repurposed content${language.value === "French" ? " in French" : ""}`;
   return `Write the ${output.value.label.toLowerCase()}${output.value.by === "language" && language.value === "French" ? " in French" : ""}`;
 });
@@ -124,31 +154,44 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
 
     <SessionTabs :session-id="sessionId" current="follow-up" />
 
-    <p v-if="loading" class="f-muted" role="status">Loading the session…</p>
-
-    <Card v-else-if="workspace && !hasTranscript">
-      <CardHeader icon="file-text" title="These are written from the transcript" :level="2" />
-      <p class="f-text">This session has no transcript yet. Make it on the Transcript tab, then come back to write the follow-up.</p>
-      <div class="f-row">
-        <UiButton variant="primary" icon-right="chevron-right" :to="`/sessions/${encodeURIComponent(sessionId)}/transcript`">
-          Open the Transcript
-        </UiButton>
-      </div>
-    </Card>
-
-    <div v-else-if="workspace" class="f-layout">
-      <nav class="f-nav" aria-label="Outputs">
+    <div class="f-layout">
+      <nav class="f-nav" aria-label="Follow-up">
         <label class="f-pick">
-          <span class="siq-sr-only">Output</span>
-          <select class="f-input f-select" :value="output.key" @change="show($event.target.value)">
+          <span class="siq-sr-only">Show</span>
+          <select class="f-input f-select" :value="onDesk ? DESK : output.key" @change="show($event.target.value)">
+            <optgroup label="Questions">
+              <option :value="DESK">Question desk{{ openCount ? ` · ${openCount} open` : "" }}</option>
+            </optgroup>
             <optgroup v-for="group in groups" :key="group.name" :label="group.name">
               <option v-for="item in group.items" :key="item.key" :value="item.key">
+                {{ item.label }}{{ item.ready ? " · ready" : "" }}
+              </option>
+            </optgroup>
+            <optgroup label="Just for fun">
+              <option v-for="item in corner" :key="item.key" :value="item.key">
                 {{ item.label }}{{ item.ready ? " · ready" : "" }}
               </option>
             </optgroup>
           </select>
           <Icon name="chevron-down" :size="16" class="f-select-icon" />
         </label>
+        <div class="f-group">
+          <h2 class="f-group-name">Questions</h2>
+          <ul class="f-items">
+            <li>
+              <button
+                type="button"
+                class="f-item siq-fx"
+                :class="{ 'is-current': onDesk }"
+                :aria-current="onDesk ? 'true' : undefined"
+                @click="show(DESK)"
+              >
+                <span>Question desk</span>
+                <span v-if="openCount" class="f-badge">{{ openCount }} open</span>
+              </button>
+            </li>
+          </ul>
+        </div>
         <div v-for="group in groups" :key="group.name" class="f-group">
           <h2 class="f-group-name">{{ group.name }}</h2>
           <ul class="f-items">
@@ -156,8 +199,8 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
               <button
                 type="button"
                 class="f-item siq-fx"
-                :class="{ 'is-current': item.key === output.key }"
-                :aria-current="item.key === output.key ? 'true' : undefined"
+                :class="{ 'is-current': !onDesk && item.key === output.key }"
+                :aria-current="!onDesk && item.key === output.key ? 'true' : undefined"
                 @click="show(item.key)"
               >
                 <span>{{ item.label }}</span>
@@ -166,9 +209,38 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
             </li>
           </ul>
         </div>
+        <div v-for="item in corner" :key="item.key" class="f-group f-corner">
+          <button
+            type="button"
+            class="f-corner-button siq-fx"
+            :class="{ 'is-current': !onDesk && item.key === output.key }"
+            :aria-current="!onDesk && item.key === output.key ? 'true' : undefined"
+            @click="show(item.key)"
+          >
+            <Icon name="star" :size="16" />
+            <span class="f-corner-text">
+              <span class="f-corner-title">{{ item.label }}</span>
+              <span class="f-muted">An unexpected take on the session. Opt-in.</span>
+            </span>
+          </button>
+        </div>
       </nav>
 
-      <Card class="f-output" :aria-busy="busy.busy ? 'true' : 'false'">
+      <QuestionDesk v-if="onDesk" :desk="desk" :csv-url="csvUrl" />
+
+      <p v-else-if="loading" class="f-muted" role="status">Loading the session…</p>
+
+      <Card v-else-if="workspace && !hasTranscript" class="f-output">
+        <CardHeader icon="file-text" title="This one is written from the transcript" :level="2" />
+        <p class="f-text">This session has no transcript yet. Make it on the Transcript tab, then come back to write it.</p>
+        <div class="f-row">
+          <UiButton variant="primary" icon-right="chevron-right" :to="`/sessions/${encodeURIComponent(sessionId)}/transcript`">
+            Open the Transcript
+          </UiButton>
+        </div>
+      </Card>
+
+      <Card v-else-if="workspace" class="f-output" :aria-busy="busy.busy ? 'true' : 'false'">
         <CardHeader :title="output.label" :subtitle="output.about" :level="2">
           <template v-if="output.by === 'language'" #right>
             <div class="f-segmented" role="group" aria-label="Language">
@@ -372,6 +444,71 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
   font-size: var(--siq-text-small);
 }
 
+.f-badge {
+  flex: none;
+  padding: 0 var(--siq-space-2);
+  border-radius: var(--siq-radius-pill);
+  background: var(--siq-surface-2);
+  color: var(--siq-ink-2);
+  font-size: var(--siq-text-small);
+  line-height: var(--siq-text-small-lh);
+  font-weight: var(--siq-weight-medium);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Surprise me: small and quiet, at the bottom of the list. */
+.f-corner {
+  margin-top: var(--siq-space-4);
+}
+
+.f-corner-button {
+  display: flex;
+  gap: var(--siq-space-2);
+  align-items: flex-start;
+  width: 100%;
+  margin: 0;
+  padding: var(--siq-space-3);
+  border: 1px dashed var(--siq-border);
+  border-radius: var(--siq-radius-control);
+  background: transparent;
+  color: var(--siq-ink-2);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition-property: background-color, border-color, color;
+  transition-duration: var(--siq-duration);
+  transition-timing-function: var(--siq-ease);
+}
+
+.f-corner-button :deep(svg) {
+  flex: none;
+  margin-top: 2px;
+  color: var(--siq-muted);
+}
+
+.f-corner-button:hover {
+  background: var(--siq-card-hover);
+  color: var(--siq-ink);
+}
+
+.f-corner-button.is-current {
+  border-style: solid;
+  background: var(--siq-selected-bg);
+  color: var(--siq-selected-ink);
+}
+
+.f-corner-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.f-corner-title {
+  font-size: var(--siq-text-ui);
+  line-height: var(--siq-text-ui-lh);
+  font-weight: var(--siq-weight-medium);
+}
+
 .f-output {
   min-width: 0;
 }
@@ -479,13 +616,15 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
 
 @media (forced-colors: active) {
   .f-item.is-current,
+  .f-corner-button.is-current,
   .f-seg.is-on {
     outline: 2px solid CanvasText;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .f-item {
+  .f-item,
+  .f-corner-button {
     transition: none;
   }
 }

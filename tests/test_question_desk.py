@@ -14,7 +14,6 @@ from unittest import mock
 import synthetic_session as synthetic
 
 from livestorm_app import api_logic
-from livestorm_app.record.chat_labels import LABEL_VERSION, chat_hash
 from livestorm_app.record.evidence import CHAT
 from livestorm_app.record.inputs import load_record_inputs
 from livestorm_app.record.question_desk import (
@@ -29,34 +28,7 @@ from livestorm_app.record.question_desk import (
 )
 from livestorm_app.record.transcript_view import ATTENDEE, TEAM
 
-# How the synthetic chat is labelled: everything social, except these.
-LABELS = {
-    "What about pricing?": ("question", "content"),
-    "Is there a replay?": ("question", "logistics"),
-    "Can you hear us?": ("tech", None),
-    "Happy to cover pricing later": ("question", "content"),  # a guest speaker's: team, left out
-}
-
-
-def _stored_labels(row):
-    """Labels for `row`'s chat, stored as `db.fetch_chat_labels` returns them."""
-    events = load_record_inputs(row).events
-    chat = events[events["kind"] == CHAT]
-    rows = chat[["eid", "livestorm_id", "text"]].to_dict("records")
-    labels = []
-    for item in rows:
-        label_class, question = LABELS.get(item["text"], ("social", None))
-        labels.append(
-            {"id": item["eid"], "livestorm_id": item["livestorm_id"] or None, "class": label_class, "question": question, "language": "en"}
-        )
-    return {
-        "label_version": LABEL_VERSION,
-        "chat_hash": chat_hash([{**r, "livestorm_id": r["livestorm_id"] or None} for r in rows]),
-        "model": "test-model",
-        "message_count": len(labels),
-        "labels": labels,
-        "created_at": None,
-    }
+_stored_labels = synthetic.chat_labels  # the synthetic chat, labelled (`synthetic.CHAT_LABELS`)
 
 
 def _inputs(row=None, *, labelled=True):
@@ -268,6 +240,14 @@ def test_the_csv_route_is_a_private_download():
     assert response.headers["cache-control"] == "private, no-store"
     assert "attachment" in response.headers["content-disposition"]
     assert response.text.startswith("﻿" + ",".join(CSV_COLUMNS))
+
+
+def test_the_frontend_fixture_is_the_route_response():
+    """`frontend/tests/fixtures/questions-v1.json` is what the desk route
+    sends for the synthetic webinar, its chat labelled. After a deliberate
+    change, regenerate it: `.venv/bin/python tests/synthetic_session.py`."""
+    committed = synthetic.QUESTIONS_FIXTURE.read_text(encoding="utf-8")
+    assert synthetic.dump(synthetic.question_desk_response()) == committed
 
 
 def test_another_session_looks_missing_and_a_failure_hides_its_detail(monkeypatch):

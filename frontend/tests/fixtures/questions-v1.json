@@ -1,0 +1,71 @@
+{
+  "sessionId": "synthetic-webinar",
+  "updatedAt": "2026-10-02T08:30:00Z",
+  "version": 1,
+  "summary": {
+    "total": 5,
+    "written": 2,
+    "aloud": 1,
+    "here": 0,
+    "open": 2,
+    "logistics": 1,
+    "chatQuestions": "ready"
+  },
+  "questions": [
+    {
+      "id": "Q001",
+      "source": "qa",
+      "t": -45,
+      "text": "Will the slides be shared?",
+      "author": "Theo P.",
+      "status": "written",
+      "answer": "Yes, see the chat.",
+      "reply": null,
+      "canSave": true
+    },
+    {
+      "id": "C0010",
+      "source": "chat",
+      "t": 200,
+      "text": "What about pricing?",
+      "author": "Sam R.",
+      "status": "open",
+      "answer": null,
+      "reply": null,
+      "canSave": true
+    },
+    {
+      "id": "Q002",
+      "source": "qa",
+      "t": 300,
+      "text": "How does pricing work for larger teams with several hundred seats?",
+      "author": "Mila F.",
+      "status": "aloud",
+      "answer": null,
+      "reply": null,
+      "canSave": true
+    },
+    {
+      "id": "Q003",
+      "source": "qa",
+      "t": 720,
+      "text": "Can we export to CSV?",
+      "author": "Sam R.",
+      "status": "written",
+      "answer": "Yes, from the Chat page.",
+      "reply": null,
+      "canSave": true
+    },
+    {
+      "id": "Q004",
+      "source": "qa",
+      "t": 1650,
+      "text": "Is there an API?",
+      "author": "Omar Q.",
+      "status": "open",
+      "answer": null,
+      "reply": null,
+      "canSave": true
+    }
+  ]
+}
