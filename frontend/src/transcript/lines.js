@@ -13,7 +13,23 @@ export const VIEWS = [
   { value: "room", label: "Chat and questions" },
 ];
 
+// The room's lines to show: everything, the chat only, or the questions
+// only (the Q&A's questions and their written answers, and the chat
+// messages the session analysis labelled questions, `asks`).
+export const ROOM_KINDS = [
+  { value: "all", label: "Both" },
+  { value: "chat", label: "Chat" },
+  { value: "questions", label: "Questions" },
+];
+
 const KIND_WORDS = { chat: "Chat", question: "Q&A", answer: "Answer" };
+
+/** Whether a room line (worded) is shown for `roomKind`. */
+export function roomKindKeeps(line, roomKind = "all") {
+  if (roomKind === "chat") return line.kind === "chat";
+  if (roomKind === "questions") return line.kind === "question" || line.kind === "answer" || line.asks;
+  return true;
+}
 
 // Speakers take a colour each, in order of first appearance, from this many
 // (`--siq-speaker-1` … in tokens.css); a seventh speaker reuses the first.
@@ -57,7 +73,8 @@ function speechLine(line, names, tones) {
 }
 
 /** A chat, Q&A or answer line, worded: `{id, kind, t, time, who, source,
- * text, status, team, gif}`. A time before the session's start reads
+ * text, status, team, asks, gif}`; `asks` marks a chat message the
+ * session analysis labelled a question ("Chat question"). A time before the session's start reads
  * "Before"; `gif` is the GIF's URL when a chat message is only a GIF link
  * (`utils/gif.js`), else "". */
 function roomLine(line) {
@@ -70,12 +87,13 @@ function roomLine(line) {
     time: typeof line.t === "number" ? (line.t < 0 ? "Before" : clockLabel(line.t)) : "",
     timeIsRecording: false,
     who: text(line.author) || "Attendee",
-    source: KIND_WORDS[line.kind] || "Chat",
+    source: line.kind === "chat" && line.asks ? "Chat question" : KIND_WORDS[line.kind] || "Chat",
     text: line.text,
     // A GIF's link is shown as the GIF, under the message's other words.
     parts: [{ text: line.kind === "chat" ? gifParts(line.text).text : line.text, unclear: false }],
     status,
     team: Boolean(line.team),
+    asks: line.kind === "chat" && Boolean(line.asks),
     gif: line.kind === "chat" ? gifParts(line.text).gif : "",
   };
 }
@@ -195,8 +213,12 @@ export function authorsOf(body) {
  * author has it (case-insensitive); `speaker` keeps one speaker's lines (the
  * room's lines go when a speaker is picked); `author` keeps one author's
  * room lines (speech goes when an author is picked); `roomQuery` searches
- * the room's lines only (the chat column's own search). */
-export function transcriptLines(body, { view = "all", query = "", speaker = undefined, author = undefined, roomQuery = "" } = {}) {
+ * the room's lines only (the chat column's own search); `roomKind` keeps
+ * the room's chat, its questions or both (`ROOM_KINDS`, `roomKindKeeps`). */
+export function transcriptLines(
+  body,
+  { view = "all", query = "", speaker = undefined, author = undefined, roomQuery = "", roomKind = "all" } = {},
+) {
   const names = speakerNames(body);
   const tones = speakerTones(body);
   const needle = text(query).toLowerCase();
@@ -213,6 +235,7 @@ export function transcriptLines(body, { view = "all", query = "", speaker = unde
     ? (body?.room || [])
         .map(roomLine)
         .filter((line) => author === undefined || line.who === author)
+        .filter((line) => roomKindKeeps(line, roomKind))
         .filter((line) => matches(line, needle) && matches(line, roomNeedle))
     : [];
   const interleaved = Boolean(body?.clock?.interleave);

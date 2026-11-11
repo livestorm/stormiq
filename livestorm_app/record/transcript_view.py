@@ -31,6 +31,11 @@ is read on demand, when someone opens the tab.
 - **Questions** say whether they were answered in writing (an answer row
   replies to them). Nothing says a question is "open": an answer given out
   loud leaves no trace in the data.
+- **Questions asked in the chat**: a chat message the session analysis
+  labelled a question (`class` "question", about the content or about
+  logistics) says so (`asks`), only while the stored labels describe this
+  chat (`inputs.chat_labels`) and, as on the question desk, never for the
+  team's own messages except on an internal session.
 
 Pure functions: no database, network or web framework.
 """
@@ -167,6 +172,8 @@ def _room(inputs: Any) -> List[Dict[str, Any]]:
         return []
     names = _names(inputs)
     answered = {reply for reply in events.loc[events["kind"] == ANSWER, "reply_to"] if isinstance(reply, str)}
+    labels = inputs.chat_labels or {}
+    internal = bool(inputs.roster.meta.internal)
     lines: List[Dict[str, Any]] = []
     for row in events[events["kind"].isin([CHAT, QUESTION, ANSWER])].to_dict("records"):
         ref = row["author_ref"] if isinstance(row["author_ref"], str) else None
@@ -180,6 +187,9 @@ def _room(inputs: Any) -> List[Dict[str, Any]]:
             "author": author or (TEAM if team else ATTENDEE),
             "team": team,
         }
+        asks = (labels.get(line["id"]) or {}).get("class") == "question"
+        if row["kind"] == CHAT and asks and (internal or not team):
+            line["asks"] = True
         if row["kind"] == QUESTION:
             line["answered"] = str(row["eid"]) in answered
         if row["kind"] == ANSWER:

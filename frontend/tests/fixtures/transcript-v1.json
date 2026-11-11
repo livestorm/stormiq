@@ -1685,7 +1685,8 @@
       "t": 200,
       "text": "What about pricing?",
       "author": "Sam R.",
-      "team": false
+      "team": false,
+      "asks": true
     },
     {
       "id": "C0011",
@@ -1744,7 +1745,8 @@
       "t": 900,
       "text": "Is there a replay?",
       "author": "Mila F.",
-      "team": false
+      "team": false,
+      "asks": true
     },
     {
       "id": "C0015",
