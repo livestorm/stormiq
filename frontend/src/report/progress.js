@@ -44,3 +44,19 @@ export function aiSteps(stage) {
 export function transcriptSteps(progress) {
   return stepsAt(TRANSCRIPT_STEPS, progress?.stage || "queued", progress?.message || "");
 }
+
+// Surprise me's voice, as the worker reports it (SURPRISE_VOICE_STAGE_FLOORS).
+export const VOICE_STEPS = [
+  { stage: "queued", label: "Waiting for a free worker" },
+  { stage: "reading", label: "Reading the take" },
+  { stage: "speaking", label: "Recording the voice" },
+];
+
+/** The voice job's steps: `progress` is the job's `{stage, done, total}`
+ * (clips made so far, on the current step). */
+export function voiceSteps(progress) {
+  const total = Number(progress?.total);
+  const done = Number(progress?.done) || 0;
+  const detail = progress?.stage === "speaking" && total > 0 ? `${done} of ${total} sentences` : "";
+  return stepsAt(VOICE_STEPS, progress?.stage || "queued", detail);
+}

@@ -75,6 +75,12 @@ def cover_image_job_id(session_id: str) -> str:
     return f"cover_image:{str(session_id).strip()}"
 
 
+def surprise_voice_job_id(session_id: str) -> str:
+    """One voice job per session (Surprise me, read aloud): two clicks on
+    Play share one job. It reads the session's take as saved when it runs."""
+    return f"surprise_voice:{str(session_id).strip()}"
+
+
 def transcription_job_id(transcript_job_id: str) -> str:
     """arq id for a `transcript_jobs` row. The row's partial unique index
     (one active job per session) is the dedupe; this id lets the web

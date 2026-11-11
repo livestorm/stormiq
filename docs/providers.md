@@ -8,11 +8,12 @@ The services StormIQ calls, how models are chosen, and the timeout and retry rul
 | **Livestorm OAuth** | sign-in, token refresh, `/me` | [`oauth_client.py`](../livestorm_app/oauth_client.py) | OAuth client id and secret |
 | **Gladia v2 (pre-recorded)** | transcription with diarization, named entities, sentences and subtitles; the transcriber also fetches the session's recordings from Livestorm | [`gladia/transcriber.py`](../livestorm_app/gladia/transcriber.py) | `GLADIA_KEY` (worker only) |
 | **Anthropic** | every text job: the v1 jobs, overall and deep analysis, Smart Recap, content repurposing, translation | [`llm_client.py`](../livestorm_app/llm_client.py) | `CLAUDE_API_KEY` |
-| **OpenAI Images** | cover images only | [`ai/cover_image.py`](../livestorm_app/ai/cover_image.py) | `OPENAI_API_KEY` |
+| **OpenAI Images** | cover images | [`ai/cover_image.py`](../livestorm_app/ai/cover_image.py) | `OPENAI_API_KEY` |
+| **OpenAI speech** | Surprise me read aloud (`gpt-4o-mini-tts`), one clip per beat | [`ai/surprise_voice.py`](../livestorm_app/ai/surprise_voice.py) | `OPENAI_API_KEY` |
 
 ## Choosing the provider and models
 
-Every text job runs on Claude (the owner's decision, 2026-11-11). There is no provider to choose: `llm_client.get_provider` always answers `anthropic`, and an `llm_provider` setting or `LLM_PROVIDER` variable saved before then is ignored. OpenAI is called only for cover images ([below](#what-admin-may-save)).
+Every text job runs on Claude (the owner's decision, 2026-11-11). There is no provider to choose: `llm_client.get_provider` always answers `anthropic`, and an `llm_provider` setting or `LLM_PROVIDER` variable saved before then is ignored. OpenAI is called only for cover images ([below](#what-admin-may-save)) and for Surprise me's voice, which reads aloud a take Claude wrote: Claude still writes all text.
 
 ### The model catalog
 
@@ -80,11 +81,14 @@ A saved id that isn't a Claude model (an OpenAI id saved before 2026-11-11) is s
 - `llm_default_model` and `llm_smart_recap_model` take a classic-output Claude model.
 - `llm_provider` is refused: there is no provider to choose.
 - `image_model` is saved and sent as given, except that an empty or retired id becomes gpt-image-2 (`cover_image.resolve_image_model`).
+- `tts_voice` (Surprise me's voice) takes one of the voices gpt-4o-mini-tts offers (`surprise_voice.TTS_VOICES`), lower case; anything else is 400. Admin lists the same voices (`tests/test_surprise_voice.py` checks it).
 
 The Admin page still has its own lists (`frontend/src/views/AdminView.vue`), and the server accepts every entry (`tests/test_model_catalog.py` checks this):
 
 - **Claude:** Haiku 4.5 and Sonnet 4.6 (the defaults) and Opus 4.8. A saved model that isn't one of these shows as unset.
 - **Images:** gpt-image-2. gpt-image-1 was shut down on 2026-10-23: `cover_image.resolve_image_model` sends gpt-image-2 when the setting or `IMAGE_MODEL` still names it, and Admin shows gpt-image-2 as active.
+
+The voice is the `tts_voice` setting, then `TTS_VOICE`, then `marin`; the speech model is `TTS_MODEL` (default `gpt-4o-mini-tts`); how it reads is `prompts/surprise_voice.txt` ("Warm, upbeat presenter; lively but clear."). A change to any of them, or to the take, gives new clip keys, so the voice is recorded again on the next Play (`surprise_voice.voice_settings`, `clip_key`).
 
 The image model is the `image_model` setting, then `IMAGE_MODEL`, then `gpt-image-2`. Image size and quality come from `IMAGE_SIZE` (default `1536x1024`) and `IMAGE_QUALITY` (default `high`).
 
@@ -163,7 +167,7 @@ Rows written by OpenAI calls before 2026-11-11 keep their `provider` and `reason
 
 The cost is estimated when the row is written, from the price of the model that answered (`ai.usage.estimate_cost_usd_micros`); a served id outside the catalog is priced as the model asked for. A model with no price in the catalog gets no cost; its tokens are still counted.
 
-The cover image call (OpenAI Images, `cover_image.generate_cover_image_with_openai`) doesn't go through `llm_client`. It leaves no `llm_usage` row and isn't held to the daily budget, although the worker starts it on its own after a Professional Smart Recap ([jobs.md](jobs.md#cover-images)). Logging it is on the [roadmap](roadmap.md#4-models).
+The speech calls of Surprise me's voice don't go through `llm_client` either: no `llm_usage` row, no budget (a user starts them, and a take is a few cents of audio). The cover image call (OpenAI Images, `cover_image.generate_cover_image_with_openai`) doesn't go through `llm_client`. It leaves no `llm_usage` row and isn't held to the daily budget, although the worker starts it on its own after a Professional Smart Recap ([jobs.md](jobs.md#cover-images)). Logging it is on the [roadmap](roadmap.md#4-models).
 
 **Daily budget.** `ORG_DAILY_LLM_BUDGET_USD` stops one organization's automatic text jobs for the rest of the UTC day once its estimated spend reaches it. It applies only to the job kinds marked `automatic` in `ai/jobs.py` (`ai.jobs.automatic_kinds`), and none is yet, so today it limits nothing. A job a user starts, every classic output included, is never held to it. `llm_client` checks it in the worker before each send, the truncation retry included (`ai.usage.check_org_budget`):
 
@@ -184,6 +188,7 @@ Every outbound call has a timeout. Retries are limited to failures that almost a
 | Gladia upload, recording download | 120 s, 60 s socket | — | — |
 | Livestorm OAuth (token exchange, refresh, `/me`) | 60 s | — | — |
 | OpenAI Images (cover) | 180 s | — | — |
+| OpenAI speech (`surprise_voice.synthesize_speech`, one POST per beat) | 10 s connect, 60 s read | 429, 500, 502, 503, 504 and connection errors (a connect timeout included); up to 3 attempts, `Retry-After` honoured (capped at 10 s) | a read timeout (the clip may be on its way, and paid for); other 4xx |
 
 The Livestorm HTTP session is shared by every user's requests, so it keeps no cookies.
 

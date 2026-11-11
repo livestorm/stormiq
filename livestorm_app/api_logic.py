@@ -28,15 +28,19 @@ from livestorm_app.db import (
     fetch_session_fields,
     fetch_session_roster,
     fetch_surprise_enabled,
+    fetch_surprise_voice_clip,
+    fetch_surprise_voice_clips,
     fetch_understanding,
     get_transcript_job_for_session,
     list_output_versions,
     list_workspace_sessions,
     merge_cached_bundle_entry,
+    prune_surprise_voice_clips,
     save_figure_check,
     save_session_faq,
     save_located_decision,
     save_question_reply,
+    save_surprise_voice_clip,
     update_transcript_job_status,
     upsert_cached_session,
 )
@@ -47,9 +51,21 @@ from livestorm_app.queue import (
     ai_job_id,
     enqueue_unique_job_sync,
     read_job_status_sync,
+    surprise_voice_job_id,
     transcription_job_id,
 )
 from livestorm_app.ai.cover_image import generate_cover_image_with_openai
+from livestorm_app.ai.surprise_voice import (
+    CLIP_MIME,
+    MAX_BEAT_CHARS,
+    MAX_BEATS,
+    SpeechFailed,
+    clip_key,
+    mp3_duration_s,
+    surprise_beats,
+    synthesize_speech,
+    voice_settings,
+)
 from livestorm_app.ai.usage import CallContext, run_provenance
 from livestorm_app.ai.generation import (
     _bundle_has_all_sections,
@@ -2651,6 +2667,165 @@ def run_cover_image_generation(
         "mime": image["mime"],
         "byteSize": len(image["bytes"]),
     }
+
+
+# ── Surprise me, read aloud (`ai/surprise_voice.py`) ──
+#
+# The saved take, cut into beats on the server (the player's own cut,
+# `surprise_voice.surprise_beats`), one OpenAI speech clip per beat. Made in
+# the worker only, when the user clicks Play (`start_surprise_voice`); each
+# clip is saved whole as it is made, keyed by `clip_key`, so a replay costs
+# nothing and a failed run is retried for the missing clips only. Only a
+# beat's text goes to OpenAI: the take was checked before it was saved.
+
+SURPRISE_VOICE_KIND = "surprise_voice"
+_SURPRISE_VOICE_FIELDS = ["organization_id", "smart_recap_bundle"]
+SURPRISE_VOICE_WORKERS = 4
+NO_TAKE_MESSAGE = "There is no surprise take to read yet. Write one first."
+
+
+class SurpriseVoiceNoTakeError(RuntimeError):
+    """The session has no Surprise me take to read aloud."""
+
+
+def _surprise_voice_row(session_id: str, organization_id: OrgScope) -> Dict[str, Any]:
+    """The session's take and organization, in the scope; the org's Surprise
+    me switch checked (`SurpriseOffError`)."""
+    row = fetch_session_fields(session_id, _SURPRISE_VOICE_FIELDS, organization_id=organization_id)
+    if not isinstance(row, dict):
+        raise SessionNotFoundError()
+    _require_surprise_on(row.get("organization_id"))
+    return row
+
+
+def _surprise_voice_plan(row: Mapping[str, Any]) -> Tuple[List[Dict[str, Any]], Dict[str, str]]:
+    """The take's beats, `[{index, kind, text, clip}]`, and the voice they
+    are read with. `clip` is the beat's cache key."""
+    take = _normalize_smart_recap_bundle(row.get("smart_recap_bundle")).get("surprise", "")
+    settings = voice_settings()
+    beats = [
+        {"index": index, "kind": beat["kind"], "text": beat["text"], "clip": clip_key(beat["text"], settings)}
+        for index, beat in enumerate(surprise_beats(take))
+    ]
+    return beats, settings
+
+
+def _surprise_voice_status(
+    session_id: str, beats: List[Dict[str, Any]], settings: Mapping[str, str], *, organization_id: OrgScope
+) -> Dict[str, Any]:
+    have = fetch_surprise_voice_clips(session_id, [beat["clip"] for beat in beats], organization_id=organization_id)
+    listed = [
+        {**beat, "ready": beat["clip"] in have, "durationS": (have.get(beat["clip"]) or {}).get("duration_s")}
+        for beat in beats
+    ]
+    ready = sum(1 for beat in listed if beat["ready"])
+    body: Dict[str, Any] = {
+        "sessionId": session_id,
+        "voice": settings["voice"],
+        "model": settings["model"],
+        "beats": listed,
+        "ready": ready,
+        "total": len(listed),
+        "progress": None,
+    }
+    if not listed:
+        body["state"] = "none"
+    elif ready == len(listed):
+        body["state"] = "ready"
+    else:
+        job = read_job_status_sync(surprise_voice_job_id(session_id))
+        status = job.get("jobStatus")
+        if status in ("pending", "running"):
+            body["state"] = status
+            body["progress"] = read_progress(SURPRISE_VOICE_KIND, session_id)
+        elif status == "error":
+            body["state"] = "error"
+            body["error"] = str(job.get("error") or "The voice could not be made.")
+        else:
+            body["state"] = "missing"
+    return _sanitize_json_value(body)
+
+
+def get_surprise_voice(session_id: str, *, organization_id: OrgScope) -> Dict[str, Any]:
+    """The voice of the session's take: `{sessionId, state, voice, model,
+    beats: [{index, kind, text, clip, ready, durationS}], ready, total,
+    progress, error?}`. `state`: `none` (no take), `missing` (not made yet),
+    `pending`, `running`, `ready` or `error`. Calls no provider."""
+    session_id = str(session_id or "").strip()
+    row = _surprise_voice_row(session_id, organization_id)
+    beats, settings = _surprise_voice_plan(row)
+    return _surprise_voice_status(session_id, beats, settings, organization_id=organization_id)
+
+
+def start_surprise_voice(session_id: str, *, organization_id: OrgScope) -> Dict[str, Any]:
+    """The user clicked Play: queue the clips the take is missing (one job
+    per session, ids only), or return the voice when every clip is there."""
+    session_id = str(session_id or "").strip()
+    row = _surprise_voice_row(session_id, organization_id)
+    beats, settings = _surprise_voice_plan(row)
+    if not beats:
+        raise SurpriseVoiceNoTakeError(NO_TAKE_MESSAGE)
+    status = _surprise_voice_status(session_id, beats, settings, organization_id=organization_id)
+    if status["state"] == "ready":
+        return status
+    job = enqueue_unique_job_sync("run_surprise_voice_job", surprise_voice_job_id(session_id), session_id)
+    if not job:
+        raise RuntimeError("The voice queue is unavailable. Check the worker service and Redis connection.")
+    status.pop("error", None)
+    status["state"] = job["jobStatus"] if job.get("jobStatus") in ("pending", "running") else "pending"
+    return status
+
+
+def get_surprise_voice_clip(session_id: str, key: str, *, organization_id: OrgScope) -> Optional[Dict[str, Any]]:
+    """One clip's `{bytes, mime}`, or None when the session has no such clip."""
+    session_id = str(session_id or "").strip()
+    _surprise_voice_row(session_id, organization_id)
+    return fetch_surprise_voice_clip(session_id, key, organization_id=organization_id)
+
+
+def run_surprise_voice(
+    api_key: str,
+    session_id: str,
+    *,
+    publish: Callable[[str, Dict[str, Any]], None] = lambda stage, extra: None,
+) -> Dict[str, Any]:
+    """The worker's side: read the take as saved now, make each missing
+    clip (a few at a time), save each one whole, then drop the clips the
+    take no longer uses. Raises with a message the player can show."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    row = _surprise_voice_row(session_id, ALL_ORGS)  # the switch, checked again
+    beats, settings = _surprise_voice_plan(row)
+    if not beats:
+        raise SurpriseVoiceNoTakeError(NO_TAKE_MESSAGE)
+    if len(beats) > MAX_BEATS or any(len(beat["text"]) > MAX_BEAT_CHARS for beat in beats):
+        raise SpeechFailed("The take is too long to read aloud.")
+    keys = [beat["clip"] for beat in beats]
+    have = fetch_surprise_voice_clips(session_id, keys, organization_id=ALL_ORGS)
+    todo: "OrderedDict[str, str]" = OrderedDict((beat["clip"], beat["text"]) for beat in beats if beat["clip"] not in have)
+    total = len(todo)
+
+    def progress(done: int) -> None:
+        publish("speaking", {"done": done, "total": total, "percent": 10 + int(85 * done / total) if total else 95})
+
+    def make(key: str, text: str) -> None:
+        audio = synthesize_speech(api_key, text, settings)
+        save_surprise_voice_clip(session_id, key, audio=audio, mime=CLIP_MIME, duration_s=mp3_duration_s(audio))
+
+    progress(0)
+    if todo:
+        with ThreadPoolExecutor(max_workers=min(SURPRISE_VOICE_WORKERS, total)) as pool:
+            futures = [pool.submit(make, key, text) for key, text in todo.items()]
+            try:
+                for done, future in enumerate(as_completed(futures), start=1):
+                    future.result()
+                    progress(done)
+            except BaseException:
+                for future in futures:
+                    future.cancel()
+                raise
+    prune_surprise_voice_clips(session_id, keys)
+    return {"status": "ok", "made": total, "beats": len(beats)}
 
 
 def run_smart_recap(api_analysis_key: str, session_id: str, tone: str) -> Dict[str, Any]:

@@ -257,6 +257,18 @@ export const api = {
     const params = new URLSearchParams({ language, item });
     return `${sessionPath(sessionId, "/content-repurposing-pdf")}?${params.toString()}`;
   },
+  // Surprise me, read aloud: the take's beats and their clips (no body: the
+  // server cuts the saved take). Starting it queues the paid voice in the
+  // worker; call it only from a click on Play.
+  getSurpriseVoice(sessionId, { signal } = {}) {
+    return request(sessionPath(sessionId, "/surprise-voice"), { signal });
+  },
+  startSurpriseVoice(sessionId, { signal } = {}) {
+    return request(sessionPath(sessionId, "/surprise-voice"), { method: "POST", signal });
+  },
+  getSurpriseVoiceClipUrl(sessionId, clip) {
+    return `${sessionPath(sessionId, "/surprise-voice/clip")}?key=${encodeURIComponent(String(clip ?? ""))}`;
+  },
   // The open questions with who asked them (name, company; no email), as CSV.
   // The question desk's CSV: `scope` "open" (the questions still open),
   // "all" (with each one's status) or "answers" (with its status and answer).

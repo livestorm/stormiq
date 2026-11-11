@@ -69,7 +69,7 @@ def _row() -> dict:
         "transcript_payload": {"text": MARKER},
         "analysis_bundle": {"English": f"# Analysis {MARKER}"},
         "deep_analysis_bundle": {"English": f"# Deep {MARKER}"},
-        "smart_recap_bundle": {"professional": f"# Recap {MARKER}"},
+        "smart_recap_bundle": {"professional": f"# Recap {MARKER}", "surprise": f"# Title\nThe take\n# Description\n{MARKER} rocks. Truly."},
         "content_repurpose_bundle": {
             "English": {"summary": MARKER, "blog": MARKER, "email": MARKER, "social_media": MARKER},
         },
@@ -102,6 +102,14 @@ class FakeBackend:
     def fetch_cover_image(self, session_id, *, organization_id):
         if session_id == SESSION_ID and _visible(organization_id):
             return {"bytes": MARKER.encode(), "mime": "image/png", "generated_at": None}
+        return None
+
+    def fetch_surprise_voice_clips(self, session_id, clip_keys, *, organization_id):
+        return {}  # no clip made yet: Play queues the voice
+
+    def fetch_surprise_voice_clip(self, session_id, clip_key, *, organization_id):
+        if session_id == SESSION_ID and _visible(organization_id):
+            return {"bytes": MARKER.encode(), "mime": "audio/mpeg"}
         return None
 
     def upsert_cached_session(self, api_key, session_id, **fields):
@@ -173,6 +181,13 @@ def backend(monkeypatch):
     monkeypatch.setattr(api_logic, "fetch_session_fields", fake.fetch_session_fields)
     monkeypatch.setattr(routes_sessions, "fetch_cover_image", fake.fetch_cover_image)
     monkeypatch.setattr(api_logic, "upsert_cached_session", fake.upsert_cached_session)
+    # Surprise me, read aloud: on for org-a, its clips, and a fixed voice (no settings read).
+    monkeypatch.setattr(api_logic, "fetch_surprise_enabled", lambda org: True)
+    monkeypatch.setattr(api_logic, "fetch_surprise_voice_clips", fake.fetch_surprise_voice_clips)
+    monkeypatch.setattr(api_logic, "fetch_surprise_voice_clip", fake.fetch_surprise_voice_clip)
+    monkeypatch.setattr(
+        api_logic, "voice_settings", lambda: {"model": "gpt-4o-mini-tts", "voice": "marin", "instructions": "Warm."}
+    )
     monkeypatch.setattr(api_logic, "save_question_reply", fake.save_question_reply)
     monkeypatch.setattr(api_logic, "fetch_question_replies", lambda session_id, organization_id: {})
     monkeypatch.setattr(api_logic, "save_located_decision", fake.save_located_decision)
@@ -237,7 +252,7 @@ def client(backend):
 
 # Superset of every query/body parameter the session routes accept; FastAPI
 # ignores the ones a given route doesn't declare.
-QUERY = {"kind": "overall", "tone": "professional", "item": "summary", "language": "English", "jobId": "job-1"}
+QUERY = {"kind": "overall", "tone": "professional", "item": "summary", "language": "English", "jobId": "job-1", "key": "a" * 64}
 BODY = {
     "tone": "professional",
     "outputLanguage": "English",

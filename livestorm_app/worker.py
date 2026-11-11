@@ -12,6 +12,7 @@ FastAPI app (via `livestorm_app.queue.enqueue_unique_job_sync`):
     - run_smart_recap_job(session_id, tone)
     - run_content_repurposing_job(session_id, output_language)
     - run_cover_image_job(session_id)   (chained after a Professional recap)
+    - run_surprise_voice_job(session_id) (Surprise me read aloud, on Play)
     - run_people_sync(sync_id, session_id)
 
 plus a no-op `ping` and the stuck-job sweeper cron.
@@ -202,6 +203,9 @@ LLM_JOB_TIMEOUT_SECONDS = 60 * 15  # up to two LLM calls (truncation or complete
 # call, streamed with its own 10-minute deadline (`JobSpec.call_deadline_s`).
 SESSION_ANALYSIS_TIMEOUT_SECONDS = 60 * 25
 COVER_IMAGE_JOB_TIMEOUT_SECONDS = 60 * 5  # one Images call, 3-min HTTP timeout
+# Surprise me's voice: one speech call per beat (a few dozen at most, four at
+# a time), each with a 60-second read timeout.
+SURPRISE_VOICE_JOB_TIMEOUT_SECONDS = 60 * 10
 
 # Transcriptions download the recording and run ffmpeg locally; more than a
 # couple at once can exhaust the starter instance's memory. Extra jobs wait
@@ -720,6 +724,41 @@ async def run_cover_image_job(
         raise
 
 
+# ── Surprise me's voice job ────────────────────────────────────────────────
+#
+# Reads the session's Surprise me take aloud with OpenAI's speech API, one
+# clip per beat (`api_logic.run_surprise_voice`). Queued only when a user
+# clicks Play (`api_logic.start_surprise_voice`), with the session id as its
+# only argument; the key comes from the worker's own environment.
+
+
+async def run_surprise_voice_job(ctx: Dict[str, Any], session_id: str) -> Dict[str, Any]:
+    from livestorm_app.api_logic import SURPRISE_VOICE_KIND, run_surprise_voice
+    from livestorm_app.ai.surprise_voice import SpeechFailed
+
+    logger.info("[run_surprise_voice_job] session_id=%s start", session_id)
+    try:
+        key = str(get_runtime_secret("OPENAI_API_KEY", "") or "").strip()
+        if not key:
+            raise SpeechFailed("The voice isn't set up on this server (no OpenAI key).")
+        publish_progress_sync(SURPRISE_VOICE_KIND, session_id, "reading")
+
+        def publish(stage: str, extra: Dict[str, Any]) -> None:
+            publish_progress_sync(SURPRISE_VOICE_KIND, session_id, stage, extra=extra)
+
+        result = await asyncio.to_thread(run_surprise_voice, key, session_id, publish=publish)
+        logger.info(
+            "[run_surprise_voice_job] session_id=%s done made=%s beats=%s",
+            session_id, result.get("made"), result.get("beats"),
+        )
+        return result
+    except Exception:
+        logger.exception("[run_surprise_voice_job] session_id=%s failed", session_id)
+        raise
+    finally:
+        clear_progress_sync(SURPRISE_VOICE_KIND, session_id)
+
+
 async def _enqueue_default_cover_image(ctx: Dict[str, Any], session_id: str) -> None:
     """Fire-and-forget enqueue of the cover image after a Professional recap.
 
@@ -1020,6 +1059,7 @@ class WorkerSettings:
         func(run_smart_recap_job, timeout=LLM_JOB_TIMEOUT_SECONDS),
         func(run_content_repurposing_job, timeout=LLM_JOB_TIMEOUT_SECONDS),
         func(run_cover_image_job, timeout=COVER_IMAGE_JOB_TIMEOUT_SECONDS),
+        func(run_surprise_voice_job, timeout=SURPRISE_VOICE_JOB_TIMEOUT_SECONDS),
         func(run_people_sync, timeout=PEOPLE_SYNC_JOB_TIMEOUT_SECONDS),
     ]
 

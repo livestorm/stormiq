@@ -2,7 +2,7 @@
 
 StormIQ analyses finished Livestorm sessions. It fetches a session's details, chat, questions and recording, transcribes the recording, caches everything in Postgres, and turns it into analytics and AI outputs (overall and deep analysis, Smart Recap, content repurposing) in English and French. Access is scoped to the user's Livestorm organization through Livestorm OAuth. Repository: `livestorm/stormiq` (local folder `chat-analysis`).
 
-**Stack.** A FastAPI web process, an arq worker, Redis and Postgres, deployed on Render. A Vue 3 SPA (Vite; no Pinia, UI library or chart library) served by FastAPI. Providers: the Livestorm API, Gladia (transcription), Anthropic by default or OpenAI (text), OpenAI Images (covers).
+**Stack.** A FastAPI web process, an arq worker, Redis and Postgres, deployed on Render. A Vue 3 SPA (Vite; no Pinia, UI library or chart library) served by FastAPI. Providers: the Livestorm API, Gladia (transcription), Anthropic by default or OpenAI (text), OpenAI Images (covers) and OpenAI speech (Surprise me's voice).
 
 ## Rules that must never break
 

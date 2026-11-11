@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { MAX_KEYWORDS, countUp, keywordsFrom, surpriseBeats } from "../src/followup/surpriseBeats";
+import fixture from "./fixtures/surprise-beats-v1.json";
+import { cleanRecap } from "../src/followup/outputs";
+import { MAX_KEYWORDS, beatsWithParts, countUp, keywordsFrom, surpriseBeats } from "../src/followup/surpriseBeats";
 
 const TAKE = `## Fifty messages and a working SSO
 
@@ -40,5 +42,23 @@ describe("Surprise me, cut into beats", () => {
 
   it("gives nothing for an empty take", () => {
     expect(surpriseBeats("", [])).toEqual([]);
+  });
+});
+
+describe("the same beats as the server's clips", () => {
+  // The backend writes the fixture from `livestorm_app/ai/surprise_voice.py`
+  // (`tests/test_surprise_voice.py`) and checks its own cut against it.
+  it("cuts every saved take of the fixture exactly as the server does", () => {
+    for (const { take, beats } of fixture) {
+      expect(surpriseBeats(cleanRecap(take)).map(({ kind, text }) => ({ kind, text }))).toEqual(beats);
+    }
+  });
+
+  it("adds the parts to the server's beats, keeping their clips", () => {
+    const [beat] = beatsWithParts([{ index: 0, kind: "line", text: "56% stayed for pricing.", clip: "k1", durationS: 1.2 }], ["Plans and pricing"]);
+    expect(beat.clip).toBe("k1");
+    expect(beat.durationS).toBe(1.2);
+    expect(beat.parts.filter((part) => part.kind !== "plain").map((part) => part.text)).toEqual(["56%", "pricing"]);
+    expect(beatsWithParts(null)).toEqual([]);
   });
 });

@@ -76,7 +76,9 @@ ANTHROPIC_CUSTOM_HEADERS      # Leave unset. The SDK would add its headers to ev
                               # every Anthropic call fails before it is sent.
                               # ANTHROPIC_API_KEY and ANTHROPIC_BASE_URL are ignored: llm_client passes the key and
                               # the host to the SDK explicitly.
-OPENAI_API_KEY                # Required for cover images (the only OpenAI call)
+OPENAI_API_KEY                # Required for cover images and Surprise me's voice (worker)
+TTS_MODEL                     # Optional. Surprise me's speech model (default gpt-4o-mini-tts)
+TTS_VOICE                     # Optional. Its voice when Admin set none (default marin)
 ORG_DAILY_LLM_BUDGET_USD      # Optional, worker. Daily spend cap per org for automatic text jobs (none exists yet), in
                               # dollars, per UTC day. Unset: no limit. Never applies to jobs a user starts or to covers.
 

@@ -10,7 +10,7 @@ Browser ── Vue SPA ──/api──▶ web: FastAPI (app.py) ─────
                                 ▼                                 │  connections, jobs
                              Redis: arq queue + progress ◀──── worker: arq
                                                                   │
-                                       Livestorm API, Gladia, Anthropic, OpenAI Images
+                                       Livestorm API, Gladia, Anthropic, OpenAI Images + speech
 ```
 
 - **web** serves the API and the built SPA. Handlers are plain `def` functions, run in FastAPI's threadpool. It calls the Livestorm API directly (fetching sessions is quick) and hands everything slow or paid to the worker.
