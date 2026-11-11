@@ -473,6 +473,38 @@ def test_when_elevenlabs_refuses_the_account_every_line_is_recorded_with_the_bac
     assert run_env["clips"].pruned == [(SESSION_ID, sorted(clip_key(line, OPENAI) for line in SCRIPT))]
 
 
+def test_any_failure_of_the_main_voice_records_the_show_with_the_backup(run_env, monkeypatch):
+    def speak(line, settings, keys):
+        if settings["provider"] == "elevenlabs" and line["beat"] == 2:
+            raise SpeechFailed("ElevenLabs refused to make the voice (HTTP 429).")
+        run_env["spoken"].append((settings["provider"], line["say"]))
+        return _mp3(5)
+
+    monkeypatch.setattr(api_logic, "record_line", speak)
+    result = api_logic.run_surprise_show(KEYS, SESSION_ID)
+    assert result["voice"] == "openai" and result["fellBack"] is True, "too busy after the retries: the backup"
+    assert run_env["clips"].pruned == [(SESSION_ID, sorted(clip_key(line, OPENAI) for line in SCRIPT))], "one voice per show"
+
+
+def test_elevenlabs_lines_are_made_two_at_a_time(run_env, monkeypatch):
+    import threading
+
+    running, peak, lock = [0], [0], threading.Lock()
+
+    def speak(line, settings, keys):
+        with lock:
+            running[0] += 1
+            peak[0] = max(peak[0], running[0])
+        threading.Event().wait(0.02)
+        with lock:
+            running[0] -= 1
+        return _mp3(5)
+
+    monkeypatch.setattr(api_logic, "record_line", speak)
+    api_logic.run_surprise_show(KEYS, SESSION_ID)
+    assert peak[0] <= api_logic.ELEVENLABS_VOICE_WORKERS == 2
+
+
 def test_an_openai_main_voice_has_no_backup(run_env, monkeypatch):
     monkeypatch.setattr(api_logic, "voice_plan", lambda: (dict(OPENAI), None))
     run_env["refuse"].add("openai")
@@ -488,7 +520,8 @@ def test_a_failed_clip_fails_the_show_and_keeps_only_whole_clips(run_env, monkey
 
     monkeypatch.setattr(api_logic, "record_line", speak)
     monkeypatch.setattr(api_logic, "SURPRISE_VOICE_WORKERS", 1)
-    with pytest.raises(SpeechFailed, match="HTTP 400"):
+    monkeypatch.setattr(api_logic, "ELEVENLABS_VOICE_WORKERS", 1)
+    with pytest.raises(SpeechFailed, match="HTTP 400"):  # the main voice failed, then the backup too
         api_logic.run_surprise_show(KEYS, SESSION_ID)
     clips = run_env["clips"]
     assert clips.pruned == [], "nothing tidied after a failure"
