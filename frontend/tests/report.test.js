@@ -82,18 +82,36 @@ describe("createSessionReport", () => {
   it("fetches the session again from Livestorm, then reads the record", async () => {
     const api = fakeApi({ fetchSessionBase: vi.fn(async () => ({})) });
     const report = createSessionReport({ api });
-    await report.open("sess-1");
+    await report.open("sess-refetch");
     expect(await report.refetch()).toBe(true);
-    expect(api.fetchSessionBase).toHaveBeenCalledWith(
-      "sess-1",
-      { apiKey: "", forceRefresh: true },
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
-    );
+    expect(api.fetchSessionBase).toHaveBeenCalledWith("sess-refetch", { apiKey: "", forceRefresh: true });
+    await tick(0);
     expect(api.getSessionRecord).toHaveBeenCalledTimes(2);
     expect(report.state.refetch).toEqual({ status: "done", error: "" });
     api.fetchSessionBase.mockRejectedValueOnce(new Error("Livestorm is unreachable."));
     expect(await report.refetch()).toBe(false);
+    await tick(0);
     expect(report.state.refetch).toEqual({ status: "error", error: "Livestorm is unreachable." });
+    report.close();
+  });
+
+  it("shares a fetch again between the pages of a session: leaving one never cancels it", async () => {
+    let release;
+    const api = fakeApi({ fetchSessionBase: vi.fn(() => new Promise((resolve) => (release = resolve))) });
+    const first = createSessionReport({ api });
+    await first.open("sess-shared");
+    const done = first.refetch();
+    first.close(); // the user moves to another tab
+    const second = createSessionReport({ api });
+    await second.open("sess-shared");
+    expect(second.state.refetch.status).toBe("running");
+    release({});
+    expect(await done).toBe(true);
+    await tick(0);
+    expect(second.state.refetch.status).toBe("done");
+    expect(api.getSessionRecord).toHaveBeenCalledTimes(3); // the second page read the record again
+    expect(api.fetchSessionBase).toHaveBeenCalledTimes(1);
+    second.close();
   });
 
   it("ignores a second click while a run is in flight", async () => {
