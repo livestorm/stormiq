@@ -18,7 +18,8 @@ import UiButton from "../ui/UiButton.vue";
 // The Report's "The audience" section: a collapsible card with the room map,
 // who spoke up (the people who wrote, by name, with one message each, then
 // how concentrated the chat was), and the channel, segment and lead-time
-// tables. Every number is a measure the server sent (`record.measures`);
+// tables (a part with nothing to show is left out, and "Method and data
+// quality" says why). Every number is a measure the server sent (`record.measures`);
 // `report/audience.js` words them. A part whose measure is missing isn't
 // shown.
 
@@ -109,7 +110,7 @@ const LEAD_COLUMNS = [
       <p v-if="people?.unnamed" class="r-note">{{ people.unnamed }}</p>
     </AudienceBlock>
 
-    <AudienceBlock v-if="channels" icon="share-2" title="Where they came from" :status="channels.status" :info="channels.info">
+    <AudienceBlock v-if="channels && !channels.empty" icon="share-2" title="Where they came from" :status="channels.status" :info="channels.info">
       <AudienceTable
         v-if="channels.rows.length"
         caption="Audience registrants by channel"
@@ -123,7 +124,7 @@ const LEAD_COLUMNS = [
       <p v-if="reference && channels.rows.length" class="r-note">This session's show-up: {{ reference }}.</p>
     </AudienceBlock>
 
-    <AudienceBlock v-if="segments" icon="pie-chart" title="Registration answers" :status="segments.status" :info="segments.info">
+    <AudienceBlock v-if="segments && !segments.empty" icon="pie-chart" title="Registration answers" :status="segments.status" :info="segments.info">
       <div v-for="table in segments.tables" :key="table.field" class="r-field">
         <p class="r-field-name">{{ table.name }}</p>
         <p v-if="table.detail" class="r-note">{{ table.detail }}</p>
@@ -140,7 +141,7 @@ const LEAD_COLUMNS = [
       <p v-if="segments.note" class="r-note">{{ segments.note }}</p>
     </AudienceBlock>
 
-    <AudienceBlock v-if="lead" icon="calendar" title="When they registered" :status="lead.status" :info="lead.info">
+    <AudienceBlock v-if="lead && !lead.empty" icon="calendar" title="When they registered" :status="lead.status" :info="lead.info">
       <AudienceTable
         v-if="lead.rows.length"
         caption="Show-up by how long before the start people registered"

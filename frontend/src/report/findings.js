@@ -183,7 +183,7 @@ const EN = {
   found: FOUND,
   nothing: NOTHING,
   notChecked: NOT_CHECKED,
-  labels: { title: "What stood out", quiet: "Nothing stood out from the session's own pattern.", checked: "Checked, nothing unusual", notChecked: "Not checked", next: "Next time", measured: "Measured", estimated: "Estimated" },
+  labels: { title: "What stood out", quiet: "Nothing stood out from the session's own pattern.", checked: "Checked, nothing unusual", notChecked: "Not checked", notCheckedNote: (n) => `${n === 1 ? "1 check" : `${n} checks`} couldn't run: why is in “Method and data quality”.`, next: "Next time", measured: "Measured", estimated: "Estimated" },
 };
 
 const WORDS = { en: EN, fr: FR };
@@ -198,12 +198,34 @@ export function foundFinding(finding, lang = "en", seed = "") {
   return { id: finding.id, confidence: finding.confidence || "estimated", ...made, next: nextTime(finding, lang, seed) };
 }
 
-/** The collapsed list: what was checked and found nothing, then what
- * couldn't be checked and why. */
+const CHECK_ICONS = { chapters: "list", friction: "zap", monologue: "timer", moments: "activity", prompts: "message-circle" };
+
+// "Chapters: the room's…" (English) or "Chapitres : le chat…" (French):
+// the topic before the first colon, the verdict after it.
+function split(line) {
+  const match = /^(.+?)\s?:\s(.+)$/.exec(line);
+  if (!match) return { topic: "", text: line };
+  const text = match[2];
+  return { topic: match[1], text: text.charAt(0).toUpperCase() + text.slice(1) };
+}
+
+/** What was checked and found nothing (`nothing`, as tiles: `{id, icon,
+ * line, topic, text}`), then what couldn't be checked and why
+ * (`notChecked`, `{id, line, topic, text}`); `line` is the whole sentence. */
 export function checkedLines(body, lang = "en") {
   const { nothing: said, notChecked: why } = words(lang);
-  const nothing = (body?.nothing || []).map((item) => said[item.id]?.(item.values)).filter(Boolean);
-  const notChecked = (body?.notChecked || []).map((item) => why[item.id]?.[item.reason]).filter(Boolean);
+  const nothing = (body?.nothing || [])
+    .map((item) => {
+      const line = said[item.id]?.(item.values);
+      return line ? { id: item.id, icon: CHECK_ICONS[item.id] || "check", line, ...split(line) } : null;
+    })
+    .filter(Boolean);
+  const notChecked = (body?.notChecked || [])
+    .map((item) => {
+      const line = why[item.id]?.[item.reason];
+      return line ? { id: item.id, line, ...split(line) } : null;
+    })
+    .filter(Boolean);
   return { nothing, notChecked };
 }
 

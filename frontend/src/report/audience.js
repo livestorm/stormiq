@@ -296,6 +296,19 @@ export function leadTable(measure) {
   };
 }
 
+// ── Parts with nothing to show ──────────────────────────────────────────────
+
+/** The audience parts with no table to show, `[{id, label, why}]`: the
+ * section leaves them out and "Method and data quality" says why. */
+export function emptyAudienceParts(measures = {}) {
+  const parts = [
+    ["channels", "Where they came from", channelTable(measures["m.channel_quality"])],
+    ["segments", "Registration answers", segmentTables(measures["m.segment_quality"])],
+    ["lead", "When they registered", leadTable(measures["m.lead_time_show_up"])],
+  ];
+  return parts.filter(([, , part]) => part && part.empty).map(([id, label, part]) => ({ id, label, why: part.empty }));
+}
+
 // ── The section's header ────────────────────────────────────────────────────
 
 /** The collapsed card's one line and key chip. */

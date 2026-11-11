@@ -4,23 +4,33 @@ import Chip from "../ui/Chip.vue";
 import Collapsible from "../ui/Collapsible.vue";
 import AudienceBlock from "./AudienceBlock.vue";
 import { methodRows, methodSummary, notShown } from "../../report/method";
+import { emptyAudienceParts } from "../../report/audience";
+import { checkedLines } from "../../report/findings";
 
 // The Report's last card, closed by default: "Method and data quality".
 // What the numbers rest on (the transcript, the clock, the people list, who
 // wrote, the chat sorting), each with a status chip (icon and word, never
 // colour alone), then "Not shown, and why": every number the page hides,
-// with the server's reason. `report/method.js` words them.
+// with the server's reason (and the audience parts with nothing to show),
+// then the "What stood out" checks that couldn't run, and why.
+// `report/method.js` words them.
 
 const props = defineProps({
   // The record route's whole response: {meta, record}.
   body: { type: Object, required: true },
+  // `GET /record/findings`, or null: the checks that couldn't run.
+  findings: { type: Object, default: null },
 });
 
 const TONE_ICONS = { good: "check", fair: "info", low: "info", neutral: "" };
 
 const summary = computed(() => methodSummary(props.body));
 const rows = computed(() => methodRows(props.body));
-const hidden = computed(() => notShown(props.body?.record?.measures || {}));
+const hidden = computed(() => [
+  ...notShown(props.body?.record?.measures || {}),
+  ...emptyAudienceParts(props.body?.record?.measures || {}),
+]);
+const unchecked = computed(() => checkedLines(props.findings).notChecked);
 </script>
 
 <template>
@@ -46,6 +56,15 @@ const hidden = computed(() => notShown(props.body?.record?.measures || {}));
       </ul>
       <p v-else class="r-note">Every number on this page is shown.</p>
       <p class="r-note">A number is hidden rather than shown on too little data: each one has its minimum.</p>
+    </AudienceBlock>
+
+    <AudienceBlock v-if="unchecked.length" icon="target" title="Checks that couldn't run">
+      <ul class="r-hidden">
+        <li v-for="item in unchecked" :key="item.line" class="r-hidden-row">
+          <span class="r-hidden-label">{{ item.topic }}</span>
+          <span class="r-hidden-why">{{ item.text }}</span>
+        </li>
+      </ul>
     </AudienceBlock>
   </Collapsible>
 </template>

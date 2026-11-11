@@ -179,5 +179,5 @@ export const FR = {
   found: { chapters, friction, monologue, prompts, moments },
   nothing: NOTHING,
   notChecked: NOT_CHECKED,
-  labels: { title: "Ce qui ressort", quiet: "Rien ne ressort du rythme habituel de la session.", checked: "Vérifié, rien d'inhabituel", notChecked: "Non vérifié", next: "La prochaine fois", measured: "Mesuré", estimated: "Estimé" },
+  labels: { title: "Ce qui ressort", quiet: "Rien ne ressort du rythme habituel de la session.", checked: "Vérifié, rien d'inhabituel", notChecked: "Non vérifié", notCheckedNote: (n) => `${n === 1 ? "1 vérification n'a" : `${n} vérifications n'ont`} pas pu être faite${n === 1 ? "" : "s"} : la raison est dans « Method and data quality ».`, next: "La prochaine fois", measured: "Mesuré", estimated: "Estimé" },
 };
