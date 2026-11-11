@@ -492,6 +492,7 @@ def ensure_database_schema() -> None:
             _ensure_org_settings_schema(cursor)
             _ensure_surprise_voice_schema(cursor)
             _ensure_surprise_storyboard_schema(cursor)
+            _ensure_surprise_script_schema(cursor)
             _ensure_session_faq_schema(cursor)
         connection.commit()
 
@@ -809,6 +810,26 @@ def _ensure_surprise_storyboard_schema(cursor: Any) -> None:
             session_id  TEXT PRIMARY KEY REFERENCES session_cache (session_id) ON DELETE CASCADE,
             story_key   TEXT NOT NULL,
             storyboard  JSONB NOT NULL,
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
+
+
+def _ensure_surprise_script_schema(cursor: Any) -> None:
+    """Surprise me's performance script (`ai/surprise_performance.py`): the
+    lines the voice says, one row per session, keyed by `script_key` (the
+    take's beats and the script's version): a read with another key finds
+    none. Written whole by the show job, after the check (or the take's own
+    beats when the script failed it). Never served to the page: only its
+    lines' beats and clip keys are. References `session_cache` (deleted with
+    it) and has no org column: every read joins `session_cache` on its org."""
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS surprise_scripts (
+            session_id  TEXT PRIMARY KEY REFERENCES session_cache (session_id) ON DELETE CASCADE,
+            script_key  TEXT NOT NULL,
+            script      JSONB NOT NULL,
             created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
         """
@@ -3048,6 +3069,69 @@ def save_surprise_storyboard(session_id: str, story_key: str, storyboard: Mappin
         raise RuntimeError("Could not save the storyboard.") from exc
 
 
+# ── Surprise me's performance script (ai/surprise_performance.py) ─────────
+
+
+def fetch_surprise_script(session_id: str, script_key: str, *, organization_id: OrgScope) -> Optional[Dict[str, Any]]:
+    """The session's performance script (`{version, source, lines}`) when it
+    was made for `script_key`; None when there is none, it is for another
+    take, or the session isn't in the scope (a blank scope never queries).
+    Raises when the database can't be read."""
+    session_id_value = str(session_id or "").strip()
+    key_value = str(script_key or "").strip()
+    if not database_enabled() or not session_id_value or not key_value:
+        return None
+    try:
+        org_filter = _org_filter(organization_id)
+    except ScopeMatchesNothing:
+        return None
+    scope_clause = " AND c.organization_id = %s" if org_filter is not None else ""
+    params = (session_id_value, key_value) + ((org_filter,) if org_filter is not None else ())
+    with get_db_connection() as connection:
+        row = connection.execute(
+            f"""
+            SELECT s.script
+            FROM surprise_scripts s
+            JOIN session_cache c ON c.session_id = s.session_id
+            WHERE s.session_id = %s AND s.script_key = %s{scope_clause}
+            LIMIT 1
+            """,
+            params,
+        ).fetchone()
+    if not row or not isinstance(row.get("script"), dict):
+        return None
+    return dict(row["script"])
+
+
+def save_surprise_script(session_id: str, script_key: str, script: Mapping[str, Any]) -> None:
+    """Save the session's performance script whole (the show job, after the
+    check), replacing one for an older take. Raises RuntimeError when the
+    write fails, or when the session is gone."""
+    session_id_value = str(session_id or "").strip()
+    key_value = str(script_key or "").strip()
+    if not session_id_value or not key_value or not isinstance(script, Mapping):
+        raise ValueError("save_surprise_script requires a session id, a key and the script.")
+    if not database_enabled():
+        raise RuntimeError("Database is not configured.")
+    try:
+        with get_db_connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO surprise_scripts (session_id, script_key, script, created_at)
+                VALUES (%s, %s, %s::jsonb, NOW())
+                ON CONFLICT (session_id) DO UPDATE SET
+                    script_key = EXCLUDED.script_key,
+                    script = EXCLUDED.script,
+                    created_at = NOW()
+                """,
+                (session_id_value, key_value, json.dumps(_without_nul(dict(script)), ensure_ascii=False)),
+            )
+            connection.commit()
+    except Exception as exc:
+        logger.error("Failed to save a performance script for session_id=%s (%s)", session_id_value, _error_label(exc))
+        raise RuntimeError("Could not save the performance script.") from exc
+
+
 # ── The question desk's saved replies (record/question_desk.py) ───────────
 #
 # One row per question the host marked or replied to. Reads and writes join
@@ -3691,6 +3775,7 @@ AI_OUTPUT_TABLES = (
     "session_understanding",
     "session_faq",
     "surprise_storyboards",
+    "surprise_scripts",
     "surprise_voice_clips",
 )
 

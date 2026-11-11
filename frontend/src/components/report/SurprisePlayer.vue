@@ -5,84 +5,93 @@ import ProgressSteps from "../ui/ProgressSteps.vue";
 import UiButton from "../ui/UiButton.vue";
 import { api } from "../../api";
 import { beatsWithParts, countUp, surpriseBeats } from "../../followup/surpriseBeats";
-import { beatMs, clockLabel, curveGeometry, headlineWords, percentValue, storyScene } from "../../followup/surpriseScenes";
-import { createSurpriseVoice } from "../../followup/useSurpriseVoice";
-import { voiceSteps } from "../../report/progress";
+import { clockLabel, curveGeometry, headlineWords, percentValue, storyScene } from "../../followup/surpriseScenes";
+import { beatFill, beatSpanMs, firstUnitOf, gapAfter, showUnits, unitMs } from "../../followup/surpriseShow";
+import { showSteps } from "../../report/progress";
 
-// Surprise me, played: one beat at a time, each read by its own OpenAI clip
-// (made in the worker the first time someone presses Play, then kept), each
-// shown as a storyboard scene (`surpriseScenes.js` `storyScene`): the voice
-// tells the sentence, the screen tells the story, never by writing the
-// sentence out. A scene is one short headline lifted from the beat (slammed
-// in, stamped on, popped in word by word, or over a flash of colour for a
-// punchline), a number it says counting up (a ring for a percentage), one of
-// the room's own lines flying in as a chat bubble, or the audience chat's
-// curve drawing in to its minute. The server's storyboard (Claude, checked
-// word for word) when it sent one; else the page's own scenes. "CC" shows
-// the sentence as a subtitle, off by default; screen readers always get it.
-// "Sound off" plays the scenes alone, at each clip's measured length or a
-// reading pace, and needs no clip at all. With "reduce motion" nothing
-// moves: each scene shows whole.
+// Surprise me, the show: the main output. One click ("Make the show") makes
+// it in the worker: the take, the performance script, the storyboard and the
+// voice (`useSurpriseShow.js`, owned by the page). Then it plays line by
+// line, each line read by its own clip, with a short gap between lines and a
+// longer one when the beat changes (`surpriseShow.js`). The screen shows the
+// line's beat as a storyboard scene (`surpriseScenes.js` `storyScene`): one
+// short headline lifted from the beat (slammed in, stamped on, popped in word
+// by word, or over a flash of colour for a punchline), a number it says
+// counting up (a ring for a percentage), one of the room's own lines flying
+// in as a chat bubble, or the audience chat's curve drawing in to its minute.
+// The script itself is only ever heard: "CC" shows the beat's sentence, the
+// take's own words, off by default; screen readers always get it. "Sound off"
+// plays the scenes alone. With "reduce motion" nothing moves.
 const props = defineProps({
+  // The page's show model (`createSurpriseShow`).
+  show: { type: Object, required: true },
   sessionId: { type: String, required: true },
-  take: { type: String, required: true },
+  // The saved take, when the page has it (else the show's own copy).
+  take: { type: String, default: "" },
   chapterTitles: { type: Array, default: () => [] },
   // The Pulse's rows (`record.pulse.minutes`): the audience chat per minute.
   minutes: { type: Array, default: () => [] },
+  // The session has a transcript: a take can be written.
+  canWrite: { type: Boolean, default: true },
   lang: { type: String, default: "en" },
 });
 
-const voice = createSurpriseVoice();
 const reduced = typeof window !== "undefined" && Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)").matches);
+const body = computed(() => props.show.state.body);
+const takeText = computed(() => props.take || body.value?.take || "");
 
-// ── The beats: the server's once it answered (its clips are cut from the
-// saved take the same way), else the page's own cut of the same text. ──
+// ── The beats: the server's once it answered (cut from the saved take the
+// same way), else the page's own cut of the same text. ──
 const beats = computed(() => {
-  const server = voice.state.body?.beats;
-  return server?.length ? beatsWithParts(server, props.chapterTitles) : surpriseBeats(props.take, props.chapterTitles);
+  const server = body.value?.beats;
+  return server?.length ? beatsWithParts(server, props.chapterTitles) : surpriseBeats(takeText.value, props.chapterTitles);
 });
+const units = computed(() => showUnits(body.value, beats.value));
 
-// ── The voice ──
-const voiceState = computed(() => voice.state.body?.state || "");
-const voiceReady = computed(() => voiceState.value === "ready");
-const making = computed(() => voice.state.starting || voiceState.value === "pending" || voiceState.value === "running");
+// ── The show ──
+const showState = computed(() => body.value?.state || "");
+const ready = computed(() => showState.value === "ready");
+const making = computed(() => props.show.state.starting || showState.value === "pending" || showState.value === "running");
 const failure = computed(
-  () => voice.state.error || (voiceState.value === "error" ? voice.state.body?.error || "The voice could not be made." : ""),
+  () => props.show.state.error || (showState.value === "error" ? body.value?.error || "The show could not be made." : ""),
 );
-const steps = computed(() => voiceSteps(voice.state.body?.progress));
+const steps = computed(() => showSteps(body.value?.progress));
 const percent = computed(() => {
-  const value = voice.state.body?.progress?.percent;
+  const value = body.value?.progress?.percent;
   return typeof value === "number" ? value : null;
 });
+const hasTake = computed(() => beats.value.length > 0);
+const makeLabel = computed(() => (hasTake.value ? "Make the show" : "Generate the show"));
+const fellBack = computed(() => Boolean(body.value?.voice?.fellBack));
 
 // ── Playback ──
-const index = ref(-1); // the beat on screen, -1 before the start
+const index = ref(-1); // the unit (line) playing, -1 before the start
 const playing = ref(false);
-const fraction = ref(0); // how far into the beat on screen, 0 to 1
+const fraction = ref(0); // how far into the unit, 0 to 1
 const muted = ref(false); // the scenes only, no sound
-const captions = ref(false); // "CC": the sentence as a subtitle, off by default
-const waiting = ref(false); // Play pressed while the voice is being made
+const captions = ref(false); // "CC": the beat's sentence as a subtitle, off by default
 const counted = ref(null); // the number shown while it counts up
 
 let audio = null;
 let preloader = null;
 let loadedUrl = "";
-let mode = "silent"; // how the beat on screen plays: "voice" | "silent"
+let mode = "silent"; // how the unit plays: "voice" | "silent"
 let frame = null;
 let timer = null;
 let counter = null;
 let silentStart = 0;
 let silentMs = 0;
-let run = 0; // bumps on every stop, so a late event of an old beat is ignored
+let run = 0; // bumps on every stop, so a late event of an old unit is ignored
 
-const beat = computed(() => (index.value >= 0 ? beats.value[index.value] || null : null));
-const finished = computed(() => index.value === beats.value.length - 1 && !playing.value && fraction.value >= 1);
+const beatIndex = computed(() => (index.value >= 0 ? units.value[index.value]?.beat ?? -1 : -1));
+const beat = computed(() => (beatIndex.value >= 0 ? beats.value[beatIndex.value] || null : null));
+const finished = computed(() => index.value === units.value.length - 1 && !playing.value && fraction.value >= 1);
 function sceneAt(i) {
   const item = beats.value[i];
   return item ? storyScene(item, { minutes: props.minutes, index: i }) : null;
 }
 
-const scene = computed(() => (index.value >= 0 ? sceneAt(index.value) : null));
+const scene = computed(() => (beatIndex.value >= 0 ? sceneAt(beatIndex.value) : null));
 const curve = computed(() => (scene.value?.effect === "pulse" ? curveGeometry(props.minutes, scene.value.minute) : null));
 // A pulse whose minute can't be drawn slams its headline in instead.
 const effect = computed(() => (scene.value?.effect === "pulse" && !curve.value ? "slam" : scene.value?.effect || "idle"));
@@ -90,12 +99,12 @@ const headline = computed(() => headlineWords(scene.value?.headline));
 const ring = computed(() => (effect.value === "count" ? percentValue(scene.value?.number) : null));
 const bubbleTime = computed(() => clockLabel(scene.value?.quote?.t));
 
-function clipUrl(item) {
-  return item?.clip ? api.getSurpriseVoiceClipUrl(props.sessionId, item.clip) : "";
+function clipUrl(unit) {
+  return unit?.clip ? api.getSurpriseShowClipUrl(props.sessionId, unit.clip) : "";
 }
 
-function withVoice(item) {
-  return !muted.value && voiceReady.value && Boolean(item?.clip);
+function withVoice(unit) {
+  return !muted.value && ready.value && Boolean(unit?.clip);
 }
 
 function clearTimers() {
@@ -114,9 +123,9 @@ function stop() {
 
 // A count's number counts up to the one said, then stays. A ring fills to its
 // percentage while the percentage counts up with it.
-function countNumber(i, ms) {
+function countNumber(b, ms) {
   counted.value = null;
-  const shown = sceneAt(i);
+  const shown = sceneAt(b);
   const target = shown?.effect === "count" ? countUp(shown.number) : null;
   if (reduced || !target || !ms) return;
   const start = performance.now();
@@ -130,29 +139,26 @@ function countNumber(i, ms) {
   counter = requestAnimationFrame(tickCount);
 }
 
-function finishBeat(i, mine) {
+function finishUnit(i, mine) {
   if (mine !== run) return;
   fraction.value = 1;
   cancelAnimationFrame(frame);
-  if (i + 1 >= beats.value.length) {
+  if (i + 1 >= units.value.length) {
     playing.value = false;
     return;
   }
-  // A beat of silence before a punchline, a breath after it.
-  // (The deadpan pause the voice leaves before a punchline.)
-  const pause = beats.value[i + 1]?.kind === "punch" ? 550 : beats.value[i].kind === "punch" ? 400 : 150;
-  timer = setTimeout(() => startBeat(i + 1, mine, 0), pause);
+  timer = setTimeout(() => startUnit(i + 1, mine, 0), gapAfter(units.value, i));
 }
 
 function tick(i, mine) {
   if (mine !== run) return;
   if (mode === "voice") {
-    const length = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : beats.value[i]?.durationS;
+    const length = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : units.value[i]?.durationS;
     fraction.value = length ? Math.min(1, audio.currentTime / length) : 0;
   } else {
     fraction.value = Math.min(1, (performance.now() - silentStart) / silentMs);
     if (fraction.value >= 1) {
-      finishBeat(i, mine);
+      finishUnit(i, mine);
       return;
     }
   }
@@ -163,34 +169,35 @@ function playSilent(i, mine, from) {
   if (mine !== run) return;
   mode = "silent";
   audio?.pause();
-  silentMs = beatMs(beats.value[i]);
+  silentMs = unitMs(units.value, i, beats.value);
   silentStart = performance.now() - from * silentMs;
   cancelAnimationFrame(frame);
   frame = requestAnimationFrame(() => tick(i, mine));
 }
 
 function preloadNext(i) {
-  const next = beats.value[i + 1];
+  const next = units.value[i + 1];
   if (!withVoice(next)) return;
   preloader ||= new Audio();
   preloader.preload = "auto";
   preloader.src = clipUrl(next);
 }
 
-function startBeat(i, mine, from = 0) {
+function startUnit(i, mine, from = 0) {
   if (mine !== run) return;
-  const item = beats.value[i];
-  if (!item) return;
-  if (from === 0) countNumber(i, (item.durationS || 0) * 1000 || beatMs(item));
+  const unit = units.value[i];
+  if (!unit) return;
+  const opensBeat = i === 0 || units.value[i - 1]?.beat !== unit.beat;
+  if (from === 0 && opensBeat) countNumber(unit.beat, beatSpanMs(units.value, unit.beat, beats.value));
   index.value = i;
   fraction.value = from;
-  if (!withVoice(item)) {
+  if (!withVoice(unit)) {
     playSilent(i, mine, from);
     return;
   }
   mode = "voice";
   audio ||= new Audio();
-  const url = clipUrl(item);
+  const url = clipUrl(unit);
   if (loadedUrl !== url) {
     audio.src = url;
     loadedUrl = url;
@@ -198,8 +205,8 @@ function startBeat(i, mine, from = 0) {
   } else if (from === 0) {
     audio.currentTime = 0;
   }
-  audio.onended = () => finishBeat(i, mine);
-  // A clip that can't load: this beat plays silently, the next tries its own.
+  audio.onended = () => finishUnit(i, mine);
+  // A clip that can't load: this line plays silently, the next tries its own.
   audio.onerror = () => {
     if (mine === run && mode === "voice") playSilent(i, mine, fraction.value);
   };
@@ -222,23 +229,22 @@ function startBeat(i, mine, from = 0) {
 }
 
 function begin(i, from = 0) {
-  if (!beats.value.length) return;
+  if (!units.value.length) return;
   stop();
-  waiting.value = false;
   playing.value = true;
-  startBeat(Math.max(0, Math.min(i, beats.value.length - 1)), run, from);
+  startUnit(Math.max(0, Math.min(i, units.value.length - 1)), run, from);
 }
 
 function play() {
-  if (!beats.value.length) return;
-  if (!muted.value && !voiceReady.value) {
-    // The first play records the voice (paid, in the worker), then starts.
-    waiting.value = true;
-    if (!making.value) voice.start();
-    return;
-  }
+  if (!units.value.length) return;
+  if (!muted.value && !ready.value) return;
   if (finished.value || index.value < 0) begin(0);
   else begin(index.value, fraction.value >= 1 ? 0 : fraction.value);
+}
+
+function makeShow() {
+  muted.value = false;
+  props.show.start();
 }
 
 function playSilently() {
@@ -246,84 +252,90 @@ function playSilently() {
   begin(0);
 }
 
-function retryVoice() {
-  muted.value = false;
-  waiting.value = true;
-  voice.start();
-}
-
+// Previous and next go by beat: to the first line of the beat before or after.
 function step(by) {
-  const target = Math.max(0, Math.min(beats.value.length - 1, (index.value < 0 ? 0 : index.value) + by));
+  const current = beatIndex.value < 0 ? 0 : beatIndex.value;
+  const target = Math.max(0, Math.min(beats.value.length - 1, current + by));
+  const unit = Math.max(0, firstUnitOf(units.value, target));
   if (playing.value) {
-    begin(target);
+    begin(unit);
     return;
   }
   stop();
   counted.value = null;
-  index.value = target;
-  fraction.value = 1;
+  index.value = unit;
+  fraction.value = 0;
 }
 
 function toggleSound() {
   const was = playing.value;
   stop();
   muted.value = !muted.value;
-  if (!was) return;
-  if (!muted.value && !voiceReady.value) play();
-  else begin(index.value);
+  if (was && (muted.value || ready.value)) begin(index.value);
 }
 
-function segment(i) {
-  if (i < index.value) return "100%";
-  if (i === index.value) return `${Math.round(fraction.value * 100)}%`;
-  return "0%";
+function segment(b) {
+  return `${Math.round(beatFill(units.value, index.value, fraction.value, b) * 100)}%`;
 }
 
-// The voice is made: start if Play is waiting for it. It failed: stop waiting.
-watch(voiceReady, (ready) => {
-  if (ready && waiting.value) begin(0);
+// The show is made: start it if the user is still here waiting for it.
+const waiting = ref(false);
+watch(making, (on) => {
+  if (on) waiting.value = true;
+});
+watch(ready, (on) => {
+  if (on && waiting.value) {
+    waiting.value = false;
+    begin(0);
+  }
 });
 watch(failure, (message) => {
   if (message) waiting.value = false;
 });
-watch(
-  () => props.sessionId,
-  (id) => voice.open(id),
-  { immediate: true },
-);
 // A new take: its beats and clips are new.
 watch(
   () => props.take,
-  () => {
+  (next, previous) => {
+    if (!previous || next === previous) return;
     stop();
     index.value = -1;
     fraction.value = 0;
-    voice.reload();
+    props.show.reload();
   },
 );
 onBeforeUnmount(() => {
   stop();
-  voice.close();
   if (audio) audio.removeAttribute("src");
   if (preloader) preloader.removeAttribute("src");
 });
 </script>
 
 <template>
-  <section class="sp" aria-label="Surprise me, played" :lang="lang">
+  <section class="sp" aria-label="Surprise me, the show" :lang="lang" :aria-busy="making ? 'true' : 'false'">
     <div class="sp-stage" :class="`is-${effect}`">
-      <div v-if="making && waiting" class="sp-making" role="status">
-        <ProgressSteps :steps="steps" :percent="percent" label="Recording the voice" note="The voice is kept: the next play starts at once." />
-        <UiButton variant="ghost" small icon="volume-x" @click="playSilently">Play without sound</UiButton>
+      <div v-if="making" class="sp-making" role="status">
+        <ProgressSteps :steps="steps" :percent="percent" label="Making the show" note="Made once, then kept: the next play starts at once." />
+      </div>
+
+      <div v-else-if="!beat && !ready" class="sp-scene is-idle">
+        <div class="sp-glow" aria-hidden="true" />
+        <p class="sp-idle-title">The session as a short show</p>
+        <p class="sp-idle-text">
+          An unexpected take, performed by an AI voice, over a storyboard of the session's own words, numbers and chat.
+        </p>
+        <UiButton v-if="hasTake || canWrite" variant="primary" icon="zap" :disabled="show.state.loading" @click="makeShow">
+          {{ makeLabel }}
+        </UiButton>
+        <p v-else class="sp-idle-text">This session has no transcript yet: the take is written from it.</p>
       </div>
 
       <div v-else-if="!beat" class="sp-scene is-idle">
         <div class="sp-glow" aria-hidden="true" />
-        <p class="sp-idle-text">Press play: the take, read aloud, one beat at a time, as a storyboard of the session's own words, numbers and chat.</p>
+        <UiButton variant="primary" icon="play" class="sp-big-play" @click="play">Play the show</UiButton>
       </div>
 
       <Transition v-else :name="reduced ? '' : 'sp-scene'" mode="out-in">
-        <div :key="index" class="sp-scene" :class="[`is-${effect}`, { 'is-punchline': scene.punch }]" aria-hidden="true">
+        <div :key="beatIndex" class="sp-scene" :class="[`is-${effect}`, { 'is-punchline': scene.punch }]" aria-hidden="true">
           <div v-if="effect === 'flash' || scene.punch" class="sp-flash" />
           <div v-if="effect === 'pop' || effect === 'slam'" class="sp-glow" />
 
@@ -372,56 +384,66 @@ onBeforeUnmount(() => {
           </p>
         </div>
       </Transition>
-      <p v-if="beat && captions && !(making && waiting)" class="sp-cc">{{ beat.text }}</p>
+      <p v-if="beat && captions && !making" class="sp-cc">{{ beat.text }}</p>
       <p v-if="beat" class="siq-sr-only" aria-live="polite">{{ beat.text }}</p>
     </div>
 
-    <div class="sp-track" aria-hidden="true">
-      <span v-for="(item, i) in beats" :key="i" class="sp-segment" :class="{ 'is-punch': item.kind === 'punch' }">
-        <span class="sp-segment-fill" :style="{ width: segment(i) }" />
-      </span>
-    </div>
-
-    <div class="sp-bar">
-      <div class="sp-controls">
-        <UiButton variant="icon" icon="chevron-left" label="Previous beat" :disabled="index <= 0" @click="step(-1)" />
-        <UiButton
-          v-if="!playing"
-          variant="primary"
-          small
-          :icon="making && waiting ? 'timer' : 'play'"
-          :disabled="making && waiting"
-          @click="play"
-        >
-          {{ making && waiting ? "Recording…" : finished ? "Play again" : index >= 0 ? "Resume" : "Play" }}
-        </UiButton>
-        <UiButton v-else variant="secondary" small icon="pause" @click="stop">Pause</UiButton>
-        <UiButton variant="icon" icon="chevron-right" label="Next beat" :disabled="index >= beats.length - 1" @click="step(1)" />
-        <UiButton v-if="index >= 0" variant="ghost" small icon="refresh-cw" @click="begin(0)">From the start</UiButton>
-        <UiButton variant="ghost" small :icon="muted ? 'volume-x' : 'volume-2'" :aria-pressed="muted ? 'true' : 'false'" @click="toggleSound">
-          {{ muted ? "Sound off" : "Sound on" }}
-        </UiButton>
-        <UiButton variant="ghost" small icon="captions" :aria-pressed="captions ? 'true' : 'false'" @click="captions = !captions">
-          CC<span class="siq-sr-only"> (subtitles {{ captions ? "on" : "off" }})</span>
-        </UiButton>
+    <template v-if="hasTake && (ready || index >= 0)">
+      <div class="sp-track" aria-hidden="true">
+        <span v-for="(item, i) in beats" :key="i" class="sp-segment" :class="{ 'is-punch': item.kind === 'punch' }">
+          <span class="sp-segment-fill" :style="{ width: segment(i) }" />
+        </span>
       </div>
-      <span class="sp-position">{{ index >= 0 ? `Beat ${index + 1} of ${beats.length}` : `${beats.length} beats` }}</span>
-    </div>
+
+      <div class="sp-bar">
+        <div class="sp-controls">
+          <UiButton variant="icon" icon="chevron-left" label="Previous beat" :disabled="beatIndex <= 0" @click="step(-1)" />
+          <UiButton v-if="!playing" variant="primary" small icon="play" :disabled="making || (!ready && !muted)" @click="play">
+            {{ finished ? "Play again" : index >= 0 ? "Resume" : "Play" }}
+          </UiButton>
+          <UiButton v-else variant="secondary" small icon="pause" @click="stop">Pause</UiButton>
+          <UiButton variant="icon" icon="chevron-right" label="Next beat" :disabled="beatIndex >= beats.length - 1" @click="step(1)" />
+          <UiButton v-if="index >= 0" variant="ghost" small icon="refresh-cw" @click="begin(0)">From the start</UiButton>
+          <UiButton variant="ghost" small :icon="muted ? 'volume-x' : 'volume-2'" :aria-pressed="muted ? 'true' : 'false'" @click="toggleSound">
+            {{ muted ? "Sound off" : "Sound on" }}
+          </UiButton>
+          <UiButton variant="ghost" small icon="captions" :aria-pressed="captions ? 'true' : 'false'" @click="captions = !captions">
+            CC<span class="siq-sr-only"> (subtitles {{ captions ? "on" : "off" }})</span>
+          </UiButton>
+        </div>
+        <span class="sp-position">{{ beatIndex >= 0 ? `Beat ${beatIndex + 1} of ${beats.length}` : `${beats.length} beats` }}</span>
+      </div>
+    </template>
 
     <div v-if="failure" class="sp-failure" role="alert">
       <p class="sp-note"><Icon name="info" :size="14" /> {{ failure }}</p>
       <div class="sp-controls">
-        <UiButton variant="secondary" small icon="refresh-cw" :disabled="making" @click="retryVoice">Try the voice again</UiButton>
-        <UiButton variant="ghost" small icon="volume-x" @click="playSilently">Play without sound</UiButton>
+        <UiButton variant="secondary" small icon="refresh-cw" :disabled="making" @click="makeShow">Try again</UiButton>
+        <UiButton v-if="hasTake" variant="ghost" small icon="volume-x" @click="playSilently">Play without sound</UiButton>
       </div>
     </div>
-    <p v-else class="sp-note">
+    <template v-else-if="hasTake && !ready && !making">
+      <div class="sp-controls">
+        <UiButton variant="ghost" small icon="volume-x" @click="playSilently">Play without sound</UiButton>
+      </div>
+      <p class="sp-note">
+        <Icon name="info" :size="14" />
+        This take was written before the show existed. "Make the show" writes its script, plans the scenes and records the
+        voice, in a minute or two. Then all of it is kept.
+      </p>
+    </template>
+    <p v-else-if="ready" class="sp-note">
       <Icon name="info" :size="14" />
-      {{
-        voiceReady
-          ? "Read by an AI voice (OpenAI). The scenes show this session's own words, numbers and chat."
-          : "The first play plans the scenes (Claude) and records an AI voice (OpenAI) from the take's text, in a minute or so. Then both are kept."
-      }}
+      <span>
+        Performed by an AI voice<template v-if="body?.voice?.label"> ({{ body.voice.label }})</template>. The scenes show this
+        session's own words, numbers and chat.
+        <strong v-if="fellBack" class="sp-backup">Recorded with the backup voice.</strong>
+      </span>
+    </p>
+    <p v-else-if="!making" class="sp-note">
+      <Icon name="info" :size="14" />
+      One click writes the take (Claude), turns it into a short spoken bit, plans the scenes and records the voice, in a minute
+      or two. Attendees are never named.
     </p>
   </section>
 </template>
@@ -439,7 +461,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 17rem;
+  min-height: 22rem;
   padding: var(--siq-space-6);
   border-radius: var(--siq-radius-card);
   background: var(--siq-surface-2);
@@ -468,9 +490,27 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
+.sp-idle-title {
+  position: relative;
+  margin: 0;
+  font-size: var(--siq-text-section);
+  line-height: var(--siq-text-section-lh);
+  font-weight: var(--siq-weight-semibold);
+  color: var(--siq-ink);
+}
+
+.sp-big-play {
+  position: relative;
+}
+
+.sp-backup {
+  font-weight: var(--siq-weight-semibold);
+  color: var(--siq-ink);
+}
+
 .sp-idle-text {
   position: relative;
-  max-width: 34ch;
+  max-width: 44ch;
   margin: 0;
   font-size: var(--siq-text-ui);
   line-height: var(--siq-text-ui-lh);
@@ -933,7 +973,7 @@ onBeforeUnmount(() => {
 
 .sp-note {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--siq-space-1);
   margin: 0;
   font-size: var(--siq-text-caption);
@@ -943,7 +983,7 @@ onBeforeUnmount(() => {
 
 @media (max-width: 640px) {
   .sp-stage {
-    min-height: 15rem;
+    min-height: 17rem;
     padding: var(--siq-space-5) var(--siq-space-4);
   }
   .sp-headline,

@@ -75,10 +75,10 @@ def cover_image_job_id(session_id: str) -> str:
     return f"cover_image:{str(session_id).strip()}"
 
 
-def surprise_voice_job_id(session_id: str) -> str:
-    """One voice job per session (Surprise me, read aloud): two clicks on
-    Play share one job. It reads the session's take as saved when it runs."""
-    return f"surprise_voice:{str(session_id).strip()}"
+def surprise_show_job_id(session_id: str) -> str:
+    """One show job per session (Surprise me: the take, the script, the
+    storyboard and the voice): two clicks on "Make the show" share it."""
+    return f"surprise_show:{str(session_id).strip()}"
 
 
 def transcription_job_id(transcript_job_id: str) -> str:

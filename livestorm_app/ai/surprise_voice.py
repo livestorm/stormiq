@@ -1,24 +1,28 @@
-"""Surprise me, read aloud: the saved take cut into beats, one OpenAI speech
-clip (mp3) per beat.
+"""Surprise me's voice: the take cut into beats, and one speech clip (mp3)
+per line of the performance script, by the main voice (ElevenLabs,
+`ai/voice_elevenlabs.py`) or the backup (OpenAI, here).
 
 - **Beats** (`surprise_beats`): the same cut as the player's
   (`frontend/src/followup/surpriseBeats.js`): the take as Follow-up shows it
   (`clean_recap`, the port of `outputs.js` `cleanRecap`), a beat per
   sentence, the title first, the last sentence of each paragraph its
   punchline. `frontend/tests/fixtures/surprise-beats-v1.json` holds takes and
-  their beats; both sides are tested against it, so a server clip and a
-  beat on screen are the same sentence.
-- **The voice** (`voice_settings`): `TTS_MODEL` (gpt-4o-mini-tts), the
-  `tts_voice` setting (or `TTS_VOICE`, cedar) and the delivery notes in
-  `prompts/surprise_voice.txt`. Only a beat's text is sent: the take was
-  already checked before it was saved (no attendee named, every figure the
-  session's), and nothing else goes with it.
-- **The cache key** (`clip_key`): a hash of the beat's text, the model, the
-  voice and the delivery notes. A replay costs nothing; a new take, voice or
-  note makes new clips, and only on the next click.
-- **The call** (`synthesize_speech`): one POST per beat with a timeout,
-  retried only for answers that mean nothing was made (429, 5xx, a
-  connection error); never after a read timeout.
+  their beats; both sides are tested against it, so a scene on screen and
+  the CC under it are the take's own sentence.
+- **The voices** (`voice_plan`): the `voice_provider` setting (`elevenlabs`,
+  the default, or `openai`) picks the main voice; with ElevenLabs, OpenAI is
+  the backup. ElevenLabs: `eleven_v3`, the `elevenlabs_voice` setting (else
+  Finley), the line's tone as an audio tag. OpenAI: `TTS_MODEL`
+  (gpt-4o-mini-tts), the `tts_voice` setting (or `TTS_VOICE`, cedar), the
+  delivery notes in `prompts/surprise_voice.txt` and the line's tone
+  (`TONE_NOTES`). Only a line's text is sent: the script was checked
+  against the take (no attendee named, every figure the take's).
+- **The cache key** (`clip_key`): a hash of the provider, the model, the
+  voice, the notes and exactly what is sent for the line. A replay costs
+  nothing; a new script, voice or note makes new clips, on the next click.
+- **The call** (`synthesize_speech`, `record_line`): one POST per line with
+  a timeout, retried only for answers that mean nothing was made (429, 5xx,
+  a connection error); never after a read timeout.
 
 No database, no web framework.
 """
@@ -28,7 +32,7 @@ from __future__ import annotations
 import hashlib
 import re
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 import requests
 
@@ -39,9 +43,23 @@ from livestorm_app.config import (
     TTS_VOICE,
 )
 
-# Bump when the beats, the request or the clip format change: every clip
-# key changes with it, so no old clip is played for a new beat.
-SURPRISE_VOICE_VERSION = 1
+# Bump when the lines, the request or the clip format change: every clip
+# key changes with it, so no old clip is played for a new line.
+SURPRISE_VOICE_VERSION = 2
+
+VOICE_PROVIDERS = ("elevenlabs", "openai")
+DEFAULT_VOICE_PROVIDER = "elevenlabs"
+# OpenAI's delivery note for one line, after the voice's own notes.
+TONE_NOTES = {
+    "deadpan": "This line: deadpan, flat and dry, barely any emphasis.",
+    "sarcastic": "This line: sarcastic, the ironic word leaned on, a knowing half-smile.",
+    "curious": "This line: genuinely puzzled, a rising question, inviting the listener in.",
+    "building": "This line: building momentum, a little faster, the setup of a joke.",
+    "punchline": "This line: the punchline. A real pause at the ellipsis, then land it flat and short.",
+    "aside": "This line: a quick throwaway aside, lower and faster.",
+    "warm": "This line: warm and sincere, slower, a smile you can hear.",
+    "excited": "This line: delighted, a burst of energy, but not shouting.",
+}
 
 # The voices gpt-4o-mini-tts offers (OpenAI's text-to-speech guide).
 TTS_VOICES = (
@@ -148,31 +166,89 @@ def resolve_voice(saved: Any) -> str:
     return name if name in TTS_VOICES else DEFAULT_TTS_VOICE
 
 
-def voice_settings() -> Dict[str, str]:
-    """`{model, voice, instructions}` for the clips: `TTS_MODEL`, the
-    `tts_voice` setting (else `TTS_VOICE`), `prompts/surprise_voice.txt`."""
+def _setting(key: str) -> str:
     try:
         from livestorm_app.db import get_setting
 
-        saved = get_setting("tts_voice") or TTS_VOICE
+        return str(get_setting(key) or "").strip()
     except Exception:
-        saved = TTS_VOICE
+        return ""
+
+
+def resolve_provider(saved: Any) -> str:
+    name = str(saved or "").strip().lower()
+    return name if name in VOICE_PROVIDERS else DEFAULT_VOICE_PROVIDER
+
+
+def openai_settings(saved_voice: Any = None) -> Dict[str, str]:
+    """`{provider, model, voice, notes}` for OpenAI: `TTS_MODEL`, the voice
+    (else `TTS_VOICE`), `prompts/surprise_voice.txt`."""
     try:
-        instructions = SURPRISE_VOICE_PROMPT_PATH.read_text(encoding="utf-8").strip()
+        notes = SURPRISE_VOICE_PROMPT_PATH.read_text(encoding="utf-8").strip()
     except OSError:
-        instructions = ""
+        notes = ""
     return {
+        "provider": "openai",
         "model": str(TTS_MODEL or "").strip() or "gpt-4o-mini-tts",
-        "voice": resolve_voice(saved),
-        "instructions": instructions or DEFAULT_INSTRUCTIONS,
+        "voice": resolve_voice(saved_voice or TTS_VOICE),
+        "notes": notes or DEFAULT_INSTRUCTIONS,
     }
 
 
-def clip_key(text: str, settings: Dict[str, str]) -> str:
-    """The cache key of one beat's clip: sha256 of the version, the model, the
-    voice, the delivery notes and the text."""
-    parts = [str(SURPRISE_VOICE_VERSION), settings["model"], settings["voice"], settings["instructions"], text]
+def elevenlabs_settings(saved_voice: Any = None) -> Dict[str, str]:
+    """`{provider, model, voice, notes}` for ElevenLabs: `eleven_v3`, the
+    voice id (else Finley); the notes are the stability sent."""
+    from livestorm_app.ai import voice_elevenlabs as eleven
+
+    voice = str(saved_voice or "").strip()
+    if not re.match(eleven.VOICE_ID_PATTERN, voice):
+        voice = eleven.DEFAULT_VOICE_ID
+    return {"provider": eleven.PROVIDER, "model": eleven.MODEL, "voice": voice, "notes": f"stability={eleven.STABILITY}"}
+
+
+def voice_plan() -> Tuple[Dict[str, str], Optional[Dict[str, str]]]:
+    """The main voice and its backup (None when the main one is OpenAI's),
+    from the Admin settings `voice_provider`, `elevenlabs_voice`, `tts_voice`."""
+    backup = openai_settings(_setting("tts_voice"))
+    if resolve_provider(_setting("voice_provider")) == "openai":
+        return backup, None
+    return elevenlabs_settings(_setting("elevenlabs_voice")), backup
+
+
+def line_request(line: Mapping[str, Any], settings: Mapping[str, str]) -> Dict[str, str]:
+    """What is sent for one line: `{text, instructions}`. ElevenLabs gets the
+    tone as an audio tag in the text; OpenAI as a note after the voice's."""
+    say = " ".join(str(line.get("say") or "").split())
+    tone = str(line.get("tone") or "")
+    if settings["provider"] == "elevenlabs":
+        from livestorm_app.ai.voice_elevenlabs import tagged_text
+
+        return {"text": tagged_text(say, tone), "instructions": ""}
+    hint = TONE_NOTES.get(tone, "")
+    return {"text": say, "instructions": f"{settings['notes']}\n\n{hint}".strip()}
+
+
+def clip_key(line: Mapping[str, Any], settings: Mapping[str, str]) -> str:
+    """The cache key of one line's clip: sha256 of the version, the provider,
+    the model, the voice, the notes and exactly what is sent."""
+    sent = line_request(line, settings)
+    parts = [
+        str(SURPRISE_VOICE_VERSION), settings["provider"], settings["model"], settings["voice"], settings["notes"],
+        sent["instructions"], sent["text"],
+    ]
     return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
+
+
+def record_line(line: Mapping[str, Any], settings: Mapping[str, str], keys: Mapping[str, str]) -> bytes:
+    """One line read aloud by the settings' provider, with its key from
+    `keys` (`{"openai": …, "elevenlabs": …}`, read from the worker's env)."""
+    sent = line_request(line, settings)
+    if settings["provider"] == "elevenlabs":
+        from livestorm_app.ai.voice_elevenlabs import synthesize
+
+        return synthesize(keys.get("elevenlabs", ""), sent["text"], dict(settings))
+    request = {"model": settings["model"], "voice": settings["voice"], "instructions": sent["instructions"]}
+    return synthesize_speech(keys.get("openai", ""), sent["text"], request)
 
 
 def _retry_after_s(response: requests.Response, attempt: int) -> float:
@@ -192,7 +268,7 @@ def synthesize_speech(
     attempts: int = SPEECH_ATTEMPTS,
     sleep: Callable[[float], None] = time.sleep,
 ) -> bytes:
-    """One beat read aloud by OpenAI (`POST /v1/audio/speech`): the mp3's
+    """One line read aloud by OpenAI (`POST /v1/audio/speech`): the mp3's
     bytes. Retries a 429, a 5xx and a connection error (nothing was made),
     never a read timeout (the clip may be on its way, and paid for)."""
     key = str(api_key or "").strip()

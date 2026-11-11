@@ -76,9 +76,11 @@ ANTHROPIC_CUSTOM_HEADERS      # Leave unset. The SDK would add its headers to ev
                               # every Anthropic call fails before it is sent.
                               # ANTHROPIC_API_KEY and ANTHROPIC_BASE_URL are ignored: llm_client passes the key and
                               # the host to the SDK explicitly.
-OPENAI_API_KEY                # Required for cover images and Surprise me's voice (worker)
-TTS_MODEL                     # Optional. Surprise me's speech model (default gpt-4o-mini-tts)
-TTS_VOICE                     # Optional. Its voice when Admin set none (default cedar)
+OPENAI_API_KEY                # Required for cover images and Surprise me's backup voice (worker)
+ELEVENLABS_API_KEY            # Worker. Surprise me's main voice (ElevenLabs eleven_v3). Unset: every show is
+                              # recorded with the OpenAI backup voice and says so. Never logged or sent to the page.
+TTS_MODEL                     # Optional. Surprise me's OpenAI speech model (default gpt-4o-mini-tts)
+TTS_VOICE                     # Optional. Its OpenAI voice when Admin set none (default cedar)
 ORG_DAILY_LLM_BUDGET_USD      # Optional, worker. Daily spend cap per org for automatic text jobs (none exists yet), in
                               # dollars, per UTC day. Unset: no limit. Never applies to jobs a user starts or to covers.
 
@@ -135,7 +137,7 @@ RENDER                        # Set by Render on every service. Turns off local-
 
 `llm_smoke.py --i-understand-this-costs` makes real, paid calls (well under a dollar in all) to check that the models StormIQ plans to use accept the parameters it plans to send: each planned parameter on the offered Claude models, each v1 job's request as the app itself writes it (`ai/request.py`), three calls of the understanding job over one dossier that show whether a cached prefix is read, and the OpenAI rows' parameters. It reads `CLAUDE_API_KEY` and `OPENAI_API_KEY` from the environment, never `.env`, skips a provider without a key, touches no database, and prints one line per call: whether it was accepted (or the HTTP status and error type it got), the stop reason and, for the cache calls, `cache_read_tokens`. Never a prompt, an answer or a key. The last line counts the calls not accepted and the cache misses (a repeated cached prefix that read 0 tokens from the cache); it exits 1 when either is above 0. Run it by hand only; its docstring lists every call.
 
-`reset_ai_outputs.py` removes every AI output so users regenerate them with the current models and formats (`db.reset_ai_outputs`): the AI bundles, their earlier versions, the chat labels, the understanding, the saved FAQ edits, Surprise me's storyboards and voice clips, and the desk's decisions on located answers; with `--include-covers`, the cover images. It keeps each session's fetched data, its transcript, the host's replies and figure checks, sign-ins, settings and `llm_usage`, and leaves `updated_at` alone. It is a dry run (counts only) unless you pass `--apply`, runs in one transaction, refuses a non-local database unless you also pass `--allow-remote-database`, and doesn't read `.env`. Take a database backup first. On Render: open the web service's Shell and run `python scripts/reset_ai_outputs.py --allow-remote-database`, then again with `--apply`.
+`reset_ai_outputs.py` removes every AI output so users regenerate them with the current models and formats (`db.reset_ai_outputs`): the AI bundles, their earlier versions, the chat labels, the understanding, the saved FAQ edits, Surprise me's storyboards, spoken scripts and voice clips, and the desk's decisions on located answers; with `--include-covers`, the cover images. It keeps each session's fetched data, its transcript, the host's replies and figure checks, sign-ins, settings and `llm_usage`, and leaves `updated_at` alone. It is a dry run (counts only) unless you pass `--apply`, runs in one transaction, refuses a non-local database unless you also pass `--allow-remote-database`, and doesn't read `.env`. Take a database backup first. On Render: open the web service's Shell and run `python scripts/reset_ai_outputs.py --allow-remote-database`, then again with `--apply`.
 
 `strip_registrant_join_links.py` removes registrant join links from rows saved before they were stripped on fetch. It is a dry run unless you pass `--apply`. It refuses a non-local database unless you also pass `--allow-remote-database`, and it doesn't read `.env`. It prints session ids and counts only.
 

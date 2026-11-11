@@ -313,16 +313,16 @@ org_settings (
 ```sql
 surprise_voice_clips (
   session_id  TEXT NOT NULL REFERENCES session_cache (session_id) ON DELETE CASCADE,
-  clip_key    TEXT NOT NULL,          -- sha256 of the version, model, voice, delivery notes and the beat's text
+  clip_key    TEXT NOT NULL,          -- sha256 of the version, provider, model, voice, notes and what is sent for the line
   mime        TEXT NOT NULL,          -- audio/mpeg
-  audio       BYTEA NOT NULL,         -- one beat's whole mp3
+  audio       BYTEA NOT NULL,         -- one line's whole mp3
   duration_s  DOUBLE PRECISION,       -- read from the mp3's frames (surprise_voice.mp3_duration_s)
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (session_id, clip_key)
 )
 ```
 
-Surprise me read aloud ([jobs.md](jobs.md#surprise-me-voice)): one row per beat of the take, written by the worker only, one whole clip at a time, as OpenAI answers (`save_surprise_voice_clip`, which raises). The same sentence twice is one row. A successful run removes the session's clips the current take no longer uses (`prune_surprise_voice_clips`). It has no org column: the reads (`fetch_surprise_voice_clips`, which returns lengths and sizes, never audio, and `fetch_surprise_voice_clip`) join `session_cache` on its org, and a blank scope reads nothing. Deleted with its session.
+Surprise me's voice ([jobs.md](jobs.md#surprise-me-show)): one row per line of the performance script, written by the worker only, one whole clip at a time, as ElevenLabs or OpenAI answers (`save_surprise_voice_clip`, which raises). The same line twice is one row. A successful run removes the session's clips the current show no longer uses, the other voice's included (`prune_surprise_voice_clips`). It has no org column: the reads (`fetch_surprise_voice_clips`, which returns lengths and sizes, never audio, and `fetch_surprise_voice_clip`) join `session_cache` on its org, and a blank scope reads nothing. Deleted with its session.
 
 ## `surprise_storyboards`
 
@@ -335,7 +335,20 @@ surprise_storyboards (
 )
 ```
 
-Surprise me's storyboard ([jobs.md](jobs.md#surprise-me-voice)): one row per session, written whole by the worker only, after the check (`save_surprise_storyboard`, which raises); a new take's storyboard replaces the old one. A scene's `quote` holds one of the room's redacted lines (id, kind, time, text), never who wrote it. Read by `fetch_surprise_storyboard` only for the take's own key, joined to `session_cache` on its org; a blank scope reads nothing. Deleted with its session.
+Surprise me's storyboard ([jobs.md](jobs.md#surprise-me-show)): one row per session, written whole by the worker only, after the check (`save_surprise_storyboard`, which raises); a new take's storyboard replaces the old one. A scene's `quote` holds one of the room's redacted lines (id, kind, time, text), never who wrote it. Read by `fetch_surprise_storyboard` only for the take's own key, joined to `session_cache` on its org; a blank scope reads nothing. Deleted with its session.
+
+## `surprise_scripts`
+
+```sql
+surprise_scripts (
+  session_id  TEXT PRIMARY KEY REFERENCES session_cache (session_id) ON DELETE CASCADE,
+  script_key  TEXT NOT NULL,          -- sha256 of SCRIPT_VERSION and the take's beats (surprise_performance.script_key)
+  script      JSONB NOT NULL,         -- {version, source: model | take, lines: [{beat, say, tone}]}
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+```
+
+Surprise me's performance script ([jobs.md](jobs.md#surprise-me-show)): one row per session, written whole by the worker only, after the check, or the take's own beats when the script failed it (`source: take`) (`save_surprise_script`, which raises); a new take's script replaces the old one. Never served to the page: `GET /surprise-show` sends each line's beat and clip key only. Read by `fetch_surprise_script` only for the take's own key, joined to `session_cache` on its org; a blank scope reads nothing. Deleted with its session.
 
 ## `oauth_connections`
 

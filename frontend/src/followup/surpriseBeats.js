@@ -113,7 +113,7 @@ export function surpriseBeats(take, chapterTitles = []) {
   return beats;
 }
 
-/** The server's beats (`[{kind, text, …}]` from `GET /surprise-voice`) with
+/** The server's beats (`[{kind, text, …}]` from `GET /surprise-show`) with
  * their parts, cut as `surpriseBeats` cuts its own. Every other field is kept. */
 export function beatsWithParts(beats = [], chapterTitles = []) {
   const keywords = keywordsFrom(chapterTitles);

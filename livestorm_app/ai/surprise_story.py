@@ -3,8 +3,8 @@ voice reads it. Not the sentence written out: one short headline lifted
 from it, a big number it says, or one of the room's own lines popping up
 as a chat bubble, each with an effect (prompt: `prompts/surprise_storyboard.txt`).
 
-- **When.** Made on the Play click only, in the voice job, before the
-  clips (`api_logic.run_surprise_voice`); cached by `story_key` (the beats'
+- **When.** Made only from the "Make the show" click, in the show job,
+  after the script and before the clips (`api_logic.run_surprise_show`); cached by `story_key` (the beats'
   text and `STORYBOARD_VERSION`) in `surprise_storyboards`, so a replay
   costs nothing.
 - **The call** (`write_storyboard`): a v1 job (`ai.jobs`, kind
@@ -22,7 +22,7 @@ as a chat bubble, each with an effect (prompt: `prompts/surprise_storyboard.txt`
   becomes `DEFAULT_EFFECT`, and an effect without what it needs (`count`
   without a number, `chat` without a quote) falls back to the headline's.
   A beat whose scene fails is None: the player draws its own scene for it
-  (`frontend/src/followup/surpriseScenes.js`), so the Play never fails.
+  (`frontend/src/followup/surpriseScenes.js`), so the show never fails.
 
 No database, no web framework.
 """

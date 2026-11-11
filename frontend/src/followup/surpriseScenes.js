@@ -7,7 +7,7 @@
 // them in SVG and CSS.
 //
 // Where a scene comes from (`storyScene`):
-// - the server's storyboard (`beats[i].scene` from `GET /surprise-voice`):
+// - the server's storyboard (`beats[i].scene` from `GET /surprise-show`):
 //   made by Claude on the Play click and checked word for word on the server
 //   (`livestorm_app/ai/surprise_story.py`); its quote's words are the room's
 //   own, redacted, never the model's;

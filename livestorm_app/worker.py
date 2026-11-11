@@ -12,7 +12,7 @@ FastAPI app (via `livestorm_app.queue.enqueue_unique_job_sync`):
     - run_smart_recap_job(session_id, tone)
     - run_content_repurposing_job(session_id, output_language)
     - run_cover_image_job(session_id)   (chained after a Professional recap)
-    - run_surprise_voice_job(session_id) (Surprise me read aloud, on Play)
+    - run_surprise_show_job(session_id) (Surprise me's show, on Make the show)
     - run_people_sync(sync_id, session_id)
 
 plus a no-op `ping` and the stuck-job sweeper cron.
@@ -35,6 +35,7 @@ Hard rules:
 from __future__ import annotations
 
 import asyncio
+import functools
 import contextlib
 import logging
 import threading
@@ -203,9 +204,11 @@ LLM_JOB_TIMEOUT_SECONDS = 60 * 15  # up to two LLM calls (truncation or complete
 # call, streamed with its own 10-minute deadline (`JobSpec.call_deadline_s`).
 SESSION_ANALYSIS_TIMEOUT_SECONDS = 60 * 25
 COVER_IMAGE_JOB_TIMEOUT_SECONDS = 60 * 5  # one Images call, 3-min HTTP timeout
-# Surprise me's voice: one speech call per beat (a few dozen at most, four at
-# a time), each with a 60-second read timeout.
-SURPRISE_VOICE_JOB_TIMEOUT_SECONDS = 60 * 10
+# Surprise me's show: the take (up to two Claude calls), the script (up to
+# two), the storyboard (one), then one speech call per line (a few dozen at
+# most, four at a time, each with a 60-second read timeout; again with the
+# backup voice when ElevenLabs refuses the account).
+SURPRISE_SHOW_JOB_TIMEOUT_SECONDS = 60 * 25
 
 # Transcriptions download the recording and run ffmpeg locally; more than a
 # couple at once can exhaust the starter instance's memory. Extra jobs wait
@@ -724,45 +727,54 @@ async def run_cover_image_job(
         raise
 
 
-# ── Surprise me's voice job ────────────────────────────────────────────────
+# ── Surprise me's show job ─────────────────────────────────────────────────
 #
-# Reads the session's Surprise me take aloud with OpenAI's speech API, one
-# clip per beat (`api_logic.run_surprise_voice`), after its storyboard
-# (Claude, `ai/surprise_story.py`). Queued only when a user clicks Play
-# (`api_logic.start_surprise_voice`), with the session id as its only
-# argument; both keys come from the worker's own environment. Without a
-# Claude key the voice is still made, and the player draws its own scenes.
+# One click, one job (`api_logic.run_surprise_show`): the take when there is
+# none (Claude, the Smart Recap's surprise tone), the performance script and
+# the storyboard (Claude), then one clip per line (ElevenLabs, or OpenAI as
+# the backup voice). Queued only when a user clicks "Make the show"
+# (`api_logic.start_surprise_show`), with the session id as its only
+# argument; every key comes from the worker's own environment, and none is
+# ever logged or put in an error.
 
 
-async def run_surprise_voice_job(ctx: Dict[str, Any], session_id: str) -> Dict[str, Any]:
-    from livestorm_app.api_logic import SURPRISE_VOICE_KIND, run_surprise_voice
-    from livestorm_app.ai.surprise_voice import SpeechFailed
-
-    logger.info("[run_surprise_voice_job] session_id=%s start", session_id)
+def _show_keys() -> Dict[str, str]:
+    """The worker's keys for the show, `{claude, openai, elevenlabs}`; a
+    missing one is "" (the show decides what it can do without it)."""
     try:
-        key = str(get_runtime_secret("OPENAI_API_KEY", "") or "").strip()
-        if not key:
-            raise SpeechFailed("The voice isn't set up on this server (no OpenAI key).")
-        publish_progress_sync(SURPRISE_VOICE_KIND, session_id, "reading")
+        claude = _read_llm_key_or_raise()
+    except RuntimeError:
+        claude = ""
+    return {
+        "claude": claude,
+        "openai": str(get_runtime_secret("OPENAI_API_KEY", "") or "").strip(),
+        "elevenlabs": str(get_runtime_secret("ELEVENLABS_API_KEY", "") or "").strip(),
+    }
+
+
+async def run_surprise_show_job(ctx: Dict[str, Any], session_id: str) -> Dict[str, Any]:
+    from livestorm_app.api_logic import SURPRISE_SHOW_KIND, run_surprise_show
+
+    logger.info("[run_surprise_show_job] session_id=%s start", session_id)
+    try:
+        publish_progress_sync(SURPRISE_SHOW_KIND, session_id, "queued")
 
         def publish(stage: str, extra: Dict[str, Any]) -> None:
-            publish_progress_sync(SURPRISE_VOICE_KIND, session_id, stage, extra=extra)
+            publish_progress_sync(SURPRISE_SHOW_KIND, session_id, stage, extra=extra)
 
-        try:
-            llm_key = _read_llm_key_or_raise()
-        except RuntimeError:
-            llm_key = ""
-        result = await asyncio.to_thread(run_surprise_voice, key, session_id, publish=publish, llm_key=llm_key)
+        keys = _show_keys()
+        result = await asyncio.to_thread(_collecting, functools.partial(run_surprise_show, publish=publish), keys, session_id)
         logger.info(
-            "[run_surprise_voice_job] session_id=%s done made=%s beats=%s story=%s",
-            session_id, result.get("made"), result.get("beats"), result.get("story"),
+            "[run_surprise_show_job] session_id=%s done take=%s script=%s story=%s lines=%s made=%s voice=%s fell_back=%s",
+            session_id, result.get("take"), result.get("script"), result.get("story"), result.get("lines"),
+            result.get("made"), result.get("voice"), result.get("fellBack"),
         )
         return result
     except Exception:
-        logger.exception("[run_surprise_voice_job] session_id=%s failed", session_id)
+        logger.exception("[run_surprise_show_job] session_id=%s failed", session_id)
         raise
     finally:
-        clear_progress_sync(SURPRISE_VOICE_KIND, session_id)
+        clear_progress_sync(SURPRISE_SHOW_KIND, session_id)
 
 
 async def _enqueue_default_cover_image(ctx: Dict[str, Any], session_id: str) -> None:
@@ -1065,7 +1077,7 @@ class WorkerSettings:
         func(run_smart_recap_job, timeout=LLM_JOB_TIMEOUT_SECONDS),
         func(run_content_repurposing_job, timeout=LLM_JOB_TIMEOUT_SECONDS),
         func(run_cover_image_job, timeout=COVER_IMAGE_JOB_TIMEOUT_SECONDS),
-        func(run_surprise_voice_job, timeout=SURPRISE_VOICE_JOB_TIMEOUT_SECONDS),
+        func(run_surprise_show_job, timeout=SURPRISE_SHOW_JOB_TIMEOUT_SECONDS),
         func(run_people_sync, timeout=PEOPLE_SYNC_JOB_TIMEOUT_SECONDS),
     ]
 

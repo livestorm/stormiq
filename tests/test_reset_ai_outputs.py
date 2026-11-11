@@ -90,7 +90,7 @@ def test_a_dry_run_counts_and_changes_nothing(test_database):
     lines = []
     counts = _script().run(apply=False, out=lines.append)
     assert all(counts[f"session_cache.{column}"] == 1 for column in db.AI_OUTPUT_COLUMNS)
-    seeded = [table for table in db.AI_OUTPUT_TABLES if table not in ("surprise_storyboards", "surprise_voice_clips")]
+    seeded = [table for table in db.AI_OUTPUT_TABLES if table not in ("surprise_storyboards", "surprise_scripts", "surprise_voice_clips")]
     assert all(counts[table] == 1 for table in seeded)
     assert counts["session_question_replies.located"] == 1
     assert "session_cache.cover_image" not in counts, "covers only when asked"

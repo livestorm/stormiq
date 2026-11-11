@@ -94,23 +94,23 @@ SESSION_ANALYSIS_STAGE_FLOORS: Dict[str, int] = {
 }
 
 
-# Surprise me, read aloud (`worker.run_surprise_voice_job`, keyed by
-# session): read the take, plan its scenes (the storyboard, Claude), then
-# one OpenAI clip per beat. While it speaks,
-# the payload also carries `done` and `total` (clips) and a `percent` that
-# moves with them.
-SURPRISE_VOICE_STAGE_FLOORS: Dict[str, int] = {
+# Surprise me's show (`worker.run_surprise_show_job`, keyed by session):
+# write the take (when there is none), the performance script, the
+# storyboard, then one clip per line. While it records, the payload also
+# carries `done` and `total` (clips) and a `percent` that moves with them.
+SURPRISE_SHOW_STAGE_FLOORS: Dict[str, int] = {
     "queued": 0,
-    "reading": 5,
-    "storyboard": 7,
-    "speaking": 10,
+    "take": 5,
+    "script": 30,
+    "storyboard": 45,
+    "voice": 55,
     "done": 100,
 }
 
 
 STAGE_TABLE: Dict[str, Dict[str, int]] = {
     "transcript": TRANSCRIPT_STAGE_FLOORS,
-    "surprise_voice": SURPRISE_VOICE_STAGE_FLOORS,
+    "surprise_show": SURPRISE_SHOW_STAGE_FLOORS,
     "roster": ROSTER_STAGE_FLOORS,
     "session_analysis": SESSION_ANALYSIS_STAGE_FLOORS,
     "overall_analysis": ANALYSIS_STAGE_FLOORS,

@@ -1034,7 +1034,7 @@ def test_the_per_session_tables_reference_the_session_through_its_unique_index(t
         (table, "c", "idx_session_cache_session_id_unique")
         for table in (
             "livestorm_sync_jobs", "output_versions", "session_chat_labels", "session_faq", "session_figure_checks", "session_people",
-            "session_question_replies", "session_rosters", "session_understanding", "surprise_storyboards", "surprise_voice_clips",
+            "session_question_replies", "session_rosters", "session_understanding", "surprise_scripts", "surprise_storyboards", "surprise_voice_clips",
         )
     ]
 

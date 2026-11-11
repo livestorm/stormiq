@@ -7,7 +7,7 @@
 #
 # REDIS_URL is wired from the redis service into both web and worker via
 # fromService. DATABASE_URL must be set in the dashboard (link to the
-# Postgres add-on). All other env vars (OPENAI_API_KEY, GLADIA_KEY,
+# Postgres add-on). All other env vars (OPENAI_API_KEY, ELEVENLABS_API_KEY, GLADIA_KEY,
 # Livestorm OAuth, etc.) are set per-service in the dashboard — see
 # docs/operations.md.
 
