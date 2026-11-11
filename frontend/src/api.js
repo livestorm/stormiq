@@ -167,6 +167,12 @@ export const api = {
   getSessionQuestionDesk(sessionId, { signal } = {}) {
     return request(sessionPath(sessionId, "/record/questions"), { signal });
   },
+  // Follow-up's "Earlier versions": one output's saved versions, newest first.
+  // `query`: `{kind, language}` or `{kind, tone}` (`versionsQuery` in followup/outputs.js).
+  getOutputVersions(sessionId, query, { signal } = {}) {
+    const params = new URLSearchParams(Object.entries(query).filter(([, value]) => value != null && value !== ""));
+    return request(`${sessionPath(sessionId, "/output-versions")}?${params}`, { signal });
+  },
   // Before you share: the figures said on stage to check, with the host's answers.
   getFigureChecks(sessionId, { signal } = {}) {
     return request(sessionPath(sessionId, "/record/figures"), { signal });

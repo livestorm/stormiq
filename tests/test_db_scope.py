@@ -315,3 +315,34 @@ def test_a_malformed_understanding_is_refused_before_any_write(test_database):
     with pytest.raises(RuntimeError):
         db.replace_understanding("sess-missing", _understanding(), dossier_hash="d" * 64, model="m")
     assert db.fetch_understanding("sess-a", ALL_ORGS) is None
+
+
+# ── Earlier versions of an output (`list_output_versions`) ──
+
+
+def test_an_outputs_versions_are_read_newest_first_in_scope_only(test_database):
+    from livestorm_app import api_logic
+
+    db.upsert_cached_session("key-a", "sess-v", session_payload={"name": "V"}, organization_id="org-a")
+    made = {"calls": 1, "job_kinds": ["faq"], "models": ["claude-haiku-5-5"], "prompt_hashes": ["p1"], "job_id": "faq:sess-v:English"}
+    db.merge_cached_bundle_entry("sess-v", "faq_bundle", "English", "FAQ one", provenance=made)
+    db.merge_cached_bundle_entry("sess-v", "faq_bundle", "English", "FAQ two", provenance=made)
+    db.merge_cached_bundle_entry("sess-v", "faq_bundle", "French", "FAQ un", provenance=made)
+
+    rows = db.list_output_versions("sess-v", "faq_bundle", "English", organization_id="org-a")
+    assert [row["content"] for row in rows] == ["FAQ two", "FAQ one"]
+    assert rows[0]["models"] == ["claude-haiku-5-5"] and rows[0]["calls"] == 1
+    assert set(rows[0]) == {"id", "content", "models", "job_kinds", "calls", "created_at"}, "never the hashes or the job id"
+    assert db.list_output_versions("sess-v", "faq_bundle", "English", organization_id="org-b") == []
+    assert db.list_output_versions("sess-v", "faq_bundle", "English", organization_id="") == []
+    assert len(db.list_output_versions("sess-v", "faq_bundle", "English", organization_id="org-a", limit=1)) == 1
+    with pytest.raises(ValueError):
+        db.list_output_versions("sess-v", "transcript_payload", "English", organization_id="org-a")
+
+    body = api_logic.get_session_output_versions("sess-v", "faq", language="English", organization_id="org-a")
+    assert [(v["content"], v["current"]) for v in body["versions"]] == [("FAQ two", True), ("FAQ one", False)]
+    assert body["entry"] == "English" and body["versions"][0]["createdAt"]
+    with pytest.raises(api_logic.SessionNotFoundError):
+        api_logic.get_session_output_versions("sess-v", "faq", organization_id="org-b")
+    with pytest.raises(api_logic.UnknownOutputKindError):
+        api_logic.get_session_output_versions("sess-v", "transcript", organization_id="org-a")

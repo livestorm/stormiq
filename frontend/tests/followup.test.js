@@ -5,12 +5,16 @@ import {
   OUTPUTS,
   canMake,
   cleanRecap,
+  earlierVersions,
   making,
+  modelLabel,
   outputFor,
   outputGroups,
   outputText,
   pdfUrl,
   toggleOptions,
+  versionText,
+  versionsQuery,
 } from "../src/followup/outputs";
 import { inlineParts, markdownBlocks, markdownSections, plainText } from "../src/followup/markdown";
 
@@ -119,14 +123,16 @@ describe("the Follow-up outputs", () => {
     expect(groups[1].items.map((item) => item.label)).toEqual(["Summary", "Blog post", "Follow-up email", "Social posts", "FAQ"]);
   });
 
-  it("switch the recap between Formal and Hype, and leave the Deep analysis off the list", () => {
+  it("switch the recap between Formal and Hype, and keep the Deep analysis read-only", () => {
     expect(toggleOptions(outputFor("recap-hype")).map((item) => [item.key, item.toggleLabel])).toEqual([
       ["recap-professional", "Formal"],
       ["recap-hype", "Hype"],
     ]);
     expect(toggleOptions(outputFor("overall"))).toEqual([]);
-    expect(OUTPUTS.some((output) => output.key === "deep")).toBe(false);
-    expect(outputFor("deep").key).toBe("overall", "an old link opens the Session analysis");
+    const deep = outputFor("deep");
+    expect([deep.group, deep.archived, deep.flow]).toEqual(["Earlier outputs", true, undefined]);
+    expect(canMake(outputs, deep, "English")).toBe(false);
+    expect(making({ loading: { undefined: true } }, deep, "English").busy).toBe(false);
     expect(OUTPUTS.filter((output) => output.sections).map((output) => output.key)).toEqual(["email", "social"]);
   });
 
@@ -189,5 +195,47 @@ describe("the outputs' Markdown", () => {
     expect(blocks).toEqual([
       { type: "paragraph", parts: [{ text: '<img src=x onerror="alert(1)"> ' }, { text: "<b>hi</b>", bold: true }] },
     ]);
+  });
+});
+
+describe("earlier outputs and earlier versions", () => {
+  it("list the Deep analysis only when one was saved, in any language", () => {
+    expect(outputGroups(outputs, "English").some((group) => group.name === "Earlier outputs")).toBe(false);
+    const saved = { ...outputs, deepAnalysisBundle: { French: "## Analyse" } };
+    const archive = outputGroups(saved, "English").find((group) => group.name === "Earlier outputs");
+    expect(archive.items).toEqual([{ key: "deep", label: "Deep analysis", ready: false, keys: ["deep"], toggle: "" }]);
+    expect(pdfUrl(fakeApi, "s1", outputFor("deep"), "French")).toBe("/a/s1/deep/French");
+  });
+
+  it("ask the server for each output's versions by language or tone", () => {
+    expect(versionsQuery(outputFor("overall"), "French")).toEqual({ kind: "overall", language: "French" });
+    expect(versionsQuery(outputFor("recap-hype"), "French")).toEqual({ kind: "smart_recap", tone: "hype" });
+    expect(versionsQuery(outputFor("blog"), "English")).toEqual({ kind: "content", language: "English" });
+    expect(versionsQuery(outputFor("team-digest"), "English")).toEqual({ kind: "team_digest", language: "English" });
+    expect(versionsQuery(outputFor("deep"), "English")).toEqual({ kind: "deep", language: "English" });
+  });
+
+  it("read a version as the output shows it", () => {
+    expect(versionText(outputFor("blog"), { summary: "S", blog: " Long. " })).toBe("Long.");
+    expect(versionText(outputFor("blog"), "not a bundle")).toBe("");
+    expect(versionText(outputFor("recap-professional"), "# Title\nRecap\n# Description\nBody")).toBe("## Recap\nBody");
+    expect(versionText(outputFor("faq"), { not: "text" })).toBe("");
+    expect(modelLabel("claude-sonnet-5-5")).toBe("Claude Sonnet 5.5");
+    expect(modelLabel("gpt-image-1")).toBe("gpt-image-1");
+  });
+
+  it("list every version but the one on screen, without repeats or empty ones", () => {
+    const body = {
+      versions: [
+        { id: 4, createdAt: "2026-11-11T13:02:00Z", models: ["claude-sonnet-5-5"], content: { blog: "Now" } },
+        { id: 3, createdAt: "2026-11-10T09:00:00Z", models: ["claude-sonnet-5-5", "claude-sonnet-5-5"], content: { blog: "Before" } },
+        { id: 2, createdAt: "2026-11-09T09:00:00Z", models: [], content: { blog: "Before" } },
+        { id: 1, createdAt: "2026-11-08T09:00:00Z", models: ["claude-haiku-5-5"], content: { summary: "no blog" } },
+      ],
+    };
+    const listed = earlierVersions(body, outputFor("blog"), "Now");
+    expect(listed.map((v) => [v.id, v.text, v.models])).toEqual([[3, "Before", "Claude Sonnet 5.5"]]);
+    expect(listed[0].when).toMatch(/10 Nov 2026/);
+    expect(earlierVersions(null, outputFor("blog"), "Now")).toEqual([]);
   });
 });

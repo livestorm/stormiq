@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from livestorm_app.api_logic import (
+    SessionNotFoundError,
+    UnknownOutputKindError,
+    get_session_output_versions,
     build_analysis_pdf,
     build_content_repurposing_pdf,
     build_smart_recap_pdf,
@@ -34,6 +38,7 @@ from livestorm_app.auth import (
 from livestorm_app.routes.common import SessionId, pdf_response, raise_http_error
 from livestorm_app.routes.models import AnalysisRequest, SmartRecapRequest
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -155,6 +160,32 @@ def deep_analysis_job(session_id: SessionId, caller: Caller = Depends(get_caller
     except Exception as exc:
         raise_http_error("Deep analysis", exc)
         raise
+
+
+VERSIONS_RESOURCE = "Earlier versions"
+
+
+@router.get("/api/sessions/{session_id}/output-versions")
+def output_versions(
+    session_id: SessionId,
+    caller: Caller = Depends(get_caller),
+    kind: str = Query(...),
+    language: str = Query("English"),
+    tone: str = Query("professional"),
+) -> Dict[str, Any]:
+    """Follow-up's "Earlier versions": one output's saved versions, newest
+    first (`api_logic.get_session_output_versions`). Read-only, no model call."""
+    try:
+        return get_session_output_versions(session_id, kind, language=language, tone=tone, organization_id=caller.read_scope)
+    except UnknownOutputKindError as exc:
+        raise HTTPException(status_code=400, detail={"resource": VERSIONS_RESOURCE, "message": str(exc)}) from exc
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail={"resource": VERSIONS_RESOURCE, "message": str(exc)}) from exc
+    except Exception as exc:
+        logger.exception("Output versions read failed for session_id=%s", session_id)
+        raise HTTPException(
+            status_code=500, detail={"resource": VERSIONS_RESOURCE, "message": "The earlier versions could not be read."}
+        ) from exc
 
 
 @router.get("/api/sessions/{session_id}/analysis-pdf")
