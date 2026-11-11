@@ -13,7 +13,7 @@ Write in English, in Slack-friendly Markdown, exactly in this shape:
 The first line is exactly the line above, word for word. Nothing before it, nothing after the last bullet.
 
 For the bullets, pick what the team most needs:
-- the vitals that matter, each number exactly as the brief writes it;
+- the vitals that matter, each number exactly as the brief writes it; a vital marked "(estimated)" says "estimated";
 - one or two key moments, each with its time from the brief ("at 12:05, 9 messages while the pricing was shown");
 - the decisions and commitments, when the brief lists any, with their due date when it gives one;
 - how many questions are still open, and the most pressing one in a few neutral words.

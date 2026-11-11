@@ -7,7 +7,9 @@ The brief holds, in this order:
 
 - the session: its title, length and whether it is internal;
 - the vitals, as the Report shows them (`record.measures`): only measures
-  whose state is `ok`, each written as the digest may quote it (a share as
+  whose value the Report shows (`ok`; `partial` and `approximation`, which
+  it marks "Estimated", marked "(estimated)"; never a hidden value), each
+  written as the digest may quote it (a share as
   "71%", a count as "5", a time as "22:30"): show-up rate, the share of
   attendees who wrote, the audience's questions, how many are still open on
   the question desk, and the median time in the room;
@@ -81,9 +83,20 @@ def _one_line(value: Any, limit: int = MAX_TEXT_CHARS) -> str:
     return text[:limit].rstrip() + "…" if len(text) > limit else text
 
 
-def _ok(measures: Mapping[str, Any], measure_id: str) -> Optional[Mapping[str, Any]]:
+# The states whose value the Report shows: `ok`, and `partial` or
+# `approximation`, which it marks "Estimated". `insufficient`, `unresolved`
+# and `unavailable` hide the value, so the brief leaves it out too.
+SHOWN_STATES = ("ok", "partial", "approximation")
+ESTIMATED = " (estimated)"
+
+
+def _shown(measures: Mapping[str, Any], measure_id: str) -> Optional[Mapping[str, Any]]:
     measure = measures.get(measure_id)
-    return measure if isinstance(measure, Mapping) and measure.get("state") == "ok" else None
+    return measure if isinstance(measure, Mapping) and measure.get("state") in SHOWN_STATES else None
+
+
+def _mark(measure: Mapping[str, Any]) -> str:
+    return "" if measure.get("state") == "ok" else ESTIMATED
 
 
 def _percent(value: Any) -> Optional[str]:
@@ -92,26 +105,27 @@ def _percent(value: Any) -> Optional[str]:
 
 
 def vital_lines(measures: Mapping[str, Any], questions_open: Optional[int]) -> List[str]:
-    """The vitals, one line each, only from measures whose state is `ok`;
+    """The vitals, one line each, from the measures whose value the Report
+    shows (`SHOWN_STATES`), those it marks "Estimated" marked "(estimated)";
     `questions_open` is the question desk's count of open questions."""
     lines: List[str] = []
-    m = _ok(measures, "m.show_up_rate")
+    m = _shown(measures, "m.show_up_rate")
     if m and _percent(m.get("value")):
-        lines.append(f"- Show-up rate: {_percent(m['value'])} of those registered came live")
-    m = _ok(measures, "m.wrote_rate")
+        lines.append(f"- Show-up rate: {_percent(m['value'])} of those registered came live{_mark(m)}")
+    m = _shown(measures, "m.wrote_rate")
     if m and _percent(m.get("value")):
-        lines.append(f"- Attendees who wrote in the chat or the Q&A: {_percent(m['value'])}")
-    m = _ok(measures, "m.questions_total")
+        lines.append(f"- Attendees who wrote in the chat or the Q&A: {_percent(m['value'])}{_mark(m)}")
+    m = _shown(measures, "m.questions_total")
     if m and _finite(m.get("value")) is not None:
-        lines.append(f"- Audience questions (Q&A and chat): {int(m['value'])}")
+        lines.append(f"- Audience questions (Q&A and chat): {int(m['value'])}{_mark(m)}")
         if isinstance(questions_open, int) and questions_open >= 0:
             lines.append(f"- Questions still open on the question desk: {questions_open}")
-    m = _ok(measures, "m.time_in_room")
+    m = _shown(measures, "m.time_in_room")
     if m:
         seconds = _finite((m.get("coverage") or {}).get("medianAttendanceS"))
         share = _percent(m.get("value"))
         if seconds is not None and share:
-            lines.append(f"- Median time in the room: {clock(seconds)}, {share} of the session")
+            lines.append(f"- Median time in the room: {clock(seconds)}, {share} of the session{_mark(m)}")
     return lines
 
 

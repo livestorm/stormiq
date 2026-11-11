@@ -108,7 +108,7 @@ def _good(brief_text):
         [
             INTERNAL_MARKER,
             "*Synthetic Product Webinar went well.*",
-            "- 5 audience questions, 1 still open.",
+            "- 5 audience questions, 2 still open.",
             "- From 1:00 to 2:00 the room greeted the team.",
             "- The team will send the slides to everyone.",
         ]
@@ -128,7 +128,7 @@ def test_the_brief_holds_the_vitals_moments_chapters_questions_and_decisions():
     assert text.startswith("# Team digest brief")
     assert "title: Synthetic Product Webinar" in text and "length: 30:00" in text
     assert "- Audience questions (Q&A and chat): 5" in text
-    assert "- Questions still open on the question desk: 1" in text
+    assert "- Questions still open on the question desk: 2" in text, "1 open and 1 covered, as Follow-up counts"
     assert "- 1:00 to 2:00: 3 messages, greetings and logistics; being said on stage: \"" in text
     assert "## Chapters\n- 0:21 Welcome and agenda" in text
     assert "- \"Is there an API?\"" in text
@@ -163,23 +163,46 @@ def test_a_saved_speaker_name_said_on_stage_is_replaced():
     assert "everyone is a team member" in brief.text and "- not listed" in brief.text
 
 
-def test_vitals_come_only_from_measures_whose_state_is_ok():
+def test_still_open_counts_as_the_follow_up_page_does_open_and_covered_not_confirmed():
+    from livestorm_app.record import question_desk as desk_module
+
+    real = desk_module.question_desk
+
+    def desk(*args, **kwargs):
+        body = real(*args, **kwargs)
+        return {**body, "summary": {**body["summary"], "open": 2, "covered": 3}}
+
+    with mock.patch.object(desk_module, "question_desk", desk):
+        _, seen = _run(answer=f"{INTERNAL_MARKER}\n- The room asked a lot.")
+    text = seen["briefs"][0].text
+    assert "- Questions still open on the question desk: 5" in text
+
+
+def test_vitals_come_from_measures_the_report_shows_and_estimated_ones_say_so():
     measures = {
         "m.show_up_rate": {"state": "ok", "value": 0.7143},
         "m.wrote_rate": {"state": "ok", "value": 0.4},
         "m.questions_total": {"state": "ok", "value": 12},
-        "m.time_in_room": {"state": "ok", "value": 0.75, "coverage": {"medianAttendanceS": 1350.0}},
+        "m.time_in_room": {"state": "approximation", "value": 0.75, "coverage": {"medianAttendanceS": 1350.0}},
     }
     assert vital_lines(measures, 3) == [
         "- Show-up rate: 71% of those registered came live",
         "- Attendees who wrote in the chat or the Q&A: 40%",
         "- Audience questions (Q&A and chat): 12",
         "- Questions still open on the question desk: 3",
-        "- Median time in the room: 22:30, 75% of the session",
+        "- Median time in the room: 22:30, 75% of the session (estimated)",
     ]
-    hidden = {key: {**value, "state": "approximation"} for key, value in measures.items()}
-    hidden["m.wrote_rate"]["state"] = "insufficient"
-    assert vital_lines(hidden, 3) == []
+    partial = {**measures, "m.show_up_rate": {"state": "partial", "value": 0.7143}}
+    assert vital_lines(partial, 3)[0] == "- Show-up rate: 71% of those registered came live (estimated)"
+    for state in ("insufficient", "unresolved", "unavailable"):
+        hidden = {key: {**value, "state": state} for key, value in measures.items()}
+        assert vital_lines(hidden, 3) == [], state
+
+
+def test_an_estimated_vital_can_be_quoted():
+    brief = "## Vitals\n- Median time in the room: 22:30, 75% of the session (estimated)"
+    text = "*Internal: not for sharing outside the team.*\n- About 75% of the session (estimated), 22:30."
+    assert check_digest(text, brief).startswith("*Internal")
 
 
 def test_the_decisions_are_read_back_without_who():
