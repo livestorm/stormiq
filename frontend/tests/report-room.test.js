@@ -123,7 +123,7 @@ describe("questionGroups", () => {
 describe("questionItem", () => {
   it("says who asked, where and when", () => {
     const item = questionItem(desk.questions.find((q) => q.id === "Q001"));
-    expect(item).toMatchObject({ text: "Will the slides be shared?", source: "qa", who: "Theo P. · Q&A · Before" });
+    expect(item).toMatchObject({ text: "Will the slides be shared?", source: "qa", who: "Theo P. · Q&A tab · Before" });
     expect(item.answers).toEqual([{ label: "Written answer", text: "Yes, see the chat.", quote: false }]);
   });
 

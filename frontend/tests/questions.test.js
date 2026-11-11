@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import body from "./fixtures/questions-v1.json";
 import {
   FILTERS,
+  SOURCES,
   canMark,
   chatNotice,
   csvChoices,
@@ -12,6 +13,8 @@ import {
   locatedNotice,
   logisticsLine,
   metaLine,
+  sourceCounts,
+  sourceOf,
   statusOf,
   summaryLine,
 } from "../src/followup/desk";
@@ -27,6 +30,25 @@ describe("the question desk's words", () => {
     expect(filterQuestions(body.questions, "open").map((q) => q.text)).toEqual(["What about pricing?", "Is there an API?"]);
     expect(filterQuestions(body.questions, "answered")).toHaveLength(3);
     expect(filterQuestions(body.questions, "all")).toBe(body.questions);
+  });
+
+  it("tell the Q&A tab's questions from the chat's, and filter by source", () => {
+    expect(SOURCES.map((source) => source.key)).toEqual(["all", "qa", "chat"]);
+    expect(sourceOf(byText["What about pricing?"])).toMatchObject({ key: "chat", label: "Chat" });
+    expect(sourceOf(byText["Is there an API?"])).toMatchObject({ key: "qa", label: "Q&A tab" });
+    expect(sourceOf({})).toMatchObject({ key: "qa" });
+    const chat = body.questions.filter((q) => q.source === "chat");
+    expect(filterQuestions(body.questions, "all", "chat")).toEqual(chat);
+    expect(filterQuestions(body.questions, "all", "qa")).toHaveLength(body.questions.length - chat.length);
+    expect(filterQuestions(body.questions, "open", "chat").map((q) => q.text)).toEqual(["What about pricing?"]);
+    expect(sourceCounts(body.questions, "open")).toEqual({ all: 2, qa: 1, chat: 1 });
+    expect(sourceCounts(body.questions, "all")).toEqual({ all: 5, qa: 5 - chat.length, chat: chat.length });
+    expect(filterCounts(body.summary, { questions: body.questions, source: "chat" })).toEqual({
+      open: 1,
+      answered: chat.length - 1,
+      all: chat.length,
+    });
+    expect(filterCounts(body.summary, { questions: body.questions, source: "all" })).toEqual(filterCounts(body.summary));
   });
 
   it("sum the desk up, leaving out the statuses nobody has", () => {
@@ -50,9 +72,9 @@ describe("the question desk's words", () => {
     expect(statusOf(byText["Will the slides be shared?"])).toEqual({ status: "measured", label: "Answered in writing" });
     expect(statusOf(byText["Is there an API?"])).toEqual({ status: "check", label: "Still open" });
     expect(statusOf({ status: "here" }).label).toBe("Answered here");
-    expect(metaLine(byText["Will the slides be shared?"])).toBe("Theo P. · Q&A · Before");
-    expect(metaLine(byText["What about pricing?"])).toBe("Sam R. · Chat · 3:20");
-    expect(metaLine({ author: "Attendee", source: "qa", t: null })).toBe("Attendee · Q&A");
+    expect(metaLine(byText["Will the slides be shared?"])).toBe("Theo P. · Before");
+    expect(metaLine(byText["What about pricing?"])).toBe("Sam R. · 3:20");
+    expect(metaLine({ author: "Attendee", source: "qa", t: null })).toBe("Attendee");
     expect(canMark(byText["Is there an API?"])).toBe(true);
     expect(canMark(byText["Will the slides be shared?"])).toBe(false);
     expect(canMark({ status: "here", canSave: true })).toBe(true);
