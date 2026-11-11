@@ -273,6 +273,21 @@ output_versions (
 - **What made it.** The worker runs each AI job inside `ai.usage.collect_calls()`; every answered call recorded there (`record_call`) adds its job kind, job id, model and hashes, and the runner passes `ai.usage.run_provenance()` when it saves. Lists keep the order first seen, without repeats or blanks. The same run's calls are in `llm_usage` too, but those rows hold no content and can't tell two runs of the same job apart (the job id repeats).
 - **Holds the outputs' text**, like the bundle columns: scoped and deleted through the session (no org column; `ON DELETE CASCADE`). Read only by `db.list_output_versions` (one output's versions, newest first, at most 20, joined to `session_cache` on the caller's org; never the hashes or the job id), for Follow-up's "Earlier versions" (`GET /output-versions`, [api.md](api.md)).
 
+## `org_settings`
+
+One row per organization whose switches a StormIQ admin changed (Admin → Organizations). An organization without a row has the defaults.
+
+```sql
+org_settings (
+  organization_id  TEXT PRIMARY KEY,
+  surprise_enabled BOOLEAN NOT NULL DEFAULT TRUE,  -- Surprise Me! on Follow-up
+  updated_by_email TEXT,                           -- the admin who changed it
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+```
+
+- Written only by `db.save_surprise_enabled` (`POST /api/admin/organizations/settings`, admins only). Read by `db.fetch_surprise_enabled`, which raises on a failed read: a surprise take's start (`api_logic.start_smart_recap`) and its worker run (`run_smart_recap`) then fail, and `/api/bootstrap` hides Surprise me. A blank organization (a session cached without one, local development) has no setting and is on. Listed for Admin by `db.admin_list_organizations`, with each organization's cached sessions.
+
 ## `oauth_connections`
 
 ```sql

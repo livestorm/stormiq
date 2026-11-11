@@ -26,6 +26,7 @@ from livestorm_app.db import (
     fetch_roster_status,
     fetch_session_fields,
     fetch_session_roster,
+    fetch_surprise_enabled,
     fetch_understanding,
     get_transcript_job_for_session,
     list_output_versions,
@@ -2032,6 +2033,21 @@ def _require_no_leak(redactor: Any, texts: Iterable[Any], what: str) -> None:
         raise PublicOutputLeak(f"The {what} contained {' and '.join(found)}. Nothing was saved; please try again.")
 
 
+class SurpriseOffError(RuntimeError):
+    """Surprise Me! is turned off for the session's organization."""
+
+
+SURPRISE_OFF_MESSAGE = "Surprise me is turned off for your organization. A StormIQ admin can turn it back on."
+
+
+def _require_surprise_on(organization_id: Any) -> None:
+    """Raises `SurpriseOffError` when a StormIQ admin turned Surprise Me!
+    off for this organization (`db.fetch_surprise_enabled`, which raises on a
+    failed read: no take is written then either)."""
+    if not fetch_surprise_enabled(str(organization_id or "")):
+        raise SurpriseOffError(SURPRISE_OFF_MESSAGE)
+
+
 class SurpriseCheckError(RuntimeError):
     """A surprise take gave a figure the session doesn't have; nothing saved."""
 
@@ -2298,6 +2314,8 @@ def run_smart_recap(api_analysis_key: str, session_id: str, tone: str) -> Dict[s
     # take may give only the times and numbers it was sent.
     speech = build_transcript_plain_text(transcript_payload)
     if tone == "surprise":
+        # Checked again in the worker: the switch may have changed since the click.
+        _require_surprise_on(cached.get("organization_id"))
         facts, roster = _surprise_facts(session_id, cached)
         redactor = _public_redactor(session_id, cached, roster)
         sent = redactor.redact(f"{facts}\n\n# Transcript\n\n{speech}")
@@ -2830,6 +2848,12 @@ def get_deep_analysis_job_data(session_id: str, job_id: str, language: str, *, o
 
 
 def start_smart_recap(session_id: str, tone: str, *, organization_id: OrgScope) -> Dict[str, Any]:
+    if tone == "surprise":
+        # The session's own organization decides, as stamped on its row.
+        row = fetch_session_fields(session_id, ["organization_id"], organization_id=organization_id)
+        if not isinstance(row, dict):
+            raise SessionNotFoundError()
+        _require_surprise_on(row.get("organization_id"))
     return _start_ai_job("smart_recap", session_id, tone=tone, organization_id=organization_id)
 
 

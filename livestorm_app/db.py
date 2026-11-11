@@ -482,6 +482,7 @@ def ensure_database_schema() -> None:
             _ensure_figure_checks_schema(cursor)
             _ensure_understanding_schema(cursor)
             _ensure_output_versions_schema(cursor)
+            _ensure_org_settings_schema(cursor)
         connection.commit()
 
 
@@ -700,6 +701,23 @@ def _ensure_output_versions_schema(cursor: Any) -> None:
         """
         CREATE INDEX IF NOT EXISTS idx_output_versions_session
         ON output_versions (session_id, output_column, entry_key, created_at DESC)
+        """
+    )
+
+
+def _ensure_org_settings_schema(cursor: Any) -> None:
+    """One row per organization that has a setting a StormIQ admin changed
+    (the Admin page's Organizations): whether Surprise Me! is on, who
+    changed it and when. An organization without a row has the defaults
+    (Surprise Me! on). No personal data but the admin's email."""
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS org_settings (
+            organization_id  TEXT PRIMARY KEY,
+            surprise_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            updated_by_email TEXT,
+            updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
         """
     )
 
@@ -3112,6 +3130,74 @@ def get_all_settings() -> Dict[str, str]:
     except Exception:
         logger.exception("Failed to load system_settings")
         return {}
+
+
+def fetch_surprise_enabled(organization_id: str) -> bool:
+    """Whether Surprise Me! is on for an organization: its `org_settings`
+    row, else on. A blank organization (a session cached without one, local
+    development) has no setting and is on. Raises when the database can't be
+    read: callers fail closed."""
+    org = str(organization_id or "").strip()
+    if not org or not database_enabled():
+        return True
+    with get_db_connection() as connection:
+        row = connection.execute(
+            "SELECT surprise_enabled FROM org_settings WHERE organization_id = %s", (org,)
+        ).fetchone()
+    return True if row is None else bool(row["surprise_enabled"])
+
+
+def save_surprise_enabled(organization_id: str, enabled: bool, *, updated_by_email: Optional[str]) -> None:
+    """Turn Surprise Me! on or off for an organization (Admin only). Raises
+    on a blank organization or a failed write."""
+    org = str(organization_id or "").strip()
+    if not org:
+        raise ValueError("An organization id is required.")
+    if not database_enabled():
+        raise RuntimeError("Database is not configured.")
+    with get_db_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO org_settings (organization_id, surprise_enabled, updated_by_email, updated_at)
+            VALUES (%s, %s, %s, NOW())
+            ON CONFLICT (organization_id) DO UPDATE
+                SET surprise_enabled = EXCLUDED.surprise_enabled,
+                    updated_by_email = EXCLUDED.updated_by_email,
+                    updated_at = NOW()
+            """,
+            (org, bool(enabled), str(updated_by_email or "").strip() or None),
+        )
+        connection.commit()
+
+
+def admin_list_organizations() -> List[Dict[str, Any]]:
+    """Every organization with a cached session or a setting, for the Admin
+    page: `{organization_id, sessions, last_session_at, surprise_enabled,
+    updated_by_email, updated_at}`, the most sessions first. Raises when the
+    database can't be read."""
+    if not database_enabled():
+        return []
+    with get_db_connection() as connection:
+        rows = connection.execute(
+            """
+            WITH orgs AS (
+                SELECT organization_id, COUNT(*) AS sessions, MAX(updated_at) AS last_session_at
+                FROM session_cache
+                WHERE COALESCE(organization_id, '') <> ''
+                GROUP BY organization_id
+            )
+            SELECT COALESCE(o.organization_id, s.organization_id) AS organization_id,
+                   COALESCE(o.sessions, 0) AS sessions,
+                   o.last_session_at,
+                   COALESCE(s.surprise_enabled, TRUE) AS surprise_enabled,
+                   s.updated_by_email,
+                   s.updated_at
+            FROM orgs o
+            FULL OUTER JOIN org_settings s ON s.organization_id = o.organization_id
+            ORDER BY sessions DESC, organization_id
+            """
+        ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def admin_list_sessions(limit: int = 500) -> List[Dict[str, Any]]:

@@ -7,7 +7,7 @@ Every route is a FastAPI handler in [`livestorm_app/routes/`](../livestorm_app/r
 | Route | Method | Auth | Purpose |
 |---|---|---|---|
 | `/api/health` | GET | public | Render health check: `{"status": "ok"}` |
-| `/api/bootstrap` | GET | public | Initial frontend state: OAuth status, connected user, `isAdmin`, local-dev flag. Never returns an API key. |
+| `/api/bootstrap` | GET | public | Initial frontend state: OAuth status, connected user, `isAdmin`, local-dev flag, and `org: {surpriseEnabled}` for the caller's organization (false when signed out or when the setting can't be read). Never returns an API key. |
 | `/api/auth/livestorm/start` | GET | public | Start the OAuth flow (sets the handshake cookie, 302 to Livestorm) |
 | `/api/auth/livestorm/callback` | GET | public | OAuth callback: check the handshake, exchange the code, fetch `/me`, set the session cookie, then redirect to `/auth/callback?auth=success` with `next`, the page the user connected from when it is a path on this site (`oauth_client.safe_return_path`), or `?auth=error` |
 | `/api/auth/logout` | POST | public | Delete the connection row and clear the session cookie |
@@ -18,6 +18,8 @@ Every route is a FastAPI handler in [`livestorm_app/routes/`](../livestorm_app/r
 | `/api/admin/users/demote` | POST | admin | Remove an admin (not `ADMIN_EMAILS` admins, not yourself) |
 | `/api/admin/sessions` | GET | admin | List cached sessions across orgs |
 | `/api/admin/sessions/{id}` | DELETE | admin | Delete a cached session |
+| `/api/admin/organizations` | GET | admin | Every organization with a cached session or a setting: `{organizations: [{organizationId, sessions, lastSessionAt, surpriseEnabled, updatedBy, updatedAt}]}`, the most sessions first ([data-model.md](data-model.md#org_settings)) |
+| `/api/admin/organizations/settings` | POST | admin | `{organizationId, surpriseEnabled}`: turn Surprise Me! on or off for one organization. A blank id is 400 |
 | `/api/admin/settings` | GET, POST | admin | Read or update allow-listed `system_settings` keys. A model id the job can't use gets 400 with the choices ([providers.md](providers.md#what-admin-may-save)) |
 | `/api/workspace-events` | POST | caller | Paginated list of events (at most 50 per page), filtered by title and status |
 | `/api/workspace-sessions` | GET | public¹ | Cached session cards for the caller's own org |

@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from livestorm_app.api_logic import (
     SessionNotFoundError,
+    SurpriseOffError,
     UnknownOutputKindError,
     get_session_output_versions,
     build_analysis_pdf,
@@ -202,6 +203,8 @@ def smart_recap(session_id: SessionId, request: SmartRecapRequest, caller: Calle
     """Start a Smart Recap job. Same contract as overall_analysis, keyed by tone."""
     try:
         return start_smart_recap(session_id, request.tone, organization_id=caller.read_scope)
+    except SurpriseOffError as exc:
+        raise HTTPException(status_code=403, detail={"resource": "Smart Recap", "message": str(exc)}) from exc
     except Exception as exc:
         raise_http_error("Smart Recap", exc)
         raise
