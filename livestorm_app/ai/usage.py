@@ -27,9 +27,11 @@ import logging
 import math
 import os
 import re
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Mapping, Optional
 
 from livestorm_app import db
 from livestorm_app.ai.models import catalog_model
@@ -283,6 +285,70 @@ def _error_name(exc: BaseException) -> str:
     return f"{type(exc).__name__}" + (f" sqlstate={sqlstate}" if sqlstate else "")
 
 
+# ── What a run's calls were, for the output it saves ───────────────────────
+#
+# `collect_calls()` opens a run (the worker wraps each AI job in one); every
+# answered call recorded inside it adds its ids and hashes (never content),
+# and `run_provenance()` sums them up for `db.merge_cached_bundle_entry`,
+# which keeps it beside the saved output in `output_versions`.
+
+_RUN_CALLS: ContextVar[Optional[List[Dict[str, Any]]]] = ContextVar("llm_run_calls", default=None)
+
+
+@contextmanager
+def collect_calls() -> Iterator[List[Dict[str, Any]]]:
+    """A run whose answered calls are collected (`run_provenance`)."""
+    calls: List[Dict[str, Any]] = []
+    token = _RUN_CALLS.set(calls)
+    try:
+        yield calls
+    finally:
+        _RUN_CALLS.reset(token)
+
+
+def _note_call(row: Mapping[str, Any]) -> None:
+    calls = _RUN_CALLS.get()
+    if calls is None:
+        return
+    calls.append(
+        {
+            "job_kind": row.get("job_kind"),
+            "job_id": row.get("job_id"),
+            "model": row.get("model_served") or row.get("model_requested") or None,
+            "prompt_hash": row.get("prompt_hash"),
+            "dossier_hash": row.get("dossier_hash"),
+            "record_version": row.get("record_version"),
+        }
+    )
+
+
+def run_provenance() -> Dict[str, Any]:
+    """What made the output this run saves: `{calls, job_id, job_kinds,
+    models, prompt_hashes, dossier_hashes, record_versions}`, each list in
+    the order first seen, without repeats or blanks. `calls` is 0 outside a
+    run (`collect_calls`) or when no call was answered."""
+    calls = _RUN_CALLS.get() or []
+
+    def distinct(key: str) -> List[str]:
+        seen: List[str] = []
+        for call in calls:
+            value = call.get(key)
+            if isinstance(value, str) and value and value not in seen:
+                seen.append(value)
+        return seen
+
+    job_ids = distinct("job_id")
+    return {
+        "calls": len(calls),
+        "job_id": job_ids[0] if job_ids else None,
+        "job_kinds": distinct("job_kind"),
+        "models": distinct("model"),
+        "prompt_hashes": distinct("prompt_hash"),
+        "dossier_hashes": distinct("dossier_hash"),
+        "record_versions": distinct("record_version"),
+    }
+
+
 def record_call(
     ctx: Optional[CallContext],
     result: "LLMResult",
@@ -311,6 +377,10 @@ def record_call(
         logger.error("llm_usage: could not build the usage row (%s); the output is kept", _error_name(exc))
         return
     logger.info(line)
+    try:
+        _note_call(row)
+    except Exception as exc:
+        logger.error("llm_usage: could not note the call for its output (%s)", _error_name(exc))
     try:
         db.insert_llm_usage(row)
     except Exception as exc:

@@ -46,7 +46,7 @@ from livestorm_app.queue import (
     transcription_job_id,
 )
 from livestorm_app.ai.cover_image import generate_cover_image_with_openai
-from livestorm_app.ai.usage import CallContext
+from livestorm_app.ai.usage import CallContext, run_provenance
 from livestorm_app.ai.generation import (
     _bundle_has_all_sections,
     analyze_with_openai,
@@ -1658,7 +1658,7 @@ def run_overall_analysis(api_analysis_key: str, session_id: str, output_language
 
     analysis_md = _require_generated_text(analysis_md, "session analysis")
     merge_cached_bundle_entry(
-        session_id, "analysis_bundle", output_language, analysis_md,
+        session_id, "analysis_bundle", output_language, analysis_md, provenance=run_provenance(),
         **({"analysis_md": analysis_md} if output_language == "English" else {}),
     )
     analysis_bundle[output_language] = analysis_md
@@ -1750,7 +1750,7 @@ def run_faq(api_analysis_key: str, session_id: str, output_language: str) -> Dic
     else:
         faq_md = _write_faq(api_analysis_key, session_id, cached, output_language)
     faq_md = _require_generated_text(faq_md, "FAQ")
-    merge_cached_bundle_entry(session_id, "faq_bundle", output_language, faq_md)
+    merge_cached_bundle_entry(session_id, "faq_bundle", output_language, faq_md, provenance=run_provenance())
     faq_bundle[output_language] = faq_md
     return {"markdown": faq_md, "bundle": faq_bundle}
 
@@ -1861,7 +1861,7 @@ def run_deep_analysis(api_analysis_key: str, session_id: str, output_language: s
         )
     deep_analysis_md = _require_generated_text(deep_analysis_md, "deep analysis")
     merge_cached_bundle_entry(
-        session_id, "deep_analysis_bundle", output_language, deep_analysis_md,
+        session_id, "deep_analysis_bundle", output_language, deep_analysis_md, provenance=run_provenance(),
         **({"deep_analysis_md": deep_analysis_md} if output_language == "English" else {}),
     )
     deep_bundle[output_language] = deep_analysis_md
@@ -1967,7 +1967,7 @@ def run_smart_recap(api_analysis_key: str, session_id: str, tone: str) -> Dict[s
         ctx=_llm_call_context("smart_recap", "smart_recap", session_id, tone, cached),
     )
     markdown = _require_generated_text(markdown, "smart recap")
-    merge_cached_bundle_entry(session_id, "smart_recap_bundle", tone, markdown)
+    merge_cached_bundle_entry(session_id, "smart_recap_bundle", tone, markdown, provenance=run_provenance())
     smart_bundle[tone] = markdown
     return {"markdown": markdown, "bundle": smart_bundle}
 
@@ -2049,7 +2049,7 @@ def run_content_repurposing(api_analysis_key: str, session_id: str, output_langu
         raise RuntimeError(
             f"Content repurposing returned an incomplete result (missing: {', '.join(missing)}). Nothing was saved; please try again."
         )
-    merge_cached_bundle_entry(session_id, "content_repurpose_bundle", output_language, bundle)
+    merge_cached_bundle_entry(session_id, "content_repurpose_bundle", output_language, bundle, provenance=run_provenance())
     all_bundles[output_language] = bundle
     return {"bundle": all_bundles, "currentLanguage": output_language, "current": bundle}
 

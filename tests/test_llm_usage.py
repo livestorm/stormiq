@@ -208,6 +208,31 @@ def test_call_llm_records_every_answered_call(http, rows, anthropic):
     assert set(row) == set(db._LLM_USAGE_COLUMNS)
 
 
+def test_a_runs_calls_are_collected_for_the_output_it_saves(http, rows, anthropic):
+    script, _ = http
+    script.extend([
+        FakeResponse(anthropic_body("partial", "max_tokens")),
+        FakeResponse(anthropic_body("complete")),
+    ])
+    assert usage.run_provenance()["calls"] == 0, "nothing is collected outside a run"
+    with usage.collect_calls() as calls:
+        llm_client.call_llm("key", "claude-haiku-4-5-20251001", [], max_tokens=2500, ctx=CTX)
+        made = usage.run_provenance()
+    assert len(calls) == 2
+    assert made == {
+        "calls": 2,
+        "job_id": "deep_analysis:sess-1:English",
+        "job_kinds": ["deep_analysis"],
+        "models": ["claude-haiku-4-5-20251001"],
+        "prompt_hashes": [],
+        "dossier_hashes": [],
+        "record_versions": [],
+    }
+    # Ids and hashes only: never the prompt or the answer.
+    assert "complete" not in json.dumps(calls) and "partial" not in json.dumps(calls)
+    assert usage.run_provenance()["calls"] == 0, "the run ends with its block"
+
+
 def test_a_v1_calls_row_holds_its_effort_and_hashes_and_never_text():
     result = llm_client.LLMResult(
         text="answer", stop="complete", stop_raw="end_turn", refusal_category=None, model_served="claude-sonnet-5-5",
@@ -554,3 +579,16 @@ def test_the_truncation_retry_is_checked_again(automatic, monkeypatch, http, row
         llm_client.call_llm("key", "claude-haiku-4-5-20251001", [], ctx=AUTOMATIC_CTX)
     assert len(sent) == 1
     assert [(row["purpose"], row["outcome"], row["cost_usd_micros"]) for row in rows] == [("main", "truncated", 2700)]
+
+
+def test_the_worker_runs_each_ai_job_with_its_calls_collected():
+    from livestorm_app import worker
+
+    def runner(value):
+        usage._note_call({"job_kind": "faq", "job_id": "faq:s:English", "model_served": "claude-haiku-5-5"})
+        return value, usage.run_provenance()
+
+    value, made = worker._collecting(runner, "ok")
+    assert value == "ok"
+    assert (made["calls"], made["models"], made["job_id"]) == (1, ["claude-haiku-5-5"], "faq:s:English")
+    assert usage.run_provenance()["calls"] == 0

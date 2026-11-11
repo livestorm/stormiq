@@ -100,6 +100,46 @@ def test_account_key_hash_is_first_writer_wins(test_database):
 # ── Failures surface instead of being swallowed ───────────────────────────
 
 
+def _versions(session_id: str) -> list:
+    with db.get_db_connection() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT output_column, entry_key, content, job_id, models, prompt_hashes, dossier_hashes, record_versions, calls"
+            " FROM output_versions WHERE session_id = %s ORDER BY id",
+            [session_id],
+        )
+        return [tuple(row.values()) for row in cursor.fetchall()]
+
+
+def test_every_saved_output_is_kept_with_what_made_it(test_database):
+    db.upsert_cached_session("key-a", "sess-a", session_payload={"id": "sess-a"})
+    made = {
+        "calls": 2, "job_id": "faq:sess-a:English", "job_kinds": ["faq"], "models": ["claude-haiku-5-5"],
+        "prompt_hashes": ["p1"], "dossier_hashes": ["d1"], "record_versions": ["r1", ""],
+    }
+    db.merge_cached_bundle_entry("sess-a", "faq_bundle", "English", "FAQ one", provenance=made)
+    db.merge_cached_bundle_entry("sess-a", "faq_bundle", "English", "FAQ two")
+    assert _row("sess-a")["faq_bundle"] == {"English": "FAQ two"}, "the bundle keeps the latest"
+    first, second = _versions("sess-a")
+    assert first == ("faq_bundle", "English", "FAQ one", "faq:sess-a:English", ["claude-haiku-5-5"], ["p1"], ["d1"], ["r1"], 2)
+    assert second == ("faq_bundle", "English", "FAQ two", None, [], [], [], [], 0), "an earlier version is kept"
+
+
+def test_no_version_is_kept_when_the_output_isnt_saved(test_database):
+    with pytest.raises(RuntimeError, match="no longer cached"):
+        db.merge_cached_bundle_entry("sess-missing", "smart_recap_bundle", "hype", "text", provenance={"calls": 1})
+    assert _versions("sess-missing") == []
+
+
+def test_versions_are_deleted_with_their_session(test_database):
+    db.upsert_cached_session("key-a", "sess-a", session_payload={"id": "sess-a"})
+    db.merge_cached_bundle_entry("sess-a", "content_repurpose_bundle", "English", {"summary": "S"})
+    assert len(_versions("sess-a")) == 1
+    with db.get_db_connection() as connection, connection.cursor() as cursor:
+        cursor.execute("DELETE FROM session_cache WHERE session_id = %s", ["sess-a"])
+        connection.commit()
+    assert _versions("sess-a") == []
+
+
 def test_merge_rejects_unknown_columns():
     with pytest.raises(ValueError):
         db.merge_cached_bundle_entry("sess-a", "transcript_payload", "x", "y")
@@ -135,7 +175,12 @@ def runner_backend(monkeypatch):
         "content_repurpose_bundle": {},
     }
     monkeypatch.setattr(api_logic, "fetch_cached_session", lambda key, sid, *, organization_id: dict(row))
-    monkeypatch.setattr(api_logic, "merge_cached_bundle_entry", lambda *args, **kwargs: merges.append((args, kwargs)))
+    def merge(*args, provenance=None, **kwargs):
+        # Every save says what made it (`output_versions`); the rest is checked as before.
+        assert isinstance(provenance, dict) and "models" in provenance
+        merges.append((args, kwargs))
+
+    monkeypatch.setattr(api_logic, "merge_cached_bundle_entry", merge)
     monkeypatch.setattr(api_logic, "get_llm_model", lambda role: "test-model")
     return merges
 
@@ -988,7 +1033,7 @@ def test_the_per_session_tables_reference_the_session_through_its_unique_index(t
     assert [(key["tbl"], key["confdeltype"], key["idx"]) for key in keys] == [
         (table, "c", "idx_session_cache_session_id_unique")
         for table in (
-            "livestorm_sync_jobs", "session_chat_labels", "session_figure_checks", "session_people",
+            "livestorm_sync_jobs", "output_versions", "session_chat_labels", "session_figure_checks", "session_people",
             "session_question_replies", "session_rosters", "session_understanding",
         )
     ]

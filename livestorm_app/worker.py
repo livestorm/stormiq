@@ -459,6 +459,16 @@ def _read_llm_key_or_raise() -> str:
     return get_llm_key()
 
 
+def _collecting(sync_runner, *runner_args):
+    """Runs an AI runner with its model calls collected, so the output it
+    saves is kept with what made it (`ai.usage.collect_calls`,
+    `output_versions`)."""
+    from livestorm_app.ai.usage import collect_calls
+
+    with collect_calls():
+        return sync_runner(*runner_args)
+
+
 async def _run_ai_job(
     kind: str,
     session_id: str,
@@ -482,7 +492,7 @@ async def _run_ai_job(
         publish_progress_sync(kind, session_id, "loading_sources")
         publish_progress_sync(kind, session_id, "building_prompt")
         publish_progress_sync(kind, session_id, "analyzing")
-        result = await asyncio.to_thread(sync_runner, *runner_args)
+        result = await asyncio.to_thread(_collecting, sync_runner, *runner_args)
         logger.info("[%s] session_id=%s done", kind, session_id)
         return result if isinstance(result, dict) else {"status": "ok"}
     except Exception:
