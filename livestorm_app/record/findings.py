@@ -16,8 +16,9 @@ The detectors of this version:
 
 - **chapters** (#7, what landed chapter by chapter): each chapter's
   unprompted audience chat per minute as an index, the session's median
-  chapter at 100. Unprompted leaves out greetings, thanks and logistics
-  (the chat labels' `social` and `logistics`) and any message within
+  chapter at 100 (`usualPerMinute`). Unprompted leaves out greetings,
+  thanks, logistics and sound or connection complaints (the chat labels'
+  `social`, `logistics` and `tech`) and any message within
   `REPLY_WINDOW_S` after a speaker's prompt to the room (the stored
   understanding's prompts). A Q&A chapter shows its questions instead of an
   index (it would always win). It needs the chapters on the session clock
@@ -56,7 +57,8 @@ The detectors of this version:
   the live minutes, MAD the median absolute deviation); adjacent ones
   merge. A surge is a reply when a prompt ended in the `REPLY_WINDOW_S`
   before its first minute or during it; a wave when half or more of its
-  chat is greetings, thanks or logistics; else an unprompted moment. Each moment carries
+  chat is greetings, thanks, logistics or sound and connection
+  complaints; else an unprompted moment. Each moment carries
   the words being said as it started, shifted back by the room's reaction
   lag (the median delay of replies to prompts, else `DEFAULT_LAG_S`), only
   on a verified clock. It needs `MOMENTS_MIN_MESSAGES` live audience
@@ -83,8 +85,9 @@ FOUND = "found"
 NOTHING = "nothing"
 NOT_CHECKED = "not_checked"
 
-# What isn't unprompted interest: greetings, thanks, logistics.
-NOT_UNPROMPTED = ("social", "logistics")
+# What isn't the room's own interest: greetings and thanks, logistics, and
+# sound or connection complaints (those are production friction).
+NOT_UNPROMPTED = ("social", "logistics", "tech")
 REPLY_WINDOW_S = 60.0
 
 CHAPTERS_MIN_SESSION_S = 600.0
@@ -149,14 +152,19 @@ def _speech_spans(inputs: Any, offset: Optional[float]) -> List[Tuple[str, float
 
 
 def _audience(inputs: Any) -> List[Dict[str, Any]]:
-    """The live audience chat and questions: `{eid, lane, t, author}`."""
+    """The live audience chat and questions: `{eid, lane, t, author}`.
+    `author` tells authors apart for a count, never leaves this module: the
+    person's `P-` ref, else Livestorm's author id (a chat saved before the
+    people links has no ref), else None."""
     events = pulse_events(inputs)
     rows: List[Dict[str, Any]] = []
     if events is None or events.empty:
         return rows
-    for eid, kind, is_team, t, author in events[["eid", "kind", "is_team", "t", "author_ref"]].itertuples(index=False, name=None):
+    columns = ["eid", "kind", "is_team", "t", "author_ref", "author_id"]
+    for eid, kind, is_team, t, ref, author_id in events[columns].itertuples(index=False, name=None):
         lane = event_lane(kind, is_team)
         if lane in ("audience_chat", "questions") and phase(t, inputs.clock) == LIVE:
+            author = ref if isinstance(ref, str) and ref else (author_id if isinstance(author_id, str) and author_id else None)
             rows.append({"eid": str(eid), "lane": lane, "t": float(t), "author": author})
     return rows
 
@@ -235,7 +243,11 @@ def detect_chapters(inputs: Any, chapters: Sequence[Mapping[str, Any]], prompts:
     total = sum(row["unprompted"] for row in rows)
     indexed = chapter_index(rows)
     rated = [row for row in indexed if row["index"] is not None]
-    values = {"chapters": [{**row, "t": round(row["t"], 1), "seconds": round(row["seconds"], 1)} for row in indexed]}
+    rates = [row["perMinute"] for row in indexed if row["perMinute"] is not None]
+    values = {
+        "chapters": [{**row, "t": round(row["t"], 1), "seconds": round(row["seconds"], 1)} for row in indexed],
+        "usualPerMinute": round(statistics.median(rates), 1) if rates else None,
+    }
     if total < CHAPTERS_MIN_MESSAGES:
         return {**base, "state": NOT_CHECKED, "reason": "few_messages", "values": {"messages": total}}
     if len(rated) < 2:

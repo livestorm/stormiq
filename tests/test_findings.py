@@ -243,6 +243,16 @@ def test_a_small_room_has_no_moments_to_find():
     assert detect_moments(unlabelled, [], None)["reason"] == "labels"
 
 
+def test_authors_without_a_person_are_told_apart_by_their_livestorm_id():
+    inputs, _, _ = _setup()
+    noisy = _with_chat(inputs, [400, 430, 470], label="tech", author=lambda i: None)
+    noisy = dataclasses.replace(
+        noisy, events=noisy.events.assign(author_id=[a if a else f"ls-{i % 2}" for i, a in enumerate(noisy.events["author_id"])])
+    )
+    (incident,) = detect_friction(noisy)["values"]["incidents"]
+    assert incident["messages"] == 3 and incident["people"] == 2, "a chat saved before the people links still counts its authors"
+
+
 # ── The route ──
 
 

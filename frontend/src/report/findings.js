@@ -6,6 +6,8 @@
 import { clockLabel, secondsLeft } from "./chartGeometry";
 
 const plural = (count, one, many) => `${count} ${count === 1 ? one : many}`;
+// "from 3 people", or nothing when the authors couldn't be told apart.
+const fromPeople = (people) => (people > 0 ? ` from ${plural(people, "person", "people")}` : "");
 const minutes = (seconds) => Math.max(1, Math.round(seconds / 60));
 const times = (index) => `${(index / 100).toFixed(1).replace(/\.0$/, "")}×`;
 
@@ -13,39 +15,43 @@ const times = (index) => `${(index / 100).toFixed(1).replace(/\.0$/, "")}×`;
 
 function chaptersFinding(values) {
   const rows = values.chapters || [];
+  const usual = values.usualPerMinute;
   const high = rows.find((row) => row.title === values.high);
   const low = rows.find((row) => row.title === values.low);
   const headline = high ? `“${high.title}” drew the room in` : `The room went quiet during “${low.title}”`;
   const lines = [];
   if (high) {
     lines.push(
-      `${high.perMinute} unprompted chat messages a minute from ${plural(high.chatters, "person", "people")}, ${times(high.index)} the session's usual chapter.`,
+      `${high.perMinute} chat messages a minute${fromPeople(high.chatters)}, ${times(high.index)} the usual chapter (${usual} a minute).`,
     );
   }
-  if (low) {
-    lines.push(`During “${low.title}” the chat fell to ${low.perMinute} a minute, ${times(low.index)} the usual.`);
-  }
-  lines.push("Greetings, thanks, logistics and replies to a question from the stage don't count: only what the room said on its own.");
-  const bars = rows.map((row) => ({
-    title: row.title,
-    start: clockLabel(row.t),
-    length: `${minutes(row.seconds)} min`,
-    index: row.index,
-    value: row.index === null ? (row.qa ? plural(row.questions, "question", "questions") : "too short") : String(row.index),
-    tone: row.title === values.high ? "high" : row.title === values.low ? "low" : "",
-  }));
-  return { headline, lines, bars, rows: [] };
+  if (low) lines.push(`During “${low.title}” the chat fell to ${low.perMinute} a minute, ${times(low.index)} the usual.`);
+  lines.push("Only what the room wrote on its own counts: not greetings, logistics, sound complaints or replies to a question from the stage.");
+  const top = Math.max(usual * 2 || 0, ...rows.map((row) => row.perMinute || 0)) || 1;
+  const chart = {
+    title: "The room's own chat, messages a minute, by chapter",
+    usual: usual === null || usual === undefined ? "" : `usual: ${usual} a minute`,
+    usualLeft: usual ? (usual / top) * 100 : null,
+    rows: rows.map((row) => ({
+      title: row.title,
+      when: `${clockLabel(row.t)} · ${minutes(row.seconds)} min`,
+      width: row.perMinute === null ? 0 : Math.min((row.perMinute / top) * 100, 100),
+      value: row.perMinute !== null ? `${row.perMinute}/min` : row.qa ? `Q&A · ${plural(row.questions, "question", "questions")}` : "under 2 min",
+      tone: row.title === values.high ? "high" : row.title === values.low ? "low" : "",
+    })),
+  };
+  return { headline, lines, chart, rows: [] };
 }
 
 function frictionFinding(values) {
   const found = values.incidents || [];
   const late = values.lateStart;
   const top = found.reduce((best, item) => (best === null || item.messages > best.messages ? item : best), null);
-  const headline = top
-    ? `${plural(top.people, "person", "people")} flagged a sound or connection problem at ${clockLabel(top.start)}`
-    : `The session started ${minutes(late.lateS)} minutes late`;
+  let headline = `The session started ${minutes(late?.lateS || 0)} minutes late`;
+  if (top && top.people > 0) headline = `${plural(top.people, "person", "people")} flagged a sound or connection problem at ${clockLabel(top.start)}`;
+  else if (top) headline = `${plural(top.messages, "message", "messages")} about sound or connection from ${clockLabel(top.start)}`;
   const rows = found.map((item) => {
-    const parts = [`${plural(item.messages, "message", "messages")} from ${plural(item.people, "person", "people")}`];
+    const parts = [`${plural(item.messages, "message", "messages")}${fromPeople(item.people)}`];
     if (values.speech) parts.push(item.deadAirS > 0 ? `${Math.round(item.deadAirS)} s of silence on stage` : "no silence on stage");
     return `${clockLabel(item.start)}–${clockLabel(item.end)} · ${parts.join(" · ")}`;
   });
@@ -53,7 +59,7 @@ function frictionFinding(values) {
   const lines = top
     ? ["Messages the analysis labelled as sound, video or connection issues, grouped when they came within two minutes of each other."]
     : [`${plural(late.waitingMessages, "message", "messages")} from the audience in the waiting room before it started.`];
-  return { headline, lines, bars: [], rows };
+  return { headline, lines, chart: null, rows };
 }
 
 function monologueFinding(values) {
@@ -64,7 +70,7 @@ function monologueFinding(values) {
       `From ${clockLabel(values.start)} to ${clockLabel(values.end)}, one speaker talked with no prompt to the room and no audience question taken. The room's own chat went from ${values.firstPerMinute} to ${values.lastPerMinute} messages a minute between the first and the last third.`,
       "Chat stands in for attention here: a quiet room may still be listening.",
     ],
-    bars: [],
+    chart: null,
     rows: [],
   };
 }
@@ -89,13 +95,13 @@ function promptsFinding(values) {
       "When the speaker asked the room something, most replies came after they started talking again. A few more seconds of silence would have let the room in.",
       "Replies aren't marked one by one: the messages over the session's usual rate stand for them.",
     ],
-    bars: [],
+    chart: null,
     rows: rows.map(promptRow),
   };
 }
 
 function momentRow(moment, usual) {
-  const parts = [`${plural(moment.messages, "message", "messages")} from ${plural(moment.people, "person", "people")}`];
+  const parts = [`${plural(moment.messages, "message", "messages")}${fromPeople(moment.people)}`];
   if (usual > 0) parts.push(`${Math.round(moment.peak / usual)}× the usual minute`);
   const head = `${moment.n}. ${clockLabel(moment.start)}–${clockLabel(moment.end)} · ${parts.join(" · ")}`;
   return moment.quote ? `${head} · while the speaker was saying “${moment.quote}”` : head;
@@ -113,14 +119,14 @@ function momentsFinding(values) {
         ? `The room leaned in at ${clockLabel(moments[0].start)}, unprompted`
         : `The room leaned in ${moments.length} times, unprompted`,
     lines,
-    bars: [],
+    chart: null,
     rows: moments.map((moment) => momentRow(moment, values.usualPerMinute)),
   };
 }
 
 const FOUND = { moments: momentsFinding, chapters: chaptersFinding, friction: frictionFinding, monologue: monologueFinding, prompts: promptsFinding };
 
-/** A found finding in words: `{id, headline, lines, bars, rows, confidence}`. */
+/** A found finding in words: `{id, headline, lines, chart, rows, confidence}`. */
 export function foundFinding(finding) {
   const words = FOUND[finding.id]?.(finding.values || {});
   return words ? { id: finding.id, confidence: finding.confidence || "estimated", ...words } : null;

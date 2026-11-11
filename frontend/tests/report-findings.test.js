@@ -14,6 +14,7 @@ const chapters = {
   values: {
     high: "Pricing for larger teams",
     low: null,
+    usualPerMinute: 1.1,
     chapters: [
       { title: "Welcome", t: 21.9, seconds: 57, qa: false, unprompted: 1, chatters: 1, questions: 0, perMinute: null, index: null },
       { title: "The dashboard", t: 78.9, seconds: 228, qa: false, unprompted: 4, chatters: 3, questions: 1, perMinute: 1.1, index: 100 },
@@ -51,17 +52,20 @@ describe("the findings' words", () => {
     expect(view.empty).toBe(false);
   });
 
-  it("word a chapter that drew the room in, with a bar per chapter", () => {
+  it("word a chapter that drew the room in, with a chart in messages a minute", () => {
     const words = foundFinding(chapters);
     expect(words.headline).toBe("“Pricing for larger teams” drew the room in");
-    expect(words.lines[0]).toBe("3.9 unprompted chat messages a minute from 7 people, 3.5× the session's usual chapter.");
-    expect(words.bars.map((bar) => [bar.value, bar.tone])).toEqual([
-      ["too short", ""],
-      ["100", ""],
-      ["355", "high"],
-      ["6 questions", ""],
+    expect(words.lines[0]).toBe("3.9 chat messages a minute from 7 people, 3.5× the usual chapter (1.1 a minute).");
+    expect(words.chart.title).toBe("The room's own chat, messages a minute, by chapter");
+    expect(words.chart.usual).toBe("usual: 1.1 a minute");
+    expect(words.chart.rows.map((row) => [row.value, row.tone])).toEqual([
+      ["under 2 min", ""],
+      ["1.1/min", ""],
+      ["3.9/min", "high"],
+      ["Q&A · 6 questions", ""],
     ]);
-    expect(words.bars[2]).toMatchObject({ start: "5:07", length: "8 min" });
+    expect(words.chart.rows[2]).toMatchObject({ when: "5:07 · 8 min", width: 100 });
+    expect(words.chart.usualLeft).toBeCloseTo((1.1 / 3.9) * 100);
   });
 
   it("word a quiet chapter on its own", () => {
@@ -70,6 +74,14 @@ describe("the findings' words", () => {
     const words = foundFinding(quiet);
     expect(words.headline).toBe("The room went quiet during “The dashboard”");
     expect(words.lines[0]).toBe("During “The dashboard” the chat fell to 0.4 a minute, 0.4× the usual.");
+  });
+
+  it("leave the people out when the chat's authors couldn't be told apart", () => {
+    const unknown = { ...friction, values: { ...friction.values, lateStart: null, incidents: [{ start: 75, end: 355, messages: 17, people: 0, deadAirS: 16 }] } };
+    const words = foundFinding(unknown);
+    expect(words.headline).toBe("17 messages about sound or connection from 1:15");
+    expect(words.rows).toEqual(["1:15–5:55 · 17 messages · 16 s of silence on stage"]);
+    expect(words.headline + words.rows.join(" ")).not.toMatch(/0 people/);
   });
 
   it("word an incident and a late start", () => {
