@@ -31,6 +31,11 @@ export const MAX_FAILURES = 5;
 // After the transcript, the worker queues the analysis "Add" asked for: the
 // page looks for it this many times, POLL_MS apart.
 export const CHAIN_CHECKS = 4;
+// Opened by "Add" before the session is saved: how long the page looks for
+// its record (every POLL_MS) while the fetch from Livestorm runs. A large
+// session's chat and people take a while; the store's fetch failing ends the
+// wait sooner (`fetchFailed`).
+export const FETCH_WAIT_MS = 180000;
 
 const IN_FLIGHT = new Set(["pending", "running"]);
 
@@ -61,6 +66,8 @@ export function createSessionReport({ api = defaultApi } = {}) {
     transcript: { status: "idle", progress: null, error: "" },
     // Opened by "Add": the transcript and the first analysis are being made.
     preparing: false,
+    // Opened by "Add" while the session is still being fetched from Livestorm.
+    fetching: false,
     chat: emptyChat(), // the chat's text by id, read on demand
     // "Fetch again from Livestorm": the session, chat and questions read again
     // (free, no transcript), then the record. idle | running | done | error.
@@ -242,15 +249,45 @@ export function createSessionReport({ api = defaultApi } = {}) {
     // Just added ("Add" opened the page with `prepare`): the page shows the
     // preparation until the transcript and the first analysis are done.
     state.preparing = prepare;
+    state.fetching = false;
     state.chat = emptyChat();
     // A "Fetch again" started on another page of this session shows here too.
     const running = refreshOf(id);
     state.refetch = { status: running.status === "running" ? "running" : "idle", error: "" };
     if (!id) return;
-    await loadRecord(own);
+    await loadRecord(own, { quiet: prepare });
+    // Just added: the fetch from Livestorm may still be saving the session.
+    if (prepare && isCurrent(own) && !state.record) await waitForRecord(own);
     if (!isCurrent(own) || !state.record) return;
     await checkRunInFlight(own);
     await followTranscript(own, prepare ? CHAIN_CHECKS : 0);
+  }
+
+  // The session isn't saved yet ("Add" opened the page as the fetch began):
+  // look for its record until it is, the fetch fails, or the wait runs out.
+  async function waitForRecord(own) {
+    state.fetching = true;
+    const until = Date.now() + FETCH_WAIT_MS;
+    while (isCurrent(own) && !state.record && !own.fetchFailed && Date.now() < until) {
+      await new Promise((resolve) => (own.transcriptTimer = setTimeout(resolve, POLL_MS)));
+      if (!isCurrent(own) || own.fetchFailed) break;
+      await loadRecord(own, { quiet: true });
+    }
+    if (!isCurrent(own)) return;
+    state.fetching = false;
+    if (!state.record) {
+      state.preparing = false;
+      if (!state.error) state.error = "The session could not be fetched from Livestorm. Go back to Add session and try again.";
+    }
+  }
+
+  /** The fetch "Add" started failed: stop waiting for the session and say
+   * why. Only while this page is still waiting for it. */
+  function fetchFailed(message) {
+    const own = scope;
+    if (!own || !state.fetching) return;
+    own.fetchFailed = true;
+    state.error = message || "The session could not be fetched from Livestorm.";
   }
 
   async function startAnalysis() {
@@ -305,5 +342,5 @@ export function createSessionReport({ api = defaultApi } = {}) {
     stopRefresh();
   }
 
-  return { state, open, close: dispose, startAnalysis, loadChat, refetch };
+  return { state, open, close: dispose, startAnalysis, loadChat, refetch, fetchFailed };
 }
