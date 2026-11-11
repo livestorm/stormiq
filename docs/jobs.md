@@ -1,6 +1,6 @@
 # Jobs and processing flows
 
-How a session is fetched, transcribed and analysed. Slow or paid work (transcription, the people sync, AI generation, cover images) runs only in the arq worker, never inside a web request; the web process doesn't even import the Gladia client. Code: [`api_logic.py`](../livestorm_app/api_logic.py) and [`people_sync.py`](../livestorm_app/people_sync.py) (web side), [`queue.py`](../livestorm_app/queue.py), [`worker.py`](../livestorm_app/worker.py), [`progress.py`](../livestorm_app/progress.py).
+How a session is fetched, transcribed and analysed. Slow or paid work (transcription, the people sync, AI generation, Surprise me's voice) runs only in the arq worker, never inside a web request; the web process doesn't even import the Gladia client. Code: [`api_logic.py`](../livestorm_app/api_logic.py) and [`people_sync.py`](../livestorm_app/people_sync.py) (web side), [`queue.py`](../livestorm_app/queue.py), [`worker.py`](../livestorm_app/worker.py), [`progress.py`](../livestorm_app/progress.py).
 
 ## Fetching a session
 
@@ -78,6 +78,7 @@ Four flows, each a queue-backed job:
 | `POST /api/sessions/{id}/decisions` | `GET …/decisions/job?language=` | `run_decisions_job` | language |
 | `POST /api/sessions/{id}/team-digest` | `GET …/team-digest/job?language=` | `run_team_digest_job` | language |
 | `POST /api/sessions/{id}/attendee-followup` | `GET …/attendee-followup/job?language=` | `run_attendee_followup_job` | language |
+| `POST /api/sessions/{id}/no-show-followup` | `GET …/no-show-followup/job?language=` | `run_no_show_followup_job` | language |
 | `POST …/deep-analysis` | `GET …/deep-analysis/job?language=` | `run_deep_analysis_job` | language |
 | `POST …/smart-recap` | `GET …/smart-recap/job?tone=` | `run_smart_recap_job` | tone |
 | `POST …/content-repurposing` | `GET …/content-repurposing/job?language=` | `run_content_repurposing_job` | language |
@@ -92,7 +93,7 @@ Four flows, each a queue-backed job:
 
 **The worker job** reads the active provider's key from its env, publishes stage-floor progress to Redis (`queued` → `loading_sources` → `building_prompt` → `analyzing`), runs the synchronous runner (`api_logic.run_overall_analysis` and the like) in `asyncio.to_thread`, and clears progress when it finishes or fails. Pollers read the durable cache first, so no "done" marker has to linger. Only complete output is saved (see [ai-outputs.md](ai-outputs.md)).
 
-The runner picks its model by job kind (`llm_client.get_llm_model`): `overall_analysis`, `faq`, `decisions`, `team_digest`, `attendee_followup`, `deep_analysis`, `smart_recap`, `content_repurposing`, or `translation` for a French version ([providers.md](providers.md#which-model-a-job-uses)).
+The runner picks its model by job kind (`llm_client.get_llm_model`): `overall_analysis`, `faq`, `decisions`, `team_digest`, `attendee_followup`, `no_show_followup`, `deep_analysis`, `smart_recap`, `content_repurposing`, or `translation` for a French version ([providers.md](providers.md#which-model-a-job-uses)).
 
 **Refusals.** When the model declines, the job fails after that one call with "The model declined this session. Nothing was saved.", which the poll returns as its `error`. It names no category: that stays in the call's `llm_usage` row (`refusal_category`). arq stores the raised exception, and `llm_client.LLMRefused` is rebuilt from its category when the poll reads it back. Nothing is retried, the content-bundle attempts included ([ai-outputs.md](ai-outputs.md#saving-rules)).
 
@@ -117,10 +118,6 @@ The v1 Report's analysis, started by a user's action: "Analyse session" on the R
 - **Progress** (`progress.SESSION_ANALYSIS_STAGE_FLOORS`, Redis key `stormiq:progress:session_analysis:{session_id}`, best effort): `labelling` (5 %), `reading` (25 %, only when the model reads the session), `saving` (95 %), `done`. The worker publishes `labelling` before the run starts, so a poll never reads an earlier run's last stage as this one's, and every stage carries `started_at_ms`, when this run started. `run_session_analysis` reports each stage through its `report` callback. The page reads `progress` only while the run is `running`.
 - **The run** (`api_logic.run_session_analysis`, in `asyncio.to_thread`; the key comes from the worker's env): it reads the cached chat through the record (`record.inputs.load_record_inputs`), and skips the model when the stored labels already describe this chat (same `chat_hash` and `LABEL_VERSION`). Otherwise it labels the chat (`ai/chat_labelling.label_chat`, [ai-outputs.md](ai-outputs.md#chat-labels-v1)) and stores the labels whole (`db.replace_chat_labels`). Then it reads the session (`api_logic._read_understanding`): it builds the session's dossier with the labels it just stored and the stored roster (`record.understanding.build_dossier`), skips the model when the stored result was read from the same dossier at the same `UNDERSTANDING_VERSION`, else makes one call (`ai/understanding.read_session`, [ai-outputs.md](ai-outputs.md#the-understanding-v1)), checks the answer (`check_understanding`) and stores it whole (`db.replace_understanding`). Without a transcript it reads nothing. It returns `{chatLabels: "labelled" | "up_to_date", messages, understanding: "read" | "up_to_date" | "no_transcript"}`. A failed step stores nothing of its own: labels made before a failed reading stay, and so does the earlier reading. Each call records an `llm_usage` row with its job kind (`chat_labels`, `understanding`) and the run's job id. Not held to the daily budget: the user starts it.
 
-## Cover images
-
-`run_cover_image_job` renders a landscape cover (1536×1024 by default) from the session's Professional Smart Recap (prompt: `prompts/cover_image_prompt.txt`) and stores the PNG in `session_cache.cover_image_bytes`. It runs in exactly two cases: after a Professional Smart Recap completes (the worker chains it, unless the session already has a cover), and from `scripts/backfill_cover_images.py`. Reading a session never starts one. The arq id is `cover_image:{session_id}`, so a cover that is queued, running, or failed within the last hour is not started again. Failures are logged and swallowed, so a broken image generator never fails the recap. Its paid OpenAI Images call goes through `cover_image.generate_cover_image_with_openai`, not `llm_client.call_llm`, so it leaves no `llm_usage` row and isn't held to the daily budget ([roadmap](roadmap.md#4-models)).
-
 ## Surprise me show
 
 `run_surprise_show_job` makes Surprise me's show in one go. It is queued only by `POST /api/sessions/{id}/surprise-show`, the click on "Make the show" (`api_logic.start_surprise_show`), never on its own, and not while one is already pending or running. Its only argument is the session id; the arq id is `surprise_show:{session_id}`, so two clicks share one job. The worker reads every key from its own environment (`worker._show_keys`: `CLAUDE_API_KEY`, `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`) and none is ever put in an argument, a log line or an error. The job runs inside `ai.usage.collect_calls`, so a take it writes is kept in `output_versions` with what made it. When it runs (`api_logic.run_surprise_show`) it checks the organization's Surprise me switch again, then makes, in order, only what the session doesn't have yet:
@@ -140,12 +137,11 @@ A successful run then drops the session's clips the show no longer uses (`db.pru
 | People sync | 15 min, the wait for the org's lock included |
 | AI flows | 15 min |
 | The session analysis | 25 min: the chat labels' batches, then the understanding call and its 10-minute stream deadline |
-| Cover image | 5 min |
 | Surprise me show | 25 min: the take (up to two Claude calls), the script (up to two), the storyboard (one), then one speech call per line, four at a time, 60 s read timeout each, again with the backup voice when ElevenLabs refuses the account |
 | `ping` | 5 min (arq default) |
 
 - A timeout fails the job. The thread it started is not killed, which is why every HTTP call also has its own timeout ([providers.md](providers.md)).
-- arq retries nothing (`max_tries=1`): failures are mostly deterministic, and re-runs cost money. A transcription marks its `transcript_jobs` row `error`, and a people sync its `livestorm_sync_jobs` row. AI, cover and voice jobs log and re-raise; arq keeps the error in the job's result for an hour, and the poll returns it. The worker stores only the error's message there, never the exception object (`queue.job_result_serializer`, set as `WorkerSettings.job_serializer`). The user retries from the UI.
+- arq retries nothing (`max_tries=1`): failures are mostly deterministic, and re-runs cost money. A transcription marks its `transcript_jobs` row `error`, and a people sync its `livestorm_sync_jobs` row. AI and voice jobs log and re-raise; arq keeps the error in the job's result for an hour, and the poll returns it. The worker stores only the error's message there, never the exception object (`queue.job_result_serializer`, set as `WorkerSettings.job_serializer`). The user retries from the UI.
 - If the worker process is killed mid-job (OOM, not a normal shutdown), arq keeps reporting that job as running until its in-progress key expires: the longest job timeout plus 10 s, about 2 hours. Until then the same output can't be regenerated. Deleting `arq:in-progress:{job id}` in Redis frees it.
 - `ping` returns `"pong"`. Enqueue it to check the web → Redis → worker path after a deploy.
 

@@ -15,7 +15,7 @@ make worker              # arq worker                         (another)
 make web                 # Vite on :5173, proxies /api to :8000 (a third)
 ```
 
-Set `STORMIQ_LOCAL_DEV=1` and `LS_API_KEY` in `.env` to skip OAuth locally ([security.md](security.md#identity)). `.env` is read at startup by `config.load_env_file()`; variables already set in the environment win. A few values are read before `.env` is loaded, so outside Docker their `.env` values are ignored: `IMAGE_MODEL`, `IMAGE_SIZE` and `IMAGE_QUALITY` (read when `config.py` is imported) and the worker's `REDIS_URL` (read when `WorkerSettings` is defined). Set those in your shell if you need non-default values.
+Set `STORMIQ_LOCAL_DEV=1` and `LS_API_KEY` in `.env` to skip OAuth locally ([security.md](security.md#identity)). `.env` is read at startup by `config.load_env_file()`; variables already set in the environment win. A few values are read before `.env` is loaded, so outside Docker their `.env` values are ignored: `TTS_MODEL` and `TTS_VOICE` (read when `config.py` is imported) and the worker's `REDIS_URL` (read when `WorkerSettings` is defined). Set those in your shell if you need non-default values.
 
 `make stack` runs everything in Docker instead (web on `:10000`, worker, Redis, Postgres, all on loopback). In that mode web and worker always use the compose Postgres, whatever `.env` says.
 
@@ -62,7 +62,7 @@ Render, configured in [`render.yaml`](../render.yaml):
 
 ### Worker environment
 
-The worker resolves every credential itself, because job arguments never carry secrets. It needs `DATABASE_URL`, `REDIS_URL`, `GLADIA_KEY`, `CLAUDE_API_KEY` for every text job, `OPENAI_API_KEY` for covers only, and `LIVESTORM_OAUTH_CLIENT_ID` / `LIVESTORM_OAUTH_CLIENT_SECRET` to refresh a user's token when a queued transcription or people sync starts close to its expiry. It logs a warning at startup when `GLADIA_KEY` is missing.
+The worker resolves every credential itself, because job arguments never carry secrets. It needs `DATABASE_URL`, `REDIS_URL`, `GLADIA_KEY`, `CLAUDE_API_KEY` for every text job, `OPENAI_API_KEY` for Surprise me's backup voice only, `ELEVENLABS_API_KEY` for its main voice, and `LIVESTORM_OAUTH_CLIENT_ID` / `LIVESTORM_OAUTH_CLIENT_SECRET` to refresh a user's token when a queued transcription or people sync starts close to its expiry. It logs a warning at startup when `GLADIA_KEY` is missing.
 
 ## Environment variables
 
@@ -76,13 +76,13 @@ ANTHROPIC_CUSTOM_HEADERS      # Leave unset. The SDK would add its headers to ev
                               # every Anthropic call fails before it is sent.
                               # ANTHROPIC_API_KEY and ANTHROPIC_BASE_URL are ignored: llm_client passes the key and
                               # the host to the SDK explicitly.
-OPENAI_API_KEY                # Required for cover images and Surprise me's backup voice (worker)
+OPENAI_API_KEY                # Required for Surprise me's backup voice (worker)
 ELEVENLABS_API_KEY            # Worker. Surprise me's main voice (ElevenLabs eleven_v3). Unset: every show is
                               # recorded with the OpenAI backup voice and says so. Never logged or sent to the page.
 TTS_MODEL                     # Optional. Surprise me's OpenAI speech model (default gpt-4o-mini-tts)
 TTS_VOICE                     # Optional. Its OpenAI voice when Admin set none (default cedar)
 ORG_DAILY_LLM_BUDGET_USD      # Optional, worker. Daily spend cap per org for automatic text jobs (none exists yet), in
-                              # dollars, per UTC day. Unset: no limit. Never applies to jobs a user starts or to covers.
+                              # dollars, per UTC day. Unset: no limit. Never applies to jobs a user starts.
 
 # Livestorm
 LIVESTORM_OAUTH_CLIENT_ID     # Required for OAuth
@@ -108,11 +108,6 @@ GLADIA_KEY                    # Required on the worker
 DATABASE_URL                  # Required. POSTGRES_URL or RENDER_POSTGRES_URL also work.
 REDIS_URL                     # Required in production; defaults to redis://localhost:6379/0
 
-# Cover images
-IMAGE_MODEL                   # Optional; default gpt-image-2. The admin setting overrides it.
-IMAGE_SIZE                    # Optional; default 1536x1024
-IMAGE_QUALITY                 # Optional; default high
-
 # Tests only
 TEST_DATABASE_URL             # Enables the real-Postgres tests. Must be a local host.
 TEST_REDIS_URL                # Enables the real-Redis tests. Local host and a dedicated db index: the fixture flushes it.
@@ -133,11 +128,11 @@ RENDER                        # Set by Render on every service. Turns off local-
 
 ## Scripts
 
-`scripts/` holds one-off backfills and diagnostics, run by hand. Read a script's docstring before running it: the backfills write to whatever `DATABASE_URL` points at, and some call paid APIs (`backfill_cover_images.py` costs about $0.17 per cover). `make_favicon.py` rebuilds the favicons from the Sora font, in a throwaway environment with fontTools and Pillow (its docstring says how); it reads no database.
+`scripts/` holds one-off backfills and diagnostics, run by hand. Read a script's docstring before running it: the backfills write to whatever `DATABASE_URL` points at, and some call paid APIs (`backfill_smart_recap_professional.py` writes a Claude recap per session). `make_favicon.py` rebuilds the favicons from the Sora font, in a throwaway environment with fontTools and Pillow (its docstring says how); it reads no database.
 
 `llm_smoke.py --i-understand-this-costs` makes real, paid calls (well under a dollar in all) to check that the models StormIQ plans to use accept the parameters it plans to send: each planned parameter on the offered Claude models, each v1 job's request as the app itself writes it (`ai/request.py`), three calls of the understanding job over one dossier that show whether a cached prefix is read, and the OpenAI rows' parameters. It reads `CLAUDE_API_KEY` and `OPENAI_API_KEY` from the environment, never `.env`, skips a provider without a key, touches no database, and prints one line per call: whether it was accepted (or the HTTP status and error type it got), the stop reason and, for the cache calls, `cache_read_tokens`. Never a prompt, an answer or a key. The last line counts the calls not accepted and the cache misses (a repeated cached prefix that read 0 tokens from the cache); it exits 1 when either is above 0. Run it by hand only; its docstring lists every call.
 
-`reset_ai_outputs.py` removes every AI output so users regenerate them with the current models and formats (`db.reset_ai_outputs`): the AI bundles, their earlier versions, the chat labels, the understanding, the saved FAQ edits, Surprise me's storyboards, spoken scripts and voice clips, and the desk's decisions on located answers; with `--include-covers`, the cover images. It keeps each session's fetched data, its transcript, the host's replies and figure checks, sign-ins, settings and `llm_usage`, and leaves `updated_at` alone. It is a dry run (counts only) unless you pass `--apply`, runs in one transaction, refuses a non-local database unless you also pass `--allow-remote-database`, and doesn't read `.env`. Take a database backup first. On Render: open the web service's Shell and run `python scripts/reset_ai_outputs.py --allow-remote-database`, then again with `--apply`.
+`reset_ai_outputs.py` removes every AI output so users regenerate them with the current models and formats (`db.reset_ai_outputs`): the AI bundles, their earlier versions, the chat labels, the understanding, the saved FAQ edits, Surprise me's storyboards, spoken scripts and voice clips, and the desk's decisions on located answers; with `--include-covers`, the bytes still stored in the unused cover image columns (covers were removed in November 2026). It keeps each session's fetched data, its transcript, the host's replies and figure checks, sign-ins, settings and `llm_usage`, and leaves `updated_at` alone. It is a dry run (counts only) unless you pass `--apply`, runs in one transaction, refuses a non-local database unless you also pass `--allow-remote-database`, and doesn't read `.env`. Take a database backup first. On Render: open the web service's Shell and run `python scripts/reset_ai_outputs.py --allow-remote-database`, then again with `--apply`.
 
 `strip_registrant_join_links.py` removes registrant join links from rows saved before they were stripped on fetch. It is a dry run unless you pass `--apply`. It refuses a non-local database unless you also pass `--allow-remote-database`, and it doesn't read `.env`. It prints session ids and counts only.
 

@@ -14,6 +14,10 @@ A full visual and UX overhaul that uses Livestorm's design language (colours, Ob
 
 The v1 design uses Sora (open licence) instead of Object Sans, which is licensed and isn't in the repo, and Lucide icons instead of Livestorm's proprietary icon font ([brand.md](brand.md#the-v1-design)).
 
+## 1b. v1.1 formats
+
+The formats for the audience, each a public format through `api_logic.run_public_format` ([ai-outputs.md](ai-outputs.md#attendee-follow-up)): ~~the attendee follow-up~~ and ~~the no-show email~~ (shipped, November 2026, as the Follow-up email's Attended and Not attended tabs), then the LinkedIn post, then the clip shortlist.
+
 ## 2. Card registry for Deep Analysis
 
 Replace the markdown blob and its regex section parser ([ai-outputs.md](ai-outputs.md#deep-analysis)) with a registry of cards.
@@ -43,7 +47,6 @@ Replace the markdown blob and its regex section parser ([ai-outputs.md](ai-outpu
 - Count what a declined attempt cost when the server-side fallback answers: the usage row's tokens and cost are the answering attempt's alone, and the declined one is only in `usage_raw.iterations`, so the daily budget doesn't count it ([providers.md](providers.md#request-layouts-and-caching)).
 - Record the tokens of an Anthropic stream that fails or passes its deadline after its first event: they may be billed, but the call leaves no `llm_usage` row, so the daily budget doesn't count them ([providers.md](providers.md#the-anthropic-sdk)).
 - Ask the classic content bundle for its JSON with a schema (`llm_client.generate_json`) instead of in the prompt, which would drop the "incomplete JSON" retry ([ai-outputs.md](ai-outputs.md#content-repurposing)).
-- Log the cover image call in `llm_usage` and hold it to the daily budget. The worker already starts it on its own after a Professional Smart Recap, through its own OpenAI Images request ([jobs.md](jobs.md#cover-images)).
 
 ## Maybe later
 

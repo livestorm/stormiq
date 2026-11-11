@@ -165,6 +165,7 @@ def ensure_database_schema() -> None:
                     decisions_bundle JSONB,
                     team_digest_bundle JSONB,
                     attendee_followup_bundle JSONB,
+                    no_show_followup_bundle JSONB,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     PRIMARY KEY (account_key_hash, session_id)
@@ -216,6 +217,12 @@ def ensure_database_schema() -> None:
             cursor.execute(
                 """
                 ALTER TABLE session_cache
+                ADD COLUMN IF NOT EXISTS no_show_followup_bundle JSONB
+                """
+            )
+            cursor.execute(
+                """
+                ALTER TABLE session_cache
                 ADD COLUMN IF NOT EXISTS transcript_speaker_names JSONB
                 """
             )
@@ -255,6 +262,10 @@ def ensure_database_schema() -> None:
                 ADD COLUMN IF NOT EXISTS created_by_name TEXT
                 """
             )
+            # The cover image columns are no longer read or written (the
+            # cover feature was removed in November 2026). They are kept,
+            # because dropping a column can't be undone; reset_ai_outputs
+            # (include_covers) clears what they still hold.
             cursor.execute(
                 """
                 ALTER TABLE session_cache
@@ -918,10 +929,8 @@ def fetch_cached_session(
                         decisions_bundle,
                         team_digest_bundle,
                         attendee_followup_bundle,
+                        no_show_followup_bundle,
                         event_payload,
-                        cover_image_bytes IS NOT NULL AS has_cover_image,
-                        cover_image_mime,
-                        cover_image_generated_at,
                         created_by_user_id,
                         created_by_email,
                         created_by_name,
@@ -963,6 +972,7 @@ _SESSION_FIELD_SQL = {
     "decisions_bundle": "decisions_bundle",
     "team_digest_bundle": "team_digest_bundle",
     "attendee_followup_bundle": "attendee_followup_bundle",
+    "no_show_followup_bundle": "no_show_followup_bundle",
     "updated_at": "updated_at",
     "organization_id": "organization_id",
 }
@@ -1026,14 +1036,12 @@ def upsert_cached_session(api_key: str, session_id: str, **fields: Any) -> None:
         "decisions_bundle",
         "team_digest_bundle",
         "attendee_followup_bundle",
+        "no_show_followup_bundle",
         "organization_id",
         "event_payload",
         "created_by_user_id",
         "created_by_email",
         "created_by_name",
-        "cover_image_bytes",
-        "cover_image_mime",
-        "cover_image_generated_at",
     }
 
     # Fields that should be set only on the *first* insert. On subsequent
@@ -1093,7 +1101,7 @@ def upsert_cached_session(api_key: str, session_id: str, **fields: Any) -> None:
 # Bundle columns hold one entry per language (or per tone for Smart Recap).
 _BUNDLE_COLUMNS = {
     "analysis_bundle", "deep_analysis_bundle", "smart_recap_bundle", "content_repurpose_bundle", "faq_bundle", "decisions_bundle",
-    "team_digest_bundle", "attendee_followup_bundle",
+    "team_digest_bundle", "attendee_followup_bundle", "no_show_followup_bundle",
 }
 # Legacy single-language TEXT columns that may be written alongside a bundle entry.
 _LEGACY_TEXT_COLUMNS = {"analysis_md", "deep_analysis_md"}
@@ -1325,9 +1333,6 @@ def list_workspace_sessions(organization_id: str) -> List[Dict[str, Any]]:
                         {_has_content_sql("deep_analysis_bundle")} AS has_deep_analysis,
                         {_has_content_sql("smart_recap_bundle")} AS has_smart_recap,
                         {_has_content_sql("content_repurpose_bundle")} AS has_content_repurposing,
-                        cover_image_bytes IS NOT NULL AS has_cover_image,
-                        cover_image_mime,
-                        cover_image_generated_at,
                         created_by_user_id,
                         created_by_email,
                         created_by_name,
@@ -1344,54 +1349,6 @@ def list_workspace_sessions(organization_id: str) -> List[Dict[str, Any]]:
     except Exception:
         logger.exception("Failed to list workspace sessions for organization_id=%s", org_filter)
         return []
-
-
-def fetch_cover_image(
-    session_id: str,
-    *,
-    organization_id: OrgScope,
-) -> Optional[Dict[str, Any]]:
-    """Return the cover image bytes for a session, scoped by org.
-
-    Same scope rules as `fetch_cached_session`. Heavy column (BYTEA, often
-    >1 MB), kept out of the list_workspace_sessions query so the card
-    endpoint stays light. Served via GET /api/sessions/{id}/cover.png.
-    Returns `{ bytes, mime, generated_at }` when present, or None.
-    """
-    if not database_enabled() or not str(session_id or "").strip():
-        return None
-    try:
-        org_filter = _org_filter(organization_id)
-    except ScopeMatchesNothing:
-        return None
-    where_clause = "WHERE session_id = %s" + (" AND organization_id = %s" if org_filter is not None else "")
-    params = (str(session_id).strip(),) + ((org_filter,) if org_filter is not None else ())
-    try:
-        with get_db_connection() as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    f"""
-                    SELECT cover_image_bytes, cover_image_mime, cover_image_generated_at
-                    FROM session_cache
-                    {where_clause}
-                    LIMIT 1
-                    """,
-                    params,
-                )
-                row = cursor.fetchone()
-        if not isinstance(row, dict):
-            return None
-        image_bytes = row.get("cover_image_bytes")
-        if not image_bytes:
-            return None
-        return {
-            "bytes": bytes(image_bytes),
-            "mime": str(row.get("cover_image_mime") or "image/png"),
-            "generated_at": row.get("cover_image_generated_at"),
-        }
-    except Exception:
-        logger.exception("Failed to read cover image for session_id=%s", str(session_id).strip())
-        return None
 
 
 def fetch_oauth_connection(connection_id: str) -> Optional[Dict[str, Any]]:
@@ -3715,7 +3672,6 @@ def admin_list_sessions(limit: int = 500) -> List[Dict[str, Any]]:
                         (deep_analysis_bundle IS NOT NULL) AS has_deep,
                         (smart_recap_bundle IS NOT NULL) AS has_recap,
                         (content_repurpose_bundle IS NOT NULL) AS has_repurposing,
-                        (cover_image_bytes IS NOT NULL) AS has_cover,
                         event_payload->'data'->'attributes'->>'title' AS event_title,
                         session_payload->'data'->'attributes'->>'name' AS session_name
                     FROM session_cache
@@ -3767,6 +3723,7 @@ AI_OUTPUT_COLUMNS = (
     "decisions_bundle",
     "team_digest_bundle",
     "attendee_followup_bundle",
+    "no_show_followup_bundle",
 )
 # Whole tables of AI-derived rows (each references `session_cache`).
 AI_OUTPUT_TABLES = (

@@ -4,7 +4,7 @@ and formats (`db.reset_ai_outputs`).
 What goes:
     - The AI bundles on each session: session analysis, deep analysis,
       repurposed content, Smart Recap (with Surprise me's take), FAQ,
-      decisions, team digest, attendee follow-up.
+      decisions, team digest, attendee and no-show follow-ups.
     - Their earlier versions (`output_versions`), the chat labels, the
       understanding (chapters, located answers, figures), the saved FAQ
       edits, Surprise me's storyboards, spoken scripts and voice clips.

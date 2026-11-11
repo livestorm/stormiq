@@ -1,9 +1,10 @@
 """The v1.1 public formats on Follow-up (proposal §7): one model call over a
 format's brief (`record/format_briefs.py`), written as Markdown for the
 audience (prompt: `prompts/<kind>.txt`, listed in
-`config.PUBLIC_FORMAT_PROMPT_PATHS`). The first is the attendee follow-up
-("You asked, we answered"); the no-show email, the LinkedIn post and the clip
-shortlist are meant to reuse this module with their own kind and prompt.
+`config.PUBLIC_FORMAT_PROMPT_PATHS`): the attendee follow-up ("You asked,
+we answered") and the no-show follow-up ("Here's what you missed"); the
+LinkedIn post and the clip shortlist are meant to reuse this module with
+their own kind and prompt.
 
 Each format is a v1 job (`ai.jobs`, the `dossier` layout), started by a click
 on Follow-up. It checks nothing: the caller (`api_logic._write_public_format`)

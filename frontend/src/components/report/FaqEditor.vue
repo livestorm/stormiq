@@ -51,7 +51,36 @@ async function copy(text, which) {
     copied.value = "";
   }
 }
-onBeforeUnmount(() => clearTimeout(copiedTimer));
+// Removing a question: asked first on the entry itself, then an Undo for a
+// few seconds (one removal at a time can be undone).
+const UNDO_MS = 8000;
+const confirming = ref(""); // the id of the entry asking "Remove it?", or ""
+const undone = ref(null); // `{entry, index}` the last removal, while Undo shows
+let undoTimer = null;
+
+function askRemove(entry) {
+  confirming.value = entry.id;
+}
+
+function confirmRemove(index) {
+  confirming.value = "";
+  const removed = props.faq.remove(index);
+  if (!removed) return;
+  clearTimeout(undoTimer);
+  undone.value = removed;
+  undoTimer = setTimeout(() => (undone.value = null), UNDO_MS);
+}
+
+function undoRemove() {
+  clearTimeout(undoTimer);
+  props.faq.restore(undone.value);
+  undone.value = null;
+}
+
+onBeforeUnmount(() => {
+  clearTimeout(copiedTimer);
+  clearTimeout(undoTimer);
+});
 
 // ── The download menu: a disclosure that closes on a choice or Escape ──
 const downloadMenu = ref(null);
@@ -183,8 +212,19 @@ function add() {
                 :data-move="`${index}:down`"
                 @click="move(index, 1)"
               />
-              <UiButton variant="icon" icon="x" :label="`Remove question ${index + 1}`" @click="faq.remove(index)" />
+              <UiButton
+                v-if="confirming !== entry.id"
+                variant="icon"
+                icon="x"
+                :label="`Remove question ${index + 1}`"
+                @click="askRemove(entry)"
+              />
             </span>
+          </div>
+          <div v-if="confirming === entry.id" class="fe-confirm" role="group" :aria-label="`Remove question ${index + 1}?`">
+            <span>Remove this question from the FAQ?</span>
+            <UiButton variant="primary" small @click="confirmRemove(index)">Remove</UiButton>
+            <UiButton variant="ghost" small @click="confirming = ''">Keep it</UiButton>
           </div>
           <label class="fe-label" :for="`fe-q-${entry.id}`">Question</label>
           <textarea
@@ -205,6 +245,12 @@ function add() {
           />
         </li>
       </ol>
+
+      <div v-if="undone" class="fe-undo" role="status">
+        <Icon name="info" :size="16" />
+        <span>Question removed. Save to keep the change.</span>
+        <UiButton variant="secondary" small icon="refresh-cw" @click="undoRemove">Undo</UiButton>
+      </div>
 
       <Collapsible v-if="earlier" variant="link" icon="file-text" title="Earlier AI version" class="fe-earlier">
         <p class="fe-muted">The FAQ StormIQ wrote with AI before it could be edited. Read-only.</p>
@@ -346,6 +392,28 @@ function add() {
   line-height: var(--siq-text-small-lh);
   font-weight: var(--siq-weight-semibold);
   color: var(--siq-ink);
+}
+
+.fe-confirm,
+.fe-undo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--siq-space-2);
+  margin: var(--siq-space-2) 0;
+  padding: var(--siq-space-2) var(--siq-space-3);
+  border: 1px solid var(--siq-border);
+  border-radius: var(--siq-radius-control);
+  background: var(--siq-surface-2);
+  color: var(--siq-ink);
+  font-size: var(--siq-text-ui);
+}
+
+/* The Undo stays in view while the list scrolls. */
+.fe-undo {
+  position: sticky;
+  bottom: var(--siq-space-4);
+  z-index: 1;
 }
 
 .fe-entry-tools {

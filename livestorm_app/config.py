@@ -24,17 +24,6 @@ ANTHROPIC_BASE_URL = "https://api.anthropic.com"
 # reads it). tests/test_llm_transport.py checks the SDK sends this one.
 ANTHROPIC_API_VERSION = "2023-06-01"
 
-# Cover image generation. The cover is built from the session's
-# Professional Smart Recap and rendered with the OpenAI Images API.
-# All three parameters can be overridden via env vars:
-#   IMAGE_MODEL   — e.g. gpt-image-2 (default: gpt-image-2; gpt-image-1 was shut down)
-#   IMAGE_SIZE    — e.g. 1536x1024, 1024x1024      (default: 1536x1024)
-#   IMAGE_QUALITY — e.g. high, medium, low          (default: high)
-OPENAI_IMAGES_URL = "https://api.openai.com/v1/images/generations"
-COVER_IMAGE_MODEL = os.getenv("IMAGE_MODEL", "gpt-image-2")
-COVER_IMAGE_SIZE = os.getenv("IMAGE_SIZE", "1536x1024")
-COVER_IMAGE_QUALITY = os.getenv("IMAGE_QUALITY", "high")
-
 # Surprise me, read aloud (`ai/surprise_voice.py`): one OpenAI speech clip
 # per beat of the take, made in the worker when the user clicks Play.
 #   TTS_MODEL — default gpt-4o-mini-tts
@@ -55,7 +44,6 @@ CONTENT_REPURPOSE_BUNDLE_PROMPT_PATH = PROMPTS_DIR / "content_repurpose_bundle_p
 SMART_RECAP_PROFESSIONAL_PROMPT_PATH = PROMPTS_DIR / "smart_recap_professional_prompt.txt"
 SMART_RECAP_HYPE_PROMPT_PATH = PROMPTS_DIR / "smart_recap_hype_prompt.txt"
 SMART_RECAP_SURPRISE_PROMPT_PATH = PROMPTS_DIR / "smart_recap_surprise_prompt.txt"
-COVER_IMAGE_PROMPT_PATH = PROMPTS_DIR / "cover_image_prompt.txt"
 SURPRISE_VOICE_PROMPT_PATH = PROMPTS_DIR / "surprise_voice.txt"  # how the voice reads the take (ai/surprise_voice.py)
 SURPRISE_STORYBOARD_PROMPT_PATH = PROMPTS_DIR / "surprise_storyboard.txt"  # v1: ai/surprise_story.py
 SURPRISE_PERFORMANCE_PROMPT_PATH = PROMPTS_DIR / "surprise_performance.txt"  # v1: ai/surprise_performance.py
@@ -68,6 +56,7 @@ TEAM_DIGEST_PROMPT_PATH = PROMPTS_DIR / "team_digest.txt"  # v1: ai/team_digest.
 # v1.1 public formats (`ai/public_formats.py`): `prompts/<kind>.txt`.
 PUBLIC_FORMAT_PROMPT_PATHS = {
     "attendee_followup": PROMPTS_DIR / "attendee_followup.txt",
+    "no_show_followup": PROMPTS_DIR / "no_show_followup.txt",
 }
 
 ENV_PATH = Path(".env")

@@ -1,9 +1,10 @@
 <script setup>
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import BeforeYouShare from "../components/report/BeforeYouShare.vue";
 import ChapterNotes from "../components/report/ChapterNotes.vue";
 import DecisionCards from "../components/report/DecisionCards.vue";
+import EmailFollowUp from "../components/report/EmailFollowUp.vue";
 import FaqEditor from "../components/report/FaqEditor.vue";
 import MarkdownBlocks from "../components/report/MarkdownBlocks.vue";
 import QuestionDesk from "../components/report/QuestionDesk.vue";
@@ -23,11 +24,13 @@ import {
   OUTPUTS,
   canMake,
   earlierVersions,
+  listKeyFor,
   making,
   outputFor,
   outputGroups,
   outputText,
   pdfUrl,
+  tabItems,
   toggleOptions,
   versionsQuery,
 } from "../followup/outputs";
@@ -127,6 +130,49 @@ const hasTranscript = computed(() => Boolean(workspace.value) && store.hasTransc
 const output = computed(() => outputFor(String(route.query.output || "")));
 const language = computed(() => (route.query.lang === "French" ? "French" : "English"));
 
+// The list scrolls with the page until it reaches the top of the window and
+// sticks there; from then on it is the window's height and scrolls on its
+// own, and once it reaches its end the wheel carries on to the page. Never a
+// small scrolling box low on the page that keeps the wheel to itself.
+const navEl = ref(null);
+const wide = typeof window !== "undefined" && window.matchMedia ? window.matchMedia("(min-width: 901px)") : null;
+let navFrame = 0;
+
+function fitNav() {
+  navFrame = 0;
+  const el = navEl.value;
+  if (!el) return;
+  if (!wide?.matches) {
+    el.style.maxHeight = "";
+    return;
+  }
+  const stickyTop = parseFloat(getComputedStyle(el).top) || 0;
+  const stuck = el.getBoundingClientRect().top <= stickyTop + 1;
+  el.style.maxHeight = stuck ? `${window.innerHeight - stickyTop - 16}px` : "";
+}
+
+function queueFitNav() {
+  if (!navFrame) navFrame = requestAnimationFrame(fitNav);
+}
+
+// The page's height changes as cards above the list load or fold.
+let pageObserver = null;
+onMounted(() => {
+  window.addEventListener("scroll", queueFitNav, { passive: true });
+  window.addEventListener("resize", queueFitNav, { passive: true });
+  if (typeof ResizeObserver !== "undefined") {
+    pageObserver = new ResizeObserver(queueFitNav);
+    pageObserver.observe(document.body);
+  }
+  queueFitNav();
+});
+onBeforeUnmount(() => {
+  window.removeEventListener("scroll", queueFitNav);
+  window.removeEventListener("resize", queueFitNav);
+  pageObserver?.disconnect();
+  cancelAnimationFrame(navFrame);
+});
+
 // The list and the output side by side: once the page is scrolled past the
 // output's top, picking another one brings its top back into view.
 const layoutEl = ref(null);
@@ -147,7 +193,9 @@ function show(key, lang = language.value) {
 const groups = computed(() => outputGroups(outputs.value, language.value));
 // Formal and Hype (the Smart Recap): one item in the list, a toggle on the output.
 const toggles = computed(() => toggleOptions(output.value));
-const listKey = computed(() => toggles.value[0]?.key || output.value.key);
+const listKey = computed(() => listKeyFor(output.value));
+// The Follow-up email's tabs (Attended, Not attended, Generic): one output each.
+const emailTabs = computed(() => tabItems(output.value, outputs.value, state, language.value));
 // Surprise me shows only while the organization has it on (`state.org`,
 // set by a StormIQ admin; the server refuses a take when it is off).
 const surpriseOn = computed(() => state.org.surpriseEnabled);
@@ -177,16 +225,22 @@ const writingKeys = computed(() => new Set(OUTPUTS.filter((item) => making(state
 const isWriting = (item) => (item.keys || [item.key]).some((key) => writingKeys.value.has(key));
 
 // ── The list: groups that fold, the one on screen open ──
+// "From the session": the desk and the chapters, then the outputs filed
+// there (the FAQ, drafted from the desk).
+const SESSION_GROUP = "From the session";
+const sessionOutputs = computed(() => groups.value.find((group) => group.name === SESSION_GROUP)?.items || []);
+const otherGroups = computed(() => groups.value.filter((group) => group.name !== SESSION_GROUP));
 const navGroups = computed(() => [
   {
     id: "session",
-    name: "From the session",
+    name: SESSION_GROUP,
     items: [
       { key: DESK, label: "Question desk" },
       { key: CHAPTERS, label: "Chapters and show notes" },
+      ...sessionOutputs.value,
     ],
   },
-  ...groups.value.map((group, index) => ({ ...group, id: `g${index}` })),
+  ...otherGroups.value.map((group, index) => ({ ...group, id: `g${index}` })),
 ].map((group) => {
   const ready = group.items.filter((item) => item.ready).length;
   const writing = group.items.some((item) => item.keys && isWriting(item));
@@ -275,6 +329,7 @@ function make() {
     decisions: () => store.runDecisions(lang),
     teamDigest: () => store.runTeamDigest(lang),
     attendeeFollowup: () => store.runAttendeeFollowup(lang),
+    noShowFollowup: () => store.runNoShowFollowup(lang),
     smartRecap: () => store.runSmartRecap(tone),
     contentRepurposing: () => store.runContentRepurposing(lang),
   }[flow];
@@ -284,7 +339,7 @@ function make() {
 const makeLabel = computed(() => {
   if (output.value.key === "decisions") return `List the decisions${language.value === "French" ? " in French" : ""}`;
   if (output.value.key === "team-digest") return `Write the team digest${language.value === "French" ? " in French" : ""}`;
-  if (output.value.key === "attendee-followup") return `Write the attendee follow-up${language.value === "French" ? " in French" : ""}`;
+  if (output.value.makeLabel) return `${output.value.makeLabel}${language.value === "French" ? " in French" : ""}`;
   if (output.value.flow === "contentRepurposing") return `Write the repurposed content${language.value === "French" ? " in French" : ""}`;
   return `Write the ${output.value.label.toLowerCase()}${output.value.by === "language" && language.value === "French" ? " in French" : ""}`;
 });
@@ -341,15 +396,18 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
     </button>
 
     <div ref="layoutEl" class="f-layout">
-      <nav class="f-nav" aria-label="Follow-up">
+      <nav ref="navEl" class="f-nav" aria-label="Follow-up">
         <label class="f-pick">
           <span class="siq-sr-only">Show</span>
           <select class="f-input f-select" :value="ownValue || listKey" @change="show($event.target.value)">
             <optgroup label="From the session">
               <option :value="DESK">Question desk{{ openCount ? ` · ${openCount} open` : "" }}</option>
               <option :value="CHAPTERS">Chapters and show notes</option>
+              <option v-for="item in sessionOutputs" :key="item.key" :value="item.key">
+                {{ item.label }}{{ isWriting(item) ? " · writing" : item.ready ? " · ready" : "" }}
+              </option>
             </optgroup>
-            <optgroup v-for="group in groups" :key="group.name" :label="group.name">
+            <optgroup v-for="group in otherGroups" :key="group.name" :label="group.name">
               <option v-for="item in group.items" :key="item.key" :value="item.key">
                 {{ item.label }}{{ isWriting(item) ? " · writing" : item.ready ? " · ready" : "" }}
               </option>
@@ -513,6 +571,7 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
             </div>
           </template>
         </CardHeader>
+        <EmailFollowUp v-if="emailTabs.length" :tabs="emailTabs" @pick="show" />
 
         <template v-if="body">
           <div class="f-actions">
@@ -617,12 +676,7 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
             from the Report's numbers, the key moments, the open questions and the decisions if you listed them. A digest
             with a number or a time StormIQ didn't measure is never saved. Nobody is named.
           </p>
-          <p v-else-if="output.key === 'attendee-followup'" class="f-text">
-            Not written yet. It runs only when you ask, with AI, from the session's chapters, the key moments of the talk
-            and two questions the audience asked that have an answer. Attendees are never named: their names, emails and
-            links are removed before anything is sent. An email with a number or a time the session doesn't have is never
-            saved.
-          </p>
+          <p v-else-if="output.notYet" class="f-text">{{ output.notYet }}</p>
           <p v-else class="f-text">Not written yet. It runs only when you ask, with AI, from the transcript and the chat.</p>
           <p v-if="output.flow === 'contentRepurposing'" class="f-muted">
             The summary, blog post, follow-up email and social posts are written together.
@@ -693,17 +747,16 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
   scroll-margin-top: var(--siq-space-4);
 }
 
-/* The list stays in view and scrolls on its own when it is taller than the
-   window, so the page never has to. */
+/* The list sticks at the top of the window; once stuck it is the window's
+   height (`fitNav`) and scrolls on its own, the wheel carrying on to the page
+   at its ends. */
 .f-nav {
   display: flex;
   flex-direction: column;
   gap: var(--siq-space-1);
   position: sticky;
   top: var(--siq-space-6);
-  max-height: calc(100dvh - 2 * var(--siq-space-6));
   overflow-y: auto;
-  overscroll-behavior: contain;
   scrollbar-width: thin;
 }
 

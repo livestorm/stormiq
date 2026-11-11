@@ -9,6 +9,7 @@ function emptyAiJobs() {
     decisions: null,
     team_digest: null,
     attendee_followup: null,
+    no_show_followup: null,
     deep_analysis: null,
     smart_recap: null,
     content_repurposing: null,
@@ -64,6 +65,7 @@ const state = reactive({
     decisions: false,
     teamDigest: false,
     attendeeFollowup: false,
+    noShowFollowup: false,
     deepAnalysis: false,
     smartRecap: false,
     contentRepurposing: false,
@@ -855,6 +857,17 @@ async function runAttendeeFollowup(outputLanguage = state.outputLanguage) {
   });
 }
 
+async function runNoShowFollowup(outputLanguage = state.outputLanguage) {
+  await runAiFlow({
+    flag: "noShowFollowup",
+    jobKind: "no_show_followup",
+    flow: "no-show-followup",
+    start: (id, signal) => api.runNoShowFollowup(id, { apiKey: state.apiKey, outputLanguage }, { signal }),
+    query: { language: outputLanguage },
+    slot: { language: outputLanguage },
+  });
+}
+
 async function runDeepAnalysis(outputLanguage = state.outputLanguage) {
   await runAiFlow({
     flag: "deepAnalysis",
@@ -867,7 +880,7 @@ async function runDeepAnalysis(outputLanguage = state.outputLanguage) {
 }
 
 async function runSmartRecap(tone) {
-  const sessionScope = await runAiFlow({
+  await runAiFlow({
     flag: "smartRecap",
     jobKind: "smart_recap",
     flow: "smart-recap",
@@ -875,11 +888,6 @@ async function runSmartRecap(tone) {
     query: { tone },
     slot: { tone },
   });
-  // The Professional recap makes the worker generate the cover image.
-  // Watch for it quietly so the hero and the card list pick it up.
-  if (sessionScope && String(tone || "").toLowerCase() === "professional") {
-    watchForCoverImage(sessionScope);
-  }
 }
 
 async function runContentRepurposing(outputLanguage = state.outputLanguage) {
@@ -891,54 +899,6 @@ async function runContentRepurposing(outputLanguage = state.outputLanguage) {
     query: { language: outputLanguage },
     slot: { language: outputLanguage },
   });
-}
-
-// ── Cover image ───────────────────────────────────────────────────────────
-//
-// Checks the (small) session card list until the cover shows up, for at
-// most COVER_WATCH_TIMEOUT_MS. Stops when the user opens another session.
-
-const COVER_WATCH_INTERVAL_MS = 10_000;
-const COVER_WATCH_TIMEOUT_MS = 3 * 60 * 1000;
-
-async function watchForCoverImage(sessionScope) {
-  if (sessionScope.watchingCover || !isCurrent(sessionScope)) return;
-  sessionScope.watchingCover = true;
-  const { id, controller } = sessionScope;
-  const deadline = Date.now() + COVER_WATCH_TIMEOUT_MS;
-  try {
-    while (Date.now() < deadline) {
-      await sleep(COVER_WATCH_INTERVAL_MS, controller.signal);
-      let card;
-      try {
-        const data = await api.fetchWorkspaceSessions({ signal: controller.signal });
-        assertCurrent(sessionScope);
-        state.workspaceSessions = Array.isArray(data?.sessions) ? data.sessions : state.workspaceSessions;
-        card = state.workspaceSessions.find((session) => session.sessionId === id);
-      } catch (error) {
-        if (isStale(error)) return;
-        continue; // a hiccup: keep watching
-      }
-      if (card?.hasCoverImage) {
-        if (state.workspace?.sessionId === id && state.workspace.meta) {
-          setWorkspace({
-            ...state.workspace,
-            meta: {
-              ...state.workspace.meta,
-              hasCoverImage: true,
-              coverImageGeneratedAt: card.coverImageGeneratedAt,
-              coverImageMime: card.coverImageMime,
-            },
-          });
-        }
-        return;
-      }
-    }
-  } catch (error) {
-    if (!isStale(error)) console.warn("Cover image watch stopped", error);
-  } finally {
-    sessionScope.watchingCover = false;
-  }
 }
 
 export function useWorkspace() {
@@ -964,6 +924,7 @@ export function useWorkspace() {
     runDecisions,
     runTeamDigest,
     runAttendeeFollowup,
+    runNoShowFollowup,
     runDeepAnalysis,
     runSmartRecap,
     runContentRepurposing,

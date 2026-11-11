@@ -58,7 +58,6 @@ from livestorm_app.queue import (
     surprise_show_job_id,
     transcription_job_id,
 )
-from livestorm_app.ai.cover_image import generate_cover_image_with_openai
 from livestorm_app.ai.surprise_story import (
     STORYBOARD_VERSION,
     check_storyboard,
@@ -106,7 +105,6 @@ from livestorm_app.ai.llm_inputs import (
 )
 from livestorm_app.ai.prompts import (
     build_deep_analysis_prompt,
-    build_cover_image_prompt,
     build_smart_recap_prompt,
 )
 from livestorm_app.analytics.audience import (
@@ -305,7 +303,7 @@ def get_transcript_download(session_id: str, *, organization_id: OrgScope) -> Di
 _OUTPUT_FIELDS = [
     "analysis_bundle", "analysis_md", "deep_analysis_bundle", "deep_analysis_md",
     "content_repurpose_bundle", "smart_recap_bundle", "faq_bundle", "decisions_bundle",
-    "team_digest_bundle", "attendee_followup_bundle",
+    "team_digest_bundle", "attendee_followup_bundle", "no_show_followup_bundle",
     # The decisions name speakers when read (`ai.decisions_entry`).
     "transcript_speaker_names",
 ]
@@ -328,6 +326,7 @@ def _serialize_outputs(cached_session: Dict[str, Any]) -> Dict[str, Any]:
         "decisionsBundle": decisions_entry.bundle_markdown(cached_session.get("decisions_bundle"), _speaker_names(cached_session)),
         "teamDigestBundle": _normalize_text_bundle(cached_session.get("team_digest_bundle"), ""),
         "attendeeFollowupBundle": _normalize_text_bundle(cached_session.get("attendee_followup_bundle"), ""),
+        "noShowFollowupBundle": _normalize_text_bundle(cached_session.get("no_show_followup_bundle"), ""),
     }
 
 
@@ -387,7 +386,6 @@ def _serialize_cached_session(session_id: str, cached_session: Dict[str, Any]) -
         fallback=str(session_attributes.get("name") or "").strip() or "Untitled event",
     )
     created_at_meta = cached_session.get("created_at")
-    cover_generated_at_meta = cached_session.get("cover_image_generated_at")
     meta = {
         "eventTitle": event_title_meta,
         "sessionName": str(session_attributes.get("name") or "").strip(),
@@ -405,15 +403,6 @@ def _serialize_cached_session(session_id: str, cached_session: Dict[str, Any]) -
         "generatedByName": str(cached_session.get("created_by_name") or "").strip(),
         "generatedAtIso": created_at_meta.isoformat() if created_at_meta else "",
         "generatedAtLabel": _format_iso_date_label(created_at_meta),
-        # `has_cover_image` is the IS NOT NULL alias from
-        # fetch_cached_session's SELECT — the actual BYTEA stays out
-        # of every cache read because it's 1-2 MB and served by its
-        # own /cover.png endpoint.
-        "hasCoverImage": bool(cached_session.get("has_cover_image")),
-        "coverImageMime": str(cached_session.get("cover_image_mime") or "image/png"),
-        "coverImageGeneratedAt": (
-            cover_generated_at_meta.isoformat() if cover_generated_at_meta else ""
-        ),
     }
 
     serialized = {
@@ -468,8 +457,7 @@ def get_cached_workspace(session_id: str, *, organization_id: OrgScope) -> Optio
     cached = fetch_cached_session("", session_id, organization_id=organization_id)
     if not isinstance(cached, dict):
         return None
-    # Reads never start paid work. Cover images are generated only after a
-    # Professional Smart Recap (worker) or by scripts/backfill_cover_images.py.
+    # Reads never start paid work.
     return _serialize_cached_session(session_id, cached)
 
 
@@ -951,6 +939,7 @@ OUTPUT_VERSION_KINDS: Dict[str, Tuple[str, str]] = {
     "decisions": ("decisions_bundle", "language"),
     "team_digest": ("team_digest_bundle", "language"),
     "attendee_followup": ("attendee_followup_bundle", "language"),
+    "no_show_followup": ("no_show_followup_bundle", "language"),
 }
 
 
@@ -1330,21 +1319,6 @@ def list_workspace_sessions_data(organization_id: str) -> Dict[str, Any]:
                 "hasDeepAnalysis": bool(row.get("has_deep_analysis")),
                 "hasSmartRecap": bool(row.get("has_smart_recap")),
                 "hasContentRepurposing": bool(row.get("has_content_repurposing")),
-                # The cover image is rendered by an OpenAI image
-                # call from the Professional Smart Recap. The list view
-                # uses hasCoverImage to decide between the real cover
-                # (GET /api/sessions/{id}/cover.png) and the placeholder
-                # gradient. `coverImageGeneratedAt` doubles as a cache
-                # buster on the frontend — the URL gets ?v=<iso> so a
-                # regenerated cover bypasses the 24h browser cache on
-                # the cover endpoint.
-                "hasCoverImage": bool(row.get("has_cover_image")),
-                "coverImageMime": str(row.get("cover_image_mime") or "image/png"),
-                "coverImageGeneratedAt": (
-                    row.get("cover_image_generated_at").isoformat()
-                    if row.get("cover_image_generated_at")
-                    else ""
-                ),
                 # "Generated by" attribution — stamped on first insert,
                 # preserved across re-fetches by the COALESCE clause in
                 # upsert_cached_session. NULL/empty when the original
@@ -2454,18 +2428,13 @@ def _placed_chapters(stored: Any, inputs: Any) -> List[Dict[str, Any]]:
     return [{"title": chapter["title"], "t": mark["t"]} for chapter, mark in zip(chapters, marks["marks"], strict=True)]
 
 
-def _attendee_followup_brief(session_id: str, cached: Mapping[str, Any], inputs: Any, stored: Any, redactor: Any) -> Any:
-    """The attendee follow-up's brief (`record.format_briefs`): title, date
-    and length, the placed chapters, the moments of content with what was
-    being said, and two answered questions from the desk (the most upvoted
-    first) without who asked; redacted whole by `redactor`."""
+def _format_brief_parts(session_id: str, cached: Mapping[str, Any], inputs: Any, stored: Any) -> Dict[str, Any]:
+    """What the attendee and no-show follow-ups' briefs hold
+    (`record.format_briefs`): title, date and length, the placed chapters,
+    the moments of content with what was being said, and two answered
+    questions from the desk (the most upvoted first) without who asked."""
     from livestorm_app.record.assemble import clock_meta, session_meta
-    from livestorm_app.record.format_briefs import (
-        answered_questions,
-        build_attendee_followup_brief,
-        question_up_votes,
-        session_date,
-    )
+    from livestorm_app.record.format_briefs import answered_questions, question_up_votes, session_date
     from livestorm_app.record.moments import room_moments
     from livestorm_app.record.question_desk import question_desk
     from livestorm_app.record.understanding import current_reading, located_answers
@@ -2475,8 +2444,7 @@ def _attendee_followup_brief(session_id: str, cached: Mapping[str, Any], inputs:
     located, located_state = located_answers(stored, inputs)
     desk = question_desk(inputs, fetch_question_replies(session_id, ALL_ORGS), located, located_state)
     meta = clock_meta(inputs)
-    return build_attendee_followup_brief(
-        redact=redactor.redact,
+    return dict(
         title=session_meta(inputs)["title"],
         date=session_date(meta.get("startedAtUnix"), meta.get("timezone")),
         length_s=meta.get("endS"),
@@ -2494,12 +2462,34 @@ def _attendee_followup_brief(session_id: str, cached: Mapping[str, Any], inputs:
     )
 
 
+def _attendee_followup_brief(session_id: str, cached: Mapping[str, Any], inputs: Any, stored: Any, redactor: Any) -> Any:
+    """The attendee follow-up's brief (`_format_brief_parts`), redacted whole by `redactor`."""
+    from livestorm_app.record.format_briefs import build_attendee_followup_brief
+
+    return build_attendee_followup_brief(redact=redactor.redact, **_format_brief_parts(session_id, cached, inputs, stored))
+
+
+def _no_show_followup_brief(session_id: str, cached: Mapping[str, Any], inputs: Any, stored: Any, redactor: Any) -> Any:
+    """The no-show follow-up's brief (`_format_brief_parts`), redacted whole by `redactor`."""
+    from livestorm_app.record.format_briefs import build_no_show_followup_brief
+
+    return build_no_show_followup_brief(redact=redactor.redact, **_format_brief_parts(session_id, cached, inputs, stored))
+
+
 PUBLIC_FORMATS: Dict[str, _PublicFormat] = {
     "attendee_followup": _PublicFormat(
         "attendee follow-up",
         "attendee_followup_bundle",
         _attendee_followup_brief,
         max_words=300,
+        required_tokens=("{{replay_link}}",),
+        starts_with="Subject:",
+    ),
+    "no_show_followup": _PublicFormat(
+        "no-show follow-up",
+        "no_show_followup_bundle",
+        _no_show_followup_brief,
+        max_words=250,
         required_tokens=("{{replay_link}}",),
         starts_with="Subject:",
     ),
@@ -2582,6 +2572,12 @@ def run_attendee_followup(api_analysis_key: str, session_id: str, output_languag
     """The Follow-up's "Attendee follow-up" ("You asked, we answered") in one
     language (`run_public_format`), saved in `attendee_followup_bundle`."""
     return run_public_format("attendee_followup", api_analysis_key, session_id, output_language)
+
+
+def run_no_show_followup(api_analysis_key: str, session_id: str, output_language: str) -> Dict[str, Any]:
+    """The Follow-up's "No-show follow-up" ("Here's what you missed") in one
+    language (`run_public_format`), saved in `no_show_followup_bundle`."""
+    return run_public_format("no_show_followup", api_analysis_key, session_id, output_language)
 
 
 class NoQuestionsError(RuntimeError):
@@ -2726,62 +2722,6 @@ def build_analysis_pdf(session_id: str, analysis_kind: str, language: str, *, or
 
     pdf_bytes = analysis_markdown_to_pdf_bytes(markdown, title=title, language=language)
     return {"filename": filename, "content": pdf_bytes}
-
-
-def run_cover_image_generation(
-    api_analysis_key: str,
-    session_id: str,
-    *,
-    force_regenerate: bool = False,
-) -> Dict[str, Any]:
-    """Generate (or refresh) the cover image for a session.
-
-    Input: the Professional Smart Recap markdown — must already exist
-    in the cache. Output: PNG bytes persisted on session_cache
-    (cover_image_bytes / cover_image_mime / cover_image_generated_at).
-
-    Designed to be called from the arq worker as a follow-up after
-    run_smart_recap completes for the Professional tone. The auto-run
-    skips when a cover image is already cached; pass
-    `force_regenerate=True` to override (e.g. when the user explicitly
-    asks for a new cover).
-
-    Raises RuntimeError when the recap is missing or the OpenAI call
-    can't produce image bytes. The caller decides whether to surface
-    or swallow; the worker logs+swallows so a failed cover doesn't
-    cascade into a failed recap.
-    """
-    cached = _require_cached_payloads(session_id, organization_id=ALL_ORGS)
-    smart_bundle = _normalize_smart_recap_bundle(cached.get("smart_recap_bundle"))
-    recap_markdown = str(smart_bundle.get("professional") or "").strip()
-    if not recap_markdown:
-        raise RuntimeError(
-            "Cover image requires a Professional Smart Recap. Run the recap first."
-        )
-
-    # Idempotency: skip when a cover already exists, unless forced.
-    # fetch_cached_session keeps the BYTEA out of its SELECT (heavy);
-    # has_cover_image is the IS NOT NULL projection we read instead.
-    if not force_regenerate and cached.get("has_cover_image"):
-        return {"status": "exists", "mime": cached.get("cover_image_mime")}
-
-    prompt = build_cover_image_prompt(recap_markdown)
-    image = generate_cover_image_with_openai(api_analysis_key, prompt=prompt)
-
-    from datetime import datetime, timezone  # local import keeps top-of-file tidy
-
-    upsert_cached_session(
-        api_analysis_key,
-        session_id,
-        cover_image_bytes=image["bytes"],
-        cover_image_mime=image["mime"],
-        cover_image_generated_at=datetime.now(timezone.utc),
-    )
-    return {
-        "status": "generated",
-        "mime": image["mime"],
-        "byteSize": len(image["bytes"]),
-    }
 
 
 # ── Surprise me, the show (`ai/surprise_performance.py`, `ai/surprise_story.py`,
@@ -3353,6 +3293,7 @@ _ARQ_JOB_FUNCTION_BY_KIND: Dict[str, str] = {
     "decisions": "run_decisions_job",
     "team_digest": "run_team_digest_job",
     "attendee_followup": "run_attendee_followup_job",
+    "no_show_followup": "run_no_show_followup_job",
 }
 
 # The columns `_extract_cached_ai_body` reads for each kind: job starts and
@@ -3366,6 +3307,7 @@ _AI_BODY_FIELDS: Dict[str, List[str]] = {
     "decisions": ["decisions_bundle"],
     "team_digest": ["team_digest_bundle"],
     "attendee_followup": ["attendee_followup_bundle"],
+    "no_show_followup": ["no_show_followup_bundle"],
 }
 
 
@@ -3415,7 +3357,7 @@ def _start_ai_job(
     # English-first enforcement: French (and any non-English variant) must be
     # a translation of the existing English version so outputs stay consistent.
     # Reject if English hasn't been generated yet.
-    if kind in ("overall_analysis", "deep_analysis", "content_repurposing", "faq", "decisions", "team_digest", "attendee_followup") and str(language or "").strip() not in ("", "English"):
+    if kind in ("overall_analysis", "deep_analysis", "content_repurposing", "faq", "decisions", "team_digest", "attendee_followup", "no_show_followup") and str(language or "").strip() not in ("", "English"):
         if not _extract_cached_ai_body(cached, kind, language="English"):
             raise RuntimeError("Generate the English version first before translating to another language.")
 
@@ -3704,6 +3646,14 @@ def start_attendee_followup(session_id: str, output_language: str, *, organizati
 
 def get_attendee_followup_job_data(session_id: str, job_id: str, language: str, *, organization_id: OrgScope, outputs_only: bool = False) -> Dict[str, Any]:
     return _get_ai_job_data("attendee_followup", session_id, job_id, language=language, organization_id=organization_id, outputs_only=outputs_only)
+
+
+def start_no_show_followup(session_id: str, output_language: str, *, organization_id: OrgScope) -> Dict[str, Any]:
+    return _start_ai_job("no_show_followup", session_id, language=output_language, organization_id=organization_id)
+
+
+def get_no_show_followup_job_data(session_id: str, job_id: str, language: str, *, organization_id: OrgScope, outputs_only: bool = False) -> Dict[str, Any]:
+    return _get_ai_job_data("no_show_followup", session_id, job_id, language=language, organization_id=organization_id, outputs_only=outputs_only)
 
 
 def start_deep_analysis(session_id: str, output_language: str, *, organization_id: OrgScope) -> Dict[str, Any]:

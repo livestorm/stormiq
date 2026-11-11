@@ -69,12 +69,6 @@ def ai_job_id(kind: str, session_id: str, dimension: str) -> str:
     return f"{kind}:{str(session_id).strip()}:{str(dimension or '').strip() or '_'}"
 
 
-def cover_image_job_id(session_id: str) -> str:
-    """One cover job per session. The retained result doubles as a cooldown:
-    after a failure, the cover is not retried automatically for an hour."""
-    return f"cover_image:{str(session_id).strip()}"
-
-
 def surprise_show_job_id(session_id: str) -> str:
     """One show job per session (Surprise me: the take, the script, the
     storyboard and the voice): two clicks on "Make the show" share it."""
@@ -338,6 +332,7 @@ AI_JOB_KINDS = frozenset({
     "decisions",
     "team_digest",
     "attendee_followup",
+    "no_show_followup",
     "deep_analysis",
     "smart_recap",
     "content_repurposing",

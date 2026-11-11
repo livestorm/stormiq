@@ -1,10 +1,8 @@
 """One-off backfill: generate a Professional Smart Recap for every cached
 session that has a transcript but no Professional recap yet.
 
-Why: as of this change, fresh transcriptions automatically enqueue a
-Professional recap so each session is ready to feed the cover-image
-generator downstream. Pre-change cached sessions don't have one — this
-script fills them in.
+Why: sessions cached before the Professional recap was made routinely
+don't have one; this script fills them in.
 
 Usage (run with OPENAI_API_KEY + DATABASE_URL in env):
 

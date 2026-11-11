@@ -23,7 +23,6 @@ import app as app_module
 from livestorm_app.routes import admin as routes_admin
 from livestorm_app.routes import common as routes_common
 from livestorm_app.routes import models as routes_models
-from livestorm_app.routes import sessions as routes_sessions
 from livestorm_app.routes import spa as routes_spa
 from livestorm_app import api_logic, auth, oauth_client, people_sync
 from livestorm_app.db import ALL_ORGS
@@ -73,7 +72,6 @@ def _row() -> dict:
         "content_repurpose_bundle": {
             "English": {"summary": MARKER, "blog": MARKER, "email": MARKER, "social_media": MARKER},
         },
-        "has_cover_image": True,
     }
 
 
@@ -98,11 +96,6 @@ class FakeBackend:
             return None
         row = {**_row(), "has_transcript": True}
         return {field: row.get(field) for field in fields}
-
-    def fetch_cover_image(self, session_id, *, organization_id):
-        if session_id == SESSION_ID and _visible(organization_id):
-            return {"bytes": MARKER.encode(), "mime": "image/png", "generated_at": None}
-        return None
 
     def fetch_surprise_voice_clips(self, session_id, clip_keys, *, organization_id):
         return {}  # no clip made yet: Make the show queues the job
@@ -179,7 +172,6 @@ def backend(monkeypatch):
     monkeypatch.setattr(auth, "is_admin_email", lambda email: email == ADMIN_EMAIL)
     monkeypatch.setattr(api_logic, "fetch_cached_session", fake.fetch_cached_session)
     monkeypatch.setattr(api_logic, "fetch_session_fields", fake.fetch_session_fields)
-    monkeypatch.setattr(routes_sessions, "fetch_cover_image", fake.fetch_cover_image)
     monkeypatch.setattr(api_logic, "upsert_cached_session", fake.upsert_cached_session)
     # Surprise me's show: on for org-a, its clips, no script yet, and fixed voices (no settings read).
     monkeypatch.setattr(api_logic, "fetch_surprise_enabled", lambda org: True)
@@ -320,6 +312,7 @@ def test_route_inventory_covers_every_session_route():
     ids = {param.id for param in SESSION_ROUTES}
     assert "GET /api/sessions/{session_id}/record" in ids
     assert {"GET /api/sessions/{session_id}/roster-status", "POST /api/sessions/{session_id}/roster-sync"} <= ids
+    assert {"POST /api/sessions/{session_id}/no-show-followup", "GET /api/sessions/{session_id}/no-show-followup/job"} <= ids
 
 
 @pytest.mark.parametrize("method,path", SESSION_ROUTES)
@@ -470,16 +463,16 @@ def test_expired_cookie_gets_reconnect_message(client):
     assert "reconnect" in response.json()["detail"]["message"].lower()
 
 
-def test_cover_image_is_not_shared_cacheable(client):
+def test_the_cover_image_route_is_gone(client):
+    # Cover images were removed (November 2026); the route answers like any unknown API path.
     response = _call(client, "GET", "/api/sessions/{session_id}/cover.png", cookie="conn-a")
-    assert response.status_code == 200
-    assert response.headers["cache-control"].startswith("private")
+    assert response.status_code == 404
 
 
 @pytest.mark.parametrize("method,path", ADMIN_ROUTES)
 def test_admin_routes_reject_anonymous_and_non_admins(client, method, path):
     url = path.replace("{session_id}", SESSION_ID)
-    body = {"email": "x@example.com", "key": "image_model", "value": "gpt-image-2"}
+    body = {"email": "x@example.com", "key": "tts_voice", "value": "cedar"}
     client.cookies.clear()
     anonymous = client.request(method, url, json=body if method == "POST" else None)
     assert anonymous.status_code == 401
@@ -532,8 +525,6 @@ def test_admin_settings_refuse_a_model_outside_the_catalog(client, saved_setting
         ("llm_smart_recap_model", "claude-sonnet-4-6"),
         ("llm_model.anthropic.understanding", "claude-opus-5-5"),
         ("llm_model.anthropic.smart_recap", "claude-haiku-4-5-20251001"),
-        # Checked where it is read (cover_image.resolve_image_model).
-        ("image_model", "gpt-image-2"),
     ],
 )
 def test_admin_settings_save_allowed_values(client, saved_settings, key, value):
@@ -552,7 +543,8 @@ def test_admin_settings_save_allowed_values(client, saved_settings, key, value):
         ("llm_model.openai.smart_recap", "gpt-4o", "Unknown setting key"),
         ("something_else", "x", "Unknown setting key"),
         ("llm_default_model", "   ", "Value cannot be empty"),
-        ("image_model", "", "Value cannot be empty"),
+        # Cover images were removed: their model setting is an unknown key now.
+        ("image_model", "gpt-image-2", "Unknown setting key"),
     ],
 )
 def test_admin_settings_refuse_unknown_keys_and_empty_values(client, saved_settings, key, value, message):
@@ -687,7 +679,6 @@ def test_blank_scope_never_queries_the_database(monkeypatch):
     monkeypatch.setattr(db, "database_enabled", lambda: True)
     monkeypatch.setattr(db, "get_db_connection", _no_connection)
     assert db.fetch_cached_session("", SESSION_ID, organization_id="") is None
-    assert db.fetch_cover_image(SESSION_ID, organization_id="  ") is None
     with pytest.raises(TypeError):
         db.fetch_cached_session("", SESSION_ID)  # scope is a required argument
 

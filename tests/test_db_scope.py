@@ -1,6 +1,6 @@
 """Org scoping against a real Postgres.
 
-Exercises the actual SQL behind `fetch_cached_session`, `fetch_cover_image`,
+Exercises the actual SQL behind `fetch_cached_session`,
 `list_workspace_sessions`, the upsert's first-writer-wins org stamp, the
 per-org model spend (`llm_spend_since`), and the stored people
 (`fetch_roster_status`, `list_session_people`, `get_org_people_attributes`).
@@ -17,7 +17,7 @@ from livestorm_app.db import ALL_ORGS
 
 
 def _seed() -> None:
-    db.upsert_cached_session("key-a", "sess-a", session_payload={"name": "A"}, organization_id="org-a", cover_image_bytes=b"png-a")
+    db.upsert_cached_session("key-a", "sess-a", session_payload={"name": "A"}, organization_id="org-a")
     db.upsert_cached_session("key-b", "sess-b", session_payload={"name": "B"}, organization_id="org-b")
 
 
@@ -27,13 +27,6 @@ def test_fetch_is_scoped_by_org(test_database):
     assert db.fetch_cached_session("", "sess-a", organization_id="org-b") is None
     assert db.fetch_cached_session("", "sess-a", organization_id="") is None
     assert db.fetch_cached_session("", "sess-a", organization_id=ALL_ORGS)["organization_id"] == "org-a"
-
-
-def test_cover_image_is_scoped_by_org(test_database):
-    _seed()
-    assert db.fetch_cover_image("sess-a", organization_id="org-a")["bytes"] == b"png-a"
-    assert db.fetch_cover_image("sess-a", organization_id="org-b") is None
-    assert db.fetch_cover_image("sess-a", organization_id=ALL_ORGS)["bytes"] == b"png-a"
 
 
 def test_workspace_list_is_scoped_by_org(test_database):

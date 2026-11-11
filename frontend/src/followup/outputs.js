@@ -14,11 +14,21 @@ export const LANGUAGES = [
 // the bundle is keyed by (a language, or a tone); `item` is a repurposing
 // item inside a language. Entries that share a `toggle` are one item in the
 // list, switched by a toggle on the output (`toggleLabel`): the Smart
-// Recap's Formal and Hype. `sections`: each top-level section (a post, an
+// Recap's Formal and Hype. Entries that share `tabs` are one item too, shown
+// as tabs on the output, each with its own language, button, loader and
+// versions (`tabLabel`, `purpose`: one line on who it is for, `makeLabel`,
+// `notYet`): the Follow-up email's Attended, Not attended and Generic, each
+// keeping its own `?output=` key (`attendee-followup` and `email` from before
+// the tabs, `no-show-followup`). `sections`: each top-level section (a post, an
 // email) gets its own Copy. `archived`: an output StormIQ no longer makes,
 // kept readable under "Earlier outputs" when one was saved (the Deep
 // analysis, off the list since November 2026: the owner's decision); it has
 // no flow and no button, and shows in the list only when it exists.
+// The Follow-up email's tabs share its title and this line.
+const EMAIL_ABOUT = "The email to send after the session, in three versions: pick who it is for.";
+const NEVER_NAMED =
+  "It holds a {{replay_link}} for your email tool to fill in. Attendees are never named: their names, emails and links are removed before anything is sent. An email with a number or a time the session doesn't have is never saved.";
+
 export const OUTPUTS = [
   {
     key: "overall",
@@ -105,10 +115,42 @@ export const OUTPUTS = [
     item: "blog",
   },
   {
+    key: "attendee-followup",
+    group: "Repurposing",
+    label: "Follow-up email",
+    about: EMAIL_ABOUT,
+    tabs: "email",
+    tabLabel: "Attended",
+    purpose:
+      "For the people who came: \"You asked, we answered\", with what the session covered, three takeaways and two of their questions answered.",
+    makeLabel: "Write the email for attendees",
+    notYet: `Not written yet. It runs only when you ask, with AI, from the session's chapters, the key moments of the talk and two questions the audience asked that have an answer. ${NEVER_NAMED}`,
+    flow: "attendeeFollowup",
+    bundle: "attendeeFollowupBundle",
+    by: "language",
+  },
+  {
+    key: "no-show-followup",
+    group: "Repurposing",
+    label: "Follow-up email",
+    about: EMAIL_ABOUT,
+    tabs: "email",
+    tabLabel: "Not attended",
+    purpose: "For the people who registered and didn't come: what they missed, a question or two answered, and a reason to watch the replay.",
+    makeLabel: "Write the email for people who didn't attend",
+    notYet: `Not written yet. It runs only when you ask, with AI, from the session's chapters, the key moments of the talk and up to two questions the audience asked that have an answer. ${NEVER_NAMED}`,
+    flow: "noShowFollowup",
+    bundle: "noShowFollowupBundle",
+    by: "language",
+  },
+  {
     key: "email",
     group: "Repurposing",
     label: "Follow-up email",
-    about: "An email to send the attendees.",
+    about: EMAIL_ABOUT,
+    tabs: "email",
+    tabLabel: "Generic",
+    purpose: "Works for both: one email you can send everyone who registered, whether they came or not.",
     flow: "contentRepurposing",
     bundle: "contentRepurposeBundle",
     by: "language",
@@ -128,21 +170,12 @@ export const OUTPUTS = [
   },
   {
     key: "faq",
-    group: "Repurposing",
+    // Next to the question desk it is drafted from.
+    group: "From the session",
     label: "FAQ",
     about: "The audience's questions and their answers, for the replay page or the follow-up email. Who asked is never named.",
     flow: "faq",
     bundle: "faqBundle",
-    by: "language",
-  },
-  {
-    key: "attendee-followup",
-    group: "For the audience",
-    label: "Attendee follow-up",
-    about:
-      "\"You asked, we answered\": an email for the attendees with what the session covered, three takeaways and two of their questions answered, with a {{replay_link}} for your email tool to fill in. Who asked is never named.",
-    flow: "attendeeFollowup",
-    bundle: "attendeeFollowupBundle",
     by: "language",
   },
   {
@@ -166,6 +199,7 @@ const JOB_KIND = {
   decisions: "decisions",
   teamDigest: "team_digest",
   attendeeFollowup: "attendee_followup",
+  noShowFollowup: "no_show_followup",
   smartRecap: "smart_recap",
   contentRepurposing: "content_repurposing",
 };
@@ -179,6 +213,17 @@ export function outputFor(key) {
 /** The outputs one toggle switches between, in order (`[]` without one). */
 export function toggleOptions(output) {
   return output?.toggle ? OUTPUTS.filter((item) => item.toggle === output.toggle) : [];
+}
+
+/** The outputs one item's tabs switch between, in order (`[]` without tabs). */
+export function tabOptions(output) {
+  return output?.tabs ? OUTPUTS.filter((item) => item.tabs === output.tabs) : [];
+}
+
+/** The key the list and the phone picker use for an output: its toggle's or
+ * its tabs' first, else its own. */
+export function listKeyFor(output) {
+  return toggleOptions(output)[0]?.key || tabOptions(output)[0]?.key || output.key;
 }
 
 /** The old classic routes, as the Follow-up output to open. */
@@ -261,11 +306,26 @@ export function outputReady(outputs, output, language) {
   return Boolean(outputText(outputs, output, language));
 }
 
+/** The tabs of the output on screen (the Follow-up email's Attended, Not
+ * attended and Generic), each `{key, label, purpose, current, ready,
+ * writing}` in `language`; `[]` for an output without tabs. Each tab is
+ * its own output: its own text, button, job and versions. */
+export function tabItems(output, outputs, state, language) {
+  return tabOptions(output).map((tab) => ({
+    key: tab.key,
+    label: tab.tabLabel,
+    purpose: tab.purpose,
+    current: tab.key === output.key,
+    ready: outputReady(outputs, tab, language),
+    writing: making(state, tab, language).busy,
+  }));
+}
+
 /** The list on the left: groups of `{key, label, ready, keys}`, `ready`
  * when the output exists in `language` (a recap in any). Outputs that share
- * a toggle are one item: `key` its first, `keys` all of them (for the
- * current mark), `ready` when any is. The corner's outputs are not in a
- * group (`CORNER_OUTPUTS`). */
+ * a toggle or tabs are one item: `key` its first, `keys` all of them (for
+ * the current mark), `ready` when any is; `toggle` names what they share.
+ * The corner's outputs are not in a group (`CORNER_OUTPUTS`). */
 export function outputGroups(outputs, language) {
   const groups = [];
   for (const output of OUTPUTS) {
@@ -277,13 +337,14 @@ export function outputGroups(outputs, language) {
       groups.push(group);
     }
     const ready = Boolean(outputText(outputs, output, language));
-    const shared = output.toggle ? group.items.find((item) => item.toggle === output.toggle) : null;
+    const together = output.toggle || output.tabs || "";
+    const shared = together ? group.items.find((item) => item.toggle === together) : null;
     if (shared) {
       shared.keys.push(output.key);
       shared.ready = shared.ready || ready;
       continue;
     }
-    group.items.push({ key: output.key, label: output.label, ready, keys: [output.key], toggle: output.toggle || "" });
+    group.items.push({ key: output.key, label: output.label, ready, keys: [output.key], toggle: together });
   }
   return groups;
 }
@@ -299,6 +360,7 @@ const VERSION_KIND = {
   decisions: "decisions",
   teamDigest: "team_digest",
   attendeeFollowup: "attendee_followup",
+  noShowFollowup: "no_show_followup",
 };
 
 /** The query for an output's saved versions, or null for one without:
