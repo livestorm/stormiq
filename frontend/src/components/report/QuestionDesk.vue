@@ -9,6 +9,7 @@ import {
   FILTERS,
   canMark,
   chatNotice,
+  csvChoices,
   filterCounts,
   filterQuestions,
   locatedActions,
@@ -28,7 +29,8 @@ import {
 // The desk's data comes from the view's `createQuestionDesk()`.
 const props = defineProps({
   desk: { type: Object, required: true },
-  csvUrl: { type: String, default: "" },
+  // The CSV's address for a scope ("open", "all", "answers"), or null for no download.
+  csvUrl: { type: Function, default: null },
 });
 
 const state = computed(() => props.desk.state);
@@ -37,6 +39,13 @@ const summary = computed(() => body.value?.summary || {});
 const counts = computed(() => filterCounts(summary.value));
 
 const filter = ref("open");
+
+// The download menu: a disclosure that closes on a choice or Escape.
+const downloadMenu = ref(null);
+const choices = computed(() => csvChoices(counts.value));
+function closeMenu() {
+  if (downloadMenu.value) downloadMenu.value.open = false;
+}
 const shown = computed(() => filterQuestions(body.value?.questions || [], filter.value));
 
 // The one question being answered: its id and the draft.
@@ -72,8 +81,26 @@ const EMPTY = {
 <template>
   <Card class="qd" :aria-busy="state.loading ? 'true' : 'false'">
     <CardHeader icon="help-circle" title="Question desk" :subtitle="body ? summaryLine(summary) : ''" :level="2">
-      <template v-if="csvUrl && counts.open" #right>
-        <UiButton variant="secondary" small icon="download" :href="csvUrl">Open questions (CSV)</UiButton>
+      <template v-if="csvUrl && counts.all" #right>
+        <details ref="downloadMenu" class="qd-download" @keydown.esc="closeMenu">
+          <summary class="qd-download-button siq-fx">
+            <Icon name="download" :size="16" />
+            <span>Download (CSV)</span>
+            <Icon name="chevron-down" :size="14" />
+          </summary>
+          <ul class="qd-download-menu" aria-label="Download">
+            <li v-for="choice in choices" :key="choice.scope">
+              <span v-if="choice.disabled" class="qd-download-item is-disabled" aria-disabled="true">
+                <span class="qd-download-label">{{ choice.label }}</span>
+                <span class="qd-download-about">None yet</span>
+              </span>
+              <a v-else class="qd-download-item siq-fx" :href="csvUrl(choice.scope)" download @click="closeMenu">
+                <span class="qd-download-label">{{ choice.label }}</span>
+                <span class="qd-download-about">{{ choice.about }}</span>
+              </a>
+            </li>
+          </ul>
+        </details>
       </template>
     </CardHeader>
 
@@ -88,8 +115,8 @@ const EMPTY = {
 
     <template v-else-if="body">
       <div class="qd-notes">
-        <p v-if="csvUrl && counts.open" class="qd-muted">
-          The CSV names who asked each open question, on every session. It stays inside your organization.
+        <p v-if="csvUrl && counts.all" class="qd-muted">
+          The CSV names who asked each question, on every session. It stays inside your organization.
         </p>
         <p v-if="logisticsLine(summary)" class="qd-muted">{{ logisticsLine(summary) }}</p>
         <p v-if="chatNotice(summary.chatQuestions)" class="qd-note">
@@ -447,6 +474,82 @@ const EMPTY = {
   margin-top: 0;
 }
 
+/* ── The download menu ── */
+.qd-download {
+  position: relative;
+}
+
+.qd-download-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--siq-space-2);
+  min-height: calc(var(--siq-target) - 4px);
+  padding: 0 var(--siq-space-3);
+  border: 1px solid var(--siq-border);
+  border-radius: var(--siq-radius-control);
+  background: var(--siq-surface);
+  color: var(--siq-ink);
+  font-size: var(--siq-text-small);
+  line-height: var(--siq-text-small-lh);
+  font-weight: var(--siq-weight-medium);
+  list-style: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.qd-download-button::-webkit-details-marker {
+  display: none;
+}
+
+.qd-download-button:hover {
+  border-color: var(--siq-border-hover);
+}
+
+.qd-download-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + var(--siq-space-1));
+  z-index: 15;
+  width: min(320px, calc(100vw - 32px));
+  margin: 0;
+  padding: var(--siq-space-1);
+  list-style: none;
+  border: 1px solid var(--siq-border);
+  border-radius: var(--siq-radius-control);
+  background: var(--siq-surface);
+  box-shadow: var(--siq-card-shadow);
+}
+
+.qd-download-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--siq-space-2) var(--siq-space-3);
+  border-radius: calc(var(--siq-radius-control) - 4px);
+  color: var(--siq-ink);
+  text-decoration: none;
+}
+
+a.qd-download-item:hover {
+  background: var(--siq-selected-bg);
+}
+
+.qd-download-item.is-disabled {
+  color: var(--siq-muted);
+}
+
+.qd-download-label {
+  font-size: var(--siq-text-ui);
+  line-height: var(--siq-text-ui-lh);
+  font-weight: var(--siq-weight-medium);
+}
+
+.qd-download-about {
+  font-size: var(--siq-text-small);
+  line-height: var(--siq-text-small-lh);
+  color: var(--siq-muted);
+}
+
 @media (forced-colors: active) {
   .qd-seg.is-on {
     outline: 2px solid CanvasText;
@@ -461,6 +564,7 @@ const EMPTY = {
 }
 
 @media print {
+  .qd-download,
   .qd-filters,
   .qd-actions,
   .qd-editor {

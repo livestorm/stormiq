@@ -199,8 +199,10 @@ export const api = {
     return `${sessionPath(sessionId, "/content-repurposing-pdf")}?${params.toString()}`;
   },
   // The open questions with who asked them (name, company; no email), as CSV.
-  getOpenQuestionsCsvUrl(sessionId) {
-    return sessionPath(sessionId, "/record/questions.csv");
+  // The question desk's CSV: `scope` "open" (the questions still open),
+  // "all" (with each one's status) or "answers" (with its status and answer).
+  getQuestionsCsvUrl(sessionId, scope = "open") {
+    return `${sessionPath(sessionId, "/record/questions.csv")}?scope=${encodeURIComponent(scope)}`;
   },
   // Full raw transcript; the workspace payload only carries what the UI renders.
   getTranscriptJsonUrl(sessionId) {

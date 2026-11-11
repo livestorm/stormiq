@@ -79,7 +79,8 @@ const onOwn = computed(() => onDesk.value || onChapters.value);
 const ownValue = computed(() => (onDesk.value ? DESK : onChapters.value ? CHAPTERS : ""));
 // Still open for the host: open, or covered in the talk but not confirmed.
 const openCount = computed(() => (desk.state.body ? filterCounts(desk.state.body.summary).open : null));
-const csvUrl = computed(() => api.getOpenQuestionsCsvUrl(props.sessionId));
+// The desk's CSV download, by scope ("open", "all", "answers").
+const csvUrl = (scope) => api.getQuestionsCsvUrl(props.sessionId, scope);
 
 // ── The header ──
 const record = computed(() => report.state.record);

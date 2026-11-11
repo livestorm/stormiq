@@ -120,3 +120,20 @@ export function locatedActions(question = {}) {
   if (question.status === "covered") return { confirm: true, reject: true };
   return { confirm: false, reject: question.status === "aloud" };
 }
+
+/** The download menu's choices, `[{scope, label, about, disabled}]`: the
+ * questions still open (none to download when nothing is open), every
+ * question with its status, or every question with its status and its
+ * answer (for a follow-up email). The server writes the file. */
+export function csvChoices(counts = {}) {
+  return [
+    { scope: "open", label: "Open questions", about: "To answer after the session", disabled: !count(counts.open) },
+    { scope: "all", label: "All questions", about: "With each one's status", disabled: !count(counts.all) },
+    {
+      scope: "answers",
+      label: "All questions with answers",
+      about: "Your answers, Livestorm's and the talk's, for a follow-up email",
+      disabled: !count(counts.all),
+    },
+  ];
+}
