@@ -1022,12 +1022,14 @@ RECORD_ENTRY_POINTS = {
         "get_session_record", "get_session_chat_messages", "get_session_transcript_view", "run_session_analysis",
         # The question desk: its inputs, rows, the question a write names, and the CSV.
         "_question_desk_inputs", "get_session_question_desk", "save_session_question_reply", "get_session_open_questions_csv",
+        # The analysis's second step: the dossier, its checks and the result's version.
+        "_read_understanding",
     },
     ("livestorm_app", "worker"): {"_transcription_options"},
     # The people sync's worker side: field definitions, `P-` refs and the session's end.
     ("livestorm_app", "people_sync"): {"run_people_sync"},
     # Checks a set of chat labels before it is written (`record.chat_labels.check_labels`).
-    ("livestorm_app", "db"): {"replace_chat_labels"},
+    ("livestorm_app", "db"): {"replace_chat_labels", "replace_understanding"},
     # Labels the chat in the worker: the chat's hash and the labels' checks.
     ("livestorm_app", "ai", "chat_labelling"): {"label_chat"},
 }

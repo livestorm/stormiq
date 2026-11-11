@@ -13,6 +13,7 @@ import synthetic_session as synthetic
 
 from livestorm_app import api_logic, db, llm_client, worker
 from livestorm_app.ai.chat_labelling import ChatLabelBatch
+from livestorm_app.ai.understanding import SessionUnderstanding
 from livestorm_app.record.chat_labels import LABEL_VERSION
 
 JOB_ID = f"session_analysis:{synthetic.SESSION_ID}:_"
@@ -72,15 +73,24 @@ def test_the_poll_reads_the_sessions_own_run_whatever_id_is_sent(queue):
 
 @pytest.fixture
 def run(monkeypatch):
-    state = {"row": synthetic.cached_row(), "stored": None, "calls": 0, "fail": None}
+    state = {"row": synthetic.cached_row(), "stored": None, "understood": None, "calls": 0, "kinds": [], "fail": None}
     monkeypatch.setattr(api_logic, "_require_cached_payloads", lambda session_id, organization_id: state["row"])
     monkeypatch.setattr(llm_client, "get_provider", lambda: "anthropic")
 
     def fake_model(kind, schema, request, *, api_key, ctx):
         state["calls"] += 1
+        state["kinds"].append(kind)
         state["ctx"] = ctx
         if state["fail"]:
             raise state["fail"]
+        if kind == "understanding":
+            state["dossier"] = request.context
+            return SessionUnderstanding.model_validate(
+                {
+                    "chapters": [{"title": "The whole session", "kind": "content", "first_utterance": "U0001", "last_utterance": "U0002"}],
+                    "answers": [], "prompts": [], "figures": [], "groups": [],
+                }
+            )
         ids = [line.split("\t")[0] for line in request.payload.splitlines()]
         return ChatLabelBatch.model_validate(
             {"labels": [{"id": label_id, "label": "social", "question": None, "language": "en"} for label_id in ids]}
@@ -88,12 +98,17 @@ def run(monkeypatch):
 
     monkeypatch.setattr(llm_client, "generate_json", fake_model)
     monkeypatch.setattr(db, "fetch_chat_labels", lambda session_id, organization_id: state["stored"])
+    monkeypatch.setattr(db, "fetch_understanding", lambda session_id, organization_id: state["understood"])
 
     def replace(session_id, labels, *, chat_hash, model):
         state["stored"] = {"label_version": LABEL_VERSION, "chat_hash": chat_hash, "model": model, "labels": labels}
         return {"label_version": LABEL_VERSION, "message_count": len(labels)}
 
+    def replace_understanding(session_id, result, *, dossier_hash, model):
+        state["understood"] = {"version": result["version"], "dossier_hash": dossier_hash, "model": model, "result": result}
+
     monkeypatch.setattr(db, "replace_chat_labels", replace)
+    monkeypatch.setattr(db, "replace_understanding", replace_understanding)
     return state
 
 
@@ -105,19 +120,24 @@ def _edited_chat():
 
 def test_a_run_labels_every_chat_message_and_stores_them(run):
     result = api_logic.run_session_analysis("key-1", synthetic.SESSION_ID)
-    assert result == {"chatLabels": "labelled", "messages": len(synthetic.CHAT)}
+    assert result == {"chatLabels": "labelled", "messages": len(synthetic.CHAT), "understanding": "read"}
     assert len(run["stored"]["labels"]) == len(synthetic.CHAT) and run["stored"]["model"] == "claude-haiku-5-5"
     assert run["stored"]["labels"][0]["livestorm_id"] == "msg-001"
+    assert run["kinds"] == ["chat_labels", "understanding"], "the labels first, then the session read once"
     ctx = run["ctx"]
     assert (ctx.job_kind, ctx.session_id, ctx.organization_id, ctx.job_id) == (
-        "chat_labels", synthetic.SESSION_ID, synthetic.ORGANIZATION_ID, JOB_ID,
+        "understanding", synthetic.SESSION_ID, synthetic.ORGANIZATION_ID, JOB_ID,
     )
+    understood = run["understood"]
+    assert understood["model"] == "claude-sonnet-5-5" and understood["dossier_hash"] == run["dossier"].sha256
+    assert [c["title"] for c in understood["result"]["chapters"]] == ["The whole session"]
 
 
 def test_an_unchanged_chat_is_not_labelled_again(run):
     api_logic.run_session_analysis("key-1", synthetic.SESSION_ID)
-    assert api_logic.run_session_analysis("key-1", synthetic.SESSION_ID)["chatLabels"] == "up_to_date"
-    assert run["calls"] == 1
+    again = api_logic.run_session_analysis("key-1", synthetic.SESSION_ID)
+    assert (again["chatLabels"], again["understanding"]) == ("up_to_date", "up_to_date")
+    assert run["kinds"] == ["chat_labels", "understanding"], "nothing changed: no call the second time"
 
 
 def test_a_changed_chat_or_an_older_label_version_is_labelled_again(run):
@@ -126,7 +146,7 @@ def test_a_changed_chat_or_an_older_label_version_is_labelled_again(run):
     assert api_logic.run_session_analysis("key-1", synthetic.SESSION_ID)["chatLabels"] == "labelled"
     run["row"] = dict(run["row"], chat_payload=_edited_chat())
     assert api_logic.run_session_analysis("key-1", synthetic.SESSION_ID)["chatLabels"] == "labelled"
-    assert run["calls"] == 3
+    assert run["kinds"].count("chat_labels") == 3
 
 
 def test_a_failed_run_keeps_the_earlier_labels(run):
@@ -141,8 +161,49 @@ def test_a_failed_run_keeps_the_earlier_labels(run):
 
 def test_a_session_without_chat_makes_no_call(run):
     run["row"] = dict(run["row"], chat_payload={"data": []})
-    assert api_logic.run_session_analysis("key-1", synthetic.SESSION_ID) == {"chatLabels": "labelled", "messages": 0}
-    assert run["calls"] == 0 and run["stored"]["labels"] == []
+    result = api_logic.run_session_analysis("key-1", synthetic.SESSION_ID)
+    assert (result["chatLabels"], result["messages"]) == ("labelled", 0)
+    assert "chat_labels" not in run["kinds"] and run["stored"]["labels"] == []
+
+
+def test_a_session_without_a_transcript_reads_nothing_more(run):
+    run["row"] = dict(run["row"], transcript_payload=None)
+    assert api_logic.run_session_analysis("key-1", synthetic.SESSION_ID)["understanding"] == "no_transcript"
+    assert run["kinds"] == ["chat_labels"] and run["understood"] is None
+
+
+def test_new_questions_or_a_new_transcript_read_the_session_again(run):
+    api_logic.run_session_analysis("key-1", synthetic.SESSION_ID)
+    first = run["understood"]["dossier_hash"]
+    questions = synthetic.questions_payload()
+    questions["data"][3]["attributes"]["question"] = "Is there a public API?"
+    run["row"] = dict(run["row"], questions_payload=questions)
+    assert api_logic.run_session_analysis("key-1", synthetic.SESSION_ID)["understanding"] == "read"
+    assert run["understood"]["dossier_hash"] != first
+    assert run["kinds"].count("understanding") == 2
+
+
+def test_a_failed_read_keeps_the_labels_just_made_and_the_earlier_reading(run):
+    api_logic.run_session_analysis("key-1", synthetic.SESSION_ID)
+    before = run["understood"]
+    questions = synthetic.questions_payload()
+    questions["data"][3]["attributes"]["question"] = "Is there a public API?"
+    run["row"] = dict(run["row"], questions_payload=questions)
+
+    original = llm_client.generate_json
+
+    def refuse_understanding(kind, *args, **kwargs):
+        if kind == "understanding":
+            raise llm_client.LLMRefused("refused")
+        return original(kind, *args, **kwargs)
+
+    llm_client.generate_json = refuse_understanding
+    try:
+        with pytest.raises(llm_client.LLMRefused):
+            api_logic.run_session_analysis("key-1", synthetic.SESSION_ID)
+    finally:
+        llm_client.generate_json = original
+    assert run["understood"] is before
 
 
 def test_the_worker_reads_the_key_itself_and_passes_the_session_id_on(monkeypatch):

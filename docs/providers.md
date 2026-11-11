@@ -42,10 +42,10 @@ The OpenAI rows are unverified until a live check; their `temperature` and token
 | `translation` | the French versions of Overall Analysis, Deep Analysis and Content Repurposing | `claude-haiku-4-5-20251001` · `gpt-4o-mini` | low | 6,000, 8,000 (deep) or 12,000 (content) |
 | `profile` | v1: the session profile | `claude-haiku-5-5` · none yet | low | 2,000 |
 | `chat_labels` | v1: chat labels, per batch | `claude-haiku-5-5` · none yet | low | 8,000 |
-| `understanding` | v1: the understanding passes | `claude-sonnet-5-5` · none yet | medium | 32,000 |
+| `understanding` | v1: the understanding job, one call per session analysis | `claude-sonnet-5-5` · none yet | medium | 32,000 |
 | `verify_meaning` | v1: the meaning check | `claude-haiku-5-5` · none yet | low | 2,000 |
 
-Smart Recap deliberately uses a stronger model than the other classic outputs. The classic outputs still send no effort, and their callers pass the answer tokens above as `max_tokens`. A v1 job sends its effort to every model that takes one ([Request layouts and caching](#request-layouts-and-caching)). Nothing runs the v1 jobs yet, and they have no OpenAI model until the live check.
+Smart Recap deliberately uses a stronger model than the other classic outputs. The classic outputs still send no effort, and their callers pass the answer tokens above as `max_tokens`. A v1 job sends its effort to every model that takes one ([Request layouts and caching](#request-layouts-and-caching)). The session analysis runs `chat_labels` and `understanding`; `profile` and `verify_meaning` run nowhere yet. No v1 job has an OpenAI model until the live check, so with OpenAI chosen in Admin the analysis fails with "no model for this job" and stores nothing new.
 
 A v1 job's spec also sets how its request is laid out (`layout`), whether its stable prefix may be cached (`cache`, with `cache_ttl`), and whether it asks for the server-side fallback (`fallbacks`):
 
@@ -53,7 +53,7 @@ A v1 job's spec also sets how its request is laid out (`layout`), whether its st
 |---|---|---|
 | `profile`, `verify_meaning` | instructions | none |
 | `chat_labels` | instructions | the instructions, when a session has at least two batches |
-| `understanding` | dossier | the dossier, when a run has at least two passes |
+| `understanding` | dossier | the dossier, when a run has at least two passes (one today, so nothing is cached) |
 
 A spec also says whether an answer cut off at the token limit is asked for once more (`truncation_retry`): yes for every classic output, as before; no for the v1 jobs, whose budgets already hold thinking headroom ([Structured outputs and refusals](#structured-outputs-and-refusals)).
 

@@ -178,6 +178,7 @@ def test_a_blank_scope_never_queries_the_people_tables(monkeypatch):
         assert db.fetch_chat_labels("sess-a", blank) is None
         assert db.fetch_chat_labels_stamp("sess-a", blank) is None
         assert db.fetch_question_replies("sess-a", blank) == {}
+        assert db.fetch_understanding("sess-a", blank) is None
         assert db.save_question_reply(
             "sess-a", organization_id=blank, source="qa", livestorm_id="q-1", evidence_id="Q001",
             answered=True, reply=None, updated_by=None,
@@ -239,3 +240,37 @@ def test_people_attributes_are_per_org(test_database):
     assert db.get_org_people_attributes("org-b") is None
     with pytest.raises(ValueError, match="never ALL_ORGS"):
         db.get_org_people_attributes(ALL_ORGS)
+
+
+def _understanding(**fields):
+    from livestorm_app.record.understanding import UNDERSTANDING_VERSION
+
+    return {"version": UNDERSTANDING_VERSION, "onClock": True, "chapters": [], "answers": [], "prompts": [], "figures": [], "groups": [], "coverage": {}, **fields}
+
+
+def test_the_understanding_is_scoped_replaced_and_deleted_with_its_session(test_database):
+    _seed()
+    db.upsert_cached_session("key-x", "sess-legacy", session_payload={"name": "L"})
+    chapter = {"title": "Opening", "kind": "opening", "first": "U0001", "last": "U0002", "t": 0.0, "tEnd": 9.0}
+    for session_id in ("sess-a", "sess-legacy"):
+        db.replace_understanding(session_id, _understanding(), dossier_hash="d" * 64, model="claude-sonnet-5-5")
+    db.replace_understanding("sess-a", _understanding(chapters=[chapter]), dossier_hash="e" * 64, model="claude-sonnet-5-5")
+    stored = db.fetch_understanding("sess-a", "org-a")
+    assert (stored["dossier_hash"], stored["model"], stored["result"]["chapters"]) == ("e" * 64, "claude-sonnet-5-5", [chapter])
+    assert db.fetch_understanding("sess-a", "org-b") is None
+    assert db.fetch_understanding("sess-b", "org-b") is None, "nothing read yet"
+    assert db.fetch_understanding("sess-legacy", "org-a") is None, "a row without an org is not any org's"
+    assert db.fetch_understanding("sess-legacy", ALL_ORGS)["dossier_hash"] == "d" * 64
+    assert db.admin_delete_session("sess-a") is True
+    assert db.fetch_understanding("sess-a", ALL_ORGS) is None
+
+
+def test_a_malformed_understanding_is_refused_before_any_write(test_database):
+    _seed()
+    with pytest.raises(ValueError):
+        db.replace_understanding("sess-a", _understanding(version=0), dossier_hash="d" * 64, model="m")
+    with pytest.raises(ValueError):
+        db.replace_understanding("sess-a", _understanding(), dossier_hash="not-a-hash", model="m")
+    with pytest.raises(RuntimeError):
+        db.replace_understanding("sess-missing", _understanding(), dossier_hash="d" * 64, model="m")
+    assert db.fetch_understanding("sess-a", ALL_ORGS) is None

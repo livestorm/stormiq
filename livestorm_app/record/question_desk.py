@@ -194,6 +194,18 @@ def question_desk(inputs: Any, saved: Mapping[str, Mapping[str, Any]]) -> Dict[s
     }
 
 
+def audience_questions(inputs: Any) -> List[Dict[str, Any]]:
+    """The desk's questions without names or saved replies, for the
+    understanding job's dossier (`record.understanding`): `{id, source, t,
+    text, answered_as}` in time order, `answered_as` from Livestorm alone (`written`,
+    `aloud` or `open`; what the host marked here never reaches a model)."""
+    rows, _ = _desk_rows(inputs, {})
+    return [
+        {"id": row["id"], "source": row["source"], "t": row["t"], "text": row["text"], "answered_as": row["desk_status"]}
+        for row in rows
+    ]
+
+
 def find_question(inputs: Any, question_id: str) -> Optional[Dict[str, Any]]:
     """The desk row `question_id` names (`Q001` or `C0001`), with its source
     and Livestorm id, or None when the desk has no such row (a team message,
