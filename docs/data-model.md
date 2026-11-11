@@ -16,9 +16,9 @@ session_cache (
   created_by_user_id       TEXT,            -- Livestorm user who first fetched the session (kept on update)
   created_by_email         TEXT,
   created_by_name          TEXT,
-  cover_image_bytes        BYTEA,           -- AI-generated cover (PNG)
-  cover_image_mime         TEXT,            -- defaults to image/png
-  cover_image_generated_at TIMESTAMPTZ,
+  cover_image_bytes        BYTEA,           -- unused since covers were removed (Nov 2026); kept, see below
+  cover_image_mime         TEXT,            -- unused, kept
+  cover_image_generated_at TIMESTAMPTZ,     -- unused, kept
   chat_payload             JSONB,           -- Livestorm chat messages, each with its author's people link; no people records
   questions_payload        JSONB,           -- Livestorm questions with askers and responders, minus registrant join links
   transcript_payload       JSONB,           -- full Gladia transcript
@@ -46,6 +46,7 @@ session_cache (
 
 - `organization_id` is stamped from the requesting user's OAuth connection on first fetch, once their Livestorm credentials prove access ([security.md](security.md)). Rows cached before org scoping have a NULL org: only admins (and local-dev callers) can read them until a member of the org fetches the session again, which stamps the org.
 - `created_by_*` are kept on update (`COALESCE(NULLIF(col, ''), EXCLUDED.col)`), so the first writer's identity sticks when a teammate refetches.
+- `cover_image_bytes`, `cover_image_mime` and `cover_image_generated_at` held the AI cover images, removed in November 2026. Nothing reads or writes them now; they are kept because dropping a column can't be undone, and `db.reset_ai_outputs(include_covers=True)` (`scripts/reset_ai_outputs.py --include-covers`) clears the bytes they still hold.
 - The unique index on `session_id` alone means refetching a session from another account updates the same row.
 - `chat_payload` keeps each message's `relationships.people.data` (`{type: "people", id}`): its author's people id. The fetcher asks for `include=people` to get it, then drops the `included` people. In the one real session checked, `session_payload` held them all; an author missing from it reads unresolved, and is never stored from the chat ([product.md §13](product.md#authors-v1-report)). A message's `author_id` is a different id, not a people id. Chats cached before StormIQ asked for `include=people` have no relationships, and they keep none: `fetch_session_base_data` returns the cached row whenever it has the session, chat and questions payloads. A cached chat is fetched again only with `forceRefresh` on the fetch routes, which no page sends for the base payloads, or when the caller can't read the cached row (one cached before org scoping) ([roadmap](roadmap.md#known-limitations)). Questions carry people ids (`question_author_id`, `response_author_id`). The v1 record resolves authors by people id only.
 - `transcript_payload` is Gladia's result (`result`) plus StormIQ's normalized fields (`text`, `segments`, `subtitles`, …), built by `gladia/transcriber._normalize_transcription`. Gladia puts each word inside its utterance (`result.transcription.utterances[].words`), and classic reads them there (`analytics/transcript._extract_transcript_object`). The normalized top-level `words` list copies `result.transcription.words` only, so it is empty unless Gladia sends that list. Classic doesn't read it: it reads `result.transcription` whenever that exists.
@@ -389,7 +390,7 @@ Admins are this table plus the `ADMIN_EMAILS` env var (bootstrap admins, who can
 
 ```sql
 system_settings (
-  key        TEXT PRIMARY KEY,                 -- allow-listed in routes/admin.py: image_model, tts_voice, llm_default_model, llm_smart_recap_model, llm_model.anthropic.<kind> (an older llm_provider row is ignored)
+  key        TEXT PRIMARY KEY,                 -- allow-listed in routes/admin.py: tts_voice, voice_provider, elevenlabs_voice, llm_default_model, llm_smart_recap_model, llm_model.anthropic.<kind> (an older llm_provider row is ignored)
   value      TEXT NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )
@@ -399,7 +400,7 @@ Admin-editable overrides for provider and model selection (`/api/admin/settings`
 
 ## `llm_usage`
 
-One row per text-model call that got an answer (HTTP 200), made through `llm_client` (`call_llm`, `generate_text`, `generate_json`) and written by `ai.usage.record_call` through `db.insert_llm_usage`. The cover image call has no row. A truncated, refused or retried call has its own row, and so does an answer that failed its schema; a call that failed in transport has none (it is only in the log), and neither has a stream stopped part-way, by an error or its deadline. See [providers.md](providers.md#usage-and-the-daily-budget).
+One row per text-model call that got an answer (HTTP 200), made through `llm_client` (`call_llm`, `generate_text`, `generate_json`) and written by `ai.usage.record_call` through `db.insert_llm_usage`. A truncated, refused or retried call has its own row, and so does an answer that failed its schema; a call that failed in transport has none (it is only in the log), and neither has a stream stopped part-way, by an error or its deadline. See [providers.md](providers.md#usage-and-the-daily-budget).
 
 ```sql
 llm_usage (

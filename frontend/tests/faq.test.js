@@ -8,6 +8,7 @@ import {
   newEntry,
   pendingUpdates,
   removeEntry,
+  restoreEntry,
   replayTime,
   sourceChip,
   toMarkdown,
@@ -71,6 +72,8 @@ describe("the FAQ's edits", () => {
     expect(moveEntry(ENTRIES, 2, -1).map((e) => e.id)).toEqual(["d-1", "d-3", "d-2"]);
     expect(moveEntry(ENTRIES, 0, -1).map((e) => e.id)).toEqual(["d-1", "d-2", "d-3"]);
     expect(removeEntry(ENTRIES, 1).map((e) => e.id)).toEqual(["d-1", "d-3"]);
+    expect(restoreEntry(removeEntry(ENTRIES, 1), ENTRIES[1], 1).map((e) => e.id)).toEqual(["d-1", "d-2", "d-3"]);
+    expect(restoreEntry([], ENTRIES[1], 5).map((e) => e.id)).toEqual(["d-2"], "kept within the list");
   });
 
   it("checks the limits before a save", () => {
@@ -157,8 +160,14 @@ describe("createFaq", () => {
     expect(faq.state.entries[2]).toMatchObject({ answer: "Yes.", source: "host" });
     expect(faq.pending.value).toEqual([]);
     faq.move(2, -1);
-    faq.remove(0);
+    const removed = faq.remove(0);
     expect(faq.state.entries.map((e) => e.id)).toEqual(["d-3", "d-2"]);
+    expect(removed.index).toBe(0);
+    faq.restore(removed);
+    expect(faq.state.entries.map((e) => e.id)).toEqual(["d-1", "d-3", "d-2"], "the undo puts it back where it was");
+    faq.restore(removed);
+    expect(faq.state.entries).toHaveLength(3, "never twice");
+    expect(faq.remove(9)).toBe(null);
   });
 
   it("drops a late answer and a late save after another session opens", async () => {

@@ -208,9 +208,6 @@ const ANTHROPIC_TEXT_MODELS = [
   { value: "claude-opus-4-8", label: "Claude Opus 4.8 — most capable" },
 ];
 
-// gpt-image-1 was shut down on 2026-10-23. A saved gpt-image-1 setting is
-// sent as gpt-image-2 (cover_image.resolve_image_model), so show that.
-const IMAGE_MODELS = [{ value: "gpt-image-2", label: "gpt-image-2 (recommended)" }];
 // Surprise me's voice. The provider (`voice_provider`): ElevenLabs, with
 // OpenAI as its backup when ElevenLabs refuses the account, or OpenAI alone
 // (livestorm_app/ai/surprise_voice.py VOICE_PROVIDERS, DEFAULT_VOICE_PROVIDER).
@@ -256,10 +253,6 @@ const VOICE_LABELS = {
   verse: "male, expressive",
 };
 const activeVoice = computed(() => (TTS_VOICES.includes(settings.value.tts_voice) ? settings.value.tts_voice : DEFAULT_TTS_VOICE));
-const activeImageModel = computed(() => {
-  const saved = settings.value.image_model;
-  return IMAGE_MODELS.some((model) => model.value === saved) ? saved : "gpt-image-2";
-});
 
 // Every text job runs on Claude (the owner's decision, 2026-11-11): there is
 // no provider to choose. A model saved before then that isn't a Claude model
@@ -568,20 +561,6 @@ onMounted(() => {
               </select>
               <Icon name="chevron-down" :size="16" class="adm-select-icon" />
             </label>
-          </Card>
-
-          <Card>
-            <CardHeader icon="presentation" title="Cover image model" subtitle="OpenAI Images, for the session covers." :level="2" />
-            <p class="adm-text adm-after">{{ IMAGE_MODELS.find((model) => model.value === activeImageModel)?.label || activeImageModel }}</p>
-            <UiButton
-              v-if="settings.image_model && settings.image_model !== activeImageModel"
-              variant="secondary"
-              small
-              :disabled="savingKey !== null"
-              @click="saveSetting('image_model', activeImageModel)"
-            >
-              Save {{ activeImageModel }}
-            </UiButton>
           </Card>
 
           <Card>

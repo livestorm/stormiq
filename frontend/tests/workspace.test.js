@@ -10,7 +10,7 @@ vi.mock("../src/api.js", () => ({ api, onUnauthorized: () => {} }));
 function workspace(sessionId, extra = {}) {
   return {
     sessionId,
-    meta: { hasCoverImage: false },
+    meta: {},
     tables: { transcriptSegments: [{ text: `${sessionId} segment` }] },
     payloads: { transcript: { subtitles: [] } },
     text: { transcriptDisplay: `${sessionId} transcript` },
@@ -280,30 +280,12 @@ describe("AI jobs", () => {
     await run;
   }
 
-  it("pick up the cover generated after a Professional recap", async () => {
+  it("start nothing else after a Professional recap (no cover watch)", async () => {
     await finishProfessionalRecap();
-    api.fetchWorkspaceSessions.mockResolvedValueOnce({ sessions: [{ sessionId: "A", hasCoverImage: false }] });
-    await vi.advanceTimersByTimeAsync(10_000);
-    expect(store.state.workspace.meta.hasCoverImage).toBe(false);
-    api.fetchWorkspaceSessions.mockResolvedValueOnce({
-      sessions: [{ sessionId: "A", hasCoverImage: true, coverImageGeneratedAt: "2026-11-04T10:00:00Z", coverImageMime: "image/png" }],
-    });
-    await vi.advanceTimersByTimeAsync(10_000);
-    expect(store.state.workspace.meta.hasCoverImage).toBe(true);
-    expect(api.getCachedSession).toHaveBeenCalledTimes(1); // the watch never downloads the workspace
+    expect(store.state.workspace.outputs.smartRecapBundle.professional).toBe("# Recap");
     const calls = api.fetchWorkspaceSessions.mock.calls.length;
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(api.fetchWorkspaceSessions.mock.calls.length).toBe(calls); // done once found
-  });
-
-  it("stop watching for the cover when the user opens another session", async () => {
-    await finishProfessionalRecap();
-    await vi.advanceTimersByTimeAsync(10_000);
-    expect(api.fetchWorkspaceSessions).toHaveBeenCalledTimes(1);
-
-    await store.loadSessionById("B");
     await vi.advanceTimersByTimeAsync(5 * 60_000);
-    expect(api.fetchWorkspaceSessions).toHaveBeenCalledTimes(1);
+    expect(api.fetchWorkspaceSessions.mock.calls.length).toBe(calls);
   });
 });
 

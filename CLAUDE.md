@@ -2,7 +2,7 @@
 
 StormIQ analyses finished Livestorm sessions. It fetches a session's details, chat, questions and recording, transcribes the recording, caches everything in Postgres, and turns it into analytics and AI outputs (overall and deep analysis, Smart Recap, content repurposing) in English and French. Access is scoped to the user's Livestorm organization through Livestorm OAuth. Repository: `livestorm/stormiq` (local folder `chat-analysis`).
 
-**Stack.** A FastAPI web process, an arq worker, Redis and Postgres, deployed on Render. A Vue 3 SPA (Vite; no Pinia, UI library or chart library) served by FastAPI. Providers: the Livestorm API, Gladia (transcription), Anthropic by default or OpenAI (text), OpenAI Images (covers), and for Surprise me's voice ElevenLabs with OpenAI speech as its backup.
+**Stack.** A FastAPI web process, an arq worker, Redis and Postgres, deployed on Render. A Vue 3 SPA (Vite; no Pinia, UI library or chart library) served by FastAPI. Providers: the Livestorm API, Gladia (transcription), Anthropic (every text job), and for Surprise me's voice ElevenLabs with OpenAI speech as its backup.
 
 ## Rules that must never break
 
@@ -49,7 +49,7 @@ Read the doc that matches your task before changing code, and update it in the s
 |---|---|---|
 | [architecture](docs/architecture.md) | the system, code map, pages, data pipeline, read-path performance rules | modules, pages, how a workspace is read |
 | [security](docs/security.md) | identity, org scope, fail-closed rules, secrets | auth, scoping, cookies, anything secret |
-| [jobs](docs/jobs.md) | fetch, transcription, AI and cover jobs; timeouts; where state lives | the queue, the worker, a job's contract |
+| [jobs](docs/jobs.md) | fetch, transcription, AI and Surprise me jobs; timeouts; where state lives | the queue, the worker, a job's contract |
 | [data-model](docs/data-model.md) | tables, indexes, caching rules, connections | the schema, or how rows are written |
 | [api](docs/api.md) | every route, its auth, response conventions | routes |
 | [ai-outputs](docs/ai-outputs.md) | what each AI output contains, languages, saving rules | output structure, prompts' sections |
