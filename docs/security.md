@@ -110,6 +110,8 @@ Every answered text-model call (`llm_client.call_llm`, `generate_text`, `generat
 
 Usage rows stay when their session is deleted: they hold no content, and they keep past spend counted for the daily budget.
 
+Saved outputs are different: `output_versions` keeps each AI output's text as it was saved, so it is session data. It has no org column: it is reached only through its session, and deleted with it (`ON DELETE CASCADE`). What made the output (`ai.usage.run_provenance`) is ids and hashes only, from the same rows as `llm_usage`.
+
 ## Web hardening
 
 - Cookies are `HttpOnly`, `SameSite=Lax`, and `Secure` everywhere except plain-HTTP local development (on Render, TLS ends at the proxy, so `RENDER` alone turns it on).

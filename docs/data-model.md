@@ -245,6 +245,32 @@ session_understanding (
 - **Which session.** `dossier_hash` and `version` say what it was read from: the analysis reads the session again only when either differs.
 - **Scoped and deleted through the session**, like the chat labels: `db.fetch_understanding` joins `session_cache` and filters on its org (a blank scope never queries), and `ON DELETE CASCADE` removes the row with the session.
 
+## `output_versions`
+
+Every AI output as it was saved, one row per save, so earlier versions are kept (the bundle columns keep only the latest). Written by `db.merge_cached_bundle_entry` in the same transaction as the bundle entry: both are saved, or neither.
+
+```sql
+output_versions (
+  id              BIGSERIAL PRIMARY KEY,
+  session_id      TEXT NOT NULL REFERENCES session_cache (session_id) ON DELETE CASCADE,
+  output_column   TEXT NOT NULL,      -- the bundle column: analysis_bundle, faq_bundle, smart_recap_bundle…
+  entry_key       TEXT NOT NULL,      -- its language, or the Smart Recap's tone
+  content         JSONB NOT NULL,     -- the value saved: the text, or content repurposing's sections
+  job_id          TEXT,               -- the deterministic arq id of the job that wrote it
+  job_kinds       TEXT[] NOT NULL DEFAULT '{}',  -- the jobs of its model calls (faq, translation…)
+  models          TEXT[] NOT NULL DEFAULT '{}',  -- the models that answered
+  prompt_hashes   TEXT[] NOT NULL DEFAULT '{}',
+  dossier_hashes  TEXT[] NOT NULL DEFAULT '{}',
+  record_versions TEXT[] NOT NULL DEFAULT '{}',
+  calls           INTEGER NOT NULL DEFAULT 0,    -- answered model calls in the run
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+-- idx_output_versions_session (session_id, output_column, entry_key, created_at DESC)
+```
+
+- **What made it.** The worker runs each AI job inside `ai.usage.collect_calls()`; every answered call recorded there (`record_call`) adds its job kind, job id, model and hashes, and the runner passes `ai.usage.run_provenance()` when it saves. Lists keep the order first seen, without repeats or blanks. The same run's calls are in `llm_usage` too, but those rows hold no content and can't tell two runs of the same job apart (the job id repeats).
+- **Holds the outputs' text**, like the bundle columns: scoped and deleted through the session (no org column; `ON DELETE CASCADE`). Nothing reads it yet; the Follow-up's earlier versions will.
+
 ## `oauth_connections`
 
 ```sql
@@ -339,7 +365,7 @@ llm_usage (
 ## Caching rules
 
 - **Cache first.** Every fetch route checks `session_cache` before calling Livestorm or Gladia. `force_refresh: true` is the only bypass. Entries never expire.
-- **One row holds the latest of everything.** There is no history of analyses: regenerating an output replaces that language's (or tone's) entry.
+- **One row holds the latest of everything.** Regenerating an output replaces that language's (or tone's) entry in its bundle column; each saved version is also kept in [`output_versions`](#output_versions).
 - **Bundle columns are written one entry at a time.** AI runners never rewrite a whole bundle: `db.merge_cached_bundle_entry(session_id, column, key, value)` sets one language or tone with a single `jsonb_set` UPDATE, so concurrent jobs on the same session (English and French, or two recap tones) can't erase each other's results. Never write a bundle column with `upsert_cached_session` from a worker job.
 - **Writes fail loudly.** `upsert_cached_session`, `merge_cached_bundle_entry`, `rewrite_base_payloads` and the people writes (`replace_session_roster`, `upsert_org_people_attributes`, `create_livestorm_sync`, `claim_livestorm_sync`, `update_livestorm_sync`, `touch_livestorm_sync`, `sweep_stuck_livestorm_syncs`) raise on database errors; a job is only `completed` once its result is saved.
 - **A roster is replaced whole or not at all.** `replace_session_roster` swaps a session's header and person rows in one transaction and bumps `roster_version`. The people sync fetches every page first, so a failed or partial fetch never overwrites a stored roster ([Stored people](#stored-people)).

@@ -94,6 +94,7 @@ What one model call reads in a session, for the Follow-up tab and the Report's l
 - **Truncation.** `llm_client` checks why the model stopped (`stop_reason == "max_tokens"`). Each job's spec says whether a cut-off answer is asked for again (`JobSpec.truncation_retry`). Every classic output does: it is retried once with double the token budget, capped at `TRUNCATION_RETRY_MAX_TOKENS` (16,000) and at the model's own limit (`llm_client.retry_budget`). The v1 jobs are not retried. If the answer is still cut off, `LLMOutputTruncated` is raised and nothing is saved. Each attempt is recorded in `llm_usage`, the cut-off and refused ones included ([providers.md](providers.md#usage-and-the-daily-budget)).
 - **Structured answers.** A v1 JSON step (`llm_client.generate_json`) sends its schema and validates the answer against it, bounds included. An answer that doesn't match raises `LLMInvalidOutput` and nothing is returned to save. The classic outputs keep their prompts, models and formats: content repurposing still asks for its JSON in the prompt ([providers.md](providers.md#structured-outputs-and-refusals)).
 - **One entry at a time.** Each job writes only its own language or tone (`db.merge_cached_bundle_entry`), see [data-model.md](data-model.md#caching-rules).
+- **Every version is kept.** The same write keeps the output as saved in `output_versions`, with the models, prompt and dossier hashes and record versions of the calls that made it ([data-model.md](data-model.md#output_versions)).
 
 ## Exports
 

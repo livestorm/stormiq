@@ -467,6 +467,7 @@ def ensure_database_schema() -> None:
             _ensure_question_replies_schema(cursor)
             _ensure_figure_checks_schema(cursor)
             _ensure_understanding_schema(cursor)
+            _ensure_output_versions_schema(cursor)
         connection.commit()
 
 
@@ -649,6 +650,42 @@ def _ensure_understanding_schema(cursor: Any) -> None:
             result       JSONB NOT NULL,
             created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
+        """
+    )
+
+
+def _ensure_output_versions_schema(cursor: Any) -> None:
+    """Every AI output as it was saved, one row per save
+    (`merge_cached_bundle_entry`): the bundle column and entry it went to,
+    the text (or the content bundle's sections) as saved, and what made it
+    (`ai.usage.run_provenance`): the models, prompt and dossier hashes and
+    record versions of the run's answered calls, and the job's id. The
+    bundle column keeps only the latest; these keep the earlier ones.
+    References `session_cache` (deleted with it) and has no org column:
+    every read joins `session_cache` on its org."""
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS output_versions (
+            id              BIGSERIAL PRIMARY KEY,
+            session_id      TEXT NOT NULL REFERENCES session_cache (session_id) ON DELETE CASCADE,
+            output_column   TEXT NOT NULL,
+            entry_key       TEXT NOT NULL,
+            content         JSONB NOT NULL,
+            job_id          TEXT,
+            job_kinds       TEXT[] NOT NULL DEFAULT '{}',
+            models          TEXT[] NOT NULL DEFAULT '{}',
+            prompt_hashes   TEXT[] NOT NULL DEFAULT '{}',
+            dossier_hashes  TEXT[] NOT NULL DEFAULT '{}',
+            record_versions TEXT[] NOT NULL DEFAULT '{}',
+            calls           INTEGER NOT NULL DEFAULT 0,
+            created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_output_versions_session
+        ON output_versions (session_id, output_column, entry_key, created_at DESC)
         """
     )
 
@@ -924,11 +961,23 @@ _BUNDLE_COLUMNS = {"analysis_bundle", "deep_analysis_bundle", "smart_recap_bundl
 _LEGACY_TEXT_COLUMNS = {"analysis_md", "deep_analysis_md"}
 
 
+_PROVENANCE_LISTS = ("job_kinds", "models", "prompt_hashes", "dossier_hashes", "record_versions")
+
+
+def _provenance_list(provenance: Mapping[str, Any], key: str) -> List[str]:
+    values = provenance.get(key)
+    if not isinstance(values, (list, tuple)):
+        return []
+    return [str(value) for value in values if isinstance(value, str) and value]
+
+
 def merge_cached_bundle_entry(
     session_id: str,
     column: str,
     key: str,
     value: Any,
+    *,
+    provenance: Optional[Mapping[str, Any]] = None,
     **legacy_text: str,
 ) -> None:
     """Atomically set `column[key] = value` without touching the bundle's other keys.
@@ -937,7 +986,10 @@ def merge_cached_bundle_entry(
     and French analyses, or two Smart Recap tones) are serialised by
     Postgres and each sees the other's entry, so neither result is lost.
     `legacy_text` optionally sets `analysis_md` / `deep_analysis_md` in the
-    same statement. Raises if the row does not exist or the write fails.
+    same statement. In the same transaction, the saved value is kept as a
+    row of `output_versions` with what made it (`provenance`, from
+    `ai.usage.run_provenance`: ids and hashes only). Raises if the row does
+    not exist or either write fails; then neither is saved.
     """
     if column not in _BUNDLE_COLUMNS:
         raise ValueError(f"Not a bundle column: {column!r}")
@@ -971,7 +1023,28 @@ def merge_cached_bundle_entry(
                     params,
                 )
                 updated = cursor.rowcount
-            connection.commit()
+                if updated:
+                    made = provenance if isinstance(provenance, Mapping) else {}
+                    job_id = made.get("job_id")
+                    calls = made.get("calls")
+                    cursor.execute(
+                        """
+                        INSERT INTO output_versions (
+                            session_id, output_column, entry_key, content, job_id,
+                            job_kinds, models, prompt_hashes, dossier_hashes, record_versions, calls
+                        ) VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        [
+                            session_id_value, column, entry_key, json.dumps(value, ensure_ascii=False),
+                            job_id if isinstance(job_id, str) and job_id else None,
+                            *[_provenance_list(made, name) for name in _PROVENANCE_LISTS],
+                            calls if isinstance(calls, int) and not isinstance(calls, bool) and calls >= 0 else 0,
+                        ],
+                    )
+            if updated:
+                connection.commit()
+            else:
+                connection.rollback()
     except Exception as exc:
         logger.exception("Failed to merge %s[%s] for session_id=%s", column, entry_key, session_id_value)
         raise RuntimeError("Could not save the result to the database. Please try again.") from exc
