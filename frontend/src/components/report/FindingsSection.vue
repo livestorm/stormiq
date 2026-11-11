@@ -139,11 +139,15 @@ const view = computed(() => findingsView(props.body, lang.value));
   color: var(--siq-ink);
 }
 
-.fs-bars,
-.fs-rows,
-
 .fs-chart {
   margin: var(--siq-space-4) 0 0;
+}
+
+.fs-bars,
+.fs-rows {
+  margin: var(--siq-space-3) 0 0;
+  padding: 0;
+  list-style: none;
 }
 
 .fs-chart-head {
@@ -243,7 +247,14 @@ const view = computed(() => findingsView(props.body, lang.value));
   font-weight: var(--siq-weight-medium);
 }
 
-.fs-rows li,
+.fs-rows li {
+  max-width: 80ch;
+  padding: var(--siq-space-1) 0;
+  font-size: var(--siq-text-small);
+  line-height: var(--siq-text-small-lh);
+  color: var(--siq-ink-2);
+  font-variant-numeric: tabular-nums;
+}
 
 .fs-segmented {
   display: inline-flex;
