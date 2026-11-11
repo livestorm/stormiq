@@ -86,7 +86,7 @@ from livestorm_app.ai.surprise_voice import (
     surprise_beats,
     voice_plan,
 )
-from livestorm_app.ai.voice_elevenlabs import VoiceUnavailable, voice_label
+from livestorm_app.ai.voice_elevenlabs import voice_label
 from livestorm_app.ai.usage import CallContext, run_provenance
 from livestorm_app.ai.generation import (
     _bundle_has_all_sections,
@@ -2725,6 +2725,9 @@ def run_cover_image_generation(
 SURPRISE_SHOW_KIND = "surprise_show"
 _SURPRISE_SHOW_FIELDS = ["organization_id", "smart_recap_bundle", "has_transcript"]
 SURPRISE_VOICE_WORKERS = 4
+# ElevenLabs' smaller plans take only a few requests at once (more answer
+# 429 "too many concurrent requests"), so its lines are made two at a time.
+ELEVENLABS_VOICE_WORKERS = 2
 NO_TAKE_MESSAGE = "There is no surprise take yet. Make the show first."
 NO_TRANSCRIPT_MESSAGE = "This session has no transcript yet. Make it on the Transcript tab first: the take is written from it."
 
@@ -2979,7 +2982,8 @@ def _record_lines(
 
     progress(0, total)
     if todo:
-        with ThreadPoolExecutor(max_workers=min(SURPRISE_VOICE_WORKERS, total)) as pool:
+        workers = ELEVENLABS_VOICE_WORKERS if settings.get("provider") == "elevenlabs" else SURPRISE_VOICE_WORKERS
+        with ThreadPoolExecutor(max_workers=min(workers, total)) as pool:
             futures = [pool.submit(make, key, line) for key, line in todo]
             try:
                 for done, future in enumerate(as_completed(futures), start=1):
@@ -3002,8 +3006,9 @@ def run_surprise_show(
     (`claude`, `openai`, `elevenlabs`). Writes the take if there is none
     (`run_smart_recap`, which raises when it fails its check twice), then
     the script, the storyboard (neither ever fails the show) and the voice:
-    every line with the main voice, or, when ElevenLabs refuses the account
-    (`VoiceUnavailable`), every line with the backup. Then drops the clips
+    every line with the main voice, or, when it fails for any reason
+    (`SpeechFailed`: the account refused, still too busy after the retries,
+    a timeout), every line with the backup. Then drops the clips
     the show no longer uses. Raises with a message the page can show."""
     llm_key = str(keys.get("claude") or "").strip()
     row = _surprise_voice_row(session_id, ALL_ORGS)  # the switch, checked again
@@ -3035,10 +3040,16 @@ def run_surprise_show(
     fell_back = False
     try:
         kept, made = _record_lines(session_id, lines, primary, keys, progress)
-    except VoiceUnavailable as exc:
+    except SpeechFailed as exc:
+        # Any failure of the main voice (the account refused, too many
+        # requests or busy after the retries, a timeout, no audio) records
+        # the whole show with the backup: one voice per show.
         if backup is None:
             raise
-        logger.warning("[surprise show] session_id=%s main voice unavailable (%s); recording with the backup", session_id, exc)
+        logger.warning(
+            "[surprise show] session_id=%s main voice failed (%s: %s); recording with the backup",
+            session_id, type(exc).__name__, exc,
+        )
         fell_back = True
         kept, made = _record_lines(session_id, lines, backup, keys, progress)
     prune_surprise_voice_clips(session_id, kept)

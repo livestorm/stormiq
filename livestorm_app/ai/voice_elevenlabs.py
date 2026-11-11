@@ -20,6 +20,7 @@ No database, no web framework.
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any, Callable, Dict, Tuple
 
@@ -33,6 +34,8 @@ from livestorm_app.ai.surprise_voice import (
     SpeechFailed,
 )
 from livestorm_app.config import ELEVENLABS_TTS_URL
+
+logger = logging.getLogger(__name__)
 
 PROVIDER = "elevenlabs"
 MODEL = "eleven_v3"
@@ -137,6 +140,9 @@ def synthesize(
             sleep(_retry_after_s(response, attempt))
             continue
         if not response.ok:
+            # Its `detail.status` is one of ElevenLabs' own codes (never text
+            # we sent): logged to tell a busy plan from an outage.
+            logger.warning("ElevenLabs answered HTTP %s (status %s)", response.status_code, _detail_status(response) or "none")
             raise SpeechFailed(f"ElevenLabs refused to make the voice (HTTP {response.status_code}).")
         audio = response.content or b""
         if not audio:
