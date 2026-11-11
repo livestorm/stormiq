@@ -59,6 +59,15 @@ class QuestionReplyRequest(BaseModel):
     reply: str = Field("", alias="reply", max_length=MAX_QUESTION_REPLY_LENGTH)
 
 
+class LocatedDecisionRequest(BaseModel):
+    """The question desk: the host's decision on an answer located in the
+    talk. `confirm` marks the question answered; `reject` ("Not this")
+    keeps it as it was and never suggests that answer again."""
+
+    question_id: str = Field(..., alias="questionId", pattern=r"^[QC][0-9]{1,6}$")
+    decision: Literal["confirm", "reject"] = Field(..., alias="decision")
+
+
 class AnalysisRequest(BaseModel):
     api_key: str = Field("", alias="apiKey")
     # Each language is a separate paid job; see config.OUTPUT_LANGUAGE_MAP.

@@ -22,6 +22,7 @@ import {
   outputText,
   pdfUrl,
 } from "../followup/outputs";
+import { filterCounts } from "../followup/desk";
 import { createQuestionDesk } from "../followup/useQuestionDesk";
 import { formatLength, formatSessionStart } from "../report/format";
 import { createSessionReport } from "../report/useSessionReport";
@@ -63,7 +64,8 @@ onBeforeUnmount(() => {
 
 const DESK = "desk";
 const onDesk = computed(() => !route.query.output || route.query.output === DESK);
-const openCount = computed(() => desk.state.body?.summary?.open ?? null);
+// Still open for the host: open, or covered in the talk but not confirmed.
+const openCount = computed(() => (desk.state.body ? filterCounts(desk.state.body.summary).open : null));
 const csvUrl = computed(() => api.getOpenQuestionsCsvUrl(props.sessionId));
 
 // ── The header ──

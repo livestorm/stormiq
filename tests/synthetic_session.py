@@ -727,15 +727,52 @@ def chat_labels(row: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+# What the understanding job "found" in the synthetic talk (no model call):
+# the chat's pricing question (open) and the Q&A one (answered aloud) are
+# both answered by the speaker at 5:18.
+UNDERSTANDING_ANSWERS = (
+    {"question_text": "What about pricing?", "utterance_text": "pricing works per team", "quote": "Pricing works per team and scales with seats."},
+    {"question_text": "How does pricing work for larger teams", "utterance_text": "pricing works per team", "quote": "pricing works per team"},
+)
+
+
+def understanding(row: Dict[str, Any]) -> Dict[str, Any]:
+    """A stored understanding for `row`, as `db.fetch_understanding` returns
+    it, read from its dossier now (its chat labelled by `chat_labels`) and
+    checked by the real `check_understanding`."""
+    from livestorm_app.record.inputs import load_record_inputs
+    from livestorm_app.record.understanding import UNDERSTANDING_VERSION, build_dossier, check_understanding
+
+    dossier, utterances, questions = build_dossier(load_record_inputs(row, stored_labels=chat_labels(row)))
+    answers = []
+    for item in UNDERSTANDING_ANSWERS:
+        question = next(q for q in questions if q["text"].startswith(item["question_text"]))
+        utterance = next(u for u in utterances if u["text"].startswith(item["utterance_text"]))
+        answers.append({"question_id": question["id"], "utterance_ids": [utterance["id"]], "quote": item["quote"]})
+    answer = {"chapters": [], "answers": answers, "prompts": [], "figures": [], "groups": []}
+    return {
+        "version": UNDERSTANDING_VERSION,
+        "dossier_hash": dossier.sha256,
+        "model": "synthetic-understanding",
+        "result": check_understanding(answer, utterances, questions),
+        "created_at": None,
+    }
+
+
 def question_desk_response(row: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """What `GET /api/sessions/{id}/record/questions` sends for `row`
-    (default: `cached_row()`), its chat labelled by `chat_labels` and no
-    reply saved, through the real route."""
+    (default: `cached_row()`), its chat labelled by `chat_labels`, its
+    understanding stored (`understanding`) and no reply saved, through the
+    real route."""
     from livestorm_app import api_logic
 
     row = cached_row() if row is None else row
     labels = chat_labels(row)
-    with mock.patch.object(api_logic, "fetch_chat_labels", lambda session_id, organization_id: labels):
+    stored = understanding(row)
+    with ExitStack() as stack:
+        stack.enter_context(mock.patch.object(api_logic, "fetch_chat_labels", lambda session_id, organization_id: labels))
+        stack.enter_context(mock.patch.object(api_logic, "fetch_understanding", lambda session_id, organization_id: stored))
+        stack.enter_context(mock.patch.object(api_logic, "fetch_question_replies", lambda session_id, organization_id: {}))
         return _get_json(row, f"/api/sessions/{row['session_id']}/record/questions")
 
 

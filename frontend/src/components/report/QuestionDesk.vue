@@ -11,6 +11,9 @@ import {
   chatNotice,
   filterCounts,
   filterQuestions,
+  locatedActions,
+  locatedLabel,
+  locatedNotice,
   logisticsLine,
   metaLine,
   statusOf,
@@ -19,9 +22,10 @@ import {
 
 // The Follow-up tab's question desk: every audience question with its
 // status (decided by the server), a filter, and for an open one a reply and
-// "Mark answered", saved on the server. The text is attendees': rendered as
-// text, never as HTML. The desk's data comes from the view's
-// `createQuestionDesk()`.
+// "Mark answered", saved on the server. A question the analysis found
+// answered in the talk shows that passage, with "Confirm" and "Not this".
+// The text is attendees' and the talk's: rendered as text, never as HTML.
+// The desk's data comes from the view's `createQuestionDesk()`.
 const props = defineProps({
   desk: { type: Object, required: true },
   csvUrl: { type: String, default: "" },
@@ -52,6 +56,10 @@ function cancelEdit() {
 async function save(question, answered) {
   const ok = await props.desk.mark(question.id, { answered, reply: answered ? draft.value : "" });
   if (ok) cancelEdit();
+}
+
+function decide(question, decision) {
+  props.desk.decide(question.id, decision);
 }
 
 const EMPTY = {
@@ -88,6 +96,10 @@ const EMPTY = {
           <Icon name="info" :size="16" />
           <span>{{ chatNotice(summary.chatQuestions) }}</span>
         </p>
+        <p v-if="locatedNotice(summary)" class="qd-note">
+          <Icon name="info" :size="16" />
+          <span>{{ locatedNotice(summary) }}</span>
+        </p>
       </div>
 
       <div v-if="counts.all" class="qd-filters" role="group" aria-label="Show">
@@ -119,6 +131,13 @@ const EMPTY = {
             </p>
 
             <p v-if="question.answer" class="qd-answer"><span class="qd-answer-label">Answer:</span> {{ question.answer }}</p>
+            <figure v-if="question.located" class="qd-located">
+              <figcaption class="qd-located-label">
+                <Icon name="play" :size="14" />
+                <span>{{ locatedLabel(question) }}</span>
+              </figcaption>
+              <blockquote class="qd-quote">“{{ question.located.quote }}”</blockquote>
+            </figure>
             <p v-if="question.reply && editing !== question.id" class="qd-answer">
               <span class="qd-answer-label">Your answer:</span> {{ question.reply }}
             </p>
@@ -139,6 +158,22 @@ const EMPTY = {
                 <UiButton variant="ghost" small :disabled="state.saving === question.id" @click="cancelEdit">Cancel</UiButton>
               </div>
             </form>
+
+            <div v-else-if="locatedActions(question).reject" class="qd-row qd-actions">
+              <UiButton
+                v-if="locatedActions(question).confirm"
+                variant="secondary"
+                small
+                icon="check"
+                :disabled="Boolean(state.saving)"
+                @click="decide(question, 'confirm')"
+              >
+                {{ state.saving === question.id ? "Saving…" : "Confirm" }}
+              </UiButton>
+              <UiButton variant="ghost" small icon="x" :disabled="Boolean(state.saving)" @click="decide(question, 'reject')">
+                Not this
+              </UiButton>
+            </div>
 
             <div v-else-if="canMark(question)" class="qd-row qd-actions">
               <UiButton
@@ -336,6 +371,35 @@ const EMPTY = {
   white-space: pre-line;
 }
 
+.qd-located {
+  margin: var(--siq-space-2) 0 0;
+  padding-left: var(--siq-space-3);
+  box-shadow: inset 2px 0 0 var(--siq-hairline);
+}
+
+.qd-located-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--siq-space-1);
+  font-size: var(--siq-text-small);
+  line-height: var(--siq-text-small-lh);
+  font-weight: var(--siq-weight-medium);
+  color: var(--siq-ink);
+}
+
+.qd-located-label :deep(svg) {
+  flex: none;
+  color: var(--siq-muted);
+}
+
+.qd-quote {
+  margin: var(--siq-space-1) 0 0;
+  font-size: var(--siq-text-ui);
+  line-height: var(--siq-text-ui-lh);
+  color: var(--siq-ink-2);
+  overflow-wrap: anywhere;
+}
+
 .qd-answer-label {
   font-weight: var(--siq-weight-medium);
   color: var(--siq-ink);
@@ -390,7 +454,8 @@ const EMPTY = {
   .qd-item {
     border-top: 1px solid CanvasText;
   }
-  .qd-answer {
+  .qd-answer,
+  .qd-located {
     border-left: 2px solid CanvasText;
   }
 }

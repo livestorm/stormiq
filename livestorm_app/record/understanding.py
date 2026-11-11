@@ -333,3 +333,38 @@ def check_understanding(
         "questions": len(questions),
     }
     return {"version": UNDERSTANDING_VERSION, "onClock": on_clock, **result, "coverage": coverage}
+
+
+# ── Reading it back ─────────────────────────────────────────────────────────
+
+READY = "ready"
+STALE = "stale"
+NONE = "none"
+
+
+def located_answers(stored: Optional[Mapping[str, Any]], inputs: Any) -> Tuple[Dict[str, Dict[str, Any]], str]:
+    """The stored understanding's located answers, by question id, for the
+    question desk: `({question_id: {t, quote, utterances}}, state)`.
+
+    Question and utterance ids are the dossier's, which shift when the
+    session is fetched again or its chat labelled again, so the answers are
+    used only while the stored result was read from this session's dossier
+    now (same hash, same version): state `ready`. Otherwise `stale` (read
+    from another dossier) or `none` (never read, or no transcript), with no
+    answers."""
+    if not stored:
+        return {}, NONE
+    dossier, utterances, _ = build_dossier(inputs)
+    if not utterances:
+        return {}, NONE
+    if stored.get("version") != UNDERSTANDING_VERSION or stored.get("dossier_hash") != dossier.sha256:
+        return {}, STALE
+    result = stored.get("result") if isinstance(stored.get("result"), Mapping) else {}
+    answers: Dict[str, Dict[str, Any]] = {}
+    for item in result.get("answers") or []:
+        if not isinstance(item, Mapping):
+            continue
+        question, t, quote = str(item.get("question") or ""), _finite(item.get("t")), _one_line(item.get("quote"))
+        if question and t is not None and quote and question not in answers:
+            answers[question] = {"t": t, "quote": quote, "utterances": _ids(item.get("utterances"))}
+    return answers, READY

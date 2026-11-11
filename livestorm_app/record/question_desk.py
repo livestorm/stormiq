@@ -20,7 +20,18 @@ A row's status, first match wins:
 2. `aloud`: marked answered aloud in Livestorm.
 3. `here`: the host marked it answered in StormIQ (`reply`, optional, is
    what they wrote).
-4. `open`.
+4. `covered`: not marked anywhere, but the understanding job located a
+   passage of the talk that answers it (`located`: `{t, quote}`), and the
+   host hasn't decided on it yet. "Confirm" saves it as answered here, noting
+   it was located; "Not this" keeps it open and never suggests it again
+   (`save_located_decision`; the decision is the saved row's `located`).
+5. `open`.
+
+A row's `located` passage is shown on a `covered` row, on an `aloud` row
+(where in the talk), and on a `here` row the host confirmed; never once the
+host said "Not this". Located answers come from `record.understanding.
+located_answers`, used only while they were read from this session as it is
+now.
 
 What the host saves (`db.save_question_reply`) is keyed by the row's source
 and Livestorm id, never by its evidence id alone, which can shift when the
@@ -55,8 +66,16 @@ CHAT_SOURCE = "chat"
 WRITTEN = "written"
 ALOUD = "aloud"
 HERE = "here"
+COVERED = "covered"
 OPEN = "open"
-STATUSES = (WRITTEN, ALOUD, HERE, OPEN)
+STATUSES = (WRITTEN, ALOUD, HERE, COVERED, OPEN)
+# Still open for the host: the CSV lists them.
+UNANSWERED = (COVERED, OPEN)
+
+# What the host decided on a located answer (`located` on a saved row).
+CONFIRMED = "confirmed"
+REJECTED = "rejected"
+LOCATED_DECISIONS = (CONFIRMED, REJECTED)
 
 MAX_REPLY_LENGTH = 4000
 
@@ -118,18 +137,37 @@ def _candidates(inputs: Any) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
     return rows, {"logistics": logistics}
 
 
-def _status(livestorm: Optional[Any], saved: Optional[Mapping[str, Any]]) -> str:
+def _status(livestorm: Optional[Any], saved: Optional[Mapping[str, Any]], located: Optional[Mapping[str, Any]]) -> str:
     if livestorm is not None and livestorm.response:
         return WRITTEN
     if livestorm is not None and livestorm.answered_orally:
         return ALOUD
     if saved and saved.get("answered"):
         return HERE
+    if located and not (saved and saved.get("located")):
+        return COVERED
     return OPEN
 
 
-def _desk_rows(inputs: Any, saved: Mapping[str, Mapping[str, Any]]) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+def _shown_passage(status: str, saved: Optional[Mapping[str, Any]], located: Optional[Mapping[str, Any]]) -> Optional[Dict[str, Any]]:
+    """The located passage a row shows: `{t, quote}`, or None."""
+    if not located:
+        return None
+    decision = (saved or {}).get("located")
+    if decision == REJECTED:
+        return None
+    if status == COVERED or status == ALOUD or (status == HERE and decision == CONFIRMED):
+        return {"t": _seconds(located.get("t")), "quote": str(located.get("quote") or "")}
+    return None
+
+
+def _desk_rows(
+    inputs: Any,
+    saved: Mapping[str, Mapping[str, Any]],
+    located: Optional[Mapping[str, Mapping[str, Any]]] = None,
+) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
     candidates, extra = _candidates(inputs)
+    located = located or {}
     by_livestorm_id = {item.livestorm_id: item for item in question_items(inputs.questions_payload) if item.livestorm_id}
     rows = []
     for row in candidates:
@@ -138,7 +176,10 @@ def _desk_rows(inputs: Any, saved: Mapping[str, Mapping[str, Any]]) -> Tuple[Lis
         key = saved_key(source, livestorm_id)
         stored = saved.get(key) if key else None
         livestorm = by_livestorm_id.get(livestorm_id) if source == QA and livestorm_id else None
-        status = _status(livestorm, stored)
+        # A located answer is suggested only for a question the host can
+        # decide on, i.e. one saved by its Livestorm id.
+        passage = located.get(str(row["eid"])) if key is not None else None
+        status = _status(livestorm, stored, passage)
         reply = stored.get("reply") if stored and isinstance(stored.get("reply"), str) and stored.get("reply") else None
         rows.append(
             {
@@ -154,16 +195,23 @@ def _desk_rows(inputs: Any, saved: Mapping[str, Mapping[str, Any]]) -> Tuple[Lis
                 "answer": livestorm.response if status == WRITTEN else None,
                 "reply": reply,
                 "canSave": key is not None,
+                "located": _shown_passage(status, stored, passage),
                 "_key": key,
             }
         )
     return rows, extra
 
 
-def question_desk(inputs: Any, saved: Mapping[str, Mapping[str, Any]]) -> Dict[str, Any]:
+def question_desk(
+    inputs: Any,
+    saved: Mapping[str, Mapping[str, Any]],
+    located: Optional[Mapping[str, Mapping[str, Any]]] = None,
+    located_state: str = "none",
+) -> Dict[str, Any]:
     """`{version, summary, questions}`. `saved` is the host's saved replies
-    by `saved_key` (`db.fetch_question_replies`)."""
-    rows, extra = _desk_rows(inputs, saved)
+    by `saved_key` (`db.fetch_question_replies`); `located` and
+    `located_state` are `record.understanding.located_answers`."""
+    rows, extra = _desk_rows(inputs, saved, located)
     names = _short_names(inputs)
     counts = {status: sum(1 for row in rows if row["desk_status"] == status) for status in STATUSES}
     questions = []
@@ -179,6 +227,7 @@ def question_desk(inputs: Any, saved: Mapping[str, Mapping[str, Any]]) -> Dict[s
                 "status": row["desk_status"],
                 "answer": row["answer"],
                 "reply": row["reply"],
+                "located": row["located"],
                 "canSave": row["canSave"],
             }
         )
@@ -189,6 +238,7 @@ def question_desk(inputs: Any, saved: Mapping[str, Mapping[str, Any]]) -> Dict[s
             **counts,
             "logistics": extra["logistics"],
             "chatQuestions": str((inputs.chat_labels_info or {}).get("state") or "none"),
+            "located": str(located_state or "none"),
         },
         "questions": questions,
     }
@@ -206,15 +256,28 @@ def audience_questions(inputs: Any) -> List[Dict[str, Any]]:
     ]
 
 
-def find_question(inputs: Any, question_id: str) -> Optional[Dict[str, Any]]:
-    """The desk row `question_id` names (`Q001` or `C0001`), with its source
-    and Livestorm id, or None when the desk has no such row (a team message,
-    a chat message not labelled a content question, an unknown id)."""
-    rows, _ = _desk_rows(inputs, {})
+def find_question(
+    inputs: Any,
+    question_id: str,
+    saved: Optional[Mapping[str, Mapping[str, Any]]] = None,
+    located: Optional[Mapping[str, Mapping[str, Any]]] = None,
+) -> Optional[Dict[str, Any]]:
+    """The desk row `question_id` names (`Q001` or `C0001`), with its source,
+    Livestorm id, status and shown passage (`located`, from `saved` and
+    `located` as `question_desk` reads them), or None when the desk has no
+    such row (a team message, a chat message not labelled a content
+    question, an unknown id)."""
+    rows, _ = _desk_rows(inputs, saved or {}, located)
     for row in rows:
         if row["id"] == question_id:
             livestorm_id = row["_key"].split(":", 1)[1] if row["_key"] else None
-            return {"id": row["id"], "source": row["source"], "livestormId": livestorm_id, "status": row["desk_status"]}
+            return {
+                "id": row["id"],
+                "source": row["source"],
+                "livestormId": livestorm_id,
+                "status": row["desk_status"],
+                "located": row["located"],
+            }
     return None
 
 
@@ -237,7 +300,9 @@ CSV_COLUMNS = ("Question", "Asked by", "Company", "Where", "When")
 
 
 def open_questions_csv(inputs: Any, saved: Mapping[str, Mapping[str, Any]]) -> str:
-    """The open questions as CSV text, with who asked each one: name and
+    """The open questions as CSV text (a located answer the host hasn't
+    confirmed is still open: the CSV doesn't read the understanding), with
+    who asked each one: name and
     company through `roster.export_people`, on every session (internal ones
     included), never an email. "When" is the time since the session's start
     ("" without a clock). Cells that a spreadsheet would read as a formula

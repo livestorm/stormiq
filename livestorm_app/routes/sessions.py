@@ -15,8 +15,10 @@ from livestorm_app.api_logic import (
     fetch_session_base_data,
     fetch_session_transcript_data,
     get_cached_workspace,
+    NothingLocatedError,
     QuestionNotFoundError,
     QuestionNotSavableError,
+    decide_session_located_answer,
     get_session_chat_messages,
     get_session_open_questions_csv,
     get_session_question_desk,
@@ -42,7 +44,7 @@ from livestorm_app.people_sync import (
     request_people_sync,
 )
 from livestorm_app.routes.common import SessionId, logger, raise_http_error
-from livestorm_app.routes.models import FetchSessionRequest, QuestionReplyRequest, SpeakerLabelsRequest
+from livestorm_app.routes.models import FetchSessionRequest, LocatedDecisionRequest, QuestionReplyRequest, SpeakerLabelsRequest
 
 router = APIRouter()
 
@@ -193,6 +195,32 @@ def update_session_question(
     except QuestionNotFoundError as exc:
         raise HTTPException(status_code=404, detail={"resource": QUESTION_DESK_RESOURCE, "message": str(exc)}) from exc
     except QuestionNotSavableError as exc:
+        raise HTTPException(status_code=409, detail={"resource": QUESTION_DESK_RESOURCE, "message": str(exc)}) from exc
+    except Exception as exc:
+        raise _question_desk_failed(session_id, exc, "saved") from exc
+
+
+@router.put("/api/sessions/{session_id}/record/questions/located")
+def decide_located_answer(
+    session_id: SessionId, request: LocatedDecisionRequest, caller: Caller = Depends(get_caller)
+) -> Dict[str, Any]:
+    """Confirm an answer located in the talk, or set it aside ("Not this"),
+    and return the desk (`api_logic.decide_session_located_answer`). Scoped
+    like every session route: another org's session looks missing."""
+    connection = caller.connection if isinstance(caller.connection, dict) else {}
+    try:
+        return decide_session_located_answer(
+            session_id,
+            request.question_id,
+            confirm=request.decision == "confirm",
+            organization_id=caller.read_scope,
+            updated_by=str(connection.get("user_id") or "") or None,
+        )
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail={"resource": QUESTION_DESK_RESOURCE, "message": str(exc)}) from exc
+    except QuestionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail={"resource": QUESTION_DESK_RESOURCE, "message": str(exc)}) from exc
+    except (QuestionNotSavableError, NothingLocatedError) as exc:
         raise HTTPException(status_code=409, detail={"resource": QUESTION_DESK_RESOURCE, "message": str(exc)}) from exc
     except Exception as exc:
         raise _question_desk_failed(session_id, exc, "saved") from exc

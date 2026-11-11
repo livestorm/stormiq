@@ -183,6 +183,10 @@ def test_a_blank_scope_never_queries_the_people_tables(monkeypatch):
             "sess-a", organization_id=blank, source="qa", livestorm_id="q-1", evidence_id="Q001",
             answered=True, reply=None, updated_by=None,
         ) is False
+        assert db.save_located_decision(
+            "sess-a", organization_id=blank, source="chat", livestorm_id="msg-9", evidence_id="C0009",
+            decision="confirmed", updated_by=None,
+        ) is False
 
 
 def _reply(session_id, organization_id, **fields):
@@ -214,6 +218,27 @@ def test_a_question_reply_is_replaced_and_deleted_with_its_session(test_database
     assert (saved["qa:q-1"]["answered"], saved["qa:q-1"]["reply"], saved["qa:q-1"]["evidence_id"]) == (False, None, "Q002")
     assert db.admin_delete_session("sess-a") is True
     assert db.fetch_question_replies("sess-a", ALL_ORGS) == {}
+
+
+def _decide(session_id, organization_id, decision, **fields):
+    values = {"source": "chat", "livestorm_id": "msg-9", "evidence_id": "C0009", "updated_by": "user-a"}
+    return db.save_located_decision(session_id, organization_id=organization_id, decision=decision, **{**values, **fields})
+
+
+def test_a_located_answers_decision_is_scoped_and_keeps_what_the_host_wrote(test_database):
+    _seed()
+    assert _decide("sess-a", "org-b", "confirmed") is False, "another org writes nothing"
+    assert db.fetch_question_replies("sess-a", ALL_ORGS) == {}
+    assert _decide("sess-a", "org-a", "rejected") is True
+    saved = db.fetch_question_replies("sess-a", "org-a")["chat:msg-9"]
+    assert (saved["answered"], saved["located"], saved["reply"]) == (False, "rejected", None), "Not this: still open"
+    _reply("sess-a", "org-a", source="chat", livestorm_id="msg-9", evidence_id="C0009", answered=False, reply="Drafting")
+    assert db.fetch_question_replies("sess-a", "org-a")["chat:msg-9"]["located"] == "rejected", "a reply keeps the decision"
+    assert _decide("sess-a", "org-a", "confirmed") is True
+    saved = db.fetch_question_replies("sess-a", "org-a")["chat:msg-9"]
+    assert (saved["answered"], saved["located"], saved["reply"]) == (True, "confirmed", "Drafting")
+    with pytest.raises(ValueError):
+        _decide("sess-a", "org-a", "maybe")
 
 
 def test_chat_labels_are_scoped_by_org(test_database):

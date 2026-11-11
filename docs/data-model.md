@@ -195,6 +195,7 @@ session_question_replies (
   evidence_id  TEXT NOT NULL,          -- its Q or C id when saved (Q001, C0001)
   answered     BOOLEAN NOT NULL,
   reply        TEXT,                   -- what the host wrote, up to 4,000 characters, or null
+  located      TEXT CHECK (located IN ('confirmed', 'rejected')),  -- the host's decision on a located answer, or null
   updated_by   TEXT,                   -- the Livestorm user id, never an email
   updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (session_id, source, livestorm_id)
@@ -202,7 +203,7 @@ session_question_replies (
 ```
 
 - **Keyed by the Livestorm id**, with the evidence id beside it: evidence ids are renumbered when a fetch changes the chat or the questions, Livestorm ids aren't.
-- **One write per question.** `db.save_question_reply` upserts the row; a failed write raises.
+- **One write per question.** `db.save_question_reply` upserts the row; a failed write raises. `db.save_located_decision` upserts the host's decision on an answer the understanding job located in the talk: `confirmed` also sets `answered` (a reply is kept), `rejected` changes nothing else. `save_question_reply` never touches `located`. The column is added by `ALTER TABLE … ADD COLUMN IF NOT EXISTS` at startup.
 - **Scoped and deleted through the session**, like the chat labels: the read (`db.fetch_question_replies`) and the write both join `session_cache` and filter on its org, so another org's session reads and writes nothing (the write's insert selects the session row with the filter); a blank scope never queries; `ON DELETE CASCADE` removes the rows with the session.
 
 ## `session_understanding`

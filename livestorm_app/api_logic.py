@@ -24,9 +24,11 @@ from livestorm_app.db import (
     fetch_roster_status,
     fetch_session_fields,
     fetch_session_roster,
+    fetch_understanding,
     get_transcript_job_for_session,
     list_workspace_sessions,
     merge_cached_bundle_entry,
+    save_located_decision,
     save_question_reply,
     update_transcript_job_status,
     upsert_cached_session,
@@ -612,6 +614,11 @@ class QuestionNotSavableError(RuntimeError):
     kept across a fetch."""
 
 
+class NothingLocatedError(RuntimeError):
+    """The question shows no located answer to confirm or set aside (none
+    was found, it is stale, or the host already decided)."""
+
+
 def _question_desk_inputs(session_id: str, *, organization_id: OrgScope) -> Tuple[Any, Dict[str, Any]]:
     """The record inputs the question desk reads, with the caller's scope:
     the session's payloads, its stored roster (one version) and its stored
@@ -634,18 +641,69 @@ def _question_desk_inputs(session_id: str, *, organization_id: OrgScope) -> Tupl
     return inputs, row
 
 
+def _located_answers(session_id: str, inputs: Any, *, organization_id: OrgScope) -> Tuple[Dict[str, Any], str]:
+    """The stored understanding's located answers for the desk, by question
+    id, and their state (`record.understanding.located_answers`: used only
+    while read from this session as it is now)."""
+    from livestorm_app.record.understanding import located_answers
+
+    return located_answers(fetch_understanding(session_id, organization_id), inputs)
+
+
 def get_session_question_desk(session_id: str, *, organization_id: OrgScope) -> Dict[str, Any]:
     """The Follow-up tab's question desk: `{sessionId, updatedAt, version,
     summary, questions}` (`record.question_desk.question_desk`): the
     audience's Q&A questions and the chat's content questions, each with its
-    status and what the host saved, authors as short names that fail closed.
-    Read on demand with the caller's scope; nothing is cached."""
+    status, what the host saved and, for a question the understanding job
+    found answered in the talk, that passage; authors as short names that
+    fail closed. Read on demand with the caller's scope; nothing is cached."""
     inputs, row = _question_desk_inputs(session_id, organization_id=organization_id)
     from livestorm_app.record.question_desk import question_desk
 
     saved = fetch_question_replies(session_id, organization_id)
-    body = _sanitize_json_value(question_desk(inputs, saved))
+    located, located_state = _located_answers(session_id, inputs, organization_id=organization_id)
+    body = _sanitize_json_value(question_desk(inputs, saved, located, located_state))
     return {"sessionId": session_id, "updatedAt": row.get("updated_at"), **body}
+
+
+def decide_session_located_answer(
+    session_id: str,
+    question_id: str,
+    *,
+    confirm: bool,
+    organization_id: OrgScope,
+    updated_by: Optional[str],
+) -> Dict[str, Any]:
+    """The host's decision on a located answer, then the desk as
+    `get_session_question_desk` returns it. Confirm (the question must be
+    `covered`) saves it as answered here, noting it was located; "Not this"
+    (the question must show a passage) keeps it as it was and never suggests
+    it again. `QuestionNotFoundError`, `QuestionNotSavableError`,
+    `NothingLocatedError` or `SessionNotFoundError` otherwise."""
+    inputs, _ = _question_desk_inputs(session_id, organization_id=organization_id)
+    from livestorm_app.record.question_desk import CONFIRMED, COVERED, REJECTED, find_question
+
+    saved = fetch_question_replies(session_id, organization_id)
+    located, _ = _located_answers(session_id, inputs, organization_id=organization_id)
+    found = find_question(inputs, str(question_id or "").strip(), saved, located)
+    if found is None:
+        raise QuestionNotFoundError("No such question in this session's question desk.")
+    if not found["livestormId"]:
+        raise QuestionNotSavableError("This question has no Livestorm id, so it can't be marked.")
+    if not found["located"] or (confirm and found["status"] != COVERED):
+        raise NothingLocatedError("There is no answer from the talk to decide on for this question.")
+    stored = save_located_decision(
+        session_id,
+        organization_id=organization_id,
+        source=found["source"],
+        livestorm_id=found["livestormId"],
+        evidence_id=found["id"],
+        decision=CONFIRMED if confirm else REJECTED,
+        updated_by=updated_by,
+    )
+    if not stored:
+        raise SessionNotFoundError()
+    return get_session_question_desk(session_id, organization_id=organization_id)
 
 
 def save_session_question_reply(
