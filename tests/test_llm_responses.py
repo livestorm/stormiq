@@ -1,9 +1,8 @@
-"""Structured outputs and refusals: the strict JSON schemas, what each provider
+"""Structured outputs and refusals: the strict JSON schemas, what Anthropic
 is sent for a JSON step, and what each stop does to the answer.
 
-Pure tests on synthetic provider responses: Anthropic is a fake SDK client
-(`tests/fake_anthropic.py`), OpenAI's POST (`llm_client._post_with_retry`) is
-replaced, and the usage writer collects rows instead of saving them. The real-Postgres cases (a refusal saves nothing
+Pure tests on synthetic responses: Anthropic is a fake SDK client
+(`tests/fake_anthropic.py`), and the usage writer collects rows instead of saving them. The real-Postgres cases (a refusal saves nothing
 but its usage row) are in test_data_integrity.py.
 """
 
@@ -199,18 +198,10 @@ def anthropic_body(text: str = "", stop: str = "end_turn", *, model: str = "clau
     }
 
 
-def openai_body(content: Optional[str] = "", finish: str = "stop", *, refusal: Optional[str] = None):
-    return {
-        "model": "gpt-4o-mini-2024-07-18",
-        "choices": [{"index": 0, "finish_reason": finish, "message": {"role": "assistant", "content": content, "refusal": refusal}}],
-        "usage": {"prompt_tokens": 1000, "completion_tokens": 200},
-    }
-
-
 @pytest.fixture
 def http(monkeypatch):
-    """Replace the providers: each call takes the next scripted response
-    (Anthropic through a fake SDK client, OpenAI's POST)."""
+    """Replace Anthropic: each call takes the next scripted response,
+    through a fake SDK client."""
     script: list = []
     sent: list = []
     scripted_providers(monkeypatch, script, sent)
@@ -228,13 +219,6 @@ def rows(monkeypatch):
 @pytest.fixture
 def anthropic(monkeypatch):
     monkeypatch.setattr(llm_client, "get_provider", lambda: "anthropic")
-
-
-@pytest.fixture
-def openai(monkeypatch):
-    """OpenAI, with an OpenAI model for the `profile` job (v1 jobs have none yet)."""
-    monkeypatch.setattr(llm_client, "get_provider", lambda: "openai")
-    monkeypatch.setitem(jobs._SPECS, "profile", dataclasses.replace(jobs.job_spec("profile"), default_openai="gpt-4o-mini"))
 
 
 PROFILE = CallContext("profile", "sess-1", "org-a", "profile:sess-1:_")
@@ -284,29 +268,11 @@ def test_anthropic_gets_the_schema_in_output_config(http, rows, anthropic, regis
     assert rows[0]["effort"] == "low" and len(rows[0]["prompt_hash"]) == 64 and rows[0]["dossier_hash"] is None
 
 
-def test_openai_gets_a_strict_response_format(http, rows, openai, registered):
-    script, sent = http
-    script.append(FakeResponse(openai_body(_json())))
-    assert llm_client.generate_json("profile", Reading, _request(), api_key="key", ctx=PROFILE).kind == "public"
-    payload = sent[0]["payload"]
-    assert payload["response_format"] == {
-        "type": "json_schema",
-        "json_schema": {"name": "Reading", "strict": True, "schema": schemas.strict_json_schema(Reading)},
-    }
-    assert "temperature" not in payload and payload["max_tokens"] == 2_000
-    assert payload["messages"] == MESSAGES
-    assert _outcomes(rows) == [("main", "ok", "stop", None)]
-
-
-def test_the_classic_outputs_send_what_they_sent_before(http, rows, anthropic, monkeypatch):
+def test_the_classic_outputs_send_what_they_sent_before(http, rows, anthropic):
     script, sent = http
     script.append(FakeResponse(anthropic_body("# Recap", model="claude-sonnet-4-6")))
     llm_client.call_llm("key", "claude-sonnet-4-6", MESSAGES, temperature=0.2, max_tokens=900)
     assert set(sent[0]["payload"]) == {"model", "max_tokens", "messages", "temperature", "system"}
-    monkeypatch.setattr(llm_client, "get_provider", lambda: "openai")
-    script.append(FakeResponse(openai_body("# Recap")))
-    llm_client.call_llm("key", "gpt-4o-mini", MESSAGES, temperature=0.2, max_tokens=900)
-    assert list(sent[1]["payload"]) == ["model", "temperature", "messages", "max_tokens"]
 
 
 # ── Checked before any paid call ───────────────────────────────────────────
@@ -440,17 +406,6 @@ def test_a_job_without_a_shared_prefix_is_never_warned_about_its_cache(http, row
     assert "prompt cache" not in caplog.text and "fallback" not in caplog.text
 
 
-def test_a_budget_that_must_stream_is_refused_on_openai(http, rows, openai, monkeypatch):
-    # StormIQ's OpenAI calls don't stream, so the call is refused before it is sent.
-    monkeypatch.setitem(jobs._SPECS, "understanding", dataclasses.replace(jobs.job_spec("understanding"), default_openai="gpt-5.4-mini"))
-    monkeypatch.setitem(models._BY_ID, "gpt-5.4-mini", dataclasses.replace(models.catalog_model("gpt-5.4-mini"), max_output=64_000))
-    _, sent = http
-    ctx = CallContext("understanding", "sess-1", "org-a")
-    with pytest.raises(llm_client.LLMError, match="must stream"):
-        llm_client.generate_text("understanding", _request("understanding"), api_key="key", ctx=ctx)
-    assert sent == []
-
-
 def test_only_a_budget_that_must_stream_streams(http, rows, anthropic, registered):
     script, sent = http
     script.append(FakeResponse(anthropic_body(_json())))
@@ -500,12 +455,10 @@ def test_the_answer_comes_from_text_blocks_only(http):
     assert llm_client._anthropic_send("key", "claude-haiku-5-5", [], None, 100).text == "Answer"
 
 
-def test_the_adapters_drop_a_refusals_partial_text(http):
+def test_the_adapter_drops_a_refusals_partial_text(http):
     script, _ = http
     script.append(FakeResponse(anthropic_body("Partial answer", "refusal")))
     assert llm_client._anthropic_send("key", "claude-haiku-5-5", [], None, 100).text == ""
-    script.append(FakeResponse(openai_body("Partial answer", "content_filter")))
-    assert llm_client._openai_send("key", "gpt-4o-mini", [], None, 100).text == ""
 
 
 @pytest.mark.parametrize("category", ["bio", None])
@@ -530,30 +483,9 @@ def test_a_refusal_keeps_its_message_through_the_job_queue(category):
         assert type(back) is type(error) and str(back) == str(error)
 
 
-@pytest.mark.parametrize(
-    "body",
-    [openai_body(None, "stop", refusal="I can't help with that."), openai_body("", "content_filter")],
-    ids=["message.refusal", "content_filter"],
-)
-def test_an_openai_refusal_raises(http, rows, openai, registered, body):
+def test_a_classic_refusal_says_so_instead_of_empty(http, rows, anthropic):
     script, sent = http
-    script.append(FakeResponse(body))
-    with pytest.raises(llm_client.LLMRefused) as refused:
-        llm_client.generate_json("profile", Reading, _request(), api_key="key", ctx=PROFILE)
-    assert str(refused.value) == REFUSED
-    assert len(sent) == 1
-    assert [row["outcome"] for row in rows] == ["refused"]
-    assert "help with that" not in repr(rows), "the refusal's own wording is never kept"
-
-
-@pytest.mark.parametrize("provider", ["anthropic", "openai"])
-def test_a_classic_refusal_says_so_instead_of_empty(http, rows, monkeypatch, provider):
-    monkeypatch.setattr(llm_client, "get_provider", lambda: provider)
-    script, sent = http
-    if provider == "anthropic":
-        script.append(FakeResponse(anthropic_body("", "refusal", model="claude-sonnet-4-6", stop_details={"type": "refusal", "category": "bio"})))
-    else:
-        script.append(FakeResponse(openai_body(None, refusal="No.")))
+    script.append(FakeResponse(anthropic_body("", "refusal", model="claude-sonnet-4-6", stop_details={"type": "refusal", "category": "bio"})))
     ctx = CallContext("smart_recap", "sess-1", "org-a", "smart_recap:sess-1:hype")
     with pytest.raises(llm_client.LLMRefused) as refused:
         llm_client.call_llm(SECRET, "model", MESSAGES, max_tokens=900, ctx=ctx)
@@ -656,12 +588,11 @@ def test_a_job_with_a_truncation_retry_doubles_its_budget_once(http, rows, anthr
 def test_the_retry_budget_is_capped(monkeypatch):
     assert llm_client.retry_budget(2_500, "claude-haiku-4-5-20251001") == 5_000
     assert llm_client.retry_budget(12_000, "claude-haiku-4-5-20251001") == llm_client.TRUNCATION_RETRY_MAX_TOKENS
-    assert llm_client.retry_budget(12_000, "gpt-4o-mini") == 16_000  # under its 16,384 limit
     assert llm_client.retry_budget(16_000, "some-unknown-model") == 16_000  # no larger: no retry
     # No catalog row is below 16,000 today; a smaller model limit caps the retry.
-    small = dataclasses.replace(models.catalog_model("gpt-4o-mini"), max_output=10_000)
-    monkeypatch.setitem(models._BY_ID, "gpt-4o-mini", small)
-    assert llm_client.retry_budget(8_000, "gpt-4o-mini") == 10_000
+    small = dataclasses.replace(models.catalog_model("claude-haiku-4-5-20251001"), max_output=10_000)
+    monkeypatch.setitem(models._BY_ID, "claude-haiku-4-5-20251001", small)
+    assert llm_client.retry_budget(8_000, "claude-haiku-4-5-20251001") == 10_000
 
 
 def test_a_call_of_an_unknown_kind_retries_a_cut_off_answer_as_before(http, rows, anthropic):

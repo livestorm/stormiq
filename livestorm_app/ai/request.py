@@ -2,8 +2,8 @@
 
 `build_request(kind, …)` gives one `LLMRequest` for a job kind; the job's
 spec (`ai/jobs.py`) says which layout it uses. `llm_client.generate_text`
-and `generate_json` take that request, and `anthropic_call` and
-`openai_payload` write it for the provider. The classic outputs don't come
+and `generate_json` take that request, and `anthropic_call` writes it for the
+Messages API. The classic outputs don't come
 through here: `llm_client.call_llm` keeps sending their own messages.
 
 The three layouts:
@@ -270,36 +270,3 @@ def anthropic_call(
         params["fallbacks"] = "default"
         betas = (SERVER_FALLBACK_BETA,)
     return AnthropicCall(params=params, betas=betas, effort=effort)
-
-
-def openai_payload(
-    request: LLMRequest, caps: ModelCaps, max_tokens: int, json_format: Optional[JsonFormat] = None
-) -> Dict[str, Any]:
-    """`request` as a Chat Completions body for `caps`' model. The same order
-    as for Anthropic, so OpenAI's automatic prefix cache sees the same stable
-    prefix: the dossier first with the instructions after it as a `system`
-    message, or the instructions first. The token parameter comes from the
-    model's row. No `temperature` and no effort are sent."""
-    spec = request.spec
-    if spec.layout == "legacy":
-        messages: List[Dict[str, str]] = [dict(message) for message in request.messages]
-    elif spec.layout == "dossier":
-        messages = [{"role": "system", "content": request.system}] if request.system else []
-        messages.append({"role": "user", "content": request.context_text})
-        if request.payload:
-            messages.append({"role": "user", "content": request.payload})
-        if caps.mid_conversation_system:
-            messages.append({"role": "system", "content": request.instructions})
-        else:
-            messages.append({"role": "user", "content": request.instructions})
-    else:
-        messages = [{"role": "system", "content": request.system}] if request.system else []
-        messages.append({"role": "system", "content": request.instructions})
-        messages.append({"role": "user", "content": request.payload or ""})
-    payload: Dict[str, Any] = {"model": caps.id, "messages": messages, caps.token_param: int(max_tokens)}
-    if json_format is not None:
-        payload["response_format"] = {
-            "type": "json_schema",
-            "json_schema": {"name": json_format.name, "strict": True, "schema": json_format.schema},
-        }
-    return payload

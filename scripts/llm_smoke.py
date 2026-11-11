@@ -1,11 +1,12 @@
 """Check with real, paid calls that the models StormIQ plans to use accept the parameters it plans to send.
 
 It costs money, so it runs only with `--i-understand-this-costs`. Run it by
-hand, never in CI. It reads the keys from the environment (`CLAUDE_API_KEY`,
-`OPENAI_API_KEY`) and never from `.env`: set them explicitly. A provider
-whose key is unset is skipped. It touches no database and writes nothing.
+hand, never in CI. It reads the key from the environment (`CLAUDE_API_KEY`)
+and never from `.env`: set it explicitly. Without it, nothing is called. It
+touches no database and writes nothing. Every text job runs on Claude, so
+it calls Anthropic only.
 
-    CLAUDE_API_KEY=… OPENAI_API_KEY=… .venv/bin/python scripts/llm_smoke.py --i-understand-this-costs [--legacy] [--model ID ...]
+    CLAUDE_API_KEY=… .venv/bin/python scripts/llm_smoke.py --i-understand-this-costs [--legacy] [--model ID ...]
 
 What it calls, one small request per line of output:
 
@@ -33,18 +34,14 @@ What it calls, one small request per line of output:
   the schema call wrote).
 - **With `--legacy`**, the classic outputs' Claude models with their
   `temperature`, on the API version the SDK sends (2023-06-01).
-- **OpenAI, every catalog row**: plain (with the row's token parameter),
-  `temperature`, a strict JSON schema, the other token parameter, and
-  `reasoning_effort`.
 
 What it prints, one line per call:
 
     anthropic claude-haiku-5-5 effort=low accepted stop=end_turn
     anthropic claude-haiku-5-5 dossier-repeat accepted stop=end_turn cache_read=2911
-    openai gpt-4o-mini reasoning_effort=low rejected HTTP 400 invalid_request_error param=reasoning_effort
+    anthropic claude-opus-5-5 fallbacks=default rejected HTTP 400 invalid_request_error
 
-`accepted` or `rejected` (with the HTTP status, the API's error type and, for
-OpenAI, the parameter it names), or `failed` with the error's class when there
+`accepted` or `rejected` (with the HTTP status and the API's error type), or `failed` with the error's class when there
 was no HTTP answer. Then the stop reason, and `cache_read=` for the dossier
 calls, with `(expected > 0)` after a repeat that read no cache. Never a
 prompt, an answer, an error message, a header or a key.
@@ -53,8 +50,7 @@ The last line counts them: `calls=… not_accepted=… cache_misses=…`. The
 script exits 1 when either count is above 0 (some rejections are expected:
 read the lines), 2 without the flag, 0 otherwise.
 
-Cost: about 60 calls (35 to Anthropic, 25 to OpenAI, 3 more with `--legacy`)
-with prompts of a few dozen tokens and one-word answers (the 5.5 models may
+Cost: about 35 calls to Anthropic (3 more with `--legacy`) with prompts of a few dozen tokens and one-word answers (the 5.5 models may
 think first), plus the four dossier calls of about 5,000 tokens on Haiku 5.5.
 Well under one dollar in total.
 """
@@ -65,7 +61,7 @@ import argparse
 import os
 import re
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, TextIO
 
@@ -73,14 +69,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 import anthropic  # noqa: E402
-import requests  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
 from livestorm_app import llm_client  # noqa: E402
 from livestorm_app.ai import jobs, models, schemas  # noqa: E402
 from livestorm_app.ai.dossier import Dossier, make_dossier  # noqa: E402
 from livestorm_app.ai.request import JsonFormat, LLMRequest, anthropic_call, build_request  # noqa: E402
-from livestorm_app.config import OPENAI_CHAT_COMPLETIONS_URL  # noqa: E402
 
 CONFIRM_FLAG = "--i-understand-this-costs"
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
@@ -89,8 +83,6 @@ SMOKE_SYSTEM = "You read a synthetic session record."
 SMOKE_DATA = "Synthetic data: 3 questions."
 SMALL_BUDGET = 4_000  # room for a 5.5 model's thinking before a one-word answer
 STREAM_BUDGET = 20_000  # over ai.jobs.STREAM_ABOVE_TOKENS
-OPENAI_BUDGET = 256
-OPENAI_TIMEOUT = (10, 120)
 _TAG_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
 
 
@@ -105,10 +97,10 @@ SMOKE_SCHEMA = schemas.build_strict_schema(SmokeAnswer)
 
 @dataclass(frozen=True)
 class Probe:
-    provider: str  # "anthropic" | "openai"
+    provider: str  # "anthropic", printed first on the line
     model: str
     name: str
-    params: Dict[str, Any]  # Anthropic: messages.create keyword arguments; OpenAI: the request body
+    params: Dict[str, Any]  # messages.create keyword arguments
     stream: bool = False
     beta: bool = False  # Anthropic's beta endpoint (the server-side fallback)
     cache: bool = False  # print cache_read_tokens
@@ -132,8 +124,6 @@ class Outcome:
 @dataclass
 class Clients:
     anthropic: Any = None
-    openai_key: str = ""
-    openai_post: Callable[..., Any] = field(default=requests.post)
 
 
 # ── Which calls ────────────────────────────────────────────────────────────
@@ -234,21 +224,7 @@ def dossier_probes(caps: models.ModelCaps) -> List[Probe]:
     ]
 
 
-def openai_probes(caps: models.ModelCaps) -> List[Probe]:
-    other = "max_tokens" if caps.token_param == "max_completion_tokens" else "max_completion_tokens"
-    base = {"model": caps.id, "messages": _user(), caps.token_param: OPENAI_BUDGET}
-    return [
-        Probe("openai", caps.id, "plain", dict(base)),
-        Probe("openai", caps.id, "temperature=0.2", {**base, "temperature": 0.2}),
-        Probe("openai", caps.id, "format=json_schema", {**base, "response_format": {
-            "type": "json_schema", "json_schema": {"name": "SmokeAnswer", "strict": True, "schema": SMOKE_SCHEMA},
-        }}),
-        Probe("openai", caps.id, f"token_param={other}", {"model": caps.id, "messages": _user(), other: OPENAI_BUDGET}),
-        Probe("openai", caps.id, "reasoning_effort=low", {**base, "reasoning_effort": "low"}),
-    ]
-
-
-def plan(*, legacy: bool, only: Sequence[str], dossier_model: str, anthropic_on: bool, openai_on: bool) -> List[Probe]:
+def plan(*, legacy: bool, only: Sequence[str], dossier_model: str, anthropic_on: bool) -> List[Probe]:
     """Every call, in order. `only` keeps the named models (empty: all)."""
     def wanted(model_id: str) -> bool:
         return not only or model_id in only
@@ -265,10 +241,6 @@ def plan(*, legacy: bool, only: Sequence[str], dossier_model: str, anthropic_on:
             for caps in models.catalog_models("anthropic", "legacy"):
                 if wanted(caps.id):
                     probes.extend(legacy_probes(caps))
-    if openai_on:
-        for caps in models.catalog_models("openai", "legacy"):
-            if wanted(caps.id):
-                probes.extend(openai_probes(caps))
     return probes
 
 
@@ -309,29 +281,6 @@ def run_anthropic(probe: Probe, client: Any) -> Outcome:
     return _anthropic_outcome(probe, message)
 
 
-def run_openai(probe: Probe, key: str, post: Callable[..., Any]) -> Outcome:
-    try:
-        response = post(
-            OPENAI_CHAT_COMPLETIONS_URL,
-            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-            json=probe.params,
-            timeout=OPENAI_TIMEOUT,
-        )
-        body = response.json()
-    except Exception as exc:
-        return Outcome(probe, "failed", type(exc).__name__)
-    body = body if isinstance(body, Mapping) else {}
-    if response.status_code >= 400:
-        error = body.get("error") if isinstance(body.get("error"), Mapping) else {}
-        parts = [f"HTTP {response.status_code}", _tag(error.get("type")) or _tag(error.get("code"))]
-        if _tag(error.get("param")):
-            parts.append(f"param={_tag(error.get('param'))}")
-        return Outcome(probe, "rejected", " ".join(part for part in parts if part))
-    choices = body.get("choices") if isinstance(body.get("choices"), list) else []
-    choice = choices[0] if choices and isinstance(choices[0], Mapping) else {}
-    return Outcome(probe, "accepted", stop=_tag(choice.get("finish_reason")))
-
-
 def format_outcome(outcome: Outcome) -> str:
     """One line: provider, model, probe, result, stop reason, cache reads. Nothing else."""
     parts = [outcome.probe.provider, outcome.probe.model, outcome.probe.name, outcome.status]
@@ -349,10 +298,7 @@ def format_outcome(outcome: Outcome) -> str:
 def run(probes: Iterable[Probe], clients: Clients, out: TextIO) -> List[Outcome]:
     outcomes = []
     for probe in probes:
-        if probe.provider == "anthropic":
-            outcome = run_anthropic(probe, clients.anthropic)
-        else:
-            outcome = run_openai(probe, clients.openai_key, clients.openai_post)
+        outcome = run_anthropic(probe, clients.anthropic)
         outcomes.append(outcome)
         print(format_outcome(outcome), file=out, flush=True)
     return outcomes
@@ -375,28 +321,20 @@ def main(
     *,
     environ: Mapping[str, str] = os.environ,
     anthropic_factory: Callable[[str], Any] = llm_client._build_anthropic_client,
-    openai_post: Callable[..., Any] = requests.post,
     out: TextIO = sys.stdout,
 ) -> int:
     args = parse_args(argv)
     if not args.confirmed:
-        print(f"This makes paid calls to Anthropic and OpenAI. Run it again with {CONFIRM_FLAG}.", file=out)
+        print(f"This makes paid calls to Anthropic. Run it again with {CONFIRM_FLAG}.", file=out)
         return 2
     claude_key = (environ.get("CLAUDE_API_KEY") or "").strip()
-    openai_key = (environ.get("OPENAI_API_KEY") or "").strip()
     if not claude_key:
         print("anthropic skipped: CLAUDE_API_KEY is not set", file=out)
-    if not openai_key:
-        print("openai skipped: OPENAI_API_KEY is not set", file=out)
     probes = plan(
         legacy=args.legacy, only=args.model, dossier_model=args.dossier_model,
-        anthropic_on=bool(claude_key), openai_on=bool(openai_key),
+        anthropic_on=bool(claude_key),
     )
-    clients = Clients(
-        anthropic=anthropic_factory(claude_key) if claude_key else None,
-        openai_key=openai_key,
-        openai_post=openai_post,
-    )
+    clients = Clients(anthropic=anthropic_factory(claude_key) if claude_key else None)
     outcomes = run(probes, clients, out)
     rejected = sum(1 for outcome in outcomes if outcome.status != "accepted")
     missed = sum(1 for outcome in outcomes if outcome.cache_missed)

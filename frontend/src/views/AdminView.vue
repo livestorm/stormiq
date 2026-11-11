@@ -170,13 +170,6 @@ const ANTHROPIC_TEXT_MODELS = [
   { value: "claude-opus-4-8", label: "Claude Opus 4.8 — most capable" },
 ];
 
-const OPENAI_TEXT_MODELS = [
-  { value: "gpt-4o-mini", label: "GPT-4o mini — fast & cheap" },
-  { value: "gpt-4o", label: "GPT-4o — balanced" },
-  { value: "gpt-4.1-mini", label: "GPT-4.1 mini — fast, newer" },
-  { value: "gpt-4.1", label: "GPT-4.1 — capable, newer" },
-];
-
 // gpt-image-1 was shut down on 2026-10-23. A saved gpt-image-1 setting is
 // sent as gpt-image-2 (cover_image.resolve_image_model), so show that.
 const IMAGE_MODELS = [{ value: "gpt-image-2", label: "gpt-image-2 (recommended)" }];
@@ -185,12 +178,14 @@ const activeImageModel = computed(() => {
   return IMAGE_MODELS.some((model) => model.value === saved) ? saved : "gpt-image-2";
 });
 
-const PROVIDERS = [
-  { value: "anthropic", label: "Anthropic", hint: "Claude models" },
-  { value: "openai", label: "OpenAI", hint: "GPT models" },
-];
-const activeProvider = computed(() => settings.value.llm_provider || "anthropic");
-const textModels = computed(() => (activeProvider.value === "openai" ? OPENAI_TEXT_MODELS : ANTHROPIC_TEXT_MODELS));
+// Every text job runs on Claude (the owner's decision, 2026-11-11): there is
+// no provider to choose. A model saved before then that isn't a Claude model
+// shows as unset; the server skips it and uses the job's default.
+const textModels = ANTHROPIC_TEXT_MODELS;
+function savedModel(key) {
+  const saved = settings.value[key] || "";
+  return textModels.some((model) => model.value === saved) ? saved : "";
+}
 
 async function loadSettings() {
   loadingSettings.value = true;
@@ -217,16 +212,6 @@ async function saveSetting(key, value) {
   } finally {
     savingKey.value = null;
   }
-}
-
-async function handleProviderChange(newProvider) {
-  if (newProvider === activeProvider.value) return;
-  await saveSetting("llm_provider", newProvider);
-  // Reset the models to sensible defaults for the new provider.
-  const defaultModel = newProvider === "openai" ? "gpt-4o-mini" : "claude-haiku-4-5-20251001";
-  const recapModel = newProvider === "openai" ? "gpt-4o" : "claude-sonnet-4-6";
-  await saveSetting("llm_default_model", defaultModel);
-  await saveSetting("llm_smart_recap_model", recapModel);
 }
 
 function switchTab(tab) {
@@ -416,36 +401,12 @@ onMounted(() => {
         </p>
         <div class="adm-models">
           <Card>
-            <CardHeader
-              icon="zap"
-              title="Provider"
-              subtitle="Who writes the analyses, recaps and repurposed content."
-              :level="2"
-            />
-            <div class="adm-segmented" role="group" aria-label="Provider">
-              <button
-                v-for="provider in PROVIDERS"
-                :key="provider.value"
-                type="button"
-                class="adm-seg siq-fx"
-                :class="{ 'is-on': activeProvider === provider.value }"
-                :aria-pressed="activeProvider === provider.value ? 'true' : 'false'"
-                :disabled="savingKey !== null"
-                @click="handleProviderChange(provider.value)"
-              >
-                {{ provider.label }} <span class="adm-hint">{{ provider.hint }}</span>
-              </button>
-            </div>
-            <p class="adm-muted adm-after">Switching resets both models below to that provider's defaults.</p>
-          </Card>
-
-          <Card>
-            <CardHeader icon="file-text" title="Default model" subtitle="Analyses, repurposed content and translations." :level="2" />
+            <CardHeader icon="file-text" title="Default model" subtitle="Claude. Analyses, repurposed content and translations." :level="2" />
             <label class="adm-field adm-select-field">
               <span class="siq-sr-only">Default model</span>
               <select
                 class="adm-input adm-select"
-                :value="settings.llm_default_model || ''"
+                :value="savedModel('llm_default_model')"
                 :disabled="savingKey !== null"
                 @change="saveSetting('llm_default_model', $event.target.value)"
               >
@@ -462,7 +423,7 @@ onMounted(() => {
               <span class="siq-sr-only">Smart Recap model</span>
               <select
                 class="adm-input adm-select"
-                :value="settings.llm_smart_recap_model || ''"
+                :value="savedModel('llm_smart_recap_model')"
                 :disabled="savingKey !== null"
                 @change="saveSetting('llm_smart_recap_model', $event.target.value)"
               >
@@ -474,7 +435,7 @@ onMounted(() => {
           </Card>
 
           <Card>
-            <CardHeader icon="presentation" title="Cover image model" subtitle="OpenAI Images, whatever the provider above." :level="2" />
+            <CardHeader icon="presentation" title="Cover image model" subtitle="OpenAI Images: the only call StormIQ makes to OpenAI." :level="2" />
             <p class="adm-text adm-after">{{ IMAGE_MODELS.find((model) => model.value === activeImageModel)?.label || activeImageModel }}</p>
             <UiButton
               v-if="settings.image_model && settings.image_model !== activeImageModel"
@@ -794,45 +755,6 @@ onMounted(() => {
   gap: var(--siq-space-4);
 }
 
-.adm-segmented {
-  display: inline-flex;
-  margin-top: var(--siq-space-4);
-  padding: 2px;
-  border: 1px solid var(--siq-border);
-  border-radius: var(--siq-radius-control);
-  background: var(--siq-input);
-}
-
-.adm-seg {
-  min-height: calc(var(--siq-target) - 6px);
-  margin: 0;
-  padding: 0 var(--siq-space-4);
-  border: 0;
-  border-radius: calc(var(--siq-radius-control) - 2px);
-  background: transparent;
-  color: var(--siq-ink-2);
-  font: inherit;
-  font-size: var(--siq-text-ui);
-  line-height: var(--siq-text-ui-lh);
-  font-weight: var(--siq-weight-medium);
-  cursor: pointer;
-}
-
-.adm-seg.is-on {
-  background: var(--siq-selected-bg);
-  color: var(--siq-selected-ink);
-}
-
-.adm-seg:disabled {
-  cursor: progress;
-}
-
-.adm-hint {
-  font-size: var(--siq-text-small);
-  font-weight: var(--siq-weight-regular);
-  color: var(--siq-muted);
-}
-
 @media (max-width: 720px) {
   .adm-title {
     font-size: var(--siq-text-headline);
@@ -849,8 +771,7 @@ onMounted(() => {
 }
 
 @media (forced-colors: active) {
-  .adm-tab.is-current,
-  .adm-seg.is-on {
+  .adm-tab.is-current {
     outline: 2px solid CanvasText;
   }
   .adm-table th,

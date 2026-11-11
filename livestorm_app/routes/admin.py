@@ -72,11 +72,11 @@ def admin_get_settings(_caller: Caller = Depends(require_admin)) -> Dict[str, An
     return {"settings": get_all_settings()}
 
 
-# Settings saved as given (non-empty). `llm_provider` is checked where it is
-# read: llm_client.get_provider ignores any value but anthropic or openai.
-# `image_model` is sent as saved, except that an empty or retired id becomes
-# gpt-image-2 (cover_image.resolve_image_model).
-_PLAIN_SETTING_KEYS = {"llm_provider", "image_model"}
+# Settings saved as given (non-empty). `image_model` is sent as saved, except
+# that an empty or retired id becomes gpt-image-2
+# (cover_image.resolve_image_model). There is no `llm_provider` any more:
+# every text job runs on Claude.
+_PLAIN_SETTING_KEYS = {"image_model"}
 
 
 @router.post("/api/admin/settings")

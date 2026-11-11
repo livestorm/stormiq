@@ -4,15 +4,16 @@ A job's model is the only thing an admin may change. Its effort and token
 budget are code, reviewed against the eval. The model is resolved per job
 (`resolve_model`) from, in order:
 
-1. the per-job setting `llm_model.<provider>.<kind>`;
+1. the per-job setting `llm_model.anthropic.<kind>`;
 2. for the classic outputs only, the older key that names no provider:
-   `llm_default_model` (three jobs) or `llm_smart_recap_model` (Smart Recap).
-   A saved id is used only with the provider it belongs to;
-3. the job's default for the active provider.
+   `llm_default_model` (three jobs) or `llm_smart_recap_model` (Smart Recap);
+3. the job's default.
 
-A saved id that is no longer offered is still used, with a WARNING: swapping
-it silently would change classic outputs. Admin refuses such ids from now on
-(`check_model_setting`).
+Every job runs on Claude (the owner's decision, 2026-11-11). A saved id that
+isn't a Claude model (an OpenAI id saved before then) is skipped, with a
+WARNING, for the next source. A saved Claude id that is no longer offered is
+still used, with a WARNING: swapping it silently would change classic
+outputs. Admin refuses such ids (`check_model_setting`).
 """
 
 from __future__ import annotations
@@ -37,7 +38,7 @@ CacheTtl = Literal["5m", "1h"]
 LEGACY_DEFAULT_SETTING = "llm_default_model"
 LEGACY_RECAP_SETTING = "llm_smart_recap_model"
 PER_JOB_SETTING_PREFIX = "llm_model."
-_PROVIDER_NAMES = {"anthropic": "Anthropic", "openai": "OpenAI"}
+_PROVIDER_NAMES = {"anthropic": "Anthropic"}
 
 # Room for thinking on top of the visible answer, per effort, for models
 # that think by default. A guess until llm_usage holds enough rows per job to calibrate it.
@@ -56,7 +57,6 @@ class JobSpec:
     label: str
     group: Group  # "v1": the v1 Report's jobs; "legacy": the classic outputs
     default_anthropic: str
-    default_openai: Optional[str]  # None: no OpenAI model until the live check
     effort: Effort  # sent only to models that accept it
     answer_tokens: int  # the cap for the visible answer
     legacy_setting: Optional[str] = None  # the older setting that also picks this job's model
@@ -81,39 +81,39 @@ class JobSpec:
     fallbacks: bool = True
 
     def default_model(self, provider: str) -> Optional[str]:
-        return self.default_anthropic if provider == "anthropic" else self.default_openai
+        return self.default_anthropic if provider == "anthropic" else None
 
     def setting_key(self, provider: str) -> str:
         return f"{PER_JOB_SETTING_PREFIX}{provider}.{self.kind}"
 
 
 JOB_SPECS: Tuple[JobSpec, ...] = (
-    # v1 jobs. Nothing runs them yet; their OpenAI models wait for the live check.
+    # v1 jobs.
     # A cut-off answer fails them at once: their budgets already hold thinking headroom.
     # Layouts: the understanding passes share one dossier, so it comes first
     # and is cached; the other jobs send their instructions first, and the
     # chat labels cache them across their batches.
-    JobSpec("profile", "Session profile", "v1", "claude-haiku-5-5", None, "low", 2_000, layout="instructions"),
-    JobSpec("chat_labels", "Chat labels", "v1", "claude-haiku-5-5", None, "low", 8_000, layout="instructions", cache=True),
-    JobSpec("understanding", "Session understanding", "v1", "claude-sonnet-5-5", None, "medium", 32_000,
+    JobSpec("profile", "Session profile", "v1", "claude-haiku-5-5", "low", 2_000, layout="instructions"),
+    JobSpec("chat_labels", "Chat labels", "v1", "claude-haiku-5-5", "low", 8_000, layout="instructions", cache=True),
+    JobSpec("understanding", "Session understanding", "v1", "claude-sonnet-5-5", "medium", 32_000,
             layout="dossier", cache=True),
-    JobSpec("verify_meaning", "Meaning check", "v1", "claude-haiku-5-5", None, "low", 2_000, layout="instructions"),
+    JobSpec("verify_meaning", "Meaning check", "v1", "claude-haiku-5-5", "low", 2_000, layout="instructions"),
     # The classic outputs. Their callers still pass today's max_tokens, and a
     # cut-off answer is retried once, as before.
     # The Follow-up's "Session analysis" (`ai/session_analysis.py`): a v1 job since
-    # November 2026, over the session's brief. No OpenAI model until the live check.
-    JobSpec("overall_analysis", "Session analysis", "v1", "claude-sonnet-5-5", None, "medium", 6_000, layout="dossier"),
+    # November 2026, over the session's brief.
+    JobSpec("overall_analysis", "Session analysis", "v1", "claude-sonnet-5-5", "medium", 6_000, layout="dossier"),
     # The Follow-up's "FAQ" (`ai/faq.py`): the audience's questions and their
     # answers, from the question desk (`record/faq_brief.py`).
-    JobSpec("faq", "FAQ", "v1", "claude-haiku-5-5", None, "low", 4_000, layout="dossier"),
-    JobSpec("deep_analysis", "Deep Analysis", "legacy", "claude-haiku-4-5-20251001", "gpt-4o-mini",
+    JobSpec("faq", "FAQ", "v1", "claude-haiku-5-5", "low", 4_000, layout="dossier"),
+    JobSpec("deep_analysis", "Deep Analysis", "legacy", "claude-haiku-4-5-20251001",
             "medium", 5_000, LEGACY_DEFAULT_SETTING, truncation_retry=True),
-    JobSpec("smart_recap", "Smart Recap", "legacy", "claude-sonnet-4-6", "gpt-5.4-mini",
+    JobSpec("smart_recap", "Smart Recap", "legacy", "claude-sonnet-4-6",
             "low", 900, LEGACY_RECAP_SETTING, truncation_retry=True),
-    JobSpec("content_repurposing", "Content Repurposing", "legacy", "claude-haiku-4-5-20251001", "gpt-4o-mini",
+    JobSpec("content_repurposing", "Content Repurposing", "legacy", "claude-haiku-4-5-20251001",
             "medium", 12_000, LEGACY_DEFAULT_SETTING, truncation_retry=True),
     # French versions of the analyses (6,000 or 8,000 tokens) and of the content bundle (12,000).
-    JobSpec("translation", "Translation", "legacy", "claude-haiku-4-5-20251001", "gpt-4o-mini",
+    JobSpec("translation", "Translation", "legacy", "claude-haiku-4-5-20251001",
             "low", 12_000, LEGACY_DEFAULT_SETTING, truncation_retry=True),
 )
 
@@ -193,8 +193,12 @@ def _read_setting(key: str) -> str:
 
 
 def _saved_choice(spec: JobSpec, provider: str, key: str, saved: str, source: Source) -> Optional[ModelChoice]:
-    """The saved id as a choice, or None when it belongs to the other provider."""
+    """The saved id as a choice, or None when it belongs to another provider
+    (an OpenAI id saved before every job ran on Claude)."""
     caps = catalog_model(saved)
+    if caps is None and not saved.startswith("claude-"):
+        logger.warning("Setting %s names %s, which is not a Claude model: %s uses the next source", key, saved, spec.kind)
+        return None
     if caps is not None and caps.provider != provider:
         logger.warning(
             "Setting %s names %s, an %s model, but the provider is %s: %s uses the next source",
@@ -216,8 +220,7 @@ def resolve_model(kind: str, provider: Optional[str] = None) -> ModelChoice:
         from livestorm_app.llm_client import get_provider
 
         provider = get_provider()
-    # llm_client.call_llm sends anything but "anthropic" to OpenAI.
-    provider = "anthropic" if provider == "anthropic" else "openai"
+    provider = "anthropic"  # the only text provider (`llm_client.get_provider`)
     sources = [(spec.setting_key(provider), "setting")]
     if spec.legacy_setting:
         sources.append((spec.legacy_setting, "legacy_setting"))

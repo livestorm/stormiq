@@ -676,7 +676,7 @@ def test_a_failed_transaction_does_not_poison_the_pool(test_database):
 def settings_db(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", "postgresql://settings-test@localhost/none")
     monkeypatch.setattr(db, "_settings_cache", {})
-    state = {"reads": 0, "value": "anthropic", "fail": False}
+    state = {"reads": 0, "value": "claude-haiku-4-5-20251001", "fail": False}
 
     class Cursor:
         def __enter__(self):
@@ -706,21 +706,21 @@ def settings_db(monkeypatch):
 
 
 def test_settings_are_read_once_per_minute(settings_db, monkeypatch):
-    assert db.get_setting("llm_provider") == "anthropic"
-    assert db.get_setting("llm_provider") == "anthropic"
+    assert db.get_setting("llm_default_model") == "claude-haiku-4-5-20251001"
+    assert db.get_setting("llm_default_model") == "claude-haiku-4-5-20251001"
     assert settings_db["reads"] == 1
     now = db.time.monotonic()
     monkeypatch.setattr(db.time, "monotonic", lambda: now + db.SETTINGS_CACHE_TTL_SECONDS + 1)
-    settings_db["value"] = "openai"
-    assert db.get_setting("llm_provider") == "openai"
+    settings_db["value"] = "claude-sonnet-4-6"
+    assert db.get_setting("llm_default_model") == "claude-sonnet-4-6"
 
 
 def test_a_database_blip_keeps_the_last_known_setting(settings_db, monkeypatch):
-    assert db.get_setting("llm_provider", "default") == "anthropic"
+    assert db.get_setting("llm_default_model", "default") == "claude-haiku-4-5-20251001"
     now = db.time.monotonic()
     monkeypatch.setattr(db.time, "monotonic", lambda: now + db.SETTINGS_CACHE_TTL_SECONDS + 1)
     settings_db["fail"] = True
-    assert db.get_setting("llm_provider", "default") == "anthropic", "a failed read must not switch the provider"
+    assert db.get_setting("llm_default_model", "default") == "claude-haiku-4-5-20251001", "a failed read must not switch the model"
 
 
 # ── Redis: one connection per process ───────────────────────────────────────

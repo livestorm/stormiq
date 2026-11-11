@@ -1,21 +1,14 @@
-"""Provider-agnostic LLM client for text generation.
+"""The LLM client for text generation: Anthropic's Messages API (Claude),
+with the worker's CLAUDE_API_KEY. Every text job runs on Claude since the
+owner's decision of 2026-11-11; the OpenAI text path is gone. Cover images
+still use the OpenAI Images API, in livestorm_app/ai/cover_image.py.
+See docs/providers.md.
 
-Active provider is selected by the `llm_provider` admin setting, else the
-LLM_PROVIDER environment variable:
-  "anthropic" (default) — Anthropic Messages API, reads CLAUDE_API_KEY
-  "openai"              — OpenAI Chat Completions API, reads OPENAI_API_KEY
-
-Cover image generation always uses the OpenAI Images API regardless of
-the provider; that lives in livestorm_app/ai/cover_image.py.
-
-Switching providers needs the matching API key on the worker; no code
-changes. See docs/providers.md.
-
-Each provider adapter returns one `LLMResult`: the text, why the model
-stopped, the model that answered, the request id and the token usage. The
-classic outputs go through `_anthropic_send` and `_openai_send`, which write
-their bodies as they always were; the v1 jobs through `_anthropic_call` and
-`_openai_call`, with a body written by `ai/request.py`. Every answered call is recorded in
+The adapter returns one `LLMResult`: the text, why the model stopped, the
+model that answered, the request id and the token usage. The classic
+outputs go through `_anthropic_send`, which writes their bodies as they
+always were; the v1 jobs through `_anthropic_call`, with a body written by
+`ai/request.py`. Every answered call is recorded in
 `llm_usage` (`ai.usage.record_call`).
 
 Two ways in:
@@ -46,8 +39,7 @@ with the SDK's own retries off, and StormIQ's retry policy around it
 for the server-side fallback), and one whose budget is large streams, stopped
 at a wall-clock deadline (`JobSpec.call_deadline_s`, `_StreamDeadline`); the
 classic outputs never stream, and their request bodies are byte for byte the
-ones the old `requests` transport sent (`_post_message`). OpenAI stays on
-`requests` (`_post_with_retry`). A failed Anthropic call raises
+ones the old `requests` transport sent (`_post_message`). A failed call raises
 `LLMProviderError`, which names the HTTP status and error type only. See
 docs/providers.md.
 """
@@ -66,11 +58,10 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Type, TypeVar
 
 import anthropic
-import requests
 from pydantic import BaseModel, ValidationError
 
 from livestorm_app.ai.models import ModelCaps, catalog_model
-from livestorm_app.ai.request import AnthropicCall, JsonFormat, LLMRequest, anthropic_call, openai_payload
+from livestorm_app.ai.request import AnthropicCall, JsonFormat, LLMRequest, anthropic_call
 from livestorm_app.ai.usage import (
     INVALID_OUTPUT,
     CallContext,
@@ -78,7 +69,6 @@ from livestorm_app.ai.usage import (
     answered_by_fallback,
     anthropic_usage,
     check_org_budget,
-    openai_usage,
     record_call,
     tag_or_none,
 )
@@ -91,36 +81,18 @@ Sent = TypeVar("Sent")
 
 
 def get_provider() -> str:
-    """Return the active LLM provider.
-
-    DB setting 'llm_provider' takes precedence; falls back to the
-    LLM_PROVIDER env var, then to "anthropic".
-    """
-    try:
-        from livestorm_app.db import get_setting
-        db_val = get_setting("llm_provider")
-        if db_val and db_val.strip().lower() in {"anthropic", "openai"}:
-            return db_val.strip().lower()
-    except Exception:
-        pass
-    return (os.getenv("LLM_PROVIDER") or "anthropic").strip().lower()
+    """The text provider: always "anthropic". The `llm_provider` setting and
+    the LLM_PROVIDER variable are no longer read (an "openai" saved before
+    2026-11-11 is ignored)."""
+    return "anthropic"
 
 
 def get_llm_key() -> str:
-    """Return the API key for the active LLM provider.
-
-    Raises RuntimeError if the required env var is missing so callers
-    get a clear error message at job start rather than at HTTP call time.
-    """
-    provider = get_provider()
-    if provider == "anthropic":
-        key = (os.getenv("CLAUDE_API_KEY") or "").strip()
-        if not key:
-            raise RuntimeError("CLAUDE_API_KEY not configured on worker process.")
-        return key
-    key = (os.getenv("OPENAI_API_KEY") or "").strip()
+    """The Anthropic API key. Raises RuntimeError if CLAUDE_API_KEY is missing,
+    so callers get a clear error at job start rather than at HTTP call time."""
+    key = (os.getenv("CLAUDE_API_KEY") or "").strip()
     if not key:
-        raise RuntimeError("OPENAI_API_KEY not configured on worker process.")
+        raise RuntimeError("CLAUDE_API_KEY not configured on worker process.")
     return key
 
 
@@ -215,13 +187,7 @@ TRUNCATION_RETRY_MAX_TOKENS = 16000
 Sender = Callable[..., LLMResult]
 
 
-def _sender(provider: str) -> Sender:
-    return _anthropic_send if provider == "anthropic" else _openai_send
-
-
-def _active_provider() -> str:
-    # Anything but "anthropic" goes to OpenAI, as it always has.
-    return "anthropic" if get_provider() == "anthropic" else "openai"
+PROVIDER = "anthropic"
 
 
 def retry_budget(max_tokens: int, model: str) -> int:
@@ -262,7 +228,7 @@ def call_llm(
     ctx: Optional[CallContext] = None,
     purpose: str = "main",
 ) -> str:
-    """Call the active LLM provider for a classic output and return the generated text.
+    """Call Claude for a classic output and return the generated text.
 
     `messages` may contain role="system" entries — the Anthropic adapter
     extracts them into the top-level `system` parameter automatically. A
@@ -283,14 +249,11 @@ def call_llm(
     automatic job is checked against its org's daily budget
     (`ai.usage.check_org_budget`); a job a user started never is.
     """
-    provider = _active_provider()
-    send = _sender(provider)
-
     def attempt(budget: int, call_purpose: str) -> LLMResult:
         if ctx is not None:
             check_org_budget(ctx.job_kind, ctx.organization_id, model)
-        result = send(api_key, model, messages, temperature, budget)
-        record_call(ctx, result, purpose=call_purpose, provider=provider, model_requested=model, max_tokens=budget)
+        result = _anthropic_send(api_key, model, messages, temperature, budget)
+        record_call(ctx, result, purpose=call_purpose, provider=PROVIDER, model_requested=model, max_tokens=budget)
         if result.stop == "refusal":
             raise LLMRefused(result.refusal_category)
         return result
@@ -311,15 +274,13 @@ def call_llm(
 
 
 def _job_model(kind: str, ctx: CallContext, *, structured: bool):
-    """The job's spec, provider, model row and budget, checked before any paid call.
-    A budget that must stream is sent to Anthropic only: StormIQ's OpenAI
-    calls don't stream."""
+    """The job's spec, provider, model row and budget, checked before any paid call."""
     from livestorm_app.ai.jobs import budget, job_spec, resolve_model
 
     spec = job_spec(kind)
     if ctx is None or ctx.job_kind != spec.kind:
         raise ValueError(f"A {spec.kind} call needs a CallContext for {spec.kind}")
-    provider = _active_provider()
+    provider = PROVIDER
     choice = resolve_model(spec.kind, provider)
     caps: Optional[ModelCaps] = choice.caps
     if caps is None:
@@ -328,12 +289,7 @@ def _job_model(kind: str, ctx: CallContext, *, structured: bool):
         )
     if structured and not caps.structured_outputs:
         raise LLMError(f"{caps.label} can't return structured output, so {spec.label} can't use it.")
-    max_tokens, stream = budget(spec, caps)
-    if stream and provider != "anthropic":
-        raise LLMError(
-            f"{spec.label} needs {max_tokens} output tokens, which must stream; "
-            "StormIQ streams only from Anthropic. Choose an Anthropic model."
-        )
+    max_tokens, _ = budget(spec, caps)
     return spec, provider, caps, max_tokens
 
 
@@ -364,14 +320,10 @@ def _generate(
 
     def attempt(budget: int, call_purpose: str):
         check_org_budget(ctx.job_kind, ctx.organization_id, caps.id)
-        effort: Optional[str] = None
-        if provider == "anthropic":
-            call = anthropic_call(request, caps, budget, json_format)
-            effort = call.effort
-            stream = _must_stream(budget)
-            result = _anthropic_call(api_key, call, stream=stream, deadline_s=spec.call_deadline_s if stream else None)
-        else:  # never a budget that must stream (`_job_model`)
-            result = _openai_call(api_key, openai_payload(request, caps, budget, json_format))
+        call = anthropic_call(request, caps, budget, json_format)
+        effort: Optional[str] = call.effort
+        stream = _must_stream(budget)
+        result = _anthropic_call(api_key, call, stream=stream, deadline_s=spec.call_deadline_s if stream else None)
         value: Any = None
         problem: Optional[str] = None
         if result.stop == "complete":
@@ -422,8 +374,6 @@ def _note_cache_and_fallback(request: LLMRequest, caps: ModelCaps, result: LLMRe
       (`fallbacks: "default"`). Its usage row names the model that answered;
       the declined attempt's own usage is in the row's `usage_raw` only.
     """
-    if provider != "anthropic":
-        return
     if request.expects_cache_read and result.usage.cache_read_tokens == 0:
         logger.warning(
             "LLM call %d of %d for %s read nothing from the prompt cache (model %s, minimum prefix %d tokens, request_id=%s)",
@@ -903,65 +853,6 @@ def _anthropic_result(body: Dict[str, Any], request_id: Optional[str], started: 
     )
 
 
-# ── OpenAI ────────────────────────────────────────────────────────────────────
-
-_OPENAI_STOPS: Dict[str, Stop] = {
-    "stop": "complete",
-    "length": "max_tokens",
-    "content_filter": "refusal",
-}
-
-
-def _openai_send(
-    api_key: str,
-    model: str,
-    messages: List[Dict[str, str]],
-    temperature: Optional[float],
-    max_tokens: int,
-) -> LLMResult:
-    """One Chat Completions call of a classic output. `temperature` None sends none."""
-    token_param = "max_completion_tokens" if str(model or "").startswith("gpt-5") else "max_tokens"
-    payload: Dict[str, Any] = {"model": model}
-    if temperature is not None:
-        payload["temperature"] = temperature
-    payload["messages"] = messages
-    payload[token_param] = max_tokens
-    return _openai_call(api_key, payload)
-
-
-def _openai_call(api_key: str, payload: Dict[str, Any]) -> LLMResult:
-    """One Chat Completions call with a body already written: a classic
-    output's (`_openai_send`) or a v1 job's (`ai.request.openai_payload`). A
-    `message.refusal` is a refusal whatever the finish reason, and so is
-    `content_filter`; a refusal keeps no text, and the refusal's own wording
-    is never kept."""
-    from livestorm_app.config import OPENAI_CHAT_COMPLETIONS_URL
-
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-
-    started = time.monotonic()
-    resp = _post_with_retry(OPENAI_CHAT_COMPLETIONS_URL, headers, payload, provider="openai")
-    body = resp.json()
-    choices = body.get("choices") or []
-    choice = choices[0] if choices and isinstance(choices[0], dict) else {}
-    message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
-    stop_raw = str(choice.get("finish_reason") or "")
-    stop: Stop = "refusal" if message.get("refusal") else _OPENAI_STOPS.get(stop_raw, "other")
-    return LLMResult(
-        text="" if stop == "refusal" else str(message.get("content") or "").strip(),
-        stop=stop,
-        stop_raw=stop_raw,
-        refusal_category=None,
-        model_served=str(body.get("model") or ""),
-        request_id=_header(resp, "x-request-id"),
-        usage=openai_usage(body.get("usage")),
-        duration_ms=_elapsed_ms(started),
-    )
-
-
 # ── Retries ────────────────────────────────────────────────────────────────────
 
 # Rate limits, overload (Anthropic 529) and transient server errors are worth
@@ -970,10 +861,6 @@ RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504, 529})
 LLM_MAX_ATTEMPTS = 4
 LLM_BACKOFF_BASE_SECONDS = 2.0
 LLM_BACKOFF_MAX_SECONDS = 30.0
-# OpenAI's (connect, read). Non-streaming calls send nothing until the whole
-# answer is generated, so the read timeout must cover a 16k-token completion.
-# Anthropic's are ANTHROPIC_TIMEOUT, the same values.
-LLM_REQUEST_TIMEOUT = (10, 300)
 
 
 def _retry_delay(attempt: int, retry_after: str | None = None) -> float:
@@ -993,7 +880,7 @@ def _retry_delay(attempt: int, retry_after: str | None = None) -> float:
 
 
 def _anthropic_retryable(exc: anthropic.APIStatusError) -> bool:
-    """An HTTP error worth retrying: the codes `_post_with_retry` retries (the
+    """An HTTP error worth retrying: RETRYABLE_STATUS_CODES (the
     SDK raises 529 as OverloadedError, which is not an InternalServerError),
     or an `overloaded_error` event that opened a stream."""
     return exc.status_code in RETRYABLE_STATUS_CODES or exc.type == "overloaded_error"
@@ -1001,7 +888,6 @@ def _anthropic_retryable(exc: anthropic.APIStatusError) -> bool:
 
 def _with_transport_retry(send: Callable[[], Sent], max_attempts: int = LLM_MAX_ATTEMPTS) -> Sent:
     """Call Anthropic through the SDK (`send`), retrying transient failures.
-    The same policy as `_post_with_retry`, read from the SDK's errors.
 
     Retried: RETRYABLE_STATUS_CODES and connection errors. These almost
     always mean no answer was produced, but not always: a gateway 502/504
@@ -1041,49 +927,4 @@ def _with_transport_retry(send: Callable[[], Sent], max_attempts: int = LLM_MAX_
                 attempt + 1, max_attempts, type(exc.__cause__ or exc).__name__, wait,
             )
         time.sleep(wait)
-    raise AssertionError("unreachable: the last attempt returns or raises")
-
-
-def _post_with_retry(
-    url: str,
-    headers: Dict[str, str],
-    payload: Dict[str, Any],
-    provider: str,
-    max_attempts: int = LLM_MAX_ATTEMPTS,
-) -> requests.Response:
-    """POST to the provider (OpenAI; Anthropic goes through
-    `_with_transport_retry`), retrying transient failures.
-
-    Retried: RETRYABLE_STATUS_CODES and connection errors. These almost
-    always mean no answer was produced, but not always: a gateway 502/504
-    or a connection reset after the request was sent can hide an answer
-    that was generated and billed, and the retry then pays once more. That
-    rare double charge is accepted over failing the whole job. Not retried:
-    a read timeout, where the model is most likely still generating (and
-    billing) the answer; and any other 4xx, which would fail again.
-    """
-    for attempt in range(max_attempts):
-        last_attempt = attempt == max_attempts - 1
-        try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=LLM_REQUEST_TIMEOUT)
-        except requests.ConnectionError as exc:
-            if last_attempt:
-                raise
-            wait = _retry_delay(attempt)
-            logger.warning(
-                "%s connection error on attempt %d/%d (%s) — retrying in %.1fs",
-                provider.capitalize(), attempt + 1, max_attempts, type(exc).__name__, wait,
-            )
-            time.sleep(wait)
-            continue
-        if resp.status_code in RETRYABLE_STATUS_CODES and not last_attempt:
-            wait = _retry_delay(attempt, resp.headers.get("Retry-After"))
-            logger.warning(
-                "%s HTTP %d on attempt %d/%d — retrying in %.1fs",
-                provider.capitalize(), resp.status_code, attempt + 1, max_attempts, wait,
-            )
-            time.sleep(wait)
-            continue
-        resp.raise_for_status()
-        return resp
     raise AssertionError("unreachable: the last attempt returns or raises")

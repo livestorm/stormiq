@@ -36,11 +36,10 @@ Replace the markdown blob and its regex section parser ([ai-outputs.md](ai-outpu
 
 ## 4. Models
 
-- Replace the four OpenAI text models before OpenAI shuts them down on 2027-01-14 ([providers.md](providers.md#choosing-the-provider-and-models)).
 - Offer the Claude models that think by default (Claude 5 and later) for the classic outputs once each has a larger token budget and sends its effort. The catalog already offers the 5.5 models for the v1 jobs ([providers.md](providers.md#the-model-catalog)).
 - Admin: one model per job, read from the server (`llm_model.<provider>.<kind>` is saved and used, but Admin doesn't show it yet).
 - Admin: usage and cost per day, job and model, read from `llm_usage` (every text-model call is logged there; nothing shows it yet).
-- Set `ORG_DAILY_LLM_BUDGET_USD` before the first automatic text job ships, and fill the OpenAI prices first if that job may run on OpenAI: with a budget set, an automatic job never calls an unpriced model ([providers.md](providers.md#usage-and-the-daily-budget)).
+- Set `ORG_DAILY_LLM_BUDGET_USD` before the first automatic text job ships: with a budget set, an automatic job never calls an unpriced model ([providers.md](providers.md#usage-and-the-daily-budget)).
 - Count what a declined attempt cost when the server-side fallback answers: the usage row's tokens and cost are the answering attempt's alone, and the declined one is only in `usage_raw.iterations`, so the daily budget doesn't count it ([providers.md](providers.md#request-layouts-and-caching)).
 - Record the tokens of an Anthropic stream that fails or passes its deadline after its first event: they may be billed, but the call leaves no `llm_usage` row, so the daily budget doesn't count them ([providers.md](providers.md#the-anthropic-sdk)).
 - Ask the classic content bundle for its JSON with a schema (`llm_client.generate_json`) instead of in the prompt, which would drop the "incomplete JSON" retry ([ai-outputs.md](ai-outputs.md#content-repurposing)).

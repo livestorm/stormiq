@@ -7,13 +7,12 @@ The services StormIQ calls, how models are chosen, and the timeout and retry rul
 | **Livestorm REST API** | session, event, chat, questions, events list; a session's people and the workspace's people attributes ([below](#livestorm-people)) | [`livestorm/client.py`](../livestorm_app/livestorm/client.py) | the user's OAuth token (or `LS_API_KEY` in local-dev mode) |
 | **Livestorm OAuth** | sign-in, token refresh, `/me` | [`oauth_client.py`](../livestorm_app/oauth_client.py) | OAuth client id and secret |
 | **Gladia v2 (pre-recorded)** | transcription with diarization, named entities, sentences and subtitles; the transcriber also fetches the session's recordings from Livestorm | [`gladia/transcriber.py`](../livestorm_app/gladia/transcriber.py) | `GLADIA_KEY` (worker only) |
-| **Anthropic** (default) | overall and deep analysis, Smart Recap, content repurposing, translation | [`llm_client.py`](../livestorm_app/llm_client.py) | `CLAUDE_API_KEY` |
-| **OpenAI Chat Completions** (optional) | the same flows, when the provider is `openai` | [`llm_client.py`](../livestorm_app/llm_client.py) | `OPENAI_API_KEY` |
-| **OpenAI Images** | cover images, whatever the text provider | [`ai/cover_image.py`](../livestorm_app/ai/cover_image.py) | `OPENAI_API_KEY` |
+| **Anthropic** | every text job: the v1 jobs, overall and deep analysis, Smart Recap, content repurposing, translation | [`llm_client.py`](../livestorm_app/llm_client.py) | `CLAUDE_API_KEY` |
+| **OpenAI Images** | cover images only | [`ai/cover_image.py`](../livestorm_app/ai/cover_image.py) | `OPENAI_API_KEY` |
 
 ## Choosing the provider and models
 
-The text provider is the `llm_provider` admin setting (editable at `/admin`), then the `LLM_PROVIDER` env var, then `anthropic`. Switching provider needs the matching key on the worker.
+Every text job runs on Claude (the owner's decision, 2026-11-11). There is no provider to choose: `llm_client.get_provider` always answers `anthropic`, and an `llm_provider` setting or `LLM_PROVIDER` variable saved before then is ignored. OpenAI is called only for cover images ([below](#what-admin-may-save)).
 
 ### The model catalog
 
@@ -22,31 +21,31 @@ The text provider is the `llm_provider` admin setting (editable at `/admin`), th
 | Status | Chosen for | Models |
 |---|---|---|
 | `offered` | the v1 jobs | Claude Haiku 5.5, Sonnet 5.5, Opus 5.5 |
-| `legacy` | the classic outputs | Claude Haiku 4.5, Sonnet 4.6, Opus 4.8; gpt-4o-mini, gpt-4o, gpt-4.1-mini, gpt-4.1, gpt-5.4-mini |
+| `legacy` | the classic outputs | Claude Haiku 4.5, Sonnet 4.6, Opus 4.8 |
 | `hidden` | nothing, but a setting saved earlier still works | Claude Opus 4.7 (Admin offered it until Opus 4.8 replaced it) |
 
 The Claude 5.5 models think by default, and thinking counts toward `max_tokens`, so they are offered only where the budget has room for it. From Claude 5, the catalog lists only the 5.5 models, on purpose: Opus 5, Sonnet 5, Fable 5 and Fable 5.1 have no row, so Admin refuses them under every key. A model gets a row when a job needs it. The classic outputs' budgets (900 tokens for Smart Recap, 2,500 for the overall analysis) are sized for models that answer directly.
 
-The OpenAI rows are unverified until a live check; their `temperature` and token parameter match what the adapter sends today, and they have no price yet. OpenAI shuts gpt-4o-mini, gpt-4o, gpt-4.1-mini and gpt-4.1 down on 2027-01-14 ([deprecations](https://developers.openai.com/api/docs/deprecations)); they must be replaced before then.
+The OpenAI text models (gpt-4o-mini, gpt-4o, gpt-4.1-mini, gpt-4.1, gpt-5.4-mini) left the catalog when every job moved to Claude; OpenAI shuts the first four down on 2027-01-14 anyway.
 
 ### One model per job
 
-[`ai/jobs.py`](../livestorm_app/ai/jobs.py) holds one `JobSpec` per AI job kind: its default model per provider, its effort and its answer budget. Only the model can be changed; effort and budget are code.
+[`ai/jobs.py`](../livestorm_app/ai/jobs.py) holds one `JobSpec` per AI job kind: its default model, its effort and its answer budget. Only the model can be changed; effort and budget are code.
 
-| Job kind | Used for | Default model (Anthropic · OpenAI) | Effort | Answer tokens |
+| Job kind | Used for | Default model | Effort | Answer tokens |
 |---|---|---|---|---|
-| `overall_analysis` | v1: the Session analysis, over the session's brief | `claude-sonnet-5-5` · none yet | medium | 6,000 |
-| `faq` | v1: the FAQ, over the question desk | `claude-haiku-5-5` · none yet | low | 4,000 |
-| `deep_analysis` | Deep Analysis | `claude-haiku-4-5-20251001` · `gpt-4o-mini` | medium | 5,000 |
-| `smart_recap` | Smart Recap, every tone | `claude-sonnet-4-6` · `gpt-5.4-mini` | low | 900 |
-| `content_repurposing` | Content Repurposing | `claude-haiku-4-5-20251001` · `gpt-4o-mini` | medium | 12,000 |
-| `translation` | the French versions of the Session analysis, Deep Analysis and Content Repurposing | `claude-haiku-4-5-20251001` · `gpt-4o-mini` | low | 6,000, 8,000 (deep) or 12,000 (content) |
-| `profile` | v1: the session profile | `claude-haiku-5-5` · none yet | low | 2,000 |
-| `chat_labels` | v1: chat labels, per batch | `claude-haiku-5-5` · none yet | low | 8,000 |
-| `understanding` | v1: the understanding job, one call per session analysis | `claude-sonnet-5-5` · none yet | medium | 32,000 |
-| `verify_meaning` | v1: the meaning check | `claude-haiku-5-5` · none yet | low | 2,000 |
+| `overall_analysis` | v1: the Session analysis, over the session's brief | `claude-sonnet-5-5` | medium | 6,000 |
+| `faq` | v1: the FAQ, over the question desk | `claude-haiku-5-5` | low | 4,000 |
+| `deep_analysis` | Deep Analysis | `claude-haiku-4-5-20251001` | medium | 5,000 |
+| `smart_recap` | Smart Recap, every tone | `claude-sonnet-4-6` | low | 900 |
+| `content_repurposing` | Content Repurposing | `claude-haiku-4-5-20251001` | medium | 12,000 |
+| `translation` | the French versions of the Session analysis, Deep Analysis and Content Repurposing | `claude-haiku-4-5-20251001` | low | 6,000, 8,000 (deep) or 12,000 (content) |
+| `profile` | v1: the session profile | `claude-haiku-5-5` | low | 2,000 |
+| `chat_labels` | v1: chat labels, per batch | `claude-haiku-5-5` | low | 8,000 |
+| `understanding` | v1: the understanding job, one call per session analysis | `claude-sonnet-5-5` | medium | 32,000 |
+| `verify_meaning` | v1: the meaning check | `claude-haiku-5-5` | low | 2,000 |
 
-Smart Recap deliberately uses a stronger model than the other classic outputs. The classic outputs still send no effort, and their callers pass the answer tokens above as `max_tokens`. A v1 job sends its effort to every model that takes one ([Request layouts and caching](#request-layouts-and-caching)). The session analysis runs `chat_labels` and `understanding`; `profile` and `verify_meaning` run nowhere yet. No v1 job has an OpenAI model until the live check, so with OpenAI chosen in Admin the analysis fails with "no model for this job" and stores nothing new.
+Smart Recap deliberately uses a stronger model than the other classic outputs. The classic outputs still send no effort, and their callers pass the answer tokens above as `max_tokens`. A v1 job sends its effort to every model that takes one ([Request layouts and caching](#request-layouts-and-caching)). The session analysis runs `chat_labels` and `understanding`; `profile` and `verify_meaning` run nowhere yet.
 
 A v1 job's spec also sets how its request is laid out (`layout`), whether its stable prefix may be cached (`cache`, with `cache_ttl`), and whether it asks for the server-side fallback (`fallbacks`):
 
@@ -58,67 +57,63 @@ A v1 job's spec also sets how its request is laid out (`layout`), whether its st
 
 A spec also says whether an answer cut off at the token limit is asked for once more (`truncation_retry`): yes for every classic output, as before; no for the v1 jobs, whose budgets already hold thinking headroom ([Structured outputs and refusals](#structured-outputs-and-refusals)).
 
-**Budget** (`ai.jobs.budget`). A job's `max_tokens` is its answer tokens, plus room for thinking when the model thinks by default (`THINKING_HEADROOM`: 4,000 at low effort, 16,000 at medium, 32,000 at high, 48,000 at xhigh, 64,000 at max), capped at the model's largest `max_tokens`. Above 16,000, `budget` marks the call to stream, and `generate_text` and `generate_json` stream it from Anthropic, stopped at the job's deadline ([The Anthropic SDK](#the-anthropic-sdk)). StormIQ's OpenAI calls don't stream, so a v1 call that must stream is refused before it is sent on OpenAI. The classic outputs never stream. The headroom is a guess until `llm_usage` holds enough rows per job to calibrate it. On their defaults, the v1 jobs get 6,000, 12,000, 48,000 (streamed) and 6,000.
+**Budget** (`ai.jobs.budget`). A job's `max_tokens` is its answer tokens, plus room for thinking when the model thinks by default (`THINKING_HEADROOM`: 4,000 at low effort, 16,000 at medium, 32,000 at high, 48,000 at xhigh, 64,000 at max), capped at the model's largest `max_tokens`. Above 16,000, `budget` marks the call to stream, and `generate_text` and `generate_json` stream it from Anthropic, stopped at the job's deadline ([The Anthropic SDK](#the-anthropic-sdk)). The classic outputs never stream. The headroom is a guess until `llm_usage` holds enough rows per job to calibrate it. On their defaults, the v1 jobs get 6,000, 12,000, 48,000 (streamed) and 6,000.
 
 ### Which model a job uses
 
 `ai.jobs.resolve_model` (and `llm_client.get_llm_model(kind)`, which the classic runners call) takes the first of:
 
-1. the per-job setting `llm_model.<provider>.<kind>`, for example `llm_model.anthropic.smart_recap`;
-2. for the classic outputs only, the older key that names no provider: `llm_default_model` (four jobs: overall and deep analysis, content repurposing, translation) or `llm_smart_recap_model` (Smart Recap). These keys don't name a provider, so a saved id is used only while its provider is active. Under the other provider, the job skips it and logs a WARNING;
-3. the job's default for the active provider.
+1. the per-job setting `llm_model.anthropic.<kind>`, for example `llm_model.anthropic.smart_recap`;
+2. for the classic outputs only, the older key that names no provider: `llm_default_model` (four jobs: overall and deep analysis, content repurposing, translation) or `llm_smart_recap_model` (Smart Recap);
+3. the job's default.
 
-A saved id that is not offered for the job (a setting saved before the catalog, or Opus 4.7) is still used, with a WARNING in the worker log: swapping it silently would change classic outputs. An id the catalog doesn't know is used with the active provider, as before. A v1 job on OpenAI fails with "No OpenAI model is set up for … yet."
+A saved id that isn't a Claude model (an OpenAI id saved before 2026-11-11) is skipped with a WARNING, and the next source is used. A saved Claude id that is not offered for the job (a setting saved before the catalog, or Opus 4.7) is still used, with a WARNING in the worker log: swapping it silently would change classic outputs.
 
 ### What Admin may save
 
 `POST /api/admin/settings` checks model settings against the catalog (`ai.jobs.check_model_setting`) and refuses anything else with 400 and a message listing the choices:
 
-- `llm_model.<provider>.<kind>` takes a model offered for that job on that provider.
-- `llm_default_model` and `llm_smart_recap_model` take a classic-output model of either provider.
-- `llm_provider` is saved as given and checked where it is read: `llm_client.get_provider` ignores any value but `anthropic` or `openai` and falls back to `LLM_PROVIDER`.
+- `llm_model.anthropic.<kind>` takes a model offered for that job.
+- `llm_default_model` and `llm_smart_recap_model` take a classic-output Claude model.
+- `llm_provider` is refused: there is no provider to choose.
 - `image_model` is saved and sent as given, except that an empty or retired id becomes gpt-image-2 (`cover_image.resolve_image_model`).
 
 The Admin page still has its own lists (`frontend/src/views/AdminView.vue`), and the server accepts every entry (`tests/test_model_catalog.py` checks this):
 
-- **Anthropic:** Claude Haiku 4.5 and Sonnet 4.6 (the defaults) and Opus 4.8.
-- **OpenAI:** gpt-4o-mini, gpt-4o, gpt-4.1-mini and gpt-4.1.
+- **Claude:** Haiku 4.5 and Sonnet 4.6 (the defaults) and Opus 4.8. A saved model that isn't one of these shows as unset.
 - **Images:** gpt-image-2. gpt-image-1 was shut down on 2026-10-23: `cover_image.resolve_image_model` sends gpt-image-2 when the setting or `IMAGE_MODEL` still names it, and Admin shows gpt-image-2 as active.
 
 The image model is the `image_model` setting, then `IMAGE_MODEL`, then `gpt-image-2`. Image size and quality come from `IMAGE_SIZE` (default `1536x1024`) and `IMAGE_QUALITY` (default `high`).
 
-**Temperature.** Every classic output asks for a low `temperature` (0.2, or 0.1 for translation). Claude 4.7 and later models reject a non-default temperature, so `llm_client._anthropic_send` sends it only when `llm_client.anthropic_accepts_temperature` says the model accepts it. A catalog model answers from its `temperature_ok`: Haiku 4.5 and Sonnet 4.6 accept it, the others don't. An id outside the catalog keeps the rule by version (`llm_client.claude_version_accepts_temperature`): Claude models up to 4.6 accept it, and any other or unknown id gets no temperature and samples at the default. This holds only on the API version the app sends (`config.ANTHROPIC_API_VERSION`, `2023-06-01`): from `2026-10-21` on, every model rejects `temperature`, and the helper then sends it to none. The SDK sends the version: `anthropic` 1.x sends `2023-06-01`, 2.x sends `2026-10-21`, so the dependency stays below 2 while a classic output sends `temperature` (a test checks the SDK sends `config.ANTHROPIC_API_VERSION`). The classic outputs' request body, `temperature` included, is written by `llm_client._post_message`, not by the SDK ([The Anthropic SDK](#the-anthropic-sdk)). The OpenAI adapter always sends it.
+**Temperature.** Every classic output asks for a low `temperature` (0.2, or 0.1 for translation). Claude 4.7 and later models reject a non-default temperature, so `llm_client._anthropic_send` sends it only when `llm_client.anthropic_accepts_temperature` says the model accepts it. A catalog model answers from its `temperature_ok`: Haiku 4.5 and Sonnet 4.6 accept it, the others don't. An id outside the catalog keeps the rule by version (`llm_client.claude_version_accepts_temperature`): Claude models up to 4.6 accept it, and any other or unknown id gets no temperature and samples at the default. This holds only on the API version the app sends (`config.ANTHROPIC_API_VERSION`, `2023-06-01`): from `2026-10-21` on, every model rejects `temperature`, and the helper then sends it to none. The SDK sends the version: `anthropic` 1.x sends `2023-06-01`, 2.x sends `2026-10-21`, so the dependency stays below 2 while a classic output sends `temperature` (a test checks the SDK sends `config.ANTHROPIC_API_VERSION`). The classic outputs' request body, `temperature` included, is written by `llm_client._post_message`, not by the SDK ([The Anthropic SDK](#the-anthropic-sdk)).
 
 ### Structured outputs and refusals
 
-Each adapter returns one `LLMResult`: the text, why the model stopped (`complete`, `max_tokens`, `refusal` or `other`, plus the provider's own value), Anthropic's refusal category, the model that answered, the request id (`request-id`, or OpenAI's `x-request-id`) and the token usage. There are two ways to call a model:
+Each adapter returns one `LLMResult`: the text, why the model stopped (`complete`, `max_tokens`, `refusal` or `other`, plus the API's own value), the refusal category, the model that answered, the request id (`request-id`) and the token usage. There are two ways to call a model:
 
-- `llm_client.call_llm`, for the classic outputs (adapters `llm_client._anthropic_send` and `_openai_send`). Each passes its own model, messages, `temperature` and `max_tokens`, and gets the text back. Their requests don't change.
-- `llm_client.generate_text(kind, request, …)` and `llm_client.generate_json(kind, schema, request, …)`, for the v1 jobs (adapters `llm_client._anthropic_call` and `_openai_call`). `request` is built for the job with `ai.request.build_request` ([Request layouts and caching](#request-layouts-and-caching)); anything else, or a request built for another job, is refused. The model comes from the job (`ai.jobs.resolve_model`), `max_tokens` from its budget (`ai.jobs.budget`), and no `temperature` is sent. A model outside the catalog, or a JSON step on a model whose row doesn't accept structured outputs (`ModelCaps.structured_outputs`), is refused before any paid call. Nothing calls them yet.
+- `llm_client.call_llm`, for the classic outputs (adapter `llm_client._anthropic_send`). Each passes its own model, messages, `temperature` and `max_tokens`, and gets the text back. Their requests don't change.
+- `llm_client.generate_text(kind, request, …)` and `llm_client.generate_json(kind, schema, request, …)`, for the v1 jobs (adapter `llm_client._anthropic_call`). `request` is built for the job with `ai.request.build_request` ([Request layouts and caching](#request-layouts-and-caching)); anything else, or a request built for another job, is refused. The model comes from the job (`ai.jobs.resolve_model`), `max_tokens` from its budget (`ai.jobs.budget`), and no `temperature` is sent. A model outside the catalog, or a JSON step on a model whose row doesn't accept structured outputs (`ModelCaps.structured_outputs`), is refused before any paid call. Nothing calls them yet.
 
-**Why the model stopped** is checked in this order, on both providers:
+**Why the model stopped** is checked in this order:
 
-| Stop | Anthropic | OpenAI | What happens |
-|---|---|---|---|
-| refusal | `stop_reason: "refusal"`; `stop_details.category` when given (it can be null) | `message.refusal` set, or `finish_reason: "content_filter"` | `LLMRefused` at once: "The model declined this session. Nothing was saved." Never retried; partial text and OpenAI's refusal wording are dropped |
-| cut off | `stop_reason: "max_tokens"` | `finish_reason: "length"` | asked once more at double the budget if the job's spec says so (`JobSpec.truncation_retry`; `llm_client.retry_budget` caps it at 16,000 and the model's limit), else `LLMOutputTruncated` |
-| complete | `end_turn` or `stop_sequence` | `stop` | the text; a JSON step validates it against its schema |
-| anything else | `pause_turn`, `tool_use`, … | `tool_calls`, … | `call_llm` returns the text as before; `generate_text` and `generate_json` raise `LLMInvalidOutput` |
+| Stop | Anthropic | What happens |
+|---|---|---|
+| refusal | `stop_reason: "refusal"`; `stop_details.category` when given (it can be null) | `LLMRefused` at once: "The model declined this session. Nothing was saved." Never retried; partial text is dropped |
+| cut off | `stop_reason: "max_tokens"` | asked once more at double the budget if the job's spec says so (`JobSpec.truncation_retry`; `llm_client.retry_budget` caps it at 16,000 and the model's limit), else `LLMOutputTruncated` |
+| complete | `end_turn` or `stop_sequence` | the text; a JSON step validates it against its schema |
+| anything else | `pause_turn`, `tool_use`, … | `call_llm` returns the text as before; `generate_text` and `generate_json` raise `LLMInvalidOutput` |
 
 The text is read from the `text` blocks only, so a leading `thinking` block (the 5.5 models may send an empty one) or a fallback block is never part of the answer. The refusal category is kept only when it is a short tag, and only in the usage row and its log line, never in the message the user sees. No server-side fallback is sent for refusals yet. The owner chose one for the v1 jobs on Sonnet and Opus 5.5; it comes with the v1 request layouts. Haiku 5.5 has none.
 
-**JSON steps.** A JSON step's schema is a Pydantic model registered with `ai.schemas.json_schema`. Registering builds its strict JSON schema at import (`ai.schemas.strict_json_schema`), so an unsupported model fails the import rather than a paid call. The schema is sent as:
+**JSON steps.** A JSON step's schema is a Pydantic model registered with `ai.schemas.json_schema`. Registering builds its strict JSON schema at import (`ai.schemas.strict_json_schema`), so an unsupported model fails the import rather than a paid call. The schema is sent as `output_config: {format: {type: "json_schema", schema}}`, with no beta header.
 
-- Anthropic: `output_config: {format: {type: "json_schema", schema}}`, with no beta header;
-- OpenAI: `response_format: {type: "json_schema", json_schema: {name, strict: true, schema}}`.
-
-The strict schema is a subset of JSON Schema that both providers accept. StormIQ chose this common subset; each provider accepts a little more. Every object closes (`additionalProperties: false`) and requires all its fields, and an optional field is `X | None` without a default. Nested models are written out in place, with no `$ref`: the providers accept references, but inlining keeps the schema simple and makes a recursive model easy to refuse. Recursion, free-form objects (`dict[str, X]`), tuples and untyped values are refused. Keywords outside the subset are left out of what is sent: bounds such as `minimum`, `maximum`, `minLength`, `maxLength`, `pattern`, `minItems` and `maxItems`, and `format` and `title`. Pydantic checks them on the answer. The answer must parse and validate against the full model (`model_validate_json`), or `LLMInvalidOutput` is raised. The error names how many checks failed and their kinds, never the answer's text.
+The strict schema is a subset of JSON Schema the API accepts; the API accepts a little more. Every object closes (`additionalProperties: false`) and requires all its fields, and an optional field is `X | None` without a default. Nested models are written out in place, with no `$ref`: the providers accept references, but inlining keeps the schema simple and makes a recursive model easy to refuse. Recursion, free-form objects (`dict[str, X]`), tuples and untyped values are refused. Keywords outside the subset are left out of what is sent: bounds such as `minimum`, `maximum`, `minLength`, `maxLength`, `pattern`, `minItems` and `maxItems`, and `format` and `title`. Pydantic checks them on the answer. The answer must parse and validate against the full model (`model_validate_json`), or `LLMInvalidOutput` is raised. The error names how many checks failed and their kinds, never the answer's text.
 
 A refusal or a cut-off raises before validation, so neither becomes `LLMInvalidOutput`. A complete answer can still fail: it can come back empty, or break a bound that only Pydantic checks, since the model never sees it. There is no repair call, so such an answer fails the step. Put a bound on a JSON step only when breaking it should fail the job.
 
 ### Request layouts and caching
 
-A v1 job never hands a model a list of messages. It builds a request with `ai.request.build_request(kind, …)`, and [`ai/request.py`](../livestorm_app/ai/request.py) writes it for the provider (`anthropic_call`, `openai_payload`). The job's spec picks one of three layouts:
+A v1 job never hands a model a list of messages. It builds a request with `ai.request.build_request(kind, …)`, and [`ai/request.py`](../livestorm_app/ai/request.py) writes it for the Messages API (`anthropic_call`). The job's spec picks one of three layouts:
 
 | Layout | What comes first | Then | Used by |
 |---|---|---|---|
@@ -146,25 +141,24 @@ A v1 job never hands a model a list of messages. It builds a request with `ai.re
 | `fallbacks` | the model accepts the server-side fallback (`server_fallback`: Sonnet 5.5 and Opus 5.5, never Haiku 5.5) and the spec keeps it on | `"default"`, with the beta `server-side-fallback-2026-07-01` |
 | `temperature` | never | |
 
-OpenAI gets the same order (the dossier first, so its automatic prefix cache sees the same prefix; the instructions after it as a `system` message), the token parameter of the model's row, no `temperature` and no effort.
-
 **The server-side fallback.** With `fallbacks: "default"`, a request the model declines is answered by the fallback model Anthropic recommends for that refusal category, in the same call. On Sonnet 5.5 only some categories are retried, so a refusal can still come back; it is handled as any refusal. When the fallback answers, the usage row names the model that answered (`model_served`), `usage_raw.iterations` lists both attempts, and `llm_client` logs a WARNING. The row's token counts and cost are the answering attempt's alone: what the declined attempt cost is not in the estimate ([roadmap](roadmap.md#4-models)).
 
 **Hashes.** Each v1 call's usage row holds the `effort` it sent, a `prompt_hash` (the SHA-256 of the layout, the system text, the instructions and the answer's schema: the same for every session until a prompt or a schema changes) and, for a dossier call, the `dossier_hash`. They let usage be compared before and after a prompt change, and a run's calls be matched to one dossier.
 
 ### Usage and the daily budget
 
-`llm_client` records every answered text-model call, the truncation retry included, as one `llm_usage` row and one log line (`ai.usage.record_call`; [data-model.md](data-model.md#llm_usage), [operations.md](operations.md#observability)). The two providers' usage objects are normalised to the same counts (`ai.usage.anthropic_usage`, `ai.usage.openai_usage`):
+`llm_client` records every answered text-model call, the truncation retry included, as one `llm_usage` row and one log line (`ai.usage.record_call`; [data-model.md](data-model.md#llm_usage), [operations.md](operations.md#observability)). The API's usage object is read into counts (`ai.usage.anthropic_usage`):
 
-| Count | Anthropic | OpenAI |
-|---|---|---|
-| uncached input | `input_tokens` | `prompt_tokens` minus `cached_tokens` |
-| cache read | `cache_read_input_tokens` | `prompt_tokens_details.cached_tokens` |
-| cache write (and its 1-hour part) | `cache_creation_input_tokens` (`cache_creation.ephemeral_1h_input_tokens`) | 0 |
-| output, thinking included | `output_tokens` | `completion_tokens` |
-| reasoning | none | `completion_tokens_details.reasoning_tokens` |
+| Count | Field |
+|---|---|
+| uncached input | `input_tokens` |
+| cache read | `cache_read_input_tokens` |
+| cache write (and its 1-hour part) | `cache_creation_input_tokens` (`cache_creation.ephemeral_1h_input_tokens`) |
+| output, thinking included | `output_tokens` |
 
-The cost is estimated when the row is written, from the price of the model that answered (`ai.usage.estimate_cost_usd_micros`); a served id outside the catalog is priced as the model asked for. A model with no price in the catalog (the OpenAI rows) gets no cost; its tokens are still counted.
+Rows written by OpenAI calls before 2026-11-11 keep their `provider` and `reasoning_tokens`.
+
+The cost is estimated when the row is written, from the price of the model that answered (`ai.usage.estimate_cost_usd_micros`); a served id outside the catalog is priced as the model asked for. A model with no price in the catalog gets no cost; its tokens are still counted.
 
 The cover image call (OpenAI Images, `cover_image.generate_cover_image_with_openai`) doesn't go through `llm_client`. It leaves no `llm_usage` row and isn't held to the daily budget, although the worker starts it on its own after a Professional Smart Recap ([jobs.md](jobs.md#cover-images)). Logging it is on the [roadmap](roadmap.md#4-models).
 
@@ -172,7 +166,7 @@ The cover image call (OpenAI Images, `cover_image.generate_cover_image_with_open
 
 - An automatic job on a session with no organization never runs: there is nobody to charge, and the spend is never summed over every org (`db.llm_spend_since` refuses a blank scope).
 - Unset means no limit. A value that isn't a dollar amount stops automatic jobs until it is fixed.
-- With a budget set, the model must have a price in the catalog: an unpriced one (every OpenAI model today) would add nothing to the spend, so an automatic job doesn't call it.
+- With a budget set, the model must have a price in the catalog: an unpriced one would add nothing to the spend, so an automatic job doesn't call it.
 - Otherwise the org's estimated spend since midnight UTC must be under the budget. The spend sums every row of the org, user-started jobs included; rows without a cost count 0. If the spend can't be read, the job doesn't run.
 
 ## Timeouts and retries
@@ -182,7 +176,6 @@ Every outbound call has a timeout. Retries are limited to failures that almost a
 | Call | Timeout | Retried on | Not retried |
 |---|---|---|---|
 | Anthropic (the SDK, `llm_client._with_transport_retry`) | 10 s connect, 300 s for the answer or between two chunks of a stream; a stream also stops at its job's wall-clock deadline (600 s) | 429, 500, 502, 503, 504, 529 and connection errors; a stream only before its first event; up to 4 attempts, exponential backoff with jitter, `Retry-After` honoured (capped at 30 s) | every timeout, connect timeouts included; a stream after its first event; other 4xx |
-| OpenAI (`llm_client._post_with_retry`) | 10 s connect, 300 s read | 429, 500, 502, 503, 504, 529 and connection errors, connect timeouts included; up to 4 attempts, the same backoff | read timeouts (the model may still be generating, and billing, that answer); other 4xx |
 | Livestorm API (`livestorm.client.livestorm_get`, all GETs) | 10 s connect, 30 s read | 429, 5xx and connection errors; 3 retries, backoff 0/1/2 s, `Retry-After` capped at 10 s | other 4xx |
 | Gladia JSON calls (`transcriber._urlopen_json`) | 60 s socket | status polls ride out up to 4 consecutive timeouts, 429s or 5xx; the Livestorm recordings GET gets up to 3 attempts | starting a transcription (a POST: a retry could pay twice); 4xx |
 | Gladia upload, recording download | 120 s, 60 s socket | — | — |
@@ -197,7 +190,7 @@ The chat call asks for `include=people`, so each message carries its author's pe
 
 ### The Anthropic SDK
 
-Anthropic calls go through the official Python SDK (`anthropic`, pinned below 2: [operations.md](operations.md#dependencies)); OpenAI calls stay on `requests`.
+Anthropic calls go through the official Python SDK (`anthropic`, pinned below 2: [operations.md](operations.md#dependencies)).
 
 - **One client per process** (`llm_client._anthropic_client`), built on first use. The worker passes the key it read from its own environment, and the client is given the key and the host (`config.ANTHROPIC_BASE_URL`) explicitly, so the SDK never reads `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL` or a local profile. The SDK would still add `ANTHROPIC_CUSTOM_HEADERS` to every request, over the key and the API version it is given, so while that variable is set no client is built and every Anthropic call fails with an error that names it (`llm_client._refuse_sdk_custom_headers`).
 - **The SDK's retries are off** (`max_retries=0`). They retry timeouts too, and a timed-out call may still be generating, and billing, its answer. `llm_client._with_transport_retry` applies the policy in the table above, the same as before the SDK: it catches `APITimeoutError` before `APIConnectionError` (its parent class), so a timeout is never retried. One thing changed: the SDK reports a connect timeout as a timeout, so a connect timeout is no longer retried (`requests` counted it as a connection error). Nothing was sent then, so a retry would have been safe: the change can fail a job that a retry would have saved, but it never bills twice. The SDK raises a 529 as `OverloadedError`, not as an `InternalServerError`, so the policy reads the status code.

@@ -53,19 +53,10 @@ def anthropic_body(text="# Output", stop="end_turn", *, model="claude-haiku-4-5-
     return body
 
 
-def openai_body(content="# Output", finish="stop", *, refusal=None, usage_obj=None):
-    return {
-        "id": "chatcmpl-test",
-        "model": "gpt-4o-mini-2024-07-18",
-        "choices": [{"index": 0, "finish_reason": finish, "message": {"role": "assistant", "content": content, "refusal": refusal}}],
-        "usage": usage_obj or {"prompt_tokens": 1000, "completion_tokens": 300},
-    }
-
-
 @pytest.fixture
 def http(monkeypatch):
-    """Replace the providers: each call takes the next scripted response
-    (Anthropic through a fake SDK client, OpenAI's POST)."""
+    """Replace Anthropic: each call takes the next scripted response,
+    through a fake SDK client."""
     script: list = []
     sent: list = []
     scripted_providers(monkeypatch, script, sent)
@@ -134,46 +125,10 @@ def test_anthropic_stop_reasons(http, stop_reason, stop_details, stop, category)
     assert (result.stop, result.refusal_category) == (stop, category)
 
 
-def test_an_openai_answer_becomes_one_result(http):
-    script, _ = http
-    script.append(FakeResponse(
-        openai_body(usage_obj={
-            "prompt_tokens": 1000, "completion_tokens": 300, "total_tokens": 1300,
-            "prompt_tokens_details": {"cached_tokens": 200},
-            "completion_tokens_details": {"reasoning_tokens": 100},
-            "note": FREE_TEXT,
-        }),
-        headers={"x-request-id": "req_openai_1"},
-    ))
-    result = llm_client._openai_send("key", "gpt-4o-mini", [{"role": "user", "content": "Hi"}], 0.2, 100)
-    assert (result.text, result.stop, result.request_id, result.model_served) == ("# Output", "complete", "req_openai_1", "gpt-4o-mini-2024-07-18")
-    assert (result.usage.input_tokens, result.usage.cache_read_tokens, result.usage.output_tokens) == (800, 200, 300)
-    assert result.usage.reasoning_tokens == 100
-    assert result.usage.raw["prompt_tokens_details"] == {"cached_tokens": 200}
-    assert "note" not in result.usage.raw and FREE_TEXT not in json.dumps(result.usage.raw)
-
-
-@pytest.mark.parametrize(
-    ("body", "stop", "text"),
-    [
-        (openai_body(finish="length"), "max_tokens", "# Output"),
-        (openai_body(content="", finish="content_filter"), "refusal", ""),
-        (openai_body(content=None, refusal="I can't help with that."), "refusal", ""),
-        ({"model": "gpt-4o-mini", "choices": []}, "other", ""),
-    ],
-)
-def test_openai_stops(http, body, stop, text):
-    script, _ = http
-    script.append(FakeResponse(body))
-    result = llm_client._openai_send("key", "gpt-4o-mini", [], 0.2, 100)
-    assert (result.stop, result.text) == (stop, text)
-
-
 def test_usage_parsing_never_raises(http):
     assert usage.anthropic_usage(None) == LLMUsage()
     odd = usage.anthropic_usage({"input_tokens": "12", "output_tokens": -3, "cache_creation": "bad", "cache_read_input_tokens": True})
     assert (odd.input_tokens, odd.output_tokens, odd.cache_read_tokens, odd.cache_write_1h_tokens) == (0, 0, 0, 0)
-    assert usage.openai_usage({"prompt_tokens": 10, "prompt_tokens_details": {"cached_tokens": 50}}).input_tokens == 0
     script, _ = http
     script.append(FakeResponse({"content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn", "usage": "not an object"}))
     assert llm_client._anthropic_send("key", "m", [], 0.2, 100).text == "ok"
@@ -196,14 +151,12 @@ def test_usage_raw_keeps_counts_and_tags_only():
 # ── Cost ───────────────────────────────────────────────────────────────────
 
 
-def test_every_anthropic_model_has_a_price_and_openai_none_yet():
+def test_every_catalog_model_is_claude_and_has_a_price():
     for model in CATALOG:
-        if model.provider == "anthropic":
-            assert model.price is not None, model.id
-            assert model.price.cache_write_5m == pytest.approx(model.price.input * 1.25), model.id
-            assert model.price.cache_write_1h == pytest.approx(model.price.input * 2), model.id
-        else:
-            assert model.price is None, model.id
+        assert model.provider == "anthropic", model.id
+        assert model.price is not None, model.id
+        assert model.price.cache_write_5m == pytest.approx(model.price.input * 1.25), model.id
+        assert model.price.cache_write_1h == pytest.approx(model.price.input * 2), model.id
 
 
 @pytest.mark.parametrize(
@@ -218,7 +171,6 @@ def test_every_anthropic_model_has_a_price_and_openai_none_yet():
         ("claude-haiku-5-5", {"input_tokens": 50_000, "output_tokens": 1000}, 5000 + 500),
         ("claude-haiku-5-5", {"input_tokens": 150_000, "output_tokens": 1000}, 75_000 + 2500),
         ("claude-haiku-5-5", {"input_tokens": 60_000, "cache_read_tokens": 60_000}, 30_000 + 3000),
-        ("gpt-4o-mini", {"input_tokens": 1000}, None),
         ("some-unknown-model", {"input_tokens": 1000}, None),
     ],
 )
@@ -333,12 +285,11 @@ def test_a_refusal_is_recorded_and_raised(http, rows, anthropic):
     assert [(row["outcome"], row["stop_reason"], row["refusal_category"]) for row in rows] == [("refused", "refusal", "bio")]
 
 
-def test_openai_calls_are_recorded_without_a_cost(http, rows, monkeypatch):
-    monkeypatch.setattr(llm_client, "get_provider", lambda: "openai")
+def test_a_call_to_an_unpriced_model_is_recorded_without_a_cost(http, rows, anthropic):
     script, _ = http
-    script.append(FakeResponse(openai_body()))
-    assert llm_client.call_llm("key", "gpt-4o-mini", [], ctx=CTX) == "# Output"
-    assert [(row["provider"], row["cost_usd_micros"], row["input_tokens"]) for row in rows] == [("openai", None, 1000)]
+    script.append(FakeResponse(anthropic_body(model="claude-not-in-catalog")))
+    assert llm_client.call_llm("key", "claude-not-in-catalog", [], ctx=CTX) == "# Output"
+    assert [(row["provider"], row["cost_usd_micros"], row["input_tokens"]) for row in rows] == [("anthropic", None, 1200)]
 
 
 def _row_ids(row: dict) -> tuple:
@@ -478,7 +429,7 @@ def test_each_classic_runner_passes_its_call_context(monkeypatch, run, dimension
 # ── The org budget for automatic jobs ──────────────────────────────────────
 
 PRICED = "claude-haiku-5-5"
-UNPRICED = "gpt-4o-mini"
+UNPRICED = "claude-not-in-catalog"
 
 
 @pytest.fixture
@@ -583,8 +534,7 @@ def test_the_budget_is_checked_before_the_paid_call(automatic, monkeypatch, spen
     assert sent == [] and rows == []
 
 
-def test_an_unpriced_model_never_makes_an_automatic_call_under_a_budget(automatic, monkeypatch, spend, http, rows):
-    monkeypatch.setattr(llm_client, "get_provider", lambda: "openai")
+def test_an_unpriced_model_never_makes_an_automatic_call_under_a_budget(automatic, monkeypatch, spend, http, rows, anthropic):
     monkeypatch.setenv(usage.ORG_DAILY_LLM_BUDGET_ENV, "100")
     _, sent = http
     with pytest.raises(usage.OrgBudgetExceeded, match="no price"):

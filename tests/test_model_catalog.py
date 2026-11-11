@@ -21,11 +21,10 @@ CLASSIC_KINDS = {"deep_analysis", "smart_recap", "content_repurposing", "transla
 # The Session analysis keeps the kind `overall_analysis` (its queue, bundle and PDF) but is a v1 job.
 V1_KINDS = {"profile", "chat_labels", "understanding", "verify_meaning", "overall_analysis", "faq"}
 
-# Every id Admin offered or the config defaulted to before the catalog existed.
-IDS_IN_USE_BEFORE_THE_CATALOG = {
-    "anthropic": ["claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-8"],
-    "openai": ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1", "gpt-5.4-mini"],
-}
+# Every Claude id Admin offered or the config defaulted to before the catalog existed.
+IDS_IN_USE_BEFORE_THE_CATALOG = ["claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-8"]
+# The OpenAI text models offered until every text job moved to Claude (2026-11-11).
+RETIRED_OPENAI_IDS = ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1", "gpt-5.4-mini"]
 CLAUDE_5_5 = ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"]
 
 
@@ -43,12 +42,25 @@ def test_catalog_ids_are_unique_and_rows_are_well_formed():
         assert models.catalog_model(model.id) is model
 
 
-@pytest.mark.parametrize(("provider", "model_id"), [(p, m) for p, ids in IDS_IN_USE_BEFORE_THE_CATALOG.items() for m in ids])
-def test_every_id_in_use_before_the_catalog_stays_usable_for_the_classic_outputs(provider, model_id):
+@pytest.mark.parametrize("model_id", IDS_IN_USE_BEFORE_THE_CATALOG)
+def test_every_id_in_use_before_the_catalog_stays_usable_for_the_classic_outputs(model_id):
     caps = models.catalog_model(model_id)
-    assert caps is not None and caps.provider == provider and caps.status == "legacy"
+    assert caps is not None and caps.provider == "anthropic" and caps.status == "legacy"
     jobs.check_model_setting("llm_default_model", model_id)
     jobs.check_model_setting("llm_smart_recap_model", model_id)
+
+
+def test_every_text_model_is_claude():
+    assert models.PROVIDERS == ("anthropic",)
+    assert {model.provider for model in models.CATALOG} == {"anthropic"}
+
+
+@pytest.mark.parametrize("model_id", RETIRED_OPENAI_IDS)
+def test_the_openai_text_models_are_gone_and_refused(model_id):
+    assert models.catalog_model(model_id) is None
+    for key in ("llm_default_model", "llm_smart_recap_model", "llm_model.anthropic.smart_recap"):
+        with pytest.raises(jobs.InvalidModelSetting):
+            jobs.check_model_setting(key, model_id)
 
 
 @pytest.mark.parametrize("model_id", CLAUDE_5_5)
@@ -75,14 +87,12 @@ def test_haiku_4_5_takes_no_effort_and_classic_claude_models_answer_directly():
 def test_catalog_temperature_agrees_with_the_rule_by_version():
     # Keeps the catalog and the fallback rule for ids outside it from drifting apart.
     for model in models.CATALOG:
-        if model.provider == "anthropic":
-            assert model.temperature_ok is llm_client.claude_version_accepts_temperature(model.id), model.id
+        assert model.temperature_ok is llm_client.claude_version_accepts_temperature(model.id), model.id
 
 
 def test_temperature_comes_from_the_catalog_and_the_api_version():
     for model in models.CATALOG:
-        expected = model.provider == "anthropic" and model.temperature_ok
-        assert llm_client.anthropic_accepts_temperature(model.id, "2023-06-01") is expected, model.id
+        assert llm_client.anthropic_accepts_temperature(model.id, "2023-06-01") is model.temperature_ok, model.id
         assert not llm_client.anthropic_accepts_temperature(model.id, "2026-10-21")
     # Ids outside the catalog keep the rule by version.
     assert llm_client.anthropic_accepts_temperature("claude-opus-4-6", "2023-06-01")
@@ -97,13 +107,13 @@ def _vue_string_list(source: str, name: str) -> list:
 
 
 def test_admin_view_offers_only_ids_the_server_accepts():
-    # AdminView keeps its own lists until it reads them from the server.
+    # AdminView keeps its own list until it reads it from the server. Every
+    # text job runs on Claude, so it offers Claude models only and no provider.
     source = (ROOT / "frontend/src/views/AdminView.vue").read_text(encoding="utf-8")
-    offered = _vue_string_list(source, "ANTHROPIC_TEXT_MODELS") + _vue_string_list(source, "OPENAI_TEXT_MODELS")
-    provider_change = re.search(r"async function handleProviderChange\(.*?\n\}", source, re.S).group(0)
-    reset_to = re.findall(r'\? "([^"]+)" : "([^"]+)"', provider_change)
-    assert len(offered) == 7 and len(reset_to) == 2
-    for model_id in offered + [m for pair in reset_to for m in pair]:
+    offered = _vue_string_list(source, "ANTHROPIC_TEXT_MODELS")
+    assert len(offered) == 3 and all(model_id.startswith("claude-") for model_id in offered)
+    assert "OPENAI_TEXT_MODELS" not in source and "handleProviderChange" not in source
+    for model_id in offered:
         jobs.check_model_setting("llm_default_model", model_id)
         jobs.check_model_setting("llm_smart_recap_model", model_id)
 
@@ -121,26 +131,23 @@ def test_registry_holds_the_v1_jobs_and_the_classic_outputs():
 
 def test_every_default_is_a_catalog_model_offered_for_its_job():
     for spec in jobs.JOB_SPECS:
-        for provider in models.PROVIDERS:
-            default = spec.default_model(provider)
-            if default is None:
-                assert spec.group == "v1" and provider == "openai", spec.kind
-                continue
-            assert default in [m.id for m in jobs.allowed_models(provider, spec.kind)], (spec.kind, provider)
-            caps = models.catalog_model(default)
-            assert not caps.effort_levels or spec.effort in caps.effort_levels
+        default = spec.default_model("anthropic")
+        assert default in [m.id for m in jobs.allowed_models("anthropic", spec.kind)], spec.kind
+        caps = models.catalog_model(default)
+        assert not caps.effort_levels or spec.effort in caps.effort_levels
+        assert spec.default_model("openai") is None, spec.kind
 
 
 def test_classic_outputs_keep_their_defaults_and_settings():
     expected = {
-        "deep_analysis": ("claude-haiku-4-5-20251001", "gpt-4o-mini", "llm_default_model"),
-        "content_repurposing": ("claude-haiku-4-5-20251001", "gpt-4o-mini", "llm_default_model"),
-        "translation": ("claude-haiku-4-5-20251001", "gpt-4o-mini", "llm_default_model"),
-        "smart_recap": ("claude-sonnet-4-6", "gpt-5.4-mini", "llm_smart_recap_model"),
+        "deep_analysis": ("claude-haiku-4-5-20251001", "llm_default_model"),
+        "content_repurposing": ("claude-haiku-4-5-20251001", "llm_default_model"),
+        "translation": ("claude-haiku-4-5-20251001", "llm_default_model"),
+        "smart_recap": ("claude-sonnet-4-6", "llm_smart_recap_model"),
     }
-    for kind, (anthropic, openai, legacy_key) in expected.items():
+    for kind, (anthropic, legacy_key) in expected.items():
         spec = jobs.job_spec(kind)
-        assert (spec.default_anthropic, spec.default_openai, spec.legacy_setting) == (anthropic, openai, legacy_key)
+        assert (spec.default_anthropic, spec.legacy_setting) == (anthropic, legacy_key)
     assert all(jobs.job_spec(kind).legacy_setting is None for kind in V1_KINDS)
 
 
@@ -149,7 +156,7 @@ def test_the_session_analysis_is_a_v1_job_on_sonnet(settings):
     session's brief on Sonnet 5.5; the classic `llm_default_model` setting
     no longer picks its model."""
     spec = jobs.job_spec("overall_analysis")
-    assert (spec.group, spec.default_anthropic, spec.default_openai, spec.layout) == ("v1", "claude-sonnet-5-5", None, "dossier")
+    assert (spec.group, spec.default_anthropic, spec.layout) == ("v1", "claude-sonnet-5-5", "dossier")
     settings["llm_default_model"] = "claude-haiku-4-5-20251001"
     assert jobs.resolve_model("overall_analysis", "anthropic").model_id == "claude-sonnet-5-5"
 
@@ -167,8 +174,8 @@ def test_budget_is_the_answer_for_models_that_answer_directly_and_is_capped():
     recap = jobs.job_spec("smart_recap")
     assert jobs.budget(recap, models.catalog_model("claude-sonnet-4-6")) == (900, False)
     content = jobs.job_spec("content_repurposing")
-    assert jobs.budget(content, models.catalog_model("gpt-4o-mini")) == (12_000, False)
-    huge = jobs.JobSpec("huge", "Huge", "v1", "claude-haiku-5-5", None, "max", 100_000)
+    assert jobs.budget(content, models.catalog_model("claude-haiku-4-5-20251001")) == (12_000, False)
+    huge = jobs.JobSpec("huge", "Huge", "v1", "claude-haiku-5-5", "max", 100_000)
     assert jobs.budget(huge, models.catalog_model("claude-haiku-5-5")) == (128_000, True)
     assert jobs.budget(huge, models.catalog_model("claude-haiku-4-5-20251001")) == (64_000, True)
 
@@ -206,14 +213,15 @@ def test_resolve_order_is_per_job_setting_then_legacy_setting_then_default(setti
     assert jobs.resolve_model("translation", "anthropic").model_id == "claude-sonnet-4-6"
 
 
-def test_a_legacy_id_of_the_other_provider_falls_through_to_the_default(settings, caplog):
+def test_a_saved_openai_legacy_setting_is_skipped_for_the_jobs_claude_default(settings, caplog):
+    # Saved before every text job ran on Claude: never sent, the job's default is used.
     settings["llm_default_model"] = "gpt-4o"
     with caplog.at_level(logging.WARNING, logger="livestorm_app.ai.jobs"):
-        choice = jobs.resolve_model("deep_analysis", "anthropic")
-    assert (choice.model_id, choice.source) == ("claude-haiku-4-5-20251001", "default")
-    assert "an openai model, but the provider is anthropic" in caplog.text
-    # The same setting is used while OpenAI is active.
-    assert jobs.resolve_model("deep_analysis", "openai").model_id == "gpt-4o"
+        choice = jobs.resolve_model("deep_analysis")
+    assert (choice.provider, choice.model_id, choice.source) == ("anthropic", "claude-haiku-4-5-20251001", "default")
+    assert "gpt-4o, which is not a Claude model" in caplog.text
+    settings["llm_smart_recap_model"] = "gpt-5.4-mini"
+    assert (jobs.resolve_model("smart_recap").model_id, jobs.resolve_model("smart_recap").source) == ("claude-sonnet-4-6", "default")
 
 
 @pytest.mark.parametrize(
@@ -241,12 +249,6 @@ def test_an_offered_saved_id_logs_nothing(settings, caplog):
     assert caplog.text == ""
 
 
-def test_v1_jobs_have_no_openai_model_yet(settings):
-    assert jobs.resolve_model("understanding", "anthropic").model_id == "claude-sonnet-5-5"
-    with pytest.raises(jobs.NoModelForJob, match="No OpenAI model is set up for Session understanding"):
-        jobs.resolve_model("understanding", "openai")
-
-
 def test_v1_jobs_never_read_the_legacy_keys(settings):
     # The legacy keys belong to the classic outputs; a v1 job uses its own key or its default.
     settings["llm_default_model"] = "claude-opus-4-8"
@@ -256,18 +258,17 @@ def test_v1_jobs_never_read_the_legacy_keys(settings):
         assert choice.source == "default" and choice.model_id == jobs.job_spec(kind).default_anthropic, kind
 
 
-def test_resolve_uses_the_active_provider(settings, monkeypatch):
-    monkeypatch.setattr(llm_client, "get_provider", lambda: "openai")
-    assert jobs.resolve_model("smart_recap").model_id == "gpt-5.4-mini"
-    # call_llm sends anything but "anthropic" to OpenAI, so the model follows:
-    # an OpenAI setting applies, and a v1 job fails as it does on OpenAI.
-    monkeypatch.setattr(llm_client, "get_provider", lambda: "azure")
-    settings["llm_default_model"] = "gpt-4o"
-    choice = jobs.resolve_model("deep_analysis")
-    assert (choice.provider, choice.model_id, choice.source) == ("openai", "gpt-4o", "legacy_setting")
-    with pytest.raises(jobs.NoModelForJob, match="No OpenAI model"):
-        jobs.resolve_model("understanding")
-    monkeypatch.setattr(llm_client, "get_provider", lambda: "anthropic")
+def test_every_job_resolves_to_claude_whatever_provider_was_saved(settings, monkeypatch):
+    # The `llm_provider` setting and LLM_PROVIDER are no longer read, and a
+    # per-job OpenAI key is not a model setting any more.
+    settings["llm_provider"] = "openai"
+    settings["llm_model.openai.smart_recap"] = "gpt-5.4-mini"
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    assert llm_client.get_provider() == "anthropic"
+    for provider in (None, "anthropic", "openai", "azure"):
+        choice = jobs.resolve_model("smart_recap", provider)
+        assert (choice.provider, choice.model_id, choice.source) == ("anthropic", "claude-sonnet-4-6", "default")
+        assert jobs.resolve_model("understanding", provider).model_id == "claude-sonnet-5-5"
     assert llm_client.get_llm_model("smart_recap") == "claude-sonnet-4-6"
 
 
