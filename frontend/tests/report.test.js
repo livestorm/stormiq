@@ -436,3 +436,16 @@ describe("a session just added, still being fetched", () => {
     expect(preparationView({ status: "running", progress: { percent: "x" } }, { status: "idle" }).percent).toBe(10);
   });
 });
+
+describe("the loader shows at once after Add", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("shows the fetch as the current step from the first moment", async () => {
+    const api = fakeApi({ getSessionRecord: vi.fn(() => new Promise(() => {})) });
+    const report = createSessionReport({ api });
+    report.open("sess-1", { prepare: true });
+    expect(report.state).toMatchObject({ preparing: true, fetching: true });
+    report.close();
+  });
+});
