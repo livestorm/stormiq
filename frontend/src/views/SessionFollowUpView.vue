@@ -120,8 +120,13 @@ const groups = computed(() => outputGroups(outputs.value, language.value));
 // Formal and Hype (the Smart Recap): one item in the list, a toggle on the output.
 const toggles = computed(() => toggleOptions(output.value));
 const listKey = computed(() => toggles.value[0]?.key || output.value.key);
+// Surprise me shows only while the organization has it on (`state.org`,
+// set by a StormIQ admin; the server refuses a take when it is off).
+const surpriseOn = computed(() => state.org.surpriseEnabled);
 const corner = computed(() =>
-  CORNER_OUTPUTS.map((item) => ({ key: item.key, label: item.label, ready: outputReady(outputs.value, item, language.value) })),
+  surpriseOn.value
+    ? CORNER_OUTPUTS.map((item) => ({ key: item.key, label: item.label, ready: outputReady(outputs.value, item, language.value) }))
+    : [],
 );
 const body = computed(() => outputText(outputs.value, output.value, language.value));
 const busy = computed(() => making(state, output.value, language.value));
@@ -211,7 +216,7 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
                 {{ item.label }}{{ item.ready ? " · ready" : "" }}
               </option>
             </optgroup>
-            <optgroup label="Just for fun">
+            <optgroup v-if="corner.length" label="Just for fun">
               <option v-for="item in corner" :key="item.key" :value="item.key">
                 {{ item.label }}{{ item.ready ? " · ready" : "" }}
               </option>
@@ -286,6 +291,11 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
       <ChapterNotes v-else-if="onChapters" :chapters="chapters" />
 
       <p v-else-if="loading" class="f-muted" role="status">Loading the session…</p>
+
+      <Card v-else-if="output.corner && !surpriseOn" class="f-output">
+        <CardHeader icon="star" :title="output.label" :level="2" />
+        <p class="f-text">Surprise me is turned off for your organization. A StormIQ admin can turn it back on.</p>
+      </Card>
 
       <Card v-else-if="workspace && !hasTranscript && output.key !== 'faq' && !output.archived" class="f-output">
         <CardHeader icon="file-text" title="This one is written from the transcript" :level="2" />

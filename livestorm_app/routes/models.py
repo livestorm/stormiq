@@ -105,6 +105,11 @@ class AdminPromoteRequest(BaseModel):
     user_id: str = ""
 
 
+class OrgSettingRequest(BaseModel):
+    organizationId: str
+    surpriseEnabled: bool
+
+
 class AdminSettingRequest(BaseModel):
     key: str
     value: str

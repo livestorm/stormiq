@@ -1,7 +1,8 @@
-"""Admin routes: users and admins, cached sessions across orgs, model settings."""
+"""Admin routes: users and admins, cached sessions across orgs, organizations' switches, model settings."""
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -14,16 +15,19 @@ from livestorm_app.auth import (
 )
 from livestorm_app.db import (
     admin_delete_session,
+    admin_list_organizations,
     admin_list_sessions,
     admin_list_users,
     demote_admin,
     get_all_settings,
     promote_admin,
+    save_surprise_enabled,
     set_setting,
 )
 from livestorm_app.routes.common import SessionId
-from livestorm_app.routes.models import AdminPromoteRequest, AdminSettingRequest
+from livestorm_app.routes.models import AdminPromoteRequest, AdminSettingRequest, OrgSettingRequest
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -65,6 +69,45 @@ def admin_get_sessions(_caller: Caller = Depends(require_admin)) -> Dict[str, An
 def admin_remove_session(session_id: SessionId, _caller: Caller = Depends(require_admin)) -> Dict[str, Any]:
     admin_delete_session(session_id)
     return {"ok": True, "sessionId": session_id}
+
+
+@router.get("/api/admin/organizations")
+def admin_get_organizations(_caller: Caller = Depends(require_admin)) -> Dict[str, Any]:
+    """Every organization with a cached session or a setting, with its
+    switches (Surprise Me!)."""
+    try:
+        rows = admin_list_organizations()
+    except Exception as exc:
+        logger.exception("Admin organizations read failed")
+        raise HTTPException(status_code=500, detail={"resource": "Organizations", "message": "The organizations could not be read."}) from exc
+    return {
+        "organizations": [
+            {
+                "organizationId": row["organization_id"],
+                "sessions": int(row["sessions"] or 0),
+                "lastSessionAt": row["last_session_at"].isoformat() if row.get("last_session_at") else None,
+                "surpriseEnabled": bool(row["surprise_enabled"]),
+                "updatedBy": row.get("updated_by_email"),
+                "updatedAt": row["updated_at"].isoformat() if row.get("updated_at") else None,
+            }
+            for row in rows
+        ]
+    }
+
+
+@router.post("/api/admin/organizations/settings")
+def admin_update_organization(body: OrgSettingRequest, caller: Caller = Depends(require_admin)) -> Dict[str, Any]:
+    """Turn Surprise Me! on or off for one organization."""
+    org = str(body.organizationId or "").strip()
+    if not org:
+        raise HTTPException(status_code=400, detail={"resource": "Organizations", "message": "An organization id is required."})
+    connection = caller.connection if isinstance(caller.connection, dict) else {}
+    try:
+        save_surprise_enabled(org, body.surpriseEnabled, updated_by_email=str(connection.get("email") or "") or None)
+    except Exception as exc:
+        logger.exception("Admin organization setting failed")
+        raise HTTPException(status_code=500, detail={"resource": "Organizations", "message": "The setting could not be saved."}) from exc
+    return {"ok": True, "organizationId": org, "surpriseEnabled": body.surpriseEnabled}
 
 
 @router.get("/api/admin/settings")

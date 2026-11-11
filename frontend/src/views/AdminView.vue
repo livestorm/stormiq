@@ -5,6 +5,7 @@ import Card from "../components/ui/Card.vue";
 import CardHeader from "../components/ui/CardHeader.vue";
 import Chip from "../components/ui/Chip.vue";
 import Icon from "../components/ui/Icon.vue";
+import StatusWord from "../components/ui/StatusWord.vue";
 import UiButton from "../components/ui/UiButton.vue";
 import { api } from "../api";
 import { useWorkspace } from "../store/workspace";
@@ -19,6 +20,7 @@ const { state } = useWorkspace();
 const TABS = [
   { value: "users", label: "People" },
   { value: "sessions", label: "Sessions" },
+  { value: "organizations", label: "Organizations" },
   { value: "models", label: "Models" },
 ];
 const activeTab = ref("users");
@@ -150,6 +152,42 @@ const shownSessions = computed(() =>
   ),
 );
 
+// ── Organizations: each one's switches (Surprise me) ─────────────────────
+const organizations = ref([]);
+const loadingOrganizations = ref(false);
+const organizationsError = ref("");
+const savingOrganization = ref("");
+
+async function loadOrganizations() {
+  loadingOrganizations.value = true;
+  organizationsError.value = "";
+  try {
+    const data = await api.adminGetOrganizations();
+    organizations.value = data?.organizations || [];
+  } catch (error) {
+    organizationsError.value = error?.message || "The organizations could not be loaded.";
+  } finally {
+    loadingOrganizations.value = false;
+  }
+}
+
+async function setSurprise(organization, enabled) {
+  savingOrganization.value = organization.organizationId;
+  organizationsError.value = "";
+  try {
+    await api.adminSetSurprise(organization.organizationId, enabled);
+    organizations.value = organizations.value.map((item) =>
+      item.organizationId === organization.organizationId
+        ? { ...item, surpriseEnabled: enabled, updatedAt: new Date().toISOString(), updatedBy: state.auth.connectedUser?.email || item.updatedBy }
+        : item,
+    );
+  } catch (error) {
+    organizationsError.value = error?.message || "The setting could not be saved.";
+  } finally {
+    savingOrganization.value = "";
+  }
+}
+
 // ── Models ────────────────────────────────────────────────────────────────
 const settings = ref({});
 const loadingSettings = ref(false);
@@ -218,6 +256,7 @@ function switchTab(tab) {
   activeTab.value = tab;
   if (tab === "users" && !users.value.length) loadUsers();
   if (tab === "sessions" && !sessions.value.length) loadSessions();
+  if (tab === "organizations" && !organizations.value.length) loadOrganizations();
   if (tab === "models" && !Object.keys(settings.value).length) loadSettings();
 }
 
@@ -231,7 +270,7 @@ onMounted(() => {
   <div class="adm-page">
     <header class="adm-head">
       <h1 class="adm-title">Admin</h1>
-      <p class="adm-lead">People, sessions and AI models, across every organization. Only admins see this page.</p>
+      <p class="adm-lead">People, sessions, organizations' switches and AI models, across every organization. Only admins see this page.</p>
     </header>
 
     <div class="adm-tabs" role="group" aria-label="Admin sections">
@@ -390,6 +429,58 @@ onMounted(() => {
       </div>
       <p v-else class="adm-muted adm-pad">No session matches.</p>
       <p class="adm-muted adm-pad adm-note">Deleting removes the session's saved data, transcript and outputs from StormIQ; it doesn't touch Livestorm.</p>
+    </Card>
+
+    <!-- ── Organizations ── -->
+    <Card v-else-if="activeTab === 'organizations'" padding="flush">
+      <div class="adm-bar">
+        <p class="adm-muted">
+          Surprise me is on for every organization until you turn it off here, for a customer who asks (a regulated
+          industry, a formal brand). Members can't turn it back on.
+        </p>
+      </div>
+      <p v-if="organizationsError" class="adm-message adm-pad" role="alert"><Icon name="info" :size="16" />{{ organizationsError }}</p>
+      <p v-if="loadingOrganizations && !organizations.length" class="adm-muted adm-pad" role="status">Loading the organizations…</p>
+      <div v-else-if="organizations.length" class="adm-table-wrap">
+        <table class="adm-table">
+          <caption class="siq-sr-only">Every organization and its switches</caption>
+          <thead>
+            <tr>
+              <th scope="col">Organization</th>
+              <th scope="col" class="adm-num">Sessions</th>
+              <th scope="col">Surprise me</th>
+              <th scope="col">Changed</th>
+              <th scope="col"><span class="siq-sr-only">Actions</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="organization in organizations" :key="organization.organizationId">
+              <th scope="row" class="adm-id-cell">{{ organization.organizationId }}</th>
+              <td class="adm-num">{{ organization.sessions }}</td>
+              <td>
+                <StatusWord v-if="organization.surpriseEnabled" status="measured" label="On" />
+                <StatusWord v-else status="check" label="Off" />
+              </td>
+              <td class="adm-date">
+                {{ organization.updatedAt ? formatDate(organization.updatedAt) : "—" }}
+                <span v-if="organization.updatedBy" class="adm-id">{{ organization.updatedBy }}</span>
+              </td>
+              <td class="adm-actions">
+                <UiButton
+                  variant="ghost"
+                  small
+                  :disabled="savingOrganization === organization.organizationId"
+                  :aria-label="`${organization.surpriseEnabled ? 'Turn off' : 'Turn on'} Surprise me for ${organization.organizationId}`"
+                  @click="setSurprise(organization, !organization.surpriseEnabled)"
+                >
+                  {{ savingOrganization === organization.organizationId ? "Saving…" : organization.surpriseEnabled ? "Turn off" : "Turn on" }}
+                </UiButton>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p v-else class="adm-muted adm-pad">No organization has a session yet.</p>
     </Card>
 
     <!-- ── Models ── -->

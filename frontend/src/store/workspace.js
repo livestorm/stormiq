@@ -21,6 +21,9 @@ const state = reactive({
     connectedUser: null,
     allowLocalApiKeyFallback: false,
   },
+  // The caller's organization's switches, from `/api/bootstrap` (off until
+  // it answers: Surprise me shows only once the server says it is on).
+  org: { surpriseEnabled: false },
   inputMode: "session",
   sessionId: "",
   eventId: "",
@@ -383,6 +386,7 @@ function applyBootstrap(payload) {
   state.auth.connectedUser = connectedUser;
   state.auth.allowLocalApiKeyFallback = allowLocalApiKeyFallback;
   state.auth.isAdmin = Boolean(payload?.auth?.isAdmin);
+  state.org.surpriseEnabled = payload?.org?.surpriseEnabled === true;
   if (defaultApiKey && (!state.apiKey || allowLocalApiKeyFallback)) {
     state.apiKey = defaultApiKey;
   }
