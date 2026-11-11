@@ -205,6 +205,25 @@ session_figure_checks (
 
 - **One row per answered check.** `db.save_figure_check` upserts it, or deletes it when the host reopens the check; it writes only when the session is in the caller's scope, and a failed write raises. `db.fetch_figure_checks` joins `session_cache` on its org.
 
+## `session_faq`
+
+The editable FAQ (Follow-up tab, `record/faq_entries.py`): the entries the user saved for one session and language.
+
+```sql
+session_faq (
+  session_id  TEXT NOT NULL REFERENCES session_cache (session_id) ON DELETE CASCADE,
+  language    TEXT NOT NULL DEFAULT 'English',
+  entries     JSONB NOT NULL,         -- [{id, question, answer, source, t, origin, deskIds}], in order
+  desk_stamp  JSONB,                  -- { desk id: "answered" | "open" }: the desk at the save
+  updated_by  TEXT,                   -- the Livestorm user id, never an email
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (session_id, language)
+)
+```
+
+- **Saved whole.** `db.save_session_faq` upserts the row with the entries `record.faq_entries.validate_entries` cleaned, only when the session is in the caller's scope (False otherwise, and for a blank scope, which never queries); a failed write raises. `db.fetch_session_faq` joins `session_cache` on its org. Nothing is stored before the first save: the page shows the desk's draft. No org column.
+- **`desk_stamp`** is what `desk_updates` compares the desk with, to offer the questions answered or added since. An entry still open keeps its previous mark, so a desk answer it hasn't taken yet is offered again.
+
 ## `session_question_replies`
 
 What the host saved in the question desk (Follow-up tab, `record/question_desk.py`): one row per question they marked answered, unmarked or replied to.

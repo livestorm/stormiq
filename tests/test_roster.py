@@ -1043,6 +1043,8 @@ RECORD_ENTRY_POINTS = {
         "_write_session_analysis",
         # The Follow-up's FAQ: its brief (`record.faq_brief`) from the question desk.
         "_write_faq",
+        # The editable FAQ: drafted from the question desk (`record.faq_entries`), saved, synced and exported.
+        "_faq_draft", "_faq_state", "get_session_faq", "save_session_faq_entries", "get_session_faq_export",
         # Public formats (FAQ, Smart Recap, content): the audience's names to redact (`record.redaction`).
         "_public_redactor",
         # Surprise Me!: what StormIQ measured (`record.surprise_brief`), and the take checked against it.

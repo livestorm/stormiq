@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -86,6 +86,26 @@ class LocatedDecisionRequest(BaseModel):
 
     question_id: str = Field(..., alias="questionId", pattern=r"^[QC][0-9]{1,6}$")
     decision: Literal["confirm", "reject"] = Field(..., alias="decision")
+
+
+class FaqEntryModel(BaseModel):
+    """One entry of the editable FAQ (`record/faq_entries.py`): plain text,
+    its answer's source, the time of a passage of the talk, and the desk
+    questions it came from. `record.faq_entries.validate_entries` cleans it."""
+
+    id: str = Field("", alias="id", max_length=100)
+    question: str = Field(..., alias="question", max_length=500)
+    answer: str = Field("", alias="answer", max_length=4000)
+    source: Literal["written", "host", "talk", "aloud", "manual", "none"] = Field("none", alias="source")
+    t: Optional[float] = Field(None, alias="t", ge=0, le=7 * 86400)
+    origin: Literal["desk", "manual"] = Field("manual", alias="origin")
+    desk_ids: List[str] = Field(default_factory=list, alias="deskIds", max_length=50)
+
+
+class FaqSaveRequest(BaseModel):
+    """The editable FAQ, saved whole: at most 200 entries, in order."""
+
+    entries: List[FaqEntryModel] = Field(..., alias="entries", max_length=200)
 
 
 class AnalysisRequest(BaseModel):

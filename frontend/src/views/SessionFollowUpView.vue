@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import BeforeYouShare from "../components/report/BeforeYouShare.vue";
 import ChapterNotes from "../components/report/ChapterNotes.vue";
+import FaqEditor from "../components/report/FaqEditor.vue";
 import MarkdownBlocks from "../components/report/MarkdownBlocks.vue";
 import QuestionDesk from "../components/report/QuestionDesk.vue";
 import SessionTabs from "../components/report/SessionTabs.vue";
@@ -32,6 +33,7 @@ import { markdownSections, plainText } from "../followup/markdown";
 import { filterCounts } from "../followup/desk";
 import { uncheckedNote } from "../followup/figures";
 import { createChapters } from "../followup/useChapters";
+import { createFaq } from "../followup/useFaq";
 import { createFigureChecks } from "../followup/useFigureChecks";
 import { createOutputVersions } from "../followup/useOutputVersions";
 import { createQuestionDesk } from "../followup/useQuestionDesk";
@@ -62,6 +64,8 @@ const desk = createQuestionDesk();
 const chapters = createChapters();
 const figures = createFigureChecks();
 const versions = createOutputVersions();
+// The FAQ is edited in place (`FaqEditor`), drafted from the desk; no AI.
+const faq = createFaq();
 
 watch(
   () => props.sessionId,
@@ -70,6 +74,7 @@ watch(
     desk.open(id);
     chapters.open(id);
     figures.open(id);
+    faq.open(id);
     store.loadSessionById(id).catch(() => {});
   },
   { immediate: true },
@@ -79,6 +84,7 @@ onBeforeUnmount(() => {
   desk.close();
   chapters.close();
   figures.close();
+  faq.close();
   versions.close();
 });
 
@@ -93,6 +99,8 @@ const ownValue = computed(() => (onDesk.value ? DESK : onChapters.value ? CHAPTE
 const openCount = computed(() => (desk.state.body ? filterCounts(desk.state.body.summary).open : null));
 // The desk's CSV download, by scope ("open", "all", "answers").
 const csvUrl = (scope) => api.getQuestionsCsvUrl(props.sessionId, scope);
+// The FAQ's downloads, by format ("md", "csv", "pdf").
+const faqUrl = (format) => api.getFaqDownloadUrl(props.sessionId, format);
 
 // ── The header ──
 const record = computed(() => report.state.record);
@@ -135,7 +143,7 @@ const pdf = computed(() => (body.value ? pdfUrl(api, props.sessionId, output.val
 const anyBusy = computed(() => OUTPUTS.some((item) => item.flow && state.loading[item.flow]));
 
 // ── Earlier versions: what was saved before the output on screen ──
-const versionsFor = computed(() => (onOwn.value ? null : versionsQuery(output.value, language.value)));
+const versionsFor = computed(() => (onOwn.value || output.value.key === "faq" ? null : versionsQuery(output.value, language.value)));
 watch([() => props.sessionId, versionsFor], ([id, query]) => versions.open(id, query), { immediate: true });
 // A new version was saved: the one on screen changed, so list it again.
 watch(body, (next, previous) => {
@@ -151,7 +159,6 @@ function make() {
   const lang = language.value;
   const run = {
     analysis: () => store.runAnalysis(lang),
-    faq: () => store.runFaq(lang),
     decisions: () => store.runDecisions(lang),
     teamDigest: () => store.runTeamDigest(lang),
     attendeeFollowup: () => store.runAttendeeFollowup(lang),
@@ -163,7 +170,6 @@ function make() {
 
 const makeLabel = computed(() => {
   if (output.value.corner) return "Write a surprise take";
-  if (output.value.key === "faq") return `Write the FAQ${language.value === "French" ? " in French" : ""}`;
   if (output.value.key === "decisions") return `List the decisions${language.value === "French" ? " in French" : ""}`;
   if (output.value.key === "team-digest") return `Write the team digest${language.value === "French" ? " in French" : ""}`;
   if (output.value.key === "attendee-followup") return `Write the attendee follow-up${language.value === "French" ? " in French" : ""}`;
@@ -292,6 +298,8 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
 
       <ChapterNotes v-else-if="onChapters" :chapters="chapters" />
 
+      <FaqEditor v-else-if="output.key === 'faq'" :faq="faq" :download-url="faqUrl" :title="title" />
+
       <p v-else-if="loading" class="f-muted" role="status">Loading the session…</p>
 
       <Card v-else-if="output.corner && !surpriseOn" class="f-output">
@@ -299,7 +307,7 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
         <p class="f-text">Surprise me is turned off for your organization. A StormIQ admin can turn it back on.</p>
       </Card>
 
-      <Card v-else-if="workspace && !hasTranscript && output.key !== 'faq' && !output.archived" class="f-output">
+      <Card v-else-if="workspace && !hasTranscript && !output.archived" class="f-output">
         <CardHeader icon="file-text" title="This one is written from the transcript" :level="2" />
         <p class="f-text">This session has no transcript yet. Make it on the Transcript tab, then come back to write it.</p>
         <div class="f-row">
@@ -432,11 +440,6 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
           <p v-if="output.key === 'overall'" class="f-text">
             Not written yet. It runs only when you ask, with AI, from what "Analyse session" found and the transcript, so run
             "Analyse session" on the Report first.
-          </p>
-          <p v-else-if="output.key === 'faq'" class="f-text">
-            Not written yet. It runs only when you ask, with AI, from the question desk: every question with its answer
-            (written, from the host, or from the talk), and the ones still open. Who asked is never sent. Run "Analyse
-            session" on the Report first.
           </p>
           <p v-else-if="output.key === 'decisions'" class="f-text">
             Not listed yet. It runs only when you ask, with AI, from the transcript: what was decided on stage and who
