@@ -24,6 +24,7 @@ from livestorm_app.api_logic import (
     get_content_repurposing_job_data,
     get_deep_analysis_job_data,
     get_decisions_job_data,
+    get_session_decisions,
     get_faq_job_data,
     get_overall_analysis_job_data,
     get_session_analysis_job,
@@ -122,6 +123,27 @@ def decisions_job(session_id: SessionId, caller: Caller = Depends(get_caller), j
     except Exception as exc:
         raise_http_error("Decisions", exc)
         raise
+
+
+DECISIONS_RESOURCE = "Decisions"
+
+
+@router.get("/api/sessions/{session_id}/decisions")
+def read_decisions(session_id: SessionId, caller: Caller = Depends(get_caller), language: str = Query("English")) -> Dict[str, Any]:
+    """Follow-up's decision cards: the saved decisions and commitments in one
+    language, with the speakers named as saved now
+    (`api_logic.get_session_decisions`). Read-only, no model call."""
+    try:
+        return get_session_decisions(session_id, language, organization_id=caller.read_scope)
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail={"resource": DECISIONS_RESOURCE, "message": str(exc)}) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={"resource": DECISIONS_RESOURCE, "message": str(exc)}) from exc
+    except Exception as exc:
+        logger.exception("Decisions read failed for session_id=%s", session_id)
+        raise HTTPException(
+            status_code=500, detail={"resource": DECISIONS_RESOURCE, "message": "The decisions could not be read."}
+        ) from exc
 
 
 @router.post("/api/sessions/{session_id}/team-digest")

@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import BeforeYouShare from "../components/report/BeforeYouShare.vue";
 import ChapterNotes from "../components/report/ChapterNotes.vue";
+import DecisionCards from "../components/report/DecisionCards.vue";
 import FaqEditor from "../components/report/FaqEditor.vue";
 import MarkdownBlocks from "../components/report/MarkdownBlocks.vue";
 import QuestionDesk from "../components/report/QuestionDesk.vue";
@@ -515,7 +516,14 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
 
         <template v-if="body">
           <div class="f-actions">
-            <UiButton variant="secondary" small :icon="copied === 'all' ? 'check' : 'copy'" @click="copy(body)">
+            <!-- The decisions' cards have their own Copy, worded with the names saved now. -->
+            <UiButton
+              v-if="output.key !== 'decisions'"
+              variant="secondary"
+              small
+              :icon="copied === 'all' ? 'check' : 'copy'"
+              @click="copy(body)"
+            >
               {{ copied === "all" ? "Copied" : sections.length > 1 ? "Copy all" : "Copy" }}
             </UiButton>
             <UiButton v-if="pdf" variant="ghost" small icon="download" :href="pdf">PDF</UiButton>
@@ -541,6 +549,7 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
               <MarkdownBlocks :text="section.text" :top="4" :lang="bodyLang" />
             </section>
           </div>
+          <DecisionCards v-else-if="output.key === 'decisions'" :session-id="sessionId" :language="language" :source="body" />
           <MarkdownBlocks v-else :text="body" :lang="bodyLang" />
 
           <Collapsible v-if="earlier.length" variant="link" icon="refresh-cw" :title="`Earlier versions (${earlier.length})`" class="f-versions">

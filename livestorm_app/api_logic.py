@@ -87,6 +87,7 @@ from livestorm_app.ai.surprise_voice import (
     voice_plan,
 )
 from livestorm_app.ai.voice_elevenlabs import voice_label
+from livestorm_app.ai import decisions_entry
 from livestorm_app.ai.usage import CallContext, run_provenance
 from livestorm_app.ai.generation import (
     _bundle_has_all_sections,
@@ -305,18 +306,26 @@ _OUTPUT_FIELDS = [
     "analysis_bundle", "analysis_md", "deep_analysis_bundle", "deep_analysis_md",
     "content_repurpose_bundle", "smart_recap_bundle", "faq_bundle", "decisions_bundle",
     "team_digest_bundle", "attendee_followup_bundle",
+    # The decisions name speakers when read (`ai.decisions_entry`).
+    "transcript_speaker_names",
 ]
 
 
+def _speaker_names(row: Mapping[str, Any]) -> Dict[str, Any]:
+    names = row.get("transcript_speaker_names")
+    return names if isinstance(names, dict) else {}
+
+
 def _serialize_outputs(cached_session: Dict[str, Any]) -> Dict[str, Any]:
-    """The `outputs` part of a workspace: every AI result of the session."""
+    """The `outputs` part of a workspace: every AI result of the session.
+    The decisions are worded now, with the speaker names saved now."""
     return {
         "analysisBundle": _normalize_text_bundle(cached_session.get("analysis_bundle"), str(cached_session.get("analysis_md") or "")),
         "deepAnalysisBundle": _normalize_text_bundle(cached_session.get("deep_analysis_bundle"), str(cached_session.get("deep_analysis_md") or "")),
         "contentRepurposeBundle": _stored_content_bundles(cached_session),
         "smartRecapBundle": _normalize_smart_recap_bundle(cached_session.get("smart_recap_bundle")),
         "faqBundle": _normalize_text_bundle(cached_session.get("faq_bundle"), ""),
-        "decisionsBundle": _normalize_text_bundle(cached_session.get("decisions_bundle"), ""),
+        "decisionsBundle": decisions_entry.bundle_markdown(cached_session.get("decisions_bundle"), _speaker_names(cached_session)),
         "teamDigestBundle": _normalize_text_bundle(cached_session.get("team_digest_bundle"), ""),
         "attendeeFollowupBundle": _normalize_text_bundle(cached_session.get("attendee_followup_bundle"), ""),
     }
@@ -974,7 +983,7 @@ def get_session_output_versions(
         raise UnknownOutputKindError(f"There are no saved versions for {kind!r}.")
     column, keyed_by = OUTPUT_VERSION_KINDS[kind]
     entry = str((tone if keyed_by == "tone" else language) or "").strip()
-    row = fetch_session_fields(session_id, [column], organization_id=organization_id)
+    row = fetch_session_fields(session_id, [column, "transcript_speaker_names"], organization_id=organization_id)
     if row is None:
         raise SessionNotFoundError("This session isn't available.")
     saved = row.get(column) if isinstance(row.get(column), dict) else {}
@@ -984,13 +993,17 @@ def get_session_output_versions(
     for version in list_output_versions(session_id, column, entry, organization_id=organization_id):
         current = not current_found and now is not None and version["content"] == now
         current_found = current_found or current
+        content = version["content"]
+        if kind == "decisions" and decisions_entry.is_entry(content):
+            # Saved as items: worded now, with the speaker names saved now.
+            content = decisions_entry.entry_markdown(content, _speaker_names(row), entry)
         versions.append(
             {
                 "id": version["id"],
                 "createdAt": _iso(version["created_at"]),
                 "models": version["models"],
                 "current": current,
-                "content": version["content"],
+                "content": content,
             }
         )
     return {"sessionId": session_id, "kind": kind, "entry": entry, "versions": _sanitize_json_value(versions)}
@@ -2048,38 +2061,77 @@ def run_faq(api_analysis_key: str, session_id: str, output_language: str) -> Dic
 def run_decisions(api_analysis_key: str, session_id: str, output_language: str) -> Dict[str, Any]:
     """The Follow-up's "Decisions and commitments" in one language. English
     is read from the session's dossier (`_write_decisions`); another
-    language is a translation of the English one, which must exist first.
-    Saved in `decisions_bundle` under the language."""
+    language is a translation of the English one, which must exist first:
+    only the items' text and due words (`_translate_decisions`), so owners
+    stay speaker refs. Saved in `decisions_bundle` under the language, as
+    items (`ai.decisions_entry`); a list saved as Markdown before November
+    2026 is translated as Markdown, as it was then."""
     cached = _require_cached_payloads(session_id, organization_id=ALL_ORGS)
-    bundle = _normalize_text_bundle(cached.get("decisions_bundle"), "")
-    if str(output_language or "").strip() not in ("", "English") and not bundle.get("English", "").strip():
+    raw = cached.get("decisions_bundle") if isinstance(cached.get("decisions_bundle"), dict) else {}
+    saved = {str(key): value for key, value in raw.items() if decisions_entry.has_body(value)}
+    language = str(output_language or "").strip() or "English"
+    if language != "English" and "English" not in saved:
         raise RuntimeError("Generate the English decisions first before translating.")
-    source_language, source_markdown = _get_alternate_language_text(bundle, output_language)
-    if source_markdown:
-        markdown = translate_markdown_with_openai(
-            api_key=api_analysis_key,
-            model=get_llm_model("translation"),
-            source_markdown=source_markdown,
-            source_language=OUTPUT_LANGUAGE_MAP.get(source_language, source_language),
-            target_language=OUTPUT_LANGUAGE_MAP.get(output_language, output_language),
-            ctx=_llm_call_context("translation", "decisions", session_id, output_language, cached),
+    source_language = "English" if language != "English" else next((key for key in saved if key != language), "")
+    source = saved.get(source_language) if source_language else None
+    ctx = _llm_call_context("translation", "decisions", session_id, output_language, cached)
+    if decisions_entry.is_entry(source):
+        value: Any = _translate_decisions(api_analysis_key, source, source_language, language, ctx)
+    elif source:
+        value = _require_generated_text(
+            translate_markdown_with_openai(
+                api_key=api_analysis_key,
+                model=get_llm_model("translation"),
+                source_markdown=source,
+                source_language=OUTPUT_LANGUAGE_MAP.get(source_language, source_language),
+                target_language=OUTPUT_LANGUAGE_MAP.get(language, language),
+                ctx=ctx,
+            ),
+            "list of decisions",
         )
     else:
-        markdown = _write_decisions(api_analysis_key, session_id, cached, output_language)
-    markdown = _require_generated_text(markdown, "list of decisions")
-    merge_cached_bundle_entry(session_id, "decisions_bundle", output_language, markdown, provenance=run_provenance())
-    bundle[output_language] = markdown
-    return {"markdown": markdown, "bundle": bundle}
+        value = _write_decisions(api_analysis_key, session_id, cached, output_language)
+    merge_cached_bundle_entry(session_id, "decisions_bundle", output_language, value, provenance=run_provenance())
+    bundle = decisions_entry.bundle_markdown({**saved, output_language: value}, _speaker_names(cached))
+    return {"markdown": bundle.get(output_language, ""), "bundle": bundle}
 
 
-def _write_decisions(api_key: str, session_id: str, cached: Mapping[str, Any], output_language: str) -> str:
+def _translate_decisions(api_key: str, entry: Mapping[str, Any], source_language: str, target_language: str, ctx: CallContext) -> Dict[str, Any]:
+    """The entry in another language: one translation call over its items'
+    text and due words only (`decisions_entry.translation_source`: never an
+    owner, a quote or a name), put back in place by code; owners, quotes,
+    ids and times are copied. A list with no item needs no call. An answer
+    that doesn't give back every line raises `LLMInvalidOutput`, so nothing
+    is saved."""
+    from livestorm_app.llm_client import LLMInvalidOutput
+
+    source = decisions_entry.translation_source(entry)
+    if not source:
+        return dict(entry)
+    translated = translate_markdown_with_openai(
+        api_key=api_key,
+        model=get_llm_model("translation"),
+        source_markdown=source,
+        source_language=OUTPUT_LANGUAGE_MAP.get(source_language, source_language),
+        target_language=OUTPUT_LANGUAGE_MAP.get(target_language, target_language),
+        ctx=ctx,
+    )
+    try:
+        return decisions_entry.apply_translation(entry, translated)
+    except decisions_entry.TranslationMismatch:
+        # Our own words, never the model's.
+        raise LLMInvalidOutput("The translated decisions didn't keep every item. Nothing was saved.") from None
+
+
+def _write_decisions(api_key: str, session_id: str, cached: Mapping[str, Any], output_language: str) -> Dict[str, Any]:
     """What was decided and promised on stage, read from the session's
     dossier (`record.understanding.build_dossier`: utterances by id and
     speaker key, never a name) by one model call (`ai.decisions`), checked
-    against it and worded by code (`record.decisions`) with the speakers'
-    saved names. Needs a transcript; it doesn't need "Analyse session"."""
+    against it (`record.decisions`) and returned as the entry to save:
+    speakers as refs, worded with their names when read. Needs a transcript;
+    it doesn't need "Analyse session"."""
     from livestorm_app.ai.decisions import read_decisions
-    from livestorm_app.record.decisions import check_decisions, decisions_markdown
+    from livestorm_app.record.decisions import check_decisions, saved_entry
     from livestorm_app.record.inputs import load_record_inputs
     from livestorm_app.record.roster import stored_roster_rows
     from livestorm_app.record.understanding import build_dossier
@@ -2100,8 +2152,32 @@ def _write_decisions(api_key: str, session_id: str, cached: Mapping[str, Any], o
         ctx=_llm_call_context("decisions", "decisions", session_id, output_language, cached),
     )
     items = check_decisions([item.model_dump() for item in answer.items], utterances)
-    names = cached.get("transcript_speaker_names") if isinstance(cached.get("transcript_speaker_names"), dict) else {}
-    return decisions_markdown(items, utterances, names, on_clock=any(u.get("t") is not None for u in utterances))
+    return saved_entry(items, utterances, on_clock=any(u.get("t") is not None for u in utterances))
+
+
+def get_session_decisions(session_id: str, language: str, *, organization_id: OrgScope) -> Dict[str, Any]:
+    """The decisions and commitments in one language, for Follow-up's cards:
+    `{sessionId, language, saved, clock, items, markdown}`. `saved` is
+    "items" (names resolved now from the speaker names saved on the
+    Transcript tab: `ai.decisions_entry.resolve_entry`), "markdown" (a list
+    saved before November 2026, served as it was, names included) or
+    "none". `markdown` is what Copy and the download give, worded now. No
+    model call; another org's session looks missing."""
+    language = str(language or "").strip() or "English"
+    if language not in OUTPUT_LANGUAGE_MAP:
+        raise ValueError(f"Unsupported output language {language!r}. Use one of: {', '.join(OUTPUT_LANGUAGE_MAP)}.")
+    row = fetch_session_fields(session_id, ["decisions_bundle", "transcript_speaker_names"], organization_id=organization_id)
+    if row is None:
+        raise SessionNotFoundError("This session isn't available.")
+    raw = row.get("decisions_bundle") if isinstance(row.get("decisions_bundle"), dict) else {}
+    value = raw.get(language)
+    names = _speaker_names(row)
+    body: Dict[str, Any] = {"saved": "none", "clock": None, "items": [], "markdown": ""}
+    if decisions_entry.is_entry(value):
+        body = {"saved": "items", **decisions_entry.resolve_entry(value, names), "markdown": decisions_entry.entry_markdown(value, names, language)}
+    elif decisions_entry.has_body(value):
+        body["saved"], body["markdown"] = "markdown", str(value).strip()
+    return {"sessionId": session_id, "language": language, **_sanitize_json_value(body)}
 
 
 def run_team_digest(api_analysis_key: str, session_id: str, output_language: str) -> Dict[str, Any]:
@@ -2169,7 +2245,8 @@ def _write_team_digest(api_key: str, session_id: str, cached: Mapping[str, Any],
     )
     located, located_state = located_answers(stored, inputs)
     desk = question_desk(inputs, fetch_question_replies(session_id, ALL_ORGS), located, located_state)
-    listed = _normalize_text_bundle(cached.get("decisions_bundle"), "").get("English", "").strip()
+    raw_decisions = cached.get("decisions_bundle") if isinstance(cached.get("decisions_bundle"), dict) else {}
+    listed = raw_decisions.get("English") if decisions_entry.has_body(raw_decisions.get("English")) else None
     brief = build_digest_brief(
         title=session_meta(inputs)["title"],
         length_s=clock_meta(inputs).get("endS"),
@@ -3244,8 +3321,9 @@ def _extract_cached_ai_body(cached: Dict[str, Any], kind: str, language: str = "
         bundle = _normalize_text_bundle(cached.get("faq_bundle"), "")
         return bundle.get(language) if bundle.get(language) else None
     if kind == "decisions":
-        bundle = _normalize_text_bundle(cached.get("decisions_bundle"), "")
-        return bundle.get(language) if bundle.get(language) else None
+        # Saved as items (`ai.decisions_entry`), or as Markdown before November 2026.
+        raw = cached.get("decisions_bundle") if isinstance(cached.get("decisions_bundle"), dict) else {}
+        return "ready" if decisions_entry.has_body(raw.get(language)) else None
     if kind == "team_digest":
         bundle = _normalize_text_bundle(cached.get("team_digest_bundle"), "")
         return bundle.get(language) if bundle.get(language) else None
