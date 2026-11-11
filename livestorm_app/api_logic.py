@@ -2092,6 +2092,18 @@ def _surprise_facts(session_id: str, cached: Mapping[str, Any]) -> Tuple[str, An
     return brief, inputs.roster
 
 
+def _surprise_refusal(markdown: str, sent: str) -> str:
+    """Why the take would be refused ("gives a number that isn't in the
+    session"), or "" when it passes `record.surprise_brief.check_surprise`."""
+    from livestorm_app.record.surprise_brief import SurpriseRejected, check_surprise
+
+    try:
+        check_surprise(markdown, sent)
+    except SurpriseRejected as exc:
+        return str(exc)
+    return ""
+
+
 def _check_surprise(markdown: str, sent: str) -> None:
     """Raises `SurpriseCheckError` when the take gives a time or a number
     that isn't in what it was sent (`record.surprise_brief.check_surprise`),
@@ -2499,21 +2511,34 @@ def run_smart_recap(api_analysis_key: str, session_id: str, tone: str) -> Dict[s
     else:
         redactor = _public_redactor(session_id, cached)
         sent = redactor.redact(speech)
-    markdown = analyze_with_openai(
-        api_key=api_analysis_key,
-        model=get_llm_model("smart_recap"),
-        system_prompt=build_smart_recap_prompt(tone),
-        output_language="English",
-        selected_sources=["transcript"],
-        derived_stats={},
-        transcript_text=sent,
-        max_tokens=900,
-        ctx=_llm_call_context("smart_recap", "smart_recap", session_id, tone, cached),
-    )
-    markdown = _require_generated_text(markdown, "smart recap")
-    _require_no_leak(redactor, [markdown], "smart recap")
+    def write(text: str) -> str:
+        answer = analyze_with_openai(
+            api_key=api_analysis_key,
+            model=get_llm_model("smart_recap"),
+            system_prompt=build_smart_recap_prompt(tone),
+            output_language="English",
+            selected_sources=["transcript"],
+            derived_stats={},
+            transcript_text=text,
+            max_tokens=900,
+            ctx=_llm_call_context("smart_recap", "smart_recap", session_id, tone, cached),
+        )
+        answer = _require_generated_text(answer, "smart recap")
+        _require_no_leak(redactor, [answer], "smart recap")
+        return answer
+
+    markdown = write(sent)
     if tone == "surprise":
-        _check_surprise(markdown, sent)
+        # A take that gives a figure the session doesn't have is written once
+        # more, within the same click, told why (never with its own words);
+        # a second refusal fails the job as before (the owner's choice).
+        reason = _surprise_refusal(markdown, sent)
+        if reason:
+            markdown = write(
+                f"{sent}\n\n# Note\n\nA first take was refused: it {reason}. Write a new take that uses only "
+                "the times and numbers given above, written the same way, or no numbers at all."
+            )
+            _check_surprise(markdown, sent)
     merge_cached_bundle_entry(session_id, "smart_recap_bundle", tone, markdown, provenance=run_provenance())
     smart_bundle[tone] = markdown
     return {"markdown": markdown, "bundle": smart_bundle}

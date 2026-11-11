@@ -12,7 +12,7 @@ import pytest
 import synthetic_session as synthetic
 
 from livestorm_app import api_logic
-from livestorm_app.record.surprise_brief import SurpriseRejected, build_surprise_brief, check_surprise
+from livestorm_app.record.surprise_brief import SurpriseRejected, build_surprise_brief, check_surprise, spoken_numbers
 
 # ── The check ──
 
@@ -61,9 +61,13 @@ def _run(tone, answer):
     row = dict(synthetic.cached_row())
     seen = {"saved": []}
 
+    answers = list(answer) if isinstance(answer, list) else None
+    seen["calls"] = []
+
     def model(**kwargs):
         seen["sent"] = kwargs["transcript_text"]
-        return answer
+        seen["calls"].append(kwargs["transcript_text"])
+        return answers.pop(0) if answers is not None else answer
 
     with ExitStack() as stack:
         for name, value in (
@@ -98,3 +102,36 @@ def test_a_surprise_take_with_an_invented_figure_is_never_saved():
 def test_the_other_tones_read_the_transcript_only():
     _, seen = _run("professional", "# Title\nRecap\n# Description\nFine.")
     assert seen["sent"] == "Welcome. Thanks [name]. We now have 142 people."
+
+
+# ── Numbers said aloud, and one retry ──
+
+
+def test_numbers_said_aloud_are_read_in_english_and_french():
+    assert spoken_numbers("we hit fifteen hundred users, twenty-five teams and two hundred and forty signups") == {"1500", "25", "240"}
+    assert spoken_numbers("quatre-vingt-dix pour cent, soixante-dix, trois mille inscrits") == {"90", "70", "3000"}
+    assert spoken_numbers("a hundred times") == {"100"}
+    assert "15" in {v for v in spoken_numbers("fifteen")}
+
+
+def test_a_number_said_aloud_may_be_written_as_digits():
+    allowed = "We now have fifteen integrations and forty-two customers."
+    assert check_surprise("Fifteen? No: 15 integrations, 42 customers.", allowed)
+    with pytest.raises(SurpriseRejected, match="number"):
+        check_surprise("All 43 customers clapped.", allowed)
+
+
+def test_a_refused_take_is_written_once_more_told_why():
+    bad = "# Title\nWow\n# Description\nAll 999 attendees cheered."
+    good = "# Title\nThe room\n# Description\n142 people, one plan."
+    _, seen = _run("surprise", [bad, good])
+    assert len(seen["calls"]) == 2
+    assert "A first take was refused: it gives a number that isn't in the session." in seen["calls"][1]
+    assert "999" not in seen["calls"][1], "never the take's own words"
+    assert len(seen["saved"]) == 1 and seen["saved"][0][3] == good
+
+
+def test_two_refusals_save_nothing():
+    bad = "# Title\nWow\n# Description\nAll 999 attendees cheered."
+    with pytest.raises(api_logic.SurpriseCheckError):
+        _run("surprise", [bad, bad])
