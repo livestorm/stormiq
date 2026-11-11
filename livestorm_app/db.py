@@ -502,8 +502,8 @@ def ensure_database_schema() -> None:
             _ensure_output_versions_schema(cursor)
             _ensure_org_settings_schema(cursor)
             _ensure_surprise_voice_schema(cursor)
-            _ensure_surprise_storyboard_schema(cursor)
             _ensure_surprise_script_schema(cursor)
+            _ensure_surprise_video_schema(cursor)
             _ensure_session_faq_schema(cursor)
         connection.commit()
 
@@ -808,23 +808,61 @@ def _ensure_surprise_voice_schema(cursor: Any) -> None:
     )
 
 
-def _ensure_surprise_storyboard_schema(cursor: Any) -> None:
-    """Surprise me's storyboard (`ai/surprise_story.py`): what the player
-    shows for each beat, one row per session, keyed by `story_key` (the
-    take's beats and the storyboard's version): a read with another key
-    finds none. Written whole by the voice job, after the check. References
-    `session_cache` (deleted with it) and has no org column: every read
-    joins `session_cache` on its org."""
+def _ensure_surprise_video_schema(cursor: Any) -> None:
+    """Surprise me's video (`ai/surprise_timing.py`, `ai/surprise_director.py`,
+    `ai/surprise_images.py`, `video/`): the timeline, the shot list, its
+    pictures and the rendered MP4. Each references `session_cache` (deleted
+    with it) and has no org column: every read joins `session_cache` on its
+    org. The in-browser player's storyboard (`surprise_storyboards`) is gone:
+    the director replaced it, so its table is dropped."""
+    cursor.execute("DROP TABLE IF EXISTS surprise_storyboards")
     cursor.execute(
         """
-        CREATE TABLE IF NOT EXISTS surprise_storyboards (
+        CREATE TABLE IF NOT EXISTS surprise_timelines (
+            session_id    TEXT PRIMARY KEY REFERENCES session_cache (session_id) ON DELETE CASCADE,
+            timeline_key  TEXT NOT NULL,
+            timeline      JSONB NOT NULL,
+            created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS surprise_shotlists (
             session_id  TEXT PRIMARY KEY REFERENCES session_cache (session_id) ON DELETE CASCADE,
-            story_key   TEXT NOT NULL,
-            storyboard  JSONB NOT NULL,
+            shots_key   TEXT NOT NULL,
+            shotlist    JSONB NOT NULL,
             created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
         """
     )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS surprise_show_images (
+            session_id  TEXT NOT NULL REFERENCES session_cache (session_id) ON DELETE CASCADE,
+            image_key   TEXT NOT NULL,
+            mime        TEXT NOT NULL,
+            image       BYTEA NOT NULL,
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (session_id, image_key)
+        )
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS surprise_videos (
+            session_id  TEXT PRIMARY KEY REFERENCES session_cache (session_id) ON DELETE CASCADE,
+            video_key   TEXT NOT NULL,
+            mp4         BYTEA NOT NULL,
+            duration_s  DOUBLE PRECISION NOT NULL,
+            size_bytes  INTEGER NOT NULL,
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
+    # An MP4 doesn't compress: stored uncompressed out of line, a byte range
+    # (`fetch_surprise_video_range`) reads only its own chunks.
+    cursor.execute("ALTER TABLE surprise_videos ALTER COLUMN mp4 SET STORAGE EXTERNAL")
 
 
 def _ensure_surprise_script_schema(cursor: Any) -> None:
@@ -958,6 +996,7 @@ _SESSION_FIELD_SQL = {
     "has_transcript": "transcript_payload IS NOT NULL",
     "session_payload": "session_payload",
     "event_payload": "event_payload",
+    "event_title": "event_payload->'data'->'attributes'->>'title'",
     "chat_payload": "chat_payload",
     "questions_payload": "questions_payload",
     "transcript_payload": "transcript_payload",
@@ -2963,67 +3002,263 @@ def prune_surprise_voice_clips(session_id: str, keep: Sequence[str]) -> int:
     return int(removed or 0)
 
 
-# ── Surprise me's storyboard (ai/surprise_story.py) ───────────────────────
+# ── Surprise me's video: timeline, shot list, pictures, MP4 ───────────────
+#
+# Only the show job writes the timeline, the shot list and the pictures, and
+# only the render worker writes the video, each whole; a write raises. Reads
+# join `session_cache` on its org, so an out-of-scope session reads nothing.
+
+# The keyed JSON rows: table -> (key column, JSON column). Identifiers come
+# from this table only, never from a caller.
+_SURPRISE_JSON_TABLES = {
+    "surprise_timelines": ("timeline_key", "timeline"),
+    "surprise_shotlists": ("shots_key", "shotlist"),
+}
 
 
-def fetch_surprise_storyboard(session_id: str, story_key: str, *, organization_id: OrgScope) -> Optional[Dict[str, Any]]:
-    """The session's storyboard (`{version, source, scenes}`) when it was
-    made for `story_key`; None when there is none, it is for another take,
-    or the session isn't in the scope (a blank scope never queries). Raises
-    when the database can't be read."""
-    session_id_value = str(session_id or "").strip()
-    key_value = str(story_key or "").strip()
-    if not database_enabled() or not session_id_value or not key_value:
-        return None
+def _scope_clause(organization_id: OrgScope) -> Optional[tuple]:
+    """`(sql, params)` for the org scope, or None when the scope is blank."""
     try:
         org_filter = _org_filter(organization_id)
     except ScopeMatchesNothing:
         return None
-    scope_clause = " AND c.organization_id = %s" if org_filter is not None else ""
-    params = (session_id_value, key_value) + ((org_filter,) if org_filter is not None else ())
+    if org_filter is None:
+        return ("", ())
+    return (" AND c.organization_id = %s", (org_filter,))
+
+
+def _fetch_surprise_json(table: str, session_id: str, key: Optional[str], *, organization_id: OrgScope) -> Optional[Dict[str, Any]]:
+    key_column, json_column = _SURPRISE_JSON_TABLES[table]
+    session_id_value = str(session_id or "").strip()
+    key_value = str(key or "").strip() if key is not None else None
+    if not database_enabled() or not session_id_value or key_value == "":
+        return None
+    scope = _scope_clause(organization_id)
+    if scope is None:
+        return None
+    key_sql = f" AND s.{key_column} = %s" if key_value is not None else ""
+    params = (session_id_value,) + ((key_value,) if key_value is not None else ()) + scope[1]
     with get_db_connection() as connection:
         row = connection.execute(
             f"""
-            SELECT s.storyboard
-            FROM surprise_storyboards s
+            SELECT s.{key_column} AS key, s.{json_column} AS body
+            FROM {table} s
             JOIN session_cache c ON c.session_id = s.session_id
-            WHERE s.session_id = %s AND s.story_key = %s{scope_clause}
+            WHERE s.session_id = %s{key_sql}{scope[0]}
             LIMIT 1
             """,
             params,
         ).fetchone()
-    if not row or not isinstance(row.get("storyboard"), dict):
+    if not row or not isinstance(row.get("body"), dict):
         return None
-    return dict(row["storyboard"])
+    return {"key": str(row["key"]), "body": dict(row["body"])}
 
 
-def save_surprise_storyboard(session_id: str, story_key: str, storyboard: Mapping[str, Any]) -> None:
-    """Save the session's storyboard whole (the voice job, after the check),
-    replacing one for an older take. Raises RuntimeError when the write
-    fails, or when the session is gone."""
+def _save_surprise_json(table: str, session_id: str, key: str, body: Mapping[str, Any], what: str) -> None:
+    key_column, json_column = _SURPRISE_JSON_TABLES[table]
     session_id_value = str(session_id or "").strip()
-    key_value = str(story_key or "").strip()
-    if not session_id_value or not key_value or not isinstance(storyboard, Mapping):
-        raise ValueError("save_surprise_storyboard requires a session id, a key and the storyboard.")
+    key_value = str(key or "").strip()
+    if not session_id_value or not key_value or not isinstance(body, Mapping):
+        raise ValueError(f"Saving the {what} requires a session id, a key and the {what}.")
+    if not database_enabled():
+        raise RuntimeError("Database is not configured.")
+    try:
+        with get_db_connection() as connection:
+            connection.execute(
+                f"""
+                INSERT INTO {table} (session_id, {key_column}, {json_column}, created_at)
+                VALUES (%s, %s, %s::jsonb, NOW())
+                ON CONFLICT (session_id) DO UPDATE SET
+                    {key_column} = EXCLUDED.{key_column},
+                    {json_column} = EXCLUDED.{json_column},
+                    created_at = NOW()
+                """,
+                (session_id_value, key_value, json.dumps(_without_nul(dict(body)), ensure_ascii=False)),
+            )
+            connection.commit()
+    except Exception as exc:
+        logger.error("Failed to save the %s for session_id=%s (%s)", what, session_id_value, _error_label(exc))
+        raise RuntimeError(f"Could not save the {what}.") from exc
+
+
+def fetch_surprise_timeline(session_id: str, timeline_key: Optional[str], *, organization_id: OrgScope) -> Optional[Dict[str, Any]]:
+    """`{key, body}`: the session's timeline (`ai/surprise_timing.build_timeline`),
+    only when made for `timeline_key` (None: whichever is saved). None when
+    there is none or the session isn't in the scope (a blank scope never
+    queries). Raises when the database can't be read."""
+    return _fetch_surprise_json("surprise_timelines", session_id, timeline_key, organization_id=organization_id)
+
+
+def save_surprise_timeline(session_id: str, timeline_key: str, timeline: Mapping[str, Any]) -> None:
+    """Save the session's timeline whole, replacing an older one. Raises."""
+    _save_surprise_json("surprise_timelines", session_id, timeline_key, timeline, "timeline")
+
+
+def fetch_surprise_shotlist(session_id: str, shots_key: Optional[str], *, organization_id: OrgScope) -> Optional[Dict[str, Any]]:
+    """`{key, body}`: the session's shot list (`{version, stage, source,
+    timeline_key, pulse, shots}`), only when made for `shots_key` (None:
+    whichever is saved); as `fetch_surprise_timeline`."""
+    return _fetch_surprise_json("surprise_shotlists", session_id, shots_key, organization_id=organization_id)
+
+
+def save_surprise_shotlist(session_id: str, shots_key: str, shotlist: Mapping[str, Any]) -> None:
+    """Save the session's shot list whole, replacing an older one. Raises."""
+    _save_surprise_json("surprise_shotlists", session_id, shots_key, shotlist, "shot list")
+
+
+def fetch_surprise_images(session_id: str, image_keys: Sequence[str], *, organization_id: OrgScope) -> Dict[str, bytes]:
+    """The session's pictures among `image_keys`, by key (JPEG bytes). Empty
+    when none, out of scope, or a blank scope. Raises when the database can't be read."""
+    session_id_value = str(session_id or "").strip()
+    keys = sorted({str(key) for key in image_keys if str(key or "").strip()})
+    if not database_enabled() or not session_id_value or not keys:
+        return {}
+    scope = _scope_clause(organization_id)
+    if scope is None:
+        return {}
+    with get_db_connection() as connection:
+        rows = connection.execute(
+            f"""
+            SELECT i.image_key, i.image
+            FROM surprise_show_images i
+            JOIN session_cache c ON c.session_id = i.session_id
+            WHERE i.session_id = %s AND i.image_key = ANY(%s){scope[0]}
+            """,
+            (session_id_value, keys) + scope[1],
+        ).fetchall()
+    return {str(row["image_key"]): bytes(row["image"]) for row in rows if row.get("image") is not None}
+
+
+def save_surprise_image(session_id: str, image_key: str, image: bytes, mime: str = "image/jpeg") -> None:
+    """Save one whole picture (the show job). Raises RuntimeError on failure."""
+    session_id_value = str(session_id or "").strip()
+    key_value = str(image_key or "").strip()
+    if not session_id_value or not key_value or not image:
+        raise ValueError("save_surprise_image requires a session id, a key and the picture.")
     if not database_enabled():
         raise RuntimeError("Database is not configured.")
     try:
         with get_db_connection() as connection:
             connection.execute(
                 """
-                INSERT INTO surprise_storyboards (session_id, story_key, storyboard, created_at)
-                VALUES (%s, %s, %s::jsonb, NOW())
-                ON CONFLICT (session_id) DO UPDATE SET
-                    story_key = EXCLUDED.story_key,
-                    storyboard = EXCLUDED.storyboard,
-                    created_at = NOW()
+                INSERT INTO surprise_show_images (session_id, image_key, mime, image, created_at)
+                VALUES (%s, %s, %s, %s, NOW())
+                ON CONFLICT (session_id, image_key) DO UPDATE SET
+                    mime = EXCLUDED.mime, image = EXCLUDED.image, created_at = NOW()
                 """,
-                (session_id_value, key_value, json.dumps(_without_nul(dict(storyboard)), ensure_ascii=False)),
+                (session_id_value, key_value, str(mime), bytes(image)),
             )
             connection.commit()
     except Exception as exc:
-        logger.error("Failed to save a storyboard for session_id=%s (%s)", session_id_value, _error_label(exc))
-        raise RuntimeError("Could not save the storyboard.") from exc
+        logger.error("Failed to save a show picture for session_id=%s (%s)", session_id_value, _error_label(exc))
+        raise RuntimeError("Could not save the show's picture.") from exc
+
+
+def prune_surprise_images(session_id: str, keep: Sequence[str]) -> int:
+    """Remove the session's pictures the current shot list no longer uses. Raises."""
+    session_id_value = str(session_id or "").strip()
+    if not database_enabled() or not session_id_value:
+        return 0
+    keys = sorted({str(key) for key in keep if str(key or "").strip()})
+    try:
+        with get_db_connection() as connection:
+            removed = connection.execute(
+                "DELETE FROM surprise_show_images WHERE session_id = %s AND NOT (image_key = ANY(%s))",
+                (session_id_value, keys),
+            ).rowcount
+            connection.commit()
+    except Exception as exc:
+        logger.error("Failed to prune show pictures for session_id=%s (%s)", session_id_value, _error_label(exc))
+        raise RuntimeError("Could not tidy the show's pictures.") from exc
+    return int(removed or 0)
+
+
+def fetch_surprise_video_meta(session_id: str, *, organization_id: OrgScope) -> Optional[Dict[str, Any]]:
+    """The session's video without its bytes: `{video_key, duration_s,
+    size_bytes, created_at}`, or None (none, out of scope, a blank scope).
+    Raises when the database can't be read."""
+    session_id_value = str(session_id or "").strip()
+    if not database_enabled() or not session_id_value:
+        return None
+    scope = _scope_clause(organization_id)
+    if scope is None:
+        return None
+    with get_db_connection() as connection:
+        row = connection.execute(
+            f"""
+            SELECT v.video_key, v.duration_s, v.size_bytes, v.created_at
+            FROM surprise_videos v
+            JOIN session_cache c ON c.session_id = v.session_id
+            WHERE v.session_id = %s{scope[0]}
+            LIMIT 1
+            """,
+            (session_id_value,) + scope[1],
+        ).fetchone()
+    if not row:
+        return None
+    return {
+        "video_key": str(row["video_key"]),
+        "duration_s": float(row["duration_s"]),
+        "size_bytes": int(row["size_bytes"]),
+        "created_at": row.get("created_at"),
+    }
+
+
+def fetch_surprise_video_range(session_id: str, start: int, length: int, *, organization_id: OrgScope) -> Optional[bytes]:
+    """`length` bytes of the session's MP4 from byte `start` (0-based), read
+    in Postgres (`substring`; the column is stored uncompressed, so only
+    those chunks are read). None when there is no video or it is out of
+    scope. Raises when the database can't be read."""
+    session_id_value = str(session_id or "").strip()
+    if not database_enabled() or not session_id_value or start < 0 or length <= 0:
+        return None
+    scope = _scope_clause(organization_id)
+    if scope is None:
+        return None
+    with get_db_connection() as connection:
+        row = connection.execute(
+            f"""
+            SELECT substring(v.mp4 FROM %s FOR %s) AS chunk
+            FROM surprise_videos v
+            JOIN session_cache c ON c.session_id = v.session_id
+            WHERE v.session_id = %s{scope[0]}
+            LIMIT 1
+            """,
+            (int(start) + 1, int(length), session_id_value) + scope[1],
+        ).fetchone()
+    if not row or row.get("chunk") is None:
+        return None
+    return bytes(row["chunk"])
+
+
+def save_surprise_video(session_id: str, video_key: str, *, mp4: bytes, duration_s: float) -> None:
+    """Save the session's video whole (the render worker), replacing an
+    older one. Raises RuntimeError when the write fails or the session is gone."""
+    session_id_value = str(session_id or "").strip()
+    key_value = str(video_key or "").strip()
+    if not session_id_value or not key_value or not mp4:
+        raise ValueError("save_surprise_video requires a session id, a key and the video.")
+    if not database_enabled():
+        raise RuntimeError("Database is not configured.")
+    try:
+        with get_db_connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO surprise_videos (session_id, video_key, mp4, duration_s, size_bytes, created_at)
+                VALUES (%s, %s, %s, %s, %s, NOW())
+                ON CONFLICT (session_id) DO UPDATE SET
+                    video_key = EXCLUDED.video_key,
+                    mp4 = EXCLUDED.mp4,
+                    duration_s = EXCLUDED.duration_s,
+                    size_bytes = EXCLUDED.size_bytes,
+                    created_at = NOW()
+                """,
+                (session_id_value, key_value, bytes(mp4), float(duration_s), len(mp4)),
+            )
+            connection.commit()
+    except Exception as exc:
+        logger.error("Failed to save the video for session_id=%s (%s)", session_id_value, _error_label(exc))
+        raise RuntimeError("Could not save the video.") from exc
 
 
 # ── Surprise me's performance script (ai/surprise_performance.py) ─────────
@@ -3731,9 +3966,12 @@ AI_OUTPUT_TABLES = (
     "session_chat_labels",
     "session_understanding",
     "session_faq",
-    "surprise_storyboards",
     "surprise_scripts",
     "surprise_voice_clips",
+    "surprise_timelines",
+    "surprise_shotlists",
+    "surprise_show_images",
+    "surprise_videos",
 )
 
 

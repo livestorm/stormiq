@@ -95,15 +95,26 @@ SESSION_ANALYSIS_STAGE_FLOORS: Dict[str, int] = {
 
 
 # Surprise me's show (`worker.run_surprise_show_job`, keyed by session):
-# write the take (when there is none), the performance script, the
-# storyboard, then one clip per line. While it records, the payload also
-# carries `done` and `total` (clips) and a `percent` that moves with them.
+# write the take (when there is none), the performance script, one clip per
+# line, then time the clips, direct the shots and draw the pictures. While
+# it records, the payload also carries `done` and `total` (clips) and a
+# `percent` that moves with them.
 SURPRISE_SHOW_STAGE_FLOORS: Dict[str, int] = {
     "queued": 0,
     "take": 5,
-    "script": 30,
-    "storyboard": 45,
-    "voice": 55,
+    "script": 15,
+    "voice": 25,
+    "timing": 55,
+    "directing": 60,
+    "pictures": 68,
+    "done": 75,
+}
+
+# Surprise me's video (`render_worker.render_surprise_video`, keyed by
+# session, on the render queue): the picture, then the sound.
+SURPRISE_VIDEO_STAGE_FLOORS: Dict[str, int] = {
+    "rendering": 78,
+    "mixing": 95,
     "done": 100,
 }
 
@@ -111,6 +122,7 @@ SURPRISE_SHOW_STAGE_FLOORS: Dict[str, int] = {
 STAGE_TABLE: Dict[str, Dict[str, int]] = {
     "transcript": TRANSCRIPT_STAGE_FLOORS,
     "surprise_show": SURPRISE_SHOW_STAGE_FLOORS,
+    "surprise_video": SURPRISE_VIDEO_STAGE_FLOORS,
     "roster": ROSTER_STAGE_FLOORS,
     "session_analysis": SESSION_ANALYSIS_STAGE_FLOORS,
     "overall_analysis": ANALYSIS_STAGE_FLOORS,

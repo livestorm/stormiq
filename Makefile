@@ -11,7 +11,7 @@ TEST_REDIS_URL  ?= redis://localhost:6379/15
 BENCH_REDIS_URL ?= redis://localhost:6379/13
 
 .DEFAULT_GOAL := help
-.PHONY: help setup services stack api worker web lint test test-backend test-frontend build check docker bench lock
+.PHONY: help setup services stack api worker render-worker web lint test test-backend test-frontend build check docker bench lock
 
 help: ## List the commands
 	@awk 'BEGIN {FS = ":.*## "} /^[a-z-]+:.*## / {printf "  %-14s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -33,6 +33,9 @@ api: ## Run the API with reload on :8000
 worker: ## Run the arq worker
 	$(BIN)/arq livestorm_app.worker.WorkerSettings
 
+render-worker: ## Run the render worker (Surprise me's MP4; needs Node, ffmpeg and GSAP_JS_PATH, see docs/operations.md)
+	HYPERFRAMES_BIN="$${HYPERFRAMES_BIN:-npx -y hyperframes@0.9.34}" $(BIN)/arq livestorm_app.render_worker.WorkerSettings
+
 web: ## Run the Vite dev server on :5173 (proxies /api to :8000)
 	cd frontend && npm run dev
 
@@ -53,9 +56,10 @@ build: ## Production frontend build
 
 check: lint test build ## Everything CI runs, except the Docker builds
 
-docker: ## Build the web and worker images
+docker: ## Build the web, worker and render images
 	docker build -t stormiq-web .
 	docker build -f docker/Dockerfile.worker -t stormiq-worker .
+	docker build --platform linux/amd64 -f docker/Dockerfile.render -t stormiq-render .
 
 bench: ## Seed synthetic sessions into the local database and time the heaviest routes
 	DATABASE_URL=$(LOCAL_DB_URL) REDIS_URL=$(BENCH_REDIS_URL) $(BIN)/python scripts/seed_benchmark_sessions.py --reset

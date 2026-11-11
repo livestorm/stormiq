@@ -28,8 +28,12 @@ from livestorm_app.db import (
     fetch_session_fields,
     fetch_session_roster,
     fetch_surprise_enabled,
+    fetch_surprise_images,
     fetch_surprise_script,
-    fetch_surprise_storyboard,
+    fetch_surprise_shotlist,
+    fetch_surprise_timeline,
+    fetch_surprise_video_meta,
+    fetch_surprise_video_range,
     fetch_surprise_voice_clip,
     fetch_surprise_voice_clips,
     fetch_understanding,
@@ -37,13 +41,16 @@ from livestorm_app.db import (
     list_output_versions,
     list_workspace_sessions,
     merge_cached_bundle_entry,
+    prune_surprise_images,
     prune_surprise_voice_clips,
     save_figure_check,
     save_session_faq,
     save_located_decision,
     save_question_reply,
+    save_surprise_image,
     save_surprise_script,
-    save_surprise_storyboard,
+    save_surprise_shotlist,
+    save_surprise_timeline,
     save_surprise_voice_clip,
     update_transcript_job_status,
     upsert_cached_session,
@@ -52,19 +59,18 @@ from livestorm_app.people_sync import roster_live_state, start_sync_on_fetch
 from livestorm_app.progress import read_progress
 from livestorm_app.queue import (
     AI_JOB_KINDS,
+    RENDER_QUEUE,
     ai_job_id,
     enqueue_unique_job_sync,
     read_job_status_sync,
     surprise_show_job_id,
+    surprise_video_job_id,
     transcription_job_id,
 )
-from livestorm_app.ai.surprise_story import (
-    STORYBOARD_VERSION,
-    check_storyboard,
-    story_key,
-    storyboard_payload,
-    write_storyboard,
-)
+from livestorm_app.ai import surprise_director as director
+from livestorm_app.ai import surprise_images as show_images
+from livestorm_app.ai import surprise_timing as timing
+from livestorm_app.video.keys import video_key as surprise_video_key
 from livestorm_app.ai.surprise_performance import (
     SCRIPT_VERSION,
     check_script,
@@ -2306,12 +2312,13 @@ class SurpriseCheckError(RuntimeError):
 
 def _surprise_facts(session_id: str, cached: Mapping[str, Any]) -> Dict[str, Any]:
     """What StormIQ measured, for Surprise Me! (`record.surprise_brief`):
-    `{brief, redactor, room, vitals}`: the brief as text (the vitals, the
-    key moments with what was being said, the placed chapters and "From the
-    room", the audience's chat and questions redacted line by line); the
+    `{brief, redactor, room, vitals, pulse}`: the brief as text (the vitals,
+    the key moments with what was being said, the placed chapters and "From
+    the room", the audience's chat and questions redacted line by line); the
     session's public redactor (`_public_redactor`, from the same people
     source as the record); the room's lines (`room_lines`: ids, times and
-    redacted text); and the vitals' lines. No model call."""
+    redacted text); the vitals' lines; and the chat per minute from the
+    record's Pulse (`[{m, chat}]`, counts only), which the video draws. No model call."""
     from livestorm_app.record.assemble import assemble_record, chapter_marks, clock_meta, session_meta
     from livestorm_app.record.digest_brief import vital_lines
     from livestorm_app.record.format_briefs import question_up_votes
@@ -2339,7 +2346,13 @@ def _surprise_facts(session_id: str, cached: Mapping[str, Any]) -> Dict[str, Any
         [{"title": chapter["title"], "t": mark["t"]} for chapter, mark in zip(chapters, marks["marks"], strict=True)]
         if marks["placed"] else []
     )
-    measures = assemble_record(inputs)["record"].get("measures") or {}
+    record = assemble_record(inputs)["record"]
+    measures = record.get("measures") or {}
+    pulse = [
+        {"m": int(row["minute"]), "chat": int(row.get("audienceChat") or 0) + int(row.get("teamChat") or 0)}
+        for row in ((record.get("pulse") or {}).get("minutes") or [])
+        if isinstance(row, Mapping) and isinstance(row.get("minute"), int)
+    ]
     moments = room_moments(inputs, result or {}, names)
     # What the room wrote, redacted line by line: never who wrote it.
     room = room_lines(
@@ -2356,7 +2369,7 @@ def _surprise_facts(session_id: str, cached: Mapping[str, Any]) -> Dict[str, Any
         chapters=placed,
         room=room,
     )
-    return {"brief": brief, "redactor": redactor, "room": room, "vitals": vital_lines(measures, None)}
+    return {"brief": brief, "redactor": redactor, "room": room, "vitals": vital_lines(measures, None), "pulse": pulse}
 
 
 def _surprise_refusal(markdown: str, sent: str) -> str:
@@ -2724,29 +2737,37 @@ def build_analysis_pdf(session_id: str, analysis_kind: str, language: str, *, or
     return {"filename": filename, "content": pdf_bytes}
 
 
-# ── Surprise me, the show (`ai/surprise_performance.py`, `ai/surprise_story.py`,
-# `ai/surprise_voice.py`, `ai/voice_elevenlabs.py`) ──
+# ── Surprise me, the show and its video (`ai/surprise_performance.py`,
+# `ai/surprise_voice.py`, `ai/voice_elevenlabs.py`, `ai/surprise_timing.py`,
+# `ai/surprise_director.py`, `ai/surprise_images.py`, `video/`) ──
 #
 # One click ("Make the show", `start_surprise_show`) queues one worker job
 # (`run_surprise_show`) that makes, in order, what the session doesn't have
 # yet: the take (the Smart Recap's `surprise` tone, `run_smart_recap`, with
 # its number check and retry), the performance script (Claude, checked
-# against the take, or the take's own beats), the storyboard (Claude, one
-# scene per beat, checked word for word) and the voice (one clip per line of
+# against the take, or the take's own beats), the voice (one clip per line of
 # the script, by ElevenLabs, or by OpenAI when ElevenLabs refuses the
-# account). Each piece is saved whole as it is made, keyed by what it was
-# made from, so a replay costs nothing and a retry makes only what is
-# missing. The script is never sent to the page: the status lists its lines
-# by beat and clip key only.
+# account), the timing (each clip's words from OpenAI whisper-1, else an
+# estimate), the shot list (Claude, checked in code, else shots from rules)
+# and up to three pictures (OpenAI Images). Then it queues the render
+# (`render_surprise_video` on `RENDER_QUEUE`), which the render worker
+# (`render_worker.py`) turns into one MP4 and saves. Each piece is saved
+# whole as it is made, keyed by what it was made from, so a replay costs
+# nothing and a retry makes only what is missing. The script is never sent
+# to the page as text: the video shows at most six of a clause's words at a time.
 
 SURPRISE_SHOW_KIND = "surprise_show"
+SURPRISE_VIDEO_KIND = "surprise_video"
+RENDER_FUNCTION = "render_surprise_video"
 _SURPRISE_SHOW_FIELDS = ["organization_id", "smart_recap_bundle", "has_transcript"]
 SURPRISE_VOICE_WORKERS = 4
 # ElevenLabs' smaller plans take only a few requests at once (more answer
 # 429 "too many concurrent requests"), so its lines are made two at a time.
 ELEVENLABS_VOICE_WORKERS = 2
+WHISPER_WORKERS = 4
 NO_TAKE_MESSAGE = "There is no surprise take yet. Make the show first."
 NO_TRANSCRIPT_MESSAGE = "This session has no transcript yet. Make it on the Transcript tab first: the take is written from it."
+RENDER_QUEUE_DOWN_MESSAGE = "The video's queue is unavailable. Check the render worker and the Redis connection."
 
 
 class SurpriseVoiceNoTakeError(RuntimeError):
@@ -2785,12 +2806,38 @@ def _voice_label(settings: Mapping[str, str]) -> str:
     return str(settings["voice"]).capitalize()
 
 
+def _video_parts(
+    session_id: str, lines: List[Dict[str, Any]], keys: List[str], *, organization_id: OrgScope
+) -> Dict[str, Any]:
+    """What the show's video is made from, as saved: `{timeline_key,
+    shots_key, video_key, timeline, shotlist, meta, ready}`. `video_key` is
+    None until the shot list is final; `ready` when the saved video was made
+    from exactly these."""
+    tl_key = timing.timeline_key(lines, keys)
+    shots_key = director.shots_key(tl_key)
+    parts: Dict[str, Any] = {"timeline_key": tl_key, "shots_key": shots_key, "video_key": None, "timeline": None,
+                             "shotlist": None, "meta": None, "ready": False}
+    saved_timeline = fetch_surprise_timeline(session_id, tl_key, organization_id=organization_id)
+    if saved_timeline is None:
+        return parts
+    parts["timeline"] = saved_timeline["body"]
+    saved_shots = fetch_surprise_shotlist(session_id, shots_key, organization_id=organization_id)
+    if saved_shots is None or saved_shots["body"].get("stage") != "final":
+        return parts
+    parts["shotlist"] = saved_shots["body"]
+    image_keys = [str(shot["image"]) for shot in saved_shots["body"].get("shots") or [] if shot.get("image")]
+    parts["video_key"] = surprise_video_key(tl_key, shots_key, image_keys)
+    meta = fetch_surprise_video_meta(session_id, organization_id=organization_id)
+    parts["meta"] = meta
+    parts["ready"] = bool(meta) and meta["video_key"] == parts["video_key"]
+    return parts
+
+
 def _surprise_show_status(session_id: str, row: Mapping[str, Any], *, organization_id: OrgScope) -> Dict[str, Any]:
     take, beats = _show_take(row)
     texts = [beat["text"] for beat in beats]
     primary, backup = voice_plan()
     script = fetch_surprise_script(session_id, script_key(texts), organization_id=organization_id) if beats else None
-    storyboard = fetch_surprise_storyboard(session_id, story_key(texts), organization_id=organization_id) if beats else None
     lines = _show_lines(script, len(beats))
     main_keys = [clip_key(line, primary) for line in lines]
     backup_keys = [clip_key(line, backup) for line in lines] if backup else []
@@ -2800,32 +2847,25 @@ def _surprise_show_status(session_id: str, row: Mapping[str, Any], *, organizati
     fell_back = bool(backup_keys) and not all(key in have for key in main_keys) and all(key in have for key in backup_keys)
     keys = backup_keys if fell_back else main_keys
     voice = backup if fell_back else primary
-    scenes = list((storyboard or {}).get("scenes") or [])
-    listed_lines = [
-        {
-            "index": index,
-            "beat": line["beat"] - 1,
-            "clip": key,
-            "ready": key in have,
-            "durationS": (have.get(key) or {}).get("duration_s"),
+    ready = sum(1 for key in keys if key in have)
+    clips_ready = bool(keys) and ready == len(keys)
+    parts = _video_parts(session_id, lines, keys, organization_id=organization_id) if clips_ready else None
+    video: Dict[str, Any] = {"state": "none", "durationS": None, "sizeBytes": None}
+    if parts and parts["ready"]:
+        video = {
+            "state": "ready",
+            "durationS": parts["meta"]["duration_s"],
+            "sizeBytes": parts["meta"]["size_bytes"],
+            "version": str(parts["video_key"])[:16],
         }
-        for index, (line, key) in enumerate(zip(lines, keys, strict=True))
-    ]
-    listed_beats = [
-        {**beat, "scene": scenes[i] if i < len(scenes) and isinstance(scenes[i], dict) else None}
-        for i, beat in enumerate(beats)
-    ]
-    ready = sum(1 for line in listed_lines if line["ready"])
     body: Dict[str, Any] = {
         "sessionId": session_id,
         "take": take,
         "hasTranscript": bool(row.get("has_transcript")),
-        "beats": listed_beats,
-        "lines": listed_lines,
+        "beats": beats,
         "ready": ready,
-        "total": len(listed_lines),
+        "total": len(keys),
         "script": "ready" if script is not None else "missing",
-        "story": "ready" if storyboard is not None else "missing",
         "voice": {
             "provider": voice["provider"],
             "model": voice["model"],
@@ -2833,24 +2873,32 @@ def _surprise_show_status(session_id: str, row: Mapping[str, Any], *, organizati
             "label": _voice_label(voice),
             "fellBack": fell_back,
         },
+        "video": video,
         "progress": None,
     }
-    clips_ready = bool(listed_lines) and ready == len(listed_lines)
-    if clips_ready and storyboard is not None:
+    if video["state"] == "ready":
         body["state"] = "ready"
         return _sanitize_json_value(body)
-    job = read_job_status_sync(surprise_show_job_id(session_id))
-    status = job.get("jobStatus")
-    if status in ("pending", "running"):
-        body["state"] = status
+    show_job = read_job_status_sync(surprise_show_job_id(session_id))
+    show_status = show_job.get("jobStatus")
+    if show_status in ("pending", "running"):
+        body["state"] = show_status
         body["progress"] = read_progress(SURPRISE_SHOW_KIND, session_id)
-    elif clips_ready:
-        # The voice is made but the storyboard isn't (its call failed): the
-        # player draws its own scenes.
-        body["state"] = "ready"
-    elif status == "error":
+        return _sanitize_json_value(body)
+    render_job = read_job_status_sync(surprise_video_job_id(session_id), RENDER_QUEUE)
+    render_status = render_job.get("jobStatus")
+    if render_status in ("pending", "running"):
+        body["state"] = "running"
+        body["video"] = {**video, "state": render_status}
+        body["progress"] = read_progress(SURPRISE_VIDEO_KIND, session_id) or {"stage": "rendering", "percent": 78}
+    elif show_status == "error":
         body["state"] = "error"
-        body["error"] = str(job.get("error") or "The show could not be made.")
+        body["error"] = str(show_job.get("error") or "The show could not be made.")
+    elif render_status == "error":
+        message = str(render_job.get("error") or "The video could not be made.")
+        body["state"] = "error"
+        body["error"] = message
+        body["video"] = {**video, "state": "error", "error": message}
     else:
         body["state"] = "missing" if beats else "none"
     return _sanitize_json_value(body)
@@ -2858,12 +2906,13 @@ def _surprise_show_status(session_id: str, row: Mapping[str, Any], *, organizati
 
 def get_surprise_show(session_id: str, *, organization_id: OrgScope) -> Dict[str, Any]:
     """The session's show: `{sessionId, state, take, hasTranscript, beats:
-    [{index, kind, text, scene}], lines: [{index, beat, clip, ready,
-    durationS}], ready, total, script, story, voice: {provider, model,
-    voice, label, fellBack}, progress, error?}`. `state`: `none` (no take
-    yet), `missing` (a take, the show not made yet), `pending`, `running`,
-    `ready` or `error`. A line's `beat` is its beat's index; its words are
-    never sent. Calls no provider."""
+    [{index, kind, text}], ready, total, script, voice: {provider, model,
+    voice, label, fellBack}, video: {state, durationS, sizeBytes, version?,
+    error?}, progress, error?}`. `state`: `none` (no take yet), `missing`
+    (a take, the video not made yet), `pending`, `running` (the show job, or
+    the render), `ready` (the video is made from the show as it is) or
+    `error`. `ready` and `total` count the voice's clips. The script's words
+    are never sent. Calls no provider."""
     session_id = str(session_id or "").strip()
     row = _surprise_voice_row(session_id, organization_id)
     return _surprise_show_status(session_id, row, organization_id=organization_id)
@@ -2871,7 +2920,8 @@ def get_surprise_show(session_id: str, *, organization_id: OrgScope) -> Dict[str
 
 def start_surprise_show(session_id: str, *, organization_id: OrgScope) -> Dict[str, Any]:
     """The user clicked "Make the show": queue the one job that makes what
-    the show is missing (ids only), or return the show when it is made."""
+    the show is missing and then its video (ids only), or return the show
+    when its video is made or on its way."""
     session_id = str(session_id or "").strip()
     row = _surprise_voice_row(session_id, organization_id)
     status = _surprise_show_status(session_id, row, organization_id=organization_id)
@@ -2883,15 +2933,77 @@ def start_surprise_show(session_id: str, *, organization_id: OrgScope) -> Dict[s
     if not job:
         raise RuntimeError("The show's queue is unavailable. Check the worker service and Redis connection.")
     status.pop("error", None)
+    status["video"] = {key: value for key, value in status["video"].items() if key != "error"}
+    if status["video"].get("state") == "error":
+        status["video"]["state"] = "none"
     status["state"] = job["jobStatus"] if job.get("jobStatus") in ("pending", "running") else "pending"
     return status
 
 
-def get_surprise_voice_clip(session_id: str, key: str, *, organization_id: OrgScope) -> Optional[Dict[str, Any]]:
-    """One clip's `{bytes, mime}`, or None when the session has no such clip."""
+class SurpriseVideoMissing(RuntimeError):
+    """The session has no video yet."""
+
+
+def get_surprise_video_meta(session_id: str, *, organization_id: OrgScope) -> Dict[str, Any]:
+    """The saved video's `{video_key, duration_s, size_bytes, created_at,
+    title}` for the video route (the Surprise me switch checked, the scope
+    passed). Raises `SurpriseVideoMissing` when there is none."""
     session_id = str(session_id or "").strip()
     _surprise_voice_row(session_id, organization_id)
-    return fetch_surprise_voice_clip(session_id, key, organization_id=organization_id)
+    meta = fetch_surprise_video_meta(session_id, organization_id=organization_id)
+    if not meta:
+        raise SurpriseVideoMissing("This session has no video yet.")
+    fields = fetch_session_fields(session_id, ["event_title"], organization_id=organization_id) or {}
+    return {**meta, "title": str(fields.get("event_title") or "").strip()}
+
+
+def get_surprise_video_bytes(session_id: str, start: int, length: int, *, organization_id: OrgScope) -> bytes:
+    """`length` bytes of the saved video from `start`, in the scope."""
+    chunk = fetch_surprise_video_range(str(session_id or "").strip(), start, length, organization_id=organization_id)
+    if chunk is None:
+        raise SurpriseVideoMissing("This session has no video yet.")
+    return chunk
+
+
+class RangeNotSatisfiable(ValueError):
+    """A Range header the video can't answer (416)."""
+
+
+def byte_range(header: Optional[str], size: int) -> Optional[Tuple[int, int]]:
+    """The first byte and the last (inclusive) asked by a `Range` header for a
+    file of `size` bytes, or None to send it whole (no header, another unit,
+    several ranges). Raises `RangeNotSatisfiable` for a range outside the file."""
+    text = str(header or "").strip()
+    if not text:
+        return None
+    unit, _, spec = text.partition("=")
+    if unit.strip().lower() != "bytes" or "," in spec:
+        return None
+    first, dash, last = spec.strip().partition("-")
+    if not dash:
+        raise RangeNotSatisfiable("A malformed range.")
+    try:
+        if first.strip() == "":
+            suffix = int(last)
+            if suffix <= 0:
+                raise RangeNotSatisfiable("An empty range.")
+            return max(0, size - suffix), size - 1
+        start = int(first)
+        end = int(last) if last.strip() else size - 1
+    except ValueError:
+        raise RangeNotSatisfiable("A malformed range.") from None
+    if start < 0 or start >= size or end < start:
+        raise RangeNotSatisfiable("The range is outside the video.")
+    return start, min(end, size - 1)
+
+
+def video_file_name(title: str) -> str:
+    """`surprise-me-<the session's title, as a slug>.mp4`."""
+    import unicodedata
+
+    plain = unicodedata.normalize("NFKD", str(title or "")).encode("ascii", "ignore").decode("ascii").lower()
+    slug = "-".join(part for part in __import__("re").split(r"[^a-z0-9]+", plain) if part)[:60].strip("-")
+    return f"surprise-me-{slug or 'session'}.mp4"
 
 
 def _show_context(kind: str, session_id: str, row: Mapping[str, Any]) -> CallContext:
@@ -2943,37 +3055,168 @@ def _make_surprise_script(
     return lines, how
 
 
-def _make_surprise_storyboard(llm_key: str, session_id: str, row: Mapping[str, Any], beats: List[Dict[str, Any]], key: str) -> str:
-    """The take's storyboard (`ai/surprise_story.py`), made once per take:
-    `kept` (already there), `made`, or, without saving anything, `skipped`
-    (no Claude key) or `failed` (the facts or the call failed; logged by
-    the error's class only). A made one is checked before it is saved
-    (`check_storyboard`) and written whole; a failed write raises."""
-    if fetch_surprise_storyboard(session_id, key, organization_id=ALL_ORGS) is not None:
-        return "kept"
-    if not str(llm_key or "").strip():
-        logger.warning("[surprise storyboard] session_id=%s skipped: no Claude key on the worker", session_id)
-        return "skipped"
-    texts = [beat["text"] for beat in beats]
+def _clip_words(openai_key: str, session_id: str, key: str) -> Optional[List[Dict[str, Any]]]:
+    """One clip's words from whisper-1, or None (logged by kind only)."""
+    try:
+        clip = fetch_surprise_voice_clip(session_id, key, organization_id=ALL_ORGS)
+        if not clip:
+            return None
+        return timing.transcribe_words(openai_key, clip["bytes"])
+    except timing.WordsFailed as exc:
+        logger.warning("[surprise timing] session_id=%s a clip is timed by estimate (%s)", session_id, exc)
+    except Exception as exc:  # never fails the show: the clip is timed by estimate
+        logger.warning("[surprise timing] session_id=%s a clip is timed by estimate (%s)", session_id, type(exc).__name__)
+    return None
+
+
+def _make_surprise_timeline(
+    openai_key: str, session_id: str, lines: List[Dict[str, Any]], clip_keys: List[str]
+) -> Tuple[str, Dict[str, Any], str]:
+    """The show's timeline (`ai/surprise_timing.py`), made once per script
+    and voice: `(key, timeline, how)`, `how` being `kept` or `made`. Each
+    clip's words come from whisper-1 (`_clip_words`, a few at a time); a
+    clip without them is timed by estimate. Saved whole; a failed write raises."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    key = timing.timeline_key(lines, clip_keys)
+    saved = fetch_surprise_timeline(session_id, key, organization_id=ALL_ORGS)
+    if saved is not None:
+        return key, saved["body"], "kept"
+    lengths = fetch_surprise_voice_clips(session_id, clip_keys, organization_id=ALL_ORGS)
+    unique = list(OrderedDict.fromkeys(clip_keys))
+    words: Dict[str, Optional[List[Dict[str, Any]]]] = {}
+    if str(openai_key or "").strip():
+        with ThreadPoolExecutor(max_workers=min(WHISPER_WORKERS, len(unique) or 1)) as pool:
+            for clip, found in zip(unique, pool.map(lambda k: _clip_words(openai_key, session_id, k), unique), strict=True):
+                words[clip] = found
+    else:
+        logger.warning("[surprise timing] session_id=%s no OpenAI key on the worker: every clip is timed by estimate", session_id)
+    clips = []
+    for clip in clip_keys:
+        duration = (lengths.get(clip) or {}).get("duration_s")
+        if not duration:
+            stored = fetch_surprise_voice_clip(session_id, clip, organization_id=ALL_ORGS)
+            duration = mp3_duration_s(stored["bytes"]) if stored else None
+        if not duration:
+            raise SpeechFailed("A line of the voice is missing. Please try again.")
+        clips.append({"key": clip, "duration_s": duration})
+    timeline = timing.build_timeline(lines, clips, [words.get(clip) for clip in clip_keys])
+    save_surprise_timeline(session_id, key, timeline)
+    return key, timeline, "made"
+
+
+def _video_facts(session_id: str, take: str) -> Dict[str, Any]:
+    """What the director may show besides the clauses: the room's redacted
+    lines (none with a placeholder left in), the vitals, the chat per
+    minute, the words an image prompt may not hold, and the redactor. Never
+    fails: without facts the director gets clauses only."""
     try:
         cached = _require_cached_payloads(session_id, organization_id=ALL_ORGS)
         facts = _surprise_facts(session_id, cached)
-        # A line with a placeholder left in it ("[name] said…") isn't offered as a bubble.
-        room = [line for line in facts["room"] if not facts["redactor"].leaks(line["text"])]
-        answer = write_storyboard(
-            storyboard_payload(beats, room, facts["vitals"]),
-            api_key=llm_key,
-            ctx=_show_context("surprise_storyboard", session_id, row),
-        )
-    except Exception as exc:  # never fails the show: the player draws its own scenes
-        logger.warning(
-            "[surprise storyboard] session_id=%s not made (%s); the player draws its own scenes",
-            session_id, type(exc).__name__,
-        )
-        return "failed"
-    scenes = check_storyboard(texts, answer.model_dump(), room)
-    save_surprise_storyboard(session_id, key, {"version": STORYBOARD_VERSION, "source": "model", "scenes": scenes})
-    return "made"
+    except Exception as exc:
+        logger.warning("[surprise director] session_id=%s facts not read (%s)", session_id, type(exc).__name__)
+        return {"room": [], "vitals": [], "pulse": [], "banned": director.banned_words([take]), "redactor": None}
+    redactor = facts["redactor"]
+    room = [line for line in facts["room"] if not redactor.leaks(line["text"])]
+    names = cached.get("transcript_speaker_names") if isinstance(cached.get("transcript_speaker_names"), dict) else {}
+    banned = director.banned_words([take, *(line["text"] for line in room)], [str(name) for name in names.values()])
+    return {"room": room, "vitals": facts["vitals"], "pulse": facts["pulse"], "banned": banned, "redactor": redactor}
+
+
+def _make_surprise_shotlist(
+    llm_key: str, session_id: str, row: Mapping[str, Any], take: str, tl_key: str, timeline: Mapping[str, Any]
+) -> Tuple[str, Dict[str, Any], str]:
+    """The video's shot list (`ai/surprise_director.py`), made once per
+    timeline: `(key, shotlist, how)`, `how` being `kept`, `made` (the
+    model's, checked) or `fallback` (shots from rules: no Claude key, a
+    failed call or an unusable answer, logged by kind only). Saved whole at
+    stage `directed` (the pictures not made yet); a failed write raises."""
+    key = director.shots_key(tl_key)
+    saved = fetch_surprise_shotlist(session_id, key, organization_id=ALL_ORGS)
+    if saved is not None and saved["body"].get("stage") in ("directed", "final"):
+        return key, saved["body"], "kept"
+    clauses = list(timeline.get("shots") or [])
+    facts = _video_facts(session_id, take)
+    minutes = [row_["m"] for row_ in facts["pulse"]]
+    shots: Optional[List[Dict[str, Any]]] = None
+    if not str(llm_key or "").strip():
+        logger.warning("[surprise director] session_id=%s skipped: no Claude key on the worker", session_id)
+    else:
+        try:
+            answer = director.direct_shots(
+                director.director_payload(clauses, facts["vitals"], facts["pulse"], facts["room"]),
+                api_key=llm_key,
+                ctx=_show_context(director.KIND, session_id, row),
+            )
+            shots = director.check_shots(clauses, answer.model_dump(), room=facts["room"], minutes=minutes, banned=facts["banned"])
+        except Exception as exc:  # never fails the show: the rules direct it
+            logger.warning("[surprise director] session_id=%s not made (%s); shots from rules", session_id, type(exc).__name__)
+    how = "made" if shots is not None else "fallback"
+    if shots is None:
+        shots = director.fallback_shots(clauses, minutes)
+    redactor = facts["redactor"]
+    for shot in shots:
+        # An image prompt holding an attendee's name or a placeholder is never sent.
+        if shot.get("type") == "image" and redactor is not None and redactor.leaks(shot.get("image_prompt") or ""):
+            shot.update(type="kinetic", image_prompt=None, fixed=True)
+    shotlist = {
+        "version": director.DIRECTOR_VERSION,
+        "stage": "directed",
+        "source": "model" if how == "made" else "rules",
+        "timeline_key": tl_key,
+        "pulse": facts["pulse"],
+        "shots": shots,
+    }
+    save_surprise_shotlist(session_id, key, shotlist)
+    return key, shotlist, how
+
+
+def _make_surprise_pictures(openai_key: str, session_id: str, key: str, shotlist: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
+    """The shot list's pictures (`ai/surprise_images.py`), at most three:
+    each made once by its prompt and saved whole; a shot whose picture
+    fails (or has no OpenAI key) becomes kinetic type. Then the shot list is
+    saved again at stage `final`: `(shotlist, pictures made)`."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    if shotlist.get("stage") == "final":
+        return shotlist, 0
+    shots = [dict(shot) for shot in shotlist.get("shots") or []]
+    wanted = [shot for shot in shots if shot.get("type") == "image" and shot.get("image_prompt")][: director.MAX_IMAGES]
+    for shot in shots:
+        if shot.get("type") == "image" and shot not in wanted:
+            shot.update(type="kinetic", image_prompt=None)
+    keys = {id(shot): show_images.image_key(shot["image_prompt"]) for shot in wanted}
+    have = fetch_surprise_images(session_id, list(keys.values()), organization_id=ALL_ORGS) if wanted else {}
+    todo = [shot for shot in wanted if keys[id(shot)] not in have]
+
+    def make(shot: Dict[str, Any]) -> bool:
+        try:
+            picture = show_images.generate_image(openai_key, shot["image_prompt"])
+        except show_images.ImageFailed as exc:
+            logger.warning("[surprise pictures] session_id=%s a picture failed (%s); kinetic type instead", session_id, exc)
+            return False
+        except Exception as exc:
+            logger.warning("[surprise pictures] session_id=%s a picture failed (%s); kinetic type instead", session_id, type(exc).__name__)
+            return False
+        save_surprise_image(session_id, keys[id(shot)], picture, show_images.IMAGE_MIME)
+        return True
+
+    made = 0
+    if todo:
+        with ThreadPoolExecutor(max_workers=len(todo)) as pool:
+            results = list(pool.map(make, todo))
+        made = sum(results)
+        for shot, done in zip(todo, results, strict=True):
+            if done:
+                have[keys[id(shot)]] = b""
+    for shot in wanted:
+        if keys[id(shot)] in have:
+            shot["image"] = keys[id(shot)]
+        else:
+            shot.update(type="kinetic", image_prompt=None, image=None)
+    final = {**shotlist, "stage": "final", "shots": shots}
+    save_surprise_shotlist(session_id, key, final)
+    return final, made
 
 
 def _record_lines(
@@ -3022,11 +3265,14 @@ def run_surprise_show(
     """The worker's side of "Make the show". `keys` are the worker's own
     (`claude`, `openai`, `elevenlabs`). Writes the take if there is none
     (`run_smart_recap`, which raises when it fails its check twice), then
-    the script, the storyboard (neither ever fails the show) and the voice:
-    every line with the main voice, or, when it fails for any reason
-    (`SpeechFailed`: the account refused, still too busy after the retries,
-    a timeout), every line with the backup. Then drops the clips
-    the show no longer uses. Raises with a message the page can show."""
+    the script (never fails the show) and the voice: every line with the
+    main voice, or, when it fails for any reason (`SpeechFailed`: the
+    account refused, still too busy after the retries, a timeout), every
+    line with the backup. Then drops the clips the show no longer uses,
+    times the clips, directs the shots and draws the pictures (none of the
+    three ever fails the show on a provider's answer), and queues the video
+    on the render queue unless it is already made. Raises with a message
+    the page can show."""
     llm_key = str(keys.get("claude") or "").strip()
     row = _surprise_voice_row(session_id, ALL_ORGS)  # the switch, checked again
     take, beats = _show_take(row)
@@ -3047,12 +3293,10 @@ def run_surprise_show(
         raise SpeechFailed("The take is too long to perform.")
     publish("script", {})
     lines, script_how = _make_surprise_script(llm_key, session_id, row, take, beats)
-    publish("storyboard", {})
-    story = _make_surprise_storyboard(llm_key, session_id, row, beats, story_key([beat["text"] for beat in beats]))
     primary, backup = voice_plan()
 
     def progress(done: int, total: int) -> None:
-        publish("voice", {"done": done, "total": total, "percent": 55 + int(40 * done / total) if total else 95})
+        publish("voice", {"done": done, "total": total, "percent": 25 + int(30 * done / total) if total else 55})
 
     fell_back = False
     try:
@@ -3070,15 +3314,38 @@ def run_surprise_show(
         fell_back = True
         kept, made = _record_lines(session_id, lines, backup, keys, progress)
     prune_surprise_voice_clips(session_id, kept)
+    openai_key = str(keys.get("openai") or "").strip()
+    publish("timing", {})
+    tl_key, timeline, timing_how = _make_surprise_timeline(openai_key, session_id, lines, kept)
+    publish("directing", {})
+    shots_key, shotlist, director_how = _make_surprise_shotlist(llm_key, session_id, row, take, tl_key, timeline)
+    publish("pictures", {})
+    shotlist, pictures = _make_surprise_pictures(openai_key, session_id, shots_key, shotlist)
+    image_keys = [str(shot["image"]) for shot in shotlist.get("shots") or [] if shot.get("image")]
+    prune_surprise_images(session_id, image_keys)
+    wanted = surprise_video_key(tl_key, shots_key, image_keys)
+    meta = fetch_surprise_video_meta(session_id, organization_id=ALL_ORGS)
+    video = "kept"
+    if not meta or meta["video_key"] != wanted:
+        job = enqueue_unique_job_sync(
+            RENDER_FUNCTION, surprise_video_job_id(session_id), session_id, _queue_name=RENDER_QUEUE
+        )
+        if not job:
+            raise RuntimeError(RENDER_QUEUE_DOWN_MESSAGE)
+        video = "queued"
     return {
         "status": "ok",
         "take": "written" if wrote_take else "kept",
         "script": script_how,
-        "story": story,
         "lines": len(lines),
         "made": made,
         "voice": (backup if fell_back else primary)["provider"],
         "fellBack": fell_back,
+        "timing": timing_how,
+        "timed": int(timeline.get("timed") or 0),
+        "director": director_how,
+        "pictures": pictures,
+        "video": video,
     }
 
 

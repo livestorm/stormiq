@@ -288,7 +288,7 @@ watch(() => output.value.key, () => (busyStarted.value = busy.value.busy ? Date.
 onBeforeUnmount(() => clearInterval(busyTicker));
 const busyElapsed = computed(() => (busyStarted.value === null ? "" : elapsedLabel(busyStarted.value, busyNow.value)));
 // Surprise me, the show (`SurprisePlayer`): first and big; the take itself
-// behind "Show transcript". Its key words come from the chapters' titles.
+// behind "Show transcript".
 const transcriptOpen = ref(false);
 watch(() => output.value.key, () => (transcriptOpen.value = false));
 const takeText = computed(() => (output.value.corner ? body.value || surprise.state.body?.take || "" : ""));
@@ -304,9 +304,6 @@ function downloadTake() {
   link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
-const chapterTitles = computed(() => (chapters.state.body?.chapters || []).map((chapter) => chapter.title).filter(Boolean));
-// Its scenes draw the audience chat per minute from the record (the Pulse).
-const pulseMinutes = computed(() => record.value?.record?.pulse?.minutes || []);
 const anyBusy = computed(() => OUTPUTS.some((item) => item.flow && state.loading[item.flow]));
 
 // ── Earlier versions: what was saved before the output on screen ──
@@ -476,9 +473,6 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
         <SurprisePlayer
           :show="surprise"
           :session-id="sessionId"
-          :take="body"
-          :chapter-titles="chapterTitles"
-          :minutes="pulseMinutes"
           :can-write="hasTranscript"
         />
         <template v-if="takeText">

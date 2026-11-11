@@ -1,9 +1,10 @@
 // Surprise me's show: one session's `GET /surprise-show` (the take and its
-// beats, the script's lines by beat and clip key, never their words, which
-// clips are made, the voice), and `POST /surprise-show`, which queues the one
-// paid job that makes what is missing: the take, the performance script, the
-// storyboard and the voice. `start()` is called only from a click on "Make
-// the show".
+// beats, how many clips are made, the voice, the video's state; never the
+// script's words), and `POST /surprise-show`, which queues the one paid job
+// that makes what is missing (the take, the performance script, the voice,
+// the timing, the shot list, the pictures), after which the render worker
+// makes the MP4. `start()` is called only from a click on "Make the show".
+// The poll follows both: the state stays `running` until the video is made.
 //
 // `createSurpriseShow()` returns a small reactive model the page owns:
 //   open(sessionId)   reads the show (and follows a job already running)

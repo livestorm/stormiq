@@ -71,8 +71,19 @@ def ai_job_id(kind: str, session_id: str, dimension: str) -> str:
 
 def surprise_show_job_id(session_id: str) -> str:
     """One show job per session (Surprise me: the take, the script, the
-    storyboard and the voice): two clicks on "Make the show" share it."""
+    voice, the timing, the shot list and the pictures): two clicks on "Make
+    the show" share it."""
     return f"surprise_show:{str(session_id).strip()}"
+
+
+# The render worker's own queue (`livestorm_app/render_worker.py`): the main
+# worker never takes a job from it, and the render worker takes nothing else.
+RENDER_QUEUE = "stormiq:render"
+
+
+def surprise_video_job_id(session_id: str) -> str:
+    """One render per session (Surprise me's MP4, on `RENDER_QUEUE`)."""
+    return f"surprise_video:{str(session_id).strip()}"
 
 
 def transcription_job_id(transcript_job_id: str) -> str:
@@ -187,18 +198,20 @@ def close_queue_bridge() -> None:
 
 async def enqueue_unique_job(pool: ArqRedis, function_name: str, job_id: str, *args: Any, **kwargs: Any) -> Dict[str, Any]:
     """`enqueue_unique_job_sync`'s work, for async code that has a pool (the
-    worker chaining one job after another): `{jobId, jobStatus, enqueued}`."""
+    worker chaining one job after another): `{jobId, jobStatus, enqueued}`.
+    `_queue_name` (arq's own keyword) puts it on another queue."""
+    queue_name = kwargs.get("_queue_name")
     for _attempt in range(2):
         job = await pool.enqueue_job(function_name, *args, _job_id=job_id, **kwargs)
         if job is not None:
             return {"jobId": job_id, "jobStatus": "pending", "enqueued": True}
-        status = await _job_status(pool, job_id)
+        status = await _job_status(pool, job_id, queue_name)
         if status["jobStatus"] in ("pending", "running"):
             return {"jobId": job_id, "jobStatus": status["jobStatus"], "enqueued": False}
         # Finished (or gone between the two calls): drop the retained
         # result so the id is free, then enqueue again.
         await pool.delete(result_key_prefix + job_id)
-    status = await _job_status(pool, job_id)
+    status = await _job_status(pool, job_id, queue_name)
     return {"jobId": job_id, "jobStatus": status["jobStatus"], "enqueued": False}
 
 
@@ -284,8 +297,9 @@ def job_result_serializer(data: Any) -> bytes:
 #     'unknown'    — Redis could not be reached
 
 
-def read_job_status_sync(job_id: str) -> Dict[str, Any]:
-    """Read an arq job's status from sync code. Never raises.
+def read_job_status_sync(job_id: str, queue_name: Optional[str] = None) -> Dict[str, Any]:
+    """Read an arq job's status from sync code. Never raises. `queue_name`
+    for a job on another queue than arq's default (`RENDER_QUEUE`).
 
     Returns: `{ jobStatus: str, error?: str }`. See the vocabulary above.
     """
@@ -293,16 +307,16 @@ def read_job_status_sync(job_id: str) -> Dict[str, Any]:
     if not cleaned:
         return {"jobStatus": "not_found"}
     try:
-        return _bridge.run(lambda pool: _job_status(pool, cleaned))
+        return _bridge.run(lambda pool: _job_status(pool, cleaned, queue_name))
     except Exception:
         logger.warning("read_job_status_sync failed for %s", job_id, exc_info=True)
         return {"jobStatus": "unknown"}
 
 
-async def _job_status(pool: ArqRedis, job_id: str) -> Dict[str, Any]:
+async def _job_status(pool: ArqRedis, job_id: str, queue_name: Optional[str] = None) -> Dict[str, Any]:
     from arq.jobs import Job, JobStatus
 
-    job = Job(job_id, pool)
+    job = Job(job_id, pool, _queue_name=queue_name) if queue_name else Job(job_id, pool)
     status = await job.status()
     if status == JobStatus.not_found:
         return {"jobStatus": "not_found"}

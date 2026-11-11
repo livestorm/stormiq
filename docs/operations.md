@@ -13,7 +13,10 @@ make services            # Postgres + Redis in Docker
 make api                 # FastAPI with reload on :8000      (one terminal)
 make worker              # arq worker                         (another)
 make web                 # Vite on :5173, proxies /api to :8000 (a third)
+make render-worker       # Surprise me's video, only when you need it (a fourth)
 ```
+
+The render worker needs Node 22 or later, ffmpeg on the `PATH` and GSAP: `npm install --prefix /tmp/stormiq-render gsap@3.15.0`, then `GSAP_JS_PATH=/tmp/stormiq-render/node_modules/gsap/dist/gsap.min.js make render-worker`. It runs `npx -y hyperframes@0.9.34` unless `HYPERFRAMES_BIN` says otherwise; the CLI downloads its pinned headless Chrome on first use (`npx hyperframes@0.9.34 browser ensure`). A two-minute show took about 3.5 minutes on an Apple-silicon Mac.
 
 Set `STORMIQ_LOCAL_DEV=1` and `LS_API_KEY` in `.env` to skip OAuth locally ([security.md](security.md#identity)). `.env` is read at startup by `config.load_env_file()`; variables already set in the environment win. A few values are read before `.env` is loaded, so outside Docker their `.env` values are ignored: `TTS_MODEL` and `TTS_VOICE` (read when `config.py` is imported) and the worker's `REDIS_URL` (read when `WorkerSettings` is defined). Set those in your shell if you need non-default values.
 
@@ -29,7 +32,7 @@ CI (`.github/workflows/ci.yml`) runs the same checks on every pull request:
 | `make test` | pytest (with the local Postgres and Redis) and Vitest |
 | `make build` | the production frontend build |
 | `make check` | all three |
-| `make docker` | both production images (CI builds them too) |
+| `make docker` | the three production images (CI builds them too); the render image for `linux/amd64`, Render's platform: its headless Chrome has no ARM build |
 
 Backend tests that need Postgres or Redis are skipped unless `TEST_DATABASE_URL` or `TEST_REDIS_URL` is set; the Makefile sets both to the compose services. Both must be local hosts, and the Redis URL must name a dedicated database index (default `/15`), because the fixture flushes it.
 
@@ -50,19 +53,34 @@ Render, configured in [`render.yaml`](../render.yaml):
 |---|---|---|
 | **web** | `uvicorn app:app` on `$PORT`: the API and the built SPA | [`Dockerfile`](../Dockerfile) (two stages: Node builds the frontend, Python runs it) |
 | **worker** | `arq livestorm_app.worker.WorkerSettings` | [`docker/Dockerfile.worker`](../docker/Dockerfile.worker) (no frontend, no HTTP) |
+| **render** (`stormiq-render`) | `arq livestorm_app.render_worker.WorkerSettings`: Surprise me's MP4, from the `stormiq:render` queue, one at a time | [`docker/Dockerfile.render`](../docker/Dockerfile.render) (Python, Node, `hyperframes` 0.9.34 and its headless Chrome, ffmpeg, Noto Color Emoji) |
 | **redis** | Render Key Value: the job queue and progress | managed |
-| **Postgres** | Render Postgres; `DATABASE_URL` is set by hand on web and worker in the dashboard (`render.yaml` declares no database) | managed |
+| **Postgres** | Render Postgres; `DATABASE_URL` is set by hand on web, worker and render in the dashboard (`render.yaml` declares no database) | managed |
 
-- Both images install the hashed lock, run as an unprivileged `stormiq` user, and need no compiler toolchain.
-- **Base images are pinned to exact versions:** `node:26.13.0-bookworm-slim` (frontend build only; Node never runs in production) and `python:3.13.18-slim-trixie` (web and worker). Floating tags would let a cached, unpatched base survive rebuilds.
+- All three images install the hashed lock, run as an unprivileged `stormiq` user, and need no compiler toolchain.
+- **Base images are pinned to exact versions:** `node:26.13.0-bookworm-slim` (the frontend build, and the render image's Node binary: Node runs in production only in the render worker) and `python:3.13.18-slim-trixie` (web, worker and render). The render image also pins `hyperframes@0.9.34` and `gsap@3.15.0` (installed with npm at build time; GSAP is never committed) and downloads the CLI's pinned headless Chrome at build time, so a render makes no network call. Floating tags would let a cached, unpatched base survive rebuilds.
 - **Health check:** `GET /api/health` is the web service's `healthCheckPath` (Render waits for it before routing to a new deploy), with a matching Docker `HEALTHCHECK`. The worker has no HTTP check; Render watches the process.
 - **Redis:** web and worker share `REDIS_URL`. A restart loses queued jobs and progress, never results ([jobs.md](jobs.md#where-state-lives)). A queue must not evict keys under memory pressure, so the Key Value instance should use the `noeviction` policy. `render.yaml` doesn't set one (Render's default may be `allkeys-lru`): check it in the dashboard.
 - **Connections:** each process keeps one Postgres pool (max 10, [data-model.md](data-model.md#connections)). The web process also keeps one Redis connection pool on a background event-loop thread (`queue._QueueBridge`). When Redis is unreachable it tries once, then fails every call immediately for `REDIS_DOWN_COOLDOWN_SECONDS` (5 s): polls report `unknown` and job starts report "queue unavailable" instead of tying up the web server's threads. Both pools close on shutdown.
 - **Compression:** Render's edge (Cloudflare) already brotli-compresses responses, so the app adds no compression middleware.
 
+### The render worker (Surprise me's video)
+
+`render.yaml` declares it (`stormiq-render`), but a Blueprint that is already synced may not create a new service on its own. To create it by hand in the Render dashboard:
+
+1. **New → Background Worker**, from this repository, branch `main`, runtime **Docker**, Dockerfile path `./docker/Dockerfile.render`, Docker build context `.` (the repository root). No start command: the image's `CMD` runs `arq livestorm_app.render_worker.WorkerSettings`.
+2. **Instance type: Standard (2 GB RAM, 1 CPU)** or larger. Headless Chrome and ffmpeg need about 1 to 1.5 GB for one 720p render (`max_jobs=1`); Starter's 512 MB is not enough. A two-minute show renders in a few minutes on one CPU (about 3.5 minutes on an Apple-silicon Mac); the job's timeout is 20 minutes.
+3. **Environment:** `DATABASE_URL` (the same internal URL as web and worker) and `REDIS_URL` (from the `stormiq-redis` Key Value's internal connection string, as on the worker). Nothing else: no AI key, no Livestorm key.
+4. **Auto-deploy** on, like web and worker. Region: the same as Postgres and Redis.
+5. After the first deploy, its log says `[render worker] startup complete (queue stormiq:render)`. Make a show on a session (Follow-up → Surprise me → Make the show): the page goes through "Rendering the video" and plays the MP4.
+
+Without this service, shows are made up to their pictures and then wait on "Rendering the video" (the render stays queued in Redis); nothing is lost, and the video renders once the service runs.
+
 ### Worker environment
 
-The worker resolves every credential itself, because job arguments never carry secrets. It needs `DATABASE_URL`, `REDIS_URL`, `GLADIA_KEY`, `CLAUDE_API_KEY` for every text job, `OPENAI_API_KEY` for Surprise me's backup voice only, `ELEVENLABS_API_KEY` for its main voice, and `LIVESTORM_OAUTH_CLIENT_ID` / `LIVESTORM_OAUTH_CLIENT_SECRET` to refresh a user's token when a queued transcription or people sync starts close to its expiry. It logs a warning at startup when `GLADIA_KEY` is missing.
+The render worker needs only `DATABASE_URL` and `REDIS_URL`: it calls no provider and reads no key. Its image sets `HYPERFRAMES_BIN`, `GSAP_JS_PATH`, `FFMPEG_BIN`, `HYPERFRAMES_NO_TELEMETRY` and `DO_NOT_TRACK` itself; don't add AI keys to it.
+
+The worker resolves every credential itself, because job arguments never carry secrets. It needs `DATABASE_URL`, `REDIS_URL`, `GLADIA_KEY`, `CLAUDE_API_KEY` for every text job, `OPENAI_API_KEY` for Surprise me only (its backup voice, its video's word timings and illustrations; without it the timing is estimated and the shots drawn as type), `ELEVENLABS_API_KEY` for its main voice, and `LIVESTORM_OAUTH_CLIENT_ID` / `LIVESTORM_OAUTH_CLIENT_SECRET` to refresh a user's token when a queued transcription or people sync starts close to its expiry. It logs a warning at startup when `GLADIA_KEY` is missing.
 
 ## Environment variables
 
@@ -76,11 +94,16 @@ ANTHROPIC_CUSTOM_HEADERS      # Leave unset. The SDK would add its headers to ev
                               # every Anthropic call fails before it is sent.
                               # ANTHROPIC_API_KEY and ANTHROPIC_BASE_URL are ignored: llm_client passes the key and
                               # the host to the SDK explicitly.
-OPENAI_API_KEY                # Required for Surprise me's backup voice (worker)
+OPENAI_API_KEY                # Worker. Surprise me's backup voice, its video's word timings (whisper-1) and illustrations
 ELEVENLABS_API_KEY            # Worker. Surprise me's main voice (ElevenLabs eleven_v3). Unset: every show is
                               # recorded with the OpenAI backup voice and says so. Never logged or sent to the page.
 TTS_MODEL                     # Optional. Surprise me's OpenAI speech model (default gpt-4o-mini-tts)
 TTS_VOICE                     # Optional. Its OpenAI voice when Admin set none (default cedar)
+
+# Surprise me's render worker (set by docker/Dockerfile.render; locally, see Local development)
+HYPERFRAMES_BIN               # The hyperframes CLI (default "hyperframes"; make render-worker: "npx -y hyperframes@0.9.34")
+GSAP_JS_PATH                  # gsap.min.js 3.15.0 (default /opt/stormiq-render/node_modules/gsap/dist/gsap.min.js)
+FFMPEG_BIN                    # ffmpeg (default "ffmpeg")
 ORG_DAILY_LLM_BUDGET_USD      # Optional, worker. Daily spend cap per org for automatic text jobs (none exists yet), in
                               # dollars, per UTC day. Unset: no limit. Never applies to jobs a user starts.
 
@@ -132,7 +155,7 @@ RENDER                        # Set by Render on every service. Turns off local-
 
 `llm_smoke.py --i-understand-this-costs` makes real, paid calls (well under a dollar in all) to check that the models StormIQ plans to use accept the parameters it plans to send: each planned parameter on the offered Claude models, each v1 job's request as the app itself writes it (`ai/request.py`), three calls of the understanding job over one dossier that show whether a cached prefix is read, and the OpenAI rows' parameters. It reads `CLAUDE_API_KEY` and `OPENAI_API_KEY` from the environment, never `.env`, skips a provider without a key, touches no database, and prints one line per call: whether it was accepted (or the HTTP status and error type it got), the stop reason and, for the cache calls, `cache_read_tokens`. Never a prompt, an answer or a key. The last line counts the calls not accepted and the cache misses (a repeated cached prefix that read 0 tokens from the cache); it exits 1 when either is above 0. Run it by hand only; its docstring lists every call.
 
-`reset_ai_outputs.py` removes every AI output so users regenerate them with the current models and formats (`db.reset_ai_outputs`): the AI bundles, their earlier versions, the chat labels, the understanding, the saved FAQ edits, Surprise me's storyboards, spoken scripts and voice clips, and the desk's decisions on located answers; with `--include-covers`, the bytes still stored in the unused cover image columns (covers were removed in November 2026). It keeps each session's fetched data, its transcript, the host's replies and figure checks, sign-ins, settings and `llm_usage`, and leaves `updated_at` alone. It is a dry run (counts only) unless you pass `--apply`, runs in one transaction, refuses a non-local database unless you also pass `--allow-remote-database`, and doesn't read `.env`. Take a database backup first. On Render: open the web service's Shell and run `python scripts/reset_ai_outputs.py --allow-remote-database`, then again with `--apply`.
+`reset_ai_outputs.py` removes every AI output so users regenerate them with the current models and formats (`db.reset_ai_outputs`): the AI bundles, their earlier versions, the chat labels, the understanding, the saved FAQ edits, Surprise me's spoken scripts, voice clips, timelines, shot lists, pictures and videos, and the desk's decisions on located answers; with `--include-covers`, the bytes still stored in the unused cover image columns (covers were removed in November 2026). It keeps each session's fetched data, its transcript, the host's replies and figure checks, sign-ins, settings and `llm_usage`, and leaves `updated_at` alone. It is a dry run (counts only) unless you pass `--apply`, runs in one transaction, refuses a non-local database unless you also pass `--allow-remote-database`, and doesn't read `.env`. Take a database backup first. On Render: open the web service's Shell and run `python scripts/reset_ai_outputs.py --allow-remote-database`, then again with `--apply`.
 
 `strip_registrant_join_links.py` removes registrant join links from rows saved before they were stripped on fetch. It is a dry run unless you pass `--apply`. It refuses a non-local database unless you also pass `--allow-remote-database`, and it doesn't read `.env`. It prints session ids and counts only.
 

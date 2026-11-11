@@ -105,6 +105,16 @@ class FakeBackend:
             return {"bytes": MARKER.encode(), "mime": "audio/mpeg"}
         return None
 
+    def fetch_surprise_video_meta(self, session_id, *, organization_id):
+        if session_id == SESSION_ID and _visible(organization_id):
+            return {"video_key": "f" * 64, "duration_s": 2.0, "size_bytes": len(MARKER), "created_at": None}
+        return None
+
+    def fetch_surprise_video_range(self, session_id, start, length, *, organization_id):
+        if session_id == SESSION_ID and _visible(organization_id):
+            return MARKER.encode()[start:start + length]
+        return None
+
     def upsert_cached_session(self, api_key, session_id, **fields):
         self.upserts.append((session_id, fields))
 
@@ -177,8 +187,12 @@ def backend(monkeypatch):
     monkeypatch.setattr(api_logic, "fetch_surprise_enabled", lambda org: True)
     monkeypatch.setattr(api_logic, "fetch_surprise_voice_clips", fake.fetch_surprise_voice_clips)
     monkeypatch.setattr(api_logic, "fetch_surprise_voice_clip", fake.fetch_surprise_voice_clip)
-    monkeypatch.setattr(api_logic, "fetch_surprise_storyboard", lambda sid, key, *, organization_id: None)
     monkeypatch.setattr(api_logic, "fetch_surprise_script", lambda sid, key, *, organization_id: None)
+    # Its video: one saved (the MP4 route reads it), none of its parts for the show as it is.
+    monkeypatch.setattr(api_logic, "fetch_surprise_video_meta", fake.fetch_surprise_video_meta)
+    monkeypatch.setattr(api_logic, "fetch_surprise_video_range", fake.fetch_surprise_video_range)
+    monkeypatch.setattr(api_logic, "fetch_surprise_timeline", lambda sid, key, *, organization_id: None)
+    monkeypatch.setattr(api_logic, "fetch_surprise_shotlist", lambda sid, key, *, organization_id: None)
     monkeypatch.setattr(
         api_logic,
         "voice_plan",
@@ -230,7 +244,7 @@ def backend(monkeypatch):
 
     monkeypatch.setattr(api_logic, "create_transcript_job", create_transcript_job)
     monkeypatch.setattr(api_logic, "read_progress", lambda *a, **k: None)
-    monkeypatch.setattr(api_logic, "read_job_status_sync", lambda job_id: {"jobStatus": "running"})
+    monkeypatch.setattr(api_logic, "read_job_status_sync", lambda job_id, queue_name=None: {"jobStatus": "running"})
     # The people sync (people_sync.py): its scope check, roster status, row and enqueue.
     monkeypatch.setattr(people_sync, "fetch_session_fields", fake.fetch_session_fields)
     monkeypatch.setattr(people_sync, "fetch_roster_status", fake.fetch_roster_status)

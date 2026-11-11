@@ -7,7 +7,8 @@ What goes:
       decisions, team digest, attendee and no-show follow-ups.
     - Their earlier versions (`output_versions`), the chat labels, the
       understanding (chapters, located answers, figures), the saved FAQ
-      edits, Surprise me's storyboards, spoken scripts and voice clips.
+      edits, Surprise me's spoken scripts, voice clips, timelines, shot
+      lists, pictures and videos.
     - The desk's decisions on answers the AI located in the talk
       ("Confirm" / "Not this"); the host's own replies stay.
     - With `--include-covers`, the cover images too.

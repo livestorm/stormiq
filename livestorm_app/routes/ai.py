@@ -5,18 +5,21 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
-
-from livestorm_app.ai.surprise_voice import CLIP_KEY_PATTERN
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 
 from livestorm_app.api_logic import (
+    RangeNotSatisfiable,
     SessionNotFoundError,
     SurpriseOffError,
+    SurpriseVideoMissing,
     SurpriseVoiceNoTakeError,
     UnknownOutputKindError,
+    byte_range,
     get_surprise_show,
-    get_surprise_voice_clip,
+    get_surprise_video_bytes,
+    get_surprise_video_meta,
     start_surprise_show,
+    video_file_name,
     get_session_output_versions,
     build_analysis_pdf,
     build_content_repurposing_pdf,
@@ -299,9 +302,10 @@ def _voice_error(exc: Exception) -> None:
 @router.post("/api/sessions/{session_id}/surprise-show")
 def surprise_show_start(session_id: SessionId, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
     """The user clicked "Make the show": queue the one worker job that makes
-    what the show is missing (the take, the script, the storyboard, the
-    voice; paid), or return the show when it is made. No body: everything
-    comes from the session as saved, never from the browser."""
+    what the show is missing (the take, the script, the voice, the timing,
+    the shot list, the pictures; paid) and then queues its video on the
+    render worker, or return the show when its video is made or on its way.
+    No body: everything comes from the session as saved, never from the browser."""
     try:
         return start_surprise_show(session_id, organization_id=caller.read_scope)
     except Exception as exc:
@@ -320,25 +324,55 @@ def surprise_show_status(session_id: SessionId, caller: Caller = Depends(get_cal
         raise
 
 
-@router.get("/api/sessions/{session_id}/surprise-show/clip")
-def surprise_voice_clip(
+VIDEO_RESOURCE = "Surprise me video"
+# The most one answer sends: a player asks for the rest as it plays.
+VIDEO_CHUNK_BYTES = 4 * 1024 * 1024
+
+
+@router.get("/api/sessions/{session_id}/surprise-show/video.mp4")
+def surprise_video(
     session_id: SessionId,
     caller: Caller = Depends(get_caller),
-    key: str = Query(..., pattern=CLIP_KEY_PATTERN),
+    download: bool = Query(False),
+    range_header: str = Header("", alias="Range"),
 ) -> Response:
-    """One line's mp3, by its cache key. Private: never kept by a shared cache."""
+    """The show's MP4, private (`Cache-Control: private`). Answers a `Range`
+    request with 206 and that part (at most `VIDEO_CHUNK_BYTES`), so a
+    player can seek; `?download=1` names the file for saving."""
     try:
-        clip = get_surprise_voice_clip(session_id, key, organization_id=caller.read_scope)
+        meta = get_surprise_video_meta(session_id, organization_id=caller.read_scope)
+    except SurpriseVideoMissing as exc:
+        raise HTTPException(status_code=404, detail={"resource": VIDEO_RESOURCE, "message": str(exc)}) from exc
     except Exception as exc:
         _voice_error(exc)
         raise
-    if not clip:
-        raise HTTPException(status_code=404, detail={"resource": VOICE_RESOURCE, "message": "This clip isn't there."})
-    return Response(
-        content=clip["bytes"],
-        media_type=clip["mime"],
-        headers={"Cache-Control": "private, max-age=86400"},
-    )
+    size = int(meta["size_bytes"])
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "private, max-age=3600",
+        "ETag": f'"{meta["video_key"][:32]}"',
+        "X-Content-Type-Options": "nosniff",
+    }
+    if download:
+        headers["Content-Disposition"] = f'attachment; filename="{video_file_name(meta.get("title") or "")}"'
+    try:
+        asked = byte_range(range_header, size)
+    except RangeNotSatisfiable:
+        return Response(status_code=416, headers={**headers, "Content-Range": f"bytes */{size}"})
+    start, end = asked if asked is not None else (0, size - 1)
+    if asked is not None:
+        end = min(end, start + VIDEO_CHUNK_BYTES - 1)
+    try:
+        body = get_surprise_video_bytes(session_id, start, end - start + 1, organization_id=caller.read_scope)
+    except SurpriseVideoMissing as exc:
+        raise HTTPException(status_code=404, detail={"resource": VIDEO_RESOURCE, "message": str(exc)}) from exc
+    except Exception as exc:
+        _voice_error(exc)
+        raise
+    if asked is None:
+        return Response(content=body, status_code=200, media_type="video/mp4", headers=headers)
+    headers["Content-Range"] = f"bytes {start}-{start + len(body) - 1}/{size}"
+    return Response(content=body, status_code=206, media_type="video/mp4", headers=headers)
 
 
 @router.get("/api/sessions/{session_id}/smart-recap/job")

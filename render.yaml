@@ -1,12 +1,13 @@
 # Render deployment for StormIQ.
 #
-# Three services, one Postgres add-on:
+# Four services, one Postgres add-on:
 #   - web    : FastAPI + built Vue frontend (Dockerfile at repo root)
 #   - worker : arq worker (docker/Dockerfile.worker)
+#   - render : arq render worker for Surprise me's video (docker/Dockerfile.render)
 #   - redis  : managed Redis instance (Render Key Value)
 #
-# REDIS_URL is wired from the redis service into both web and worker via
-# fromService. DATABASE_URL must be set in the dashboard (link to the
+# REDIS_URL is wired from the redis service via
+# fromService into web, worker and render. DATABASE_URL must be set in the dashboard (link to the
 # Postgres add-on). All other env vars (OPENAI_API_KEY, ELEVENLABS_API_KEY, GLADIA_KEY,
 # Livestorm OAuth, etc.) are set per-service in the dashboard — see
 # docs/operations.md.
@@ -31,6 +32,24 @@ services:
     runtime: docker
     dockerfilePath: ./docker/Dockerfile.worker
     plan: starter
+    autoDeploy: true
+    envVars:
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: stormiq-redis
+          property: connectionString
+
+  # Surprise me's video: the render worker (docker/Dockerfile.render). It takes
+  # jobs only from the `stormiq:render` queue, one at a time, and needs only
+  # DATABASE_URL (set in the dashboard, linked to the Postgres add-on) and
+  # REDIS_URL: no AI key, it makes no paid call. Headless Chrome plus ffmpeg
+  # want about 2 GB of RAM: the Standard plan. See docs/operations.md.
+  - type: worker
+    name: stormiq-render
+    runtime: docker
+    dockerfilePath: ./docker/Dockerfile.render
+    plan: standard
     autoDeploy: true
     envVars:
       - key: REDIS_URL

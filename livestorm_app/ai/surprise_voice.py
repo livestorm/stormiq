@@ -2,13 +2,12 @@
 per line of the performance script, by the main voice (ElevenLabs,
 `ai/voice_elevenlabs.py`) or the backup (OpenAI, here).
 
-- **Beats** (`surprise_beats`): the same cut as the player's
-  (`frontend/src/followup/surpriseBeats.js`): the take as Follow-up shows it
+- **Beats** (`surprise_beats`): the take as Follow-up shows it
   (`clean_recap`, the port of `outputs.js` `cleanRecap`), a beat per
   sentence, the title first, the last sentence of each paragraph its
   punchline. `frontend/tests/fixtures/surprise-beats-v1.json` holds takes and
-  their beats; both sides are tested against it, so a scene on screen and
-  the CC under it are the take's own sentence.
+  their beats (the in-browser player that shared it is gone; the server's
+  cut is still tested against it).
 - **The voices** (`voice_plan`): the `voice_provider` setting (`elevenlabs`,
   the default, or `openai`) picks the main voice; with ElevenLabs, OpenAI is
   the backup. ElevenLabs: `eleven_v3`, the `elevenlabs_voice` setting (else
@@ -87,7 +86,7 @@ RETRY_AFTER_CAP_S = 10.0
 
 class SpeechFailed(RuntimeError):
     """A clip could not be made. Its message says what failed, never the key
-    or OpenAI's answer: it is what the player shows."""
+    or OpenAI's answer: it is what the page shows."""
 
 
 # ── The beats (port of surpriseBeats.js) ──
@@ -320,8 +319,8 @@ _SAMPLE_RATES = {3: (44100, 48000, 32000), 2: (22050, 24000, 16000), 0: (11025, 
 
 def mp3_duration_s(data: bytes) -> Optional[float]:
     """An mp3's length in seconds, from its frame headers (an ID3v2 tag
-    skipped), or None when no Layer III frame is found. The player times
-    each beat by it until the clip's own length is known."""
+    skipped), or None when no Layer III frame is found. The video's timing
+    (`ai/surprise_timing.py`) lays the clips end to end by it."""
     view = memoryview(data or b"")
     size = len(view)
     index = 0

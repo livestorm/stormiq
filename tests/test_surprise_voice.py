@@ -34,7 +34,7 @@ from test_access_control import (  # noqa: F401  (fixtures)
     saved_settings,
 )
 
-from livestorm_app import api_logic, db, oauth_client, worker
+from livestorm_app import api_logic, db, worker
 from livestorm_app.ai import surprise_voice as voice
 from livestorm_app.ai import voice_elevenlabs as eleven
 from livestorm_app.ai.surprise_voice import (
@@ -368,8 +368,8 @@ class Clips:
 def run_env(monkeypatch):
     clips = Clips()
     row = {"organization_id": "org-a", "has_transcript": True, "smart_recap_bundle": {"surprise": TAKE, "professional": "# Title\nX"}}
-    spoken, scripts, boards = [], {}, {}
-    env = {"clips": clips, "row": row, "spoken": spoken, "scripts": scripts, "refuse": set()}
+    spoken, scripts, queued = [], {}, []
+    env = {"clips": clips, "row": row, "spoken": spoken, "scripts": scripts, "refuse": set(), "queued": queued}
     monkeypatch.setattr(api_logic, "fetch_session_fields", lambda sid, fields, *, organization_id: dict(row))
     monkeypatch.setattr(api_logic, "fetch_surprise_enabled", lambda org: True)
     monkeypatch.setattr(api_logic, "voice_plan", lambda: (dict(ELEVEN), dict(OPENAI)))
@@ -378,17 +378,22 @@ def run_env(monkeypatch):
     monkeypatch.setattr(api_logic, "prune_surprise_voice_clips", clips.prune)
     monkeypatch.setattr(api_logic, "fetch_surprise_script", lambda sid, key, *, organization_id: scripts.get(key))
     monkeypatch.setattr(api_logic, "save_surprise_script", lambda sid, key, script: scripts.__setitem__(key, script))
-    monkeypatch.setattr(api_logic, "fetch_surprise_storyboard", lambda sid, key, *, organization_id: boards.get(key))
-    monkeypatch.setattr(api_logic, "save_surprise_storyboard", lambda sid, key, board: boards.__setitem__(key, board))
-    # The script and the storyboard are tested in their own files: here, a
-    # script that passes, and a storyboard with no scene.
+    # The script and the video's steps are tested in their own files
+    # (`test_surprise_performance.py`, `test_surprise_video.py`): here, a
+    # script that passes, then a timeline, a shot list and no picture.
     monkeypatch.setattr(api_logic, "_make_surprise_script", lambda key, sid, r, take, beats: (
         api_logic.save_surprise_script(sid, script_key([b["text"] for b in beats]), {"version": 1, "source": "model", "lines": SCRIPT})
         or (SCRIPT, "made")
     ))
-    monkeypatch.setattr(api_logic, "_make_surprise_storyboard", lambda key, sid, r, beats, k: (
-        boards.__setitem__(k, {"version": 1, "source": "model", "scenes": [None] * len(beats)}) or "made"
-    ))
+    monkeypatch.setattr(api_logic, "_make_surprise_timeline", lambda key, sid, lines, keys: ("tl-key", {"timed": len(keys)}, "made"))
+    monkeypatch.setattr(api_logic, "_make_surprise_shotlist", lambda key, sid, r, take, tk, tl: ("sh-key", {"shots": []}, "made"))
+    monkeypatch.setattr(api_logic, "_make_surprise_pictures", lambda key, sid, sk, sl: ({**sl, "stage": "final"}, 0))
+    monkeypatch.setattr(api_logic, "prune_surprise_images", lambda sid, keep: 0)
+    monkeypatch.setattr(api_logic, "fetch_surprise_video_meta", lambda sid, *, organization_id: None)
+    monkeypatch.setattr(
+        api_logic, "enqueue_unique_job_sync",
+        lambda name, job_id, *args, **kwargs: queued.append((name, job_id, args, kwargs)) or {"jobStatus": "pending"},
+    )
 
     def speak(line, settings, keys):
         if settings["provider"] in env["refuse"]:
@@ -412,12 +417,19 @@ def test_the_show_records_each_line_once_saves_each_clip_whole_and_tidies_the_re
     assert all(saved[4] == pytest.approx(5 * 1152 / 44100, abs=0.001) for saved in clips.saved)
     assert clips.pruned == [(SESSION_ID, sorted(clip_key(line, ELEVEN) for line in SCRIPT))]
     assert result == {
-        "status": "ok", "take": "kept", "script": "made", "story": "made", "lines": len(SCRIPT), "made": len(SCRIPT),
-        "voice": "elevenlabs", "fellBack": False,
+        "status": "ok", "take": "kept", "script": "made", "lines": len(SCRIPT), "made": len(SCRIPT),
+        "voice": "elevenlabs", "fellBack": False, "timing": "made", "timed": len(SCRIPT), "director": "made",
+        "pictures": 0, "video": "queued",
     }
-    assert [stage for stage, _ in published][:2] == ["script", "storyboard"], "a saved take is not written again"
-    assert published[2] == ("voice", {"done": 0, "total": len(SCRIPT), "percent": 55})
-    assert published[-1] == ("voice", {"done": len(SCRIPT), "total": len(SCRIPT), "percent": 95})
+    stages = [stage for stage, _ in published]
+    assert stages[0] == "script", "a saved take is not written again"
+    assert published[1] == ("voice", {"done": 0, "total": len(SCRIPT), "percent": 25})
+    assert published[-4] == ("voice", {"done": len(SCRIPT), "total": len(SCRIPT), "percent": 55})
+    assert stages[-3:] == ["timing", "directing", "pictures"]
+    # The render goes on the render worker's queue, with the session id only.
+    assert run_env["queued"] == [
+        ("render_surprise_video", f"surprise_video:{SESSION_ID}", (SESSION_ID,), {"_queue_name": "stormiq:render"})
+    ]
 
 
 def test_the_show_writes_the_take_first_when_there_is_none(run_env, monkeypatch):
@@ -433,7 +445,7 @@ def test_the_show_writes_the_take_first_when_there_is_none(run_env, monkeypatch)
     published = []
     result = api_logic.run_surprise_show(KEYS, SESSION_ID, publish=lambda stage, extra: published.append(stage))
     assert written == [("claude-key", SESSION_ID, "surprise")] and result["take"] == "written"
-    assert published[:3] == ["take", "script", "storyboard"] and published[3] == "voice"
+    assert published[:2] == ["take", "script"] and published[2] == "voice"
 
 
 def test_a_take_that_fails_its_check_fails_the_show_before_any_voice(run_env, monkeypatch):
@@ -544,7 +556,7 @@ def test_the_worker_job_reads_its_keys_from_the_environment_and_clears_its_progr
 
     def run(keys, session_id, *, publish):
         seen["keys"] = dict(keys)
-        return {"status": "ok", "made": 0, "lines": 1, "story": "made"}
+        return {"status": "ok", "made": 0, "lines": 1, "video": "queued"}
 
     monkeypatch.setattr(api_logic, "run_surprise_show", run)
     monkeypatch.setenv("CLAUDE_API_KEY", "claude-env")
@@ -586,13 +598,37 @@ def _with_clips(monkeypatch, settings):
     )
 
 
+def _with_video(monkeypatch, settings, *, made=True):
+    """The show's timeline and final shot list for these clips, and (when
+    `made`) a video made from exactly them."""
+    from livestorm_app.ai import surprise_director, surprise_timing
+    from livestorm_app.video.keys import video_key
+
+    tl_key = surprise_timing.timeline_key(ROUTE_LINES, [clip_key(line, settings) for line in ROUTE_LINES])
+    sh_key = surprise_director.shots_key(tl_key)
+    monkeypatch.setattr(api_logic, "fetch_surprise_timeline", lambda sid, key, *, organization_id: (
+        {"key": tl_key, "body": {"total": 12.0}} if key == tl_key else None))
+    monkeypatch.setattr(api_logic, "fetch_surprise_shotlist", lambda sid, key, *, organization_id: (
+        {"key": sh_key, "body": {"stage": "final", "shots": []}} if key == sh_key else None))
+    meta = {"video_key": video_key(tl_key, sh_key, []), "duration_s": 12.0, "size_bytes": 900_000, "created_at": None}
+    monkeypatch.setattr(api_logic, "fetch_surprise_video_meta", lambda sid, *, organization_id: meta if made else None)
+
+
+def _jobs(monkeypatch, show="not_found", render="not_found", error=""):
+    def status(job_id, queue_name=None):
+        state = render if queue_name else show
+        return {"jobStatus": state, **({"error": error} if state == "error" else {})}
+
+    monkeypatch.setattr(api_logic, "read_job_status_sync", status)
+
+
 def test_make_the_show_queues_one_job_with_the_session_id_only(client, backend, monkeypatch):  # noqa: F811
-    monkeypatch.setattr(api_logic, "read_job_status_sync", lambda job_id: {"jobStatus": "not_found"})
+    _jobs(monkeypatch)
     response = _call(client, "POST", SHOW, cookie="conn-a", body={})
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["state"] in ("pending", "running") and body["script"] == "missing"
-    assert [beat["text"] for beat in body["beats"]] == ["The take", "ORGACONFIDENTIALMARKER rocks.", "Truly."], "as the player shows it"
+    assert [beat["text"] for beat in body["beats"]] == ["The take", "ORGACONFIDENTIALMARKER rocks.", "Truly."]
     assert backend.enqueued == [("run_surprise_show_job", f"surprise_show:{SESSION_ID}", SESSION_ID)]
 
 
@@ -604,54 +640,79 @@ def test_reading_the_show_starts_nothing(client, backend):  # noqa: F811
     assert backend.enqueued == [], "a show being made is not queued twice"
 
 
-def test_a_show_already_made_is_not_queued_again_and_never_sends_the_script(client, backend, monkeypatch):  # noqa: F811
+def test_a_show_whose_video_is_made_is_not_queued_again_and_never_sends_the_script(client, backend, monkeypatch):  # noqa: F811
     _with_script(monkeypatch)
     _with_clips(monkeypatch, ROUTE_MAIN)
-    scene = {"effect": "pop", "headline": "rocks", "number": None, "quote": None}
-    monkeypatch.setattr(
-        api_logic, "fetch_surprise_storyboard", lambda sid, key, *, organization_id: {"version": 1, "source": "model", "scenes": [None, scene]}
-    )
+    _with_video(monkeypatch, ROUTE_MAIN)
+    _jobs(monkeypatch)
     response = _call(client, "POST", SHOW, cookie="conn-a", body={})
     body = response.json()
     assert body["state"] == "ready" and body["total"] == 4 and body["ready"] == 4
-    assert [line["beat"] for line in body["lines"]] == [0, 1, 1, 2], "each line by its beat's index"
-    assert all(line["ready"] and line["durationS"] == 1.5 for line in body["lines"])
+    assert body["video"]["state"] == "ready" and body["video"]["durationS"] == 12.0 and body["video"]["sizeBytes"] == 900_000
+    assert len(body["video"]["version"]) == 16
     assert body["voice"] == {
         "provider": "elevenlabs", "model": "eleven_v3", "voice": "fnYMz3F5gMEDGMWcH1ex", "label": "Finley (British, deep)", "fellBack": False,
     }
-    assert body["story"] == "ready" and [beat["scene"] for beat in body["beats"]] == [None, scene, None]
-    assert "SECRETSCRIPTWORDS" not in response.text and "say" not in body["lines"][0], "the script is only ever heard"
+    assert "SECRETSCRIPTWORDS" not in response.text and "lines" not in body, "the script's words are never sent"
     assert backend.enqueued == []
 
 
 def test_a_show_recorded_with_the_backup_says_so(client, backend, monkeypatch):  # noqa: F811
     _with_script(monkeypatch)
     _with_clips(monkeypatch, ROUTE_BACKUP)
-    monkeypatch.setattr(api_logic, "read_job_status_sync", lambda job_id: {"jobStatus": "complete"})
+    _with_video(monkeypatch, ROUTE_BACKUP)
+    _jobs(monkeypatch, show="completed")
     body = _call(client, "GET", SHOW, cookie="conn-a").json()
     assert body["state"] == "ready" and body["voice"]["fellBack"] is True and body["voice"]["provider"] == "openai"
     assert body["voice"]["label"] == "Marin"
-    assert all(line["clip"] == clip_key(ROUTE_LINES[i], ROUTE_BACKUP) for i, line in enumerate(body["lines"]))
 
 
-def test_a_show_without_its_storyboard_plays_and_the_next_click_tries_again(client, backend, monkeypatch):  # noqa: F811
+def test_a_show_whose_video_is_older_or_missing_asks_for_a_click(client, backend, monkeypatch):  # noqa: F811
     _with_script(monkeypatch)
     _with_clips(monkeypatch, ROUTE_MAIN)
-    monkeypatch.setattr(api_logic, "read_job_status_sync", lambda job_id: {"jobStatus": "complete"})
-    read = _call(client, "GET", SHOW, cookie="conn-a").json()
-    assert read["state"] == "ready" and read["story"] == "missing", "the player draws its own scenes"
-    assert backend.enqueued == []
+    _with_video(monkeypatch, ROUTE_MAIN, made=False)
+    _jobs(monkeypatch, show="completed")
+    body = _call(client, "GET", SHOW, cookie="conn-a").json()
+    assert body["state"] == "missing" and body["video"]["state"] == "none"
+    assert backend.enqueued == [], "a read starts nothing"
+    _call(client, "POST", SHOW, cookie="conn-a", body={})
+    assert backend.enqueued == [("run_surprise_show_job", f"surprise_show:{SESSION_ID}", SESSION_ID)], "the click makes what is missing"
+
+
+def test_while_the_video_renders_the_show_is_running_on_the_rendering_step(client, backend, monkeypatch):  # noqa: F811
+    _with_script(monkeypatch)
+    _with_clips(monkeypatch, ROUTE_MAIN)
+    _with_video(monkeypatch, ROUTE_MAIN, made=False)
+    _jobs(monkeypatch, show="completed", render="pending")
+    body = _call(client, "GET", SHOW, cookie="conn-a").json()
+    assert body["state"] == "running" and body["video"]["state"] == "pending"
+    assert body["progress"]["stage"] == "rendering"
+    _call(client, "POST", SHOW, cookie="conn-a", body={})
+    assert backend.enqueued == [], "a render in flight is not queued again"
 
 
 def test_a_failed_show_says_why(client, backend, monkeypatch):  # noqa: F811
-    monkeypatch.setattr(api_logic, "read_job_status_sync", lambda job_id: {"jobStatus": "error", "error": "OpenAI could not be reached."})
+    _jobs(monkeypatch, show="error", error="OpenAI could not be reached.")
     body = _call(client, "GET", SHOW, cookie="conn-a").json()
     assert body["state"] == "error" and body["error"] == "OpenAI could not be reached."
     _call(client, "POST", SHOW, cookie="conn-a", body={})
     assert len(backend.enqueued) == 1, "the user's retry queues the show again"
 
 
-@pytest.mark.parametrize(("method", "path"), [("POST", SHOW), ("GET", SHOW), ("GET", SHOW + "/clip")])
+def test_a_failed_render_says_why_and_try_again_queues_the_show(client, backend, monkeypatch):  # noqa: F811
+    _with_script(monkeypatch)
+    _with_clips(monkeypatch, ROUTE_MAIN)
+    _with_video(monkeypatch, ROUTE_MAIN, made=False)
+    _jobs(monkeypatch, show="completed", render="error", error="The video took too long to render its pictures. Please try again.")
+    body = _call(client, "GET", SHOW, cookie="conn-a").json()
+    assert body["state"] == "error" and body["video"]["state"] == "error"
+    assert body["error"] == body["video"]["error"] == "The video took too long to render its pictures. Please try again."
+    started = _call(client, "POST", SHOW, cookie="conn-a", body={}).json()
+    assert started["state"] in ("pending", "running") and "error" not in started["video"]
+    assert backend.enqueued == [("run_surprise_show_job", f"surprise_show:{SESSION_ID}", SESSION_ID)]
+
+
+@pytest.mark.parametrize(("method", "path"), [("POST", SHOW), ("GET", SHOW), ("GET", SHOW + "/video.mp4")])
 def test_the_show_is_refused_when_surprise_me_is_off(client, backend, monkeypatch, method, path):  # noqa: F811
     monkeypatch.setattr(api_logic, "fetch_surprise_enabled", lambda org: False)
     response = _call(client, method, path, cookie="conn-a", body={})
@@ -663,7 +724,7 @@ def test_the_show_is_refused_when_surprise_me_is_off(client, backend, monkeypatc
 def test_without_a_take_the_click_writes_it_and_without_a_transcript_it_is_refused(client, backend, monkeypatch):  # noqa: F811
     row = {"organization_id": "org-a", "smart_recap_bundle": {}, "has_transcript": True}
     monkeypatch.setattr(api_logic, "fetch_session_fields", lambda sid, fields, *, organization_id: dict(row))
-    monkeypatch.setattr(api_logic, "read_job_status_sync", lambda job_id: {"jobStatus": "not_found"})
+    _jobs(monkeypatch)
     assert _call(client, "GET", SHOW, cookie="conn-a").json()["state"] == "none"
     assert _call(client, "POST", SHOW, cookie="conn-a", body={}).status_code == 200
     assert backend.enqueued == [("run_surprise_show_job", f"surprise_show:{SESSION_ID}", SESSION_ID)]
@@ -673,17 +734,9 @@ def test_without_a_take_the_click_writes_it_and_without_a_transcript_it_is_refus
     assert len(backend.enqueued) == 1
 
 
-def test_a_clip_is_private_audio(client):  # noqa: F811
+def test_the_voice_clips_are_no_longer_served_one_by_one(client):  # noqa: F811
     response = _call(client, "GET", SHOW + "/clip", cookie="conn-a")
-    assert response.status_code == 200
-    assert response.headers["content-type"] == "audio/mpeg"
-    assert response.headers["cache-control"].startswith("private")
-
-
-def test_a_malformed_clip_key_is_refused(client):  # noqa: F811
-    client.cookies.set(oauth_client.LIVESTORM_OAUTH_COOKIE, "conn-a")
-    response = client.get(f"/api/sessions/{SESSION_ID}/surprise-show/clip", params={"key": "../etc"})
-    assert response.status_code == 422
+    assert response.status_code == 404, "the page plays the video; the clips stay on the server"
 
 
 @pytest.mark.parametrize(

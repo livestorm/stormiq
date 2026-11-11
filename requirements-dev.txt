@@ -894,6 +894,7 @@ pillow==13.0.0 \
     --hash=sha256:ffea6b2986a797c84b6d1d27d4f43e0b83c73fc16281a930891cd237cf0d08fe
     # via
     #   -c requirements.txt
+    #   -r requirements.in
     #   reportlab
 pluggy==1.7.0 \
     --hash=sha256:7dd7b0d8832ba3cb632c306926ded123429211b83641b35dc5c41ad2d34f9bec \
