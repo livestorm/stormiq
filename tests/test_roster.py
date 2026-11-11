@@ -1033,6 +1033,8 @@ RECORD_ENTRY_POINTS = {
         "_located_answers", "decide_session_located_answer",
         # The Transcript tab's inputs, and the chapters (`record.understanding.chapter_list`, `show_notes`).
         "_transcript_inputs", "_chapter_list", "get_session_chapters",
+        # The Follow-up's Session analysis: its brief (`record.session_brief`) from the record, the understanding and the desk.
+        "_write_session_analysis",
         # The analysis's second step: the dossier, its checks and the result's version.
         "_read_understanding",
     },

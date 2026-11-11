@@ -2,21 +2,22 @@
 
 What each AI output contains, how it is stored, and the rules for saving it. The prompts are plain text in [`prompts/`](../prompts/); the jobs that produce the outputs are in [jobs.md](jobs.md#ai-generation), and the models in [providers.md](providers.md).
 
-## Overall Analysis
+## Session analysis
 
-Markdown with 5 sections ([prompt](../prompts/analysis_base_prompt.txt)):
+The Follow-up tab's "Session analysis" (job kind `overall_analysis`, kept for its queue, bundle and PDF). Since November 2026 it is a v1 job: one Sonnet 5.5 call at medium effort (`ai/session_analysis.py`, the `dossier` layout, 6,000 answer tokens) over the session's **brief**, not the raw Livestorm payloads ([prompt](../prompts/session_analysis.txt)).
 
-1. Executive Summary
-2. Key Themes
-3. Engagement Insights
-4. Risks / Friction Signals
-5. Actionable Recommendations
+- **The brief** (`record.session_brief.build_brief`, built by `api_logic._write_session_analysis`): the session's title, length, language and whether it is internal; the Report's numbers, only those it would show, worded with their units (`number_lines`: attendees and show-up, time in the room, who wrote, questions, Q&A answered, time to answer, speaking pace, talk time per speaker key); the busiest minutes of the audience's chat and what it was about (`chat_lines`); the chapters, the prompts to the room and the figures said on stage from the stored understanding, a flagged figure marked "do not state it as a fact"; the audience's questions with their desk status and where the talk answered them, never their author (`question_lines`); and the transcript by speaker key (`S0`). No name, email, company, people id or `P-` ref; one session gives the same bytes every time.
+- **It needs "Analyse session" first**: the brief is built only while the stored understanding was read from the session as it is now (`understanding.current_reading`); otherwise the job fails with `SessionNotAnalysedError` and says to run it on the Report. It also needs the transcript.
+- **Four sections**, in the session analysis's language: What happened, What landed with the audience, Questions, What to do next. The prompt has the model quote the brief's numbers as given and compute none, call speakers by their role, and never repeat a flagged figure as a fact.
+- About $0.10–0.20 a run on a one-hour session. The French version is a translation of the English one (the `translation` job), as before.
 
-Stored as `analysis_bundle: {English: "...", French: "..."}`. The legacy `analysis_md` column mirrors English only.
-
-Chat statistics sent to the model (`llm_inputs.build_derived_stats`) count audience messages only, with `excluded_team_messages` giving the number of team and guest-speaker messages left out. The chat messages themselves are sent with their `from_team_member` and `from_guest_speaker` flags, as the deep analysis already did. The session summary's `total_messages_count` and `participant_summary.top_chatters` leave team members and guest speakers out too, and each question carries `answered_by` and `answered_orally`. `total_messages_count` counts the chat's audience messages, as Session Overview's Chat Messages does, an empty cached chat as 0 ([product.md §13](product.md#13-glossary-of-metrics-and-formulas)); `top_chatters` still ranks people by their own `messages_count`. On an internal session ([product.md §13](product.md#13-glossary-of-metrics-and-formulas)) nothing is left out, and `derived_stats.internal_session` is `true` so the model knows the team's messages are the audience's.
+Stored as `analysis_bundle: {English: "...", French: "..."}`. The legacy `analysis_md` column mirrors English only. Analyses written before November 2026 stay as they were until written again.
 
 ## Deep Analysis
+
+The Follow-up tab no longer lists it (November 2026); its route, job and stored outputs stay. It reads the classic inputs below.
+
+Chat statistics sent to the model (`llm_inputs.build_derived_stats`) count audience messages only, with `excluded_team_messages` giving the number of team and guest-speaker messages left out. The chat messages themselves are sent with their `from_team_member` and `from_guest_speaker` flags, as the deep analysis already did. The session summary's `total_messages_count` and `participant_summary.top_chatters` leave team members and guest speakers out too, and each question carries `answered_by` and `answered_orally`. `total_messages_count` counts the chat's audience messages, as Session Overview's Chat Messages does, an empty cached chat as 0 ([product.md §13](product.md#13-glossary-of-metrics-and-formulas)); `top_chatters` still ranks people by their own `messages_count`. On an internal session ([product.md §13](product.md#13-glossary-of-metrics-and-formulas)) nothing is left out, and `derived_stats.internal_session` is `true` so the model knows the team's messages are the audience's.
 
 Markdown with 10 sections, with the headings spelled exactly as in the [prompt](../prompts/analysis_deep_prompt.txt):
 
@@ -70,7 +71,7 @@ What one model call reads in a session, for the Follow-up tab and the Report's l
 
 ## Languages
 
-- Overall Analysis, Deep Analysis and Content Repurposing come in English and French. English is generated from the sources; French is a translation of the saved English output, so it needs English first (the API returns 400 otherwise). A language already in the bundle is reused; only a missing one costs a model call.
+- The Session analysis, Deep Analysis and Content Repurposing come in English and French. English is generated from the sources; French is a translation of the saved English output, so it needs English first (the API returns 400 otherwise). A language already in the bundle is reused; only a missing one costs a model call.
 - Smart Recap is always in English.
 - The interface is in English. The Analysis and Content Repurposing views switch their labels when French is selected for their output.
 - Gladia transcribes in the spoken language, whatever the interface language.
@@ -89,4 +90,4 @@ Every stored AI output has a PDF route, rendered with reportlab in [`pdf.py`](..
 
 ## Prompts
 
-All prompts live in `prompts/*.txt` and can be tuned without code changes; the paths are in [`config.py`](../livestorm_app/config.py). The overall analysis is assembled from the base prompt plus per-source prompts (chat, questions, transcript, all sources).
+All prompts live in `prompts/*.txt` and can be tuned without code changes; the paths are in [`config.py`](../livestorm_app/config.py). The Session analysis has one prompt, `session_analysis.txt`, filled with the output language.

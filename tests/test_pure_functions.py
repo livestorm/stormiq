@@ -591,7 +591,8 @@ def _run_ai_job(monkeypatch, run, session_payload, chat_payload) -> dict:
     return seen
 
 
-@pytest.mark.parametrize("run", [api_logic.run_overall_analysis, api_logic.run_deep_analysis], ids=["overall", "deep"])
+# The classic inputs; the Session analysis reads the session's brief instead (tests/test_session_brief.py).
+@pytest.mark.parametrize("run", [api_logic.run_deep_analysis], ids=["deep"])
 @pytest.mark.parametrize(
     ("session_payload", "chat_payload", "internal", "excluded", "team"),
     [
@@ -680,22 +681,13 @@ def test_the_model_sees_the_chat_count_in_the_session_summary():
     assert stats["session"]["total_messages_count"] == stats["chat"]["total_messages"] == 3
 
 
-@pytest.mark.parametrize("run", [api_logic.run_overall_analysis, api_logic.run_deep_analysis], ids=["overall", "deep"])
+# The classic inputs; the Session analysis reads the session's brief instead (tests/test_session_brief.py).
+@pytest.mark.parametrize("run", [api_logic.run_deep_analysis], ids=["deep"])
 def test_ai_jobs_count_an_empty_cached_chat_as_no_message(monkeypatch, run):
     # The people say 5 audience and 24 team messages; the cached chat has none.
     session = _run_ai_job(monkeypatch, run, PUBLIC_WEBINAR, _chat_payload([]))["derived_stats"]["session"]
     assert (session["total_messages_count"], session["team_messages_count"]) == (0, 0)
 
-
-def test_overall_analysis_falls_back_to_the_people_without_a_cached_chat(monkeypatch):
-    stats = _run_ai_job(monkeypatch, api_logic.run_overall_analysis, PUBLIC_WEBINAR, None)["derived_stats"]
-    assert "chat" not in stats
-    assert (stats["session"]["total_messages_count"], stats["session"]["team_messages_count"]) == (5, 24)
-
-
-def test_an_empty_cached_chat_adds_no_chat_block_for_the_overall_analysis(monkeypatch):
-    # The model's chat stats are unchanged: none for an empty chat.
-    assert "chat" not in _run_ai_job(monkeypatch, api_logic.run_overall_analysis, PUBLIC_WEBINAR, _chat_payload([]))["derived_stats"]
 
 
 # ── Cross-source timeline: chat or questions is enough ─────────────────────

@@ -1,3 +1,0 @@
-Multiple sources are included. Synthesize briefly — do not write a section per source.
-- Surface the 1–2 most important cross-source signals (e.g. gap between what was said vs. what was asked).
-- Keep every point to one line. This is an overview, not a detailed report.

@@ -54,15 +54,12 @@ from livestorm_app.ai.generation import (
     translate_markdown_with_openai,
 )
 from livestorm_app.ai.llm_inputs import (
-    build_compact_chat_payload_for_llm,
-    build_compact_questions_payload_for_llm,
     build_compact_transcript_payload_for_llm,
     build_deep_analysis_chat_payload_for_llm,
     build_deep_analysis_questions_payload_for_llm,
     build_derived_stats,
 )
 from livestorm_app.ai.prompts import (
-    build_analysis_prompt,
     build_deep_analysis_prompt,
     build_cover_image_prompt,
     build_smart_recap_prompt,
@@ -1463,20 +1460,13 @@ def _require_generated_text(text: Any, label: str) -> str:
 
 
 def run_overall_analysis(api_analysis_key: str, session_id: str, output_language: str) -> Dict[str, Any]:
+    """The Follow-up's "Session analysis" in one language. English is written
+    from the session's brief (`_write_session_analysis`); another language
+    is a translation of the English one, which must exist first. Saved in
+    `analysis_bundle` under the language."""
     cached = _require_cached_payloads(session_id, organization_id=ALL_ORGS)
-    session_payload = cached.get("session_payload")
-    chat_payload = cached.get("chat_payload")
-    questions_payload = cached.get("questions_payload")
-    transcript_payload = cached.get("transcript_payload")
-    if not isinstance(transcript_payload, dict):
-        raise RuntimeError("Overall analysis requires a transcript payload.")
-
-    chat_df = build_chat_df_from_payload(chat_payload) if isinstance(chat_payload, dict) else pd.DataFrame()
-    questions_df = build_questions_df_from_payload(questions_payload) if isinstance(questions_payload, dict) else pd.DataFrame()
-    internal_session = session_is_internal(session_payload) if isinstance(session_payload, dict) else False
-    selected_sources = ["transcript"]
-    if isinstance(chat_payload, dict) and isinstance(questions_payload, dict):
-        selected_sources.extend(["chat", "questions"])
+    if not isinstance(cached.get("transcript_payload"), dict):
+        raise RuntimeError("The session analysis needs the transcript. Make it on the Transcript tab first.")
 
     analysis_bundle = _normalize_text_bundle(cached.get("analysis_bundle"), str(cached.get("analysis_md") or ""))
     if str(output_language or "").strip() not in ("", "English") and not analysis_bundle.get("English", "").strip():
@@ -1492,40 +1482,75 @@ def run_overall_analysis(api_analysis_key: str, session_id: str, output_language
             ctx=_llm_call_context("translation", "overall_analysis", session_id, output_language, cached),
         )
     else:
-        analysis_md = analyze_with_openai(
-            api_key=api_analysis_key,
-            model=get_llm_model("overall_analysis"),
-            system_prompt=build_analysis_prompt(selected_sources),
-            output_language=OUTPUT_LANGUAGE_MAP.get(output_language, output_language),
-            selected_sources=selected_sources,
-            derived_stats=build_derived_stats(
-                chat_df=chat_df if not chat_df.empty else None,
-                questions_df=questions_df if not questions_df.empty else None,
-                transcript_payload=transcript_payload,
-                session_payload=session_payload if isinstance(session_payload, dict) else None,
-                internal=internal_session,
-                # The session summary counts the cached chat, even an empty
-                # one, as Session Overview's Chat Messages does.
-                session_chat_df=chat_df if isinstance(chat_payload, dict) else None,
-            ),
-            raw_payload=build_compact_chat_payload_for_llm(chat_df) if not chat_df.empty else None,
-            questions_payload=build_compact_questions_payload_for_llm(questions_df) if not questions_df.empty else None,
-            transcript_text=build_transcript_plain_text(transcript_payload),
-            session_payload=(
-                build_compact_session_payload_for_llm(session_payload, internal=internal_session)
-                if isinstance(session_payload, dict)
-                else None
-            ),
-            ctx=_llm_call_context("overall_analysis", "overall_analysis", session_id, output_language, cached),
-        )
+        analysis_md = _write_session_analysis(api_analysis_key, session_id, cached, output_language)
 
-    analysis_md = _require_generated_text(analysis_md, "overall analysis")
+    analysis_md = _require_generated_text(analysis_md, "session analysis")
     merge_cached_bundle_entry(
         session_id, "analysis_bundle", output_language, analysis_md,
         **({"analysis_md": analysis_md} if output_language == "English" else {}),
     )
     analysis_bundle[output_language] = analysis_md
     return {"markdown": analysis_md, "bundle": analysis_bundle}
+
+
+class SessionNotAnalysedError(RuntimeError):
+    """The session analysis reads what "Analyse session" stored, and there is
+    none for the session as it is now."""
+
+
+def _write_session_analysis(api_key: str, session_id: str, cached: Mapping[str, Any], output_language: str) -> str:
+    """The session analysis written from the session's brief
+    (`record.session_brief.build_brief`): the record's numbers and pulse,
+    the stored understanding (only while read from the session as it is
+    now), the question desk's rows without their authors, and the
+    transcript by speaker key. Raises `SessionNotAnalysedError` when the
+    session hasn't been analysed, or changed since."""
+    from livestorm_app.ai.session_analysis import write_analysis
+    from livestorm_app.db import fetch_understanding
+    from livestorm_app.record.assemble import assemble_record, clock_meta, session_meta
+    from livestorm_app.record.inputs import load_record_inputs
+    from livestorm_app.record.question_desk import question_desk
+    from livestorm_app.record.roster import stored_roster_rows
+    from livestorm_app.record.session_brief import build_brief
+    from livestorm_app.record.understanding import READY, STALE, current_reading, located_answers
+
+    roster_status = fetch_roster_status(session_id, ALL_ORGS) or {}
+    stored_roster = fetch_session_roster(session_id, ALL_ORGS) if roster_status.get("roster") is not None else None
+    inputs = load_record_inputs(
+        dict(cached),
+        roster_rows=stored_roster_rows(stored_roster) if stored_roster is not None else None,
+        stored_labels=fetch_chat_labels(session_id, ALL_ORGS),
+    )
+    stored = fetch_understanding(session_id, ALL_ORGS)
+    result, state, utterances = current_reading(stored, inputs)
+    if state == STALE:
+        raise SessionNotAnalysedError('The session changed since it was analysed. Run "Analyse session" again on the Report first.')
+    if state != READY:
+        raise SessionNotAnalysedError('Run "Analyse session" on the Report first: the session analysis builds on it.')
+    located, located_state = located_answers(stored, inputs)
+    desk = question_desk(inputs, fetch_question_replies(session_id, ALL_ORGS), located, located_state)
+    transcript = inputs.transcript
+    languages = list(getattr(transcript, "languages", None) or [])
+    brief = build_brief(
+        title=session_meta(inputs)["title"],
+        length_s=clock_meta(inputs).get("endS"),
+        language=languages[0] if languages else "unknown",
+        internal=bool(inputs.roster.meta.internal),
+        record=assemble_record(inputs)["record"],
+        understanding=result,
+        utterances=utterances,
+        # The desk's rows without their authors: names never reach a model.
+        questions=[
+            {"t": q["t"], "source": q["source"], "text": q["text"], "answered_as": q["status"], "located": q["located"]}
+            for q in desk["questions"]
+        ],
+    )
+    return write_analysis(
+        brief,
+        output_language=OUTPUT_LANGUAGE_MAP.get(output_language, output_language),
+        api_key=api_key,
+        ctx=_llm_call_context("overall_analysis", "overall_analysis", session_id, output_language, cached),
+    )
 
 
 def run_deep_analysis(api_analysis_key: str, session_id: str, output_language: str) -> Dict[str, Any]:
@@ -1596,7 +1621,7 @@ def build_analysis_pdf(session_id: str, analysis_kind: str, language: str, *, or
 
     if kind == "overall":
         bundle = _normalize_text_bundle(cached.get("analysis_bundle"), str(cached.get("analysis_md") or ""))
-        title = "Analyse globale" if is_french else "Overall Analysis"
+        title = "Analyse de la session" if is_french else "Session analysis"
         filename = f"stormiq-overall-analysis-{language.lower()}-{session_id}.pdf"
     elif kind == "deep":
         bundle = _normalize_text_bundle(cached.get("deep_analysis_bundle"), str(cached.get("deep_analysis_md") or ""))

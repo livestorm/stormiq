@@ -9,8 +9,7 @@ import CardHeader from "../components/ui/CardHeader.vue";
 const MODELS = [
   { step: "Transcript", model: "gladia-v2-pre-recorded", purpose: "Speech to text, speakers, sentences and named entities." },
   { step: "Transcript tab", model: "gladia-v2-pre-recorded output", purpose: "What was said next to the chat, the speakers' names, the subtitles (SRT) and the speaking stats." },
-  { step: "Overall analysis", model: "claude-haiku-4-5", purpose: "The overall analysis, from the transcript, the chat and the questions." },
-  { step: "Deep analysis", model: "claude-haiku-4-5", purpose: "The host-facing diagnostic, in ten sections, from the transcript, chat, questions and session." },
+  { step: "Session analysis", model: "claude-sonnet-5-5", purpose: "What happened, what landed with the audience, the questions and what to do next, from what StormIQ measured and the transcript, never with a name." },
   { step: "Repurposing", model: "claude-haiku-4-5", purpose: "A summary, a blog post, a follow-up email and social posts." },
   { step: "Smart Recap", model: "claude-sonnet-4-6", purpose: "A recap in three tones (professional, hype, surprise), with a stronger model on purpose." },
   { step: "Languages", model: "claude-haiku-4-5", purpose: "Translates an output between English and French when the other language is asked for." },

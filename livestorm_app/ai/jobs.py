@@ -6,7 +6,7 @@ budget are code, reviewed against the eval. The model is resolved per job
 
 1. the per-job setting `llm_model.<provider>.<kind>`;
 2. for the classic outputs only, the older key that names no provider:
-   `llm_default_model` (four jobs) or `llm_smart_recap_model` (Smart Recap).
+   `llm_default_model` (three jobs) or `llm_smart_recap_model` (Smart Recap).
    A saved id is used only with the provider it belongs to;
 3. the job's default for the active provider.
 
@@ -100,8 +100,9 @@ JOB_SPECS: Tuple[JobSpec, ...] = (
     JobSpec("verify_meaning", "Meaning check", "v1", "claude-haiku-5-5", None, "low", 2_000, layout="instructions"),
     # The classic outputs. Their callers still pass today's max_tokens, and a
     # cut-off answer is retried once, as before.
-    JobSpec("overall_analysis", "Overall Analysis", "legacy", "claude-haiku-4-5-20251001", "gpt-4o-mini",
-            "low", 2_500, LEGACY_DEFAULT_SETTING, truncation_retry=True),
+    # The Follow-up's "Session analysis" (`ai/session_analysis.py`): a v1 job since
+    # November 2026, over the session's brief. No OpenAI model until the live check.
+    JobSpec("overall_analysis", "Session analysis", "v1", "claude-sonnet-5-5", None, "medium", 6_000, layout="dossier"),
     JobSpec("deep_analysis", "Deep Analysis", "legacy", "claude-haiku-4-5-20251001", "gpt-4o-mini",
             "medium", 5_000, LEGACY_DEFAULT_SETTING, truncation_retry=True),
     JobSpec("smart_recap", "Smart Recap", "legacy", "claude-sonnet-4-6", "gpt-5.4-mini",

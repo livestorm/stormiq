@@ -1,18 +1,13 @@
-"""System prompts for every AI output, built from the text files in prompts/."""
+"""System prompts for the classic AI outputs, built from the text files in
+prompts/. The Session analysis has its own (`ai/session_analysis.py`)."""
 
 from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import List
 
 from livestorm_app.config import (
-    ANALYSIS_ALL_SOURCES_PROMPT_PATH,
-    ANALYSIS_BASE_PROMPT_PATH,
-    ANALYSIS_CHAT_PROMPT_PATH,
     ANALYSIS_DEEP_PROMPT_PATH,
-    ANALYSIS_QUESTIONS_PROMPT_PATH,
-    ANALYSIS_TRANSCRIPT_PROMPT_PATH,
     CONTENT_REPURPOSE_BUNDLE_PROMPT_PATH,
     COVER_IMAGE_PROMPT_PATH,
     SMART_RECAP_HYPE_PROMPT_PATH,
@@ -25,28 +20,6 @@ def load_analysis_prompt(path: Path) -> str:
     if path.exists():
         return path.read_text(encoding="utf-8").strip()
     return ""
-
-
-def build_analysis_prompt(selected_sources: List[str]) -> str:
-    prompt_parts = [load_analysis_prompt(ANALYSIS_BASE_PROMPT_PATH)]
-    if "chat" in selected_sources:
-        prompt_parts.append(load_analysis_prompt(ANALYSIS_CHAT_PROMPT_PATH))
-    if "questions" in selected_sources:
-        prompt_parts.append(load_analysis_prompt(ANALYSIS_QUESTIONS_PROMPT_PATH))
-    if "transcript" in selected_sources:
-        prompt_parts.append(load_analysis_prompt(ANALYSIS_TRANSCRIPT_PROMPT_PATH))
-    if set(selected_sources) == {"chat", "questions", "transcript"}:
-        prompt_parts.append(load_analysis_prompt(ANALYSIS_ALL_SOURCES_PROMPT_PATH))
-
-    prompt = "\n\n".join(part for part in prompt_parts if part.strip())
-    if prompt.strip():
-        return prompt
-
-    return (
-        "You are a senior analyst. Review the selected Livestorm session sources and return concise, "
-        "evidence-based markdown with an executive summary, key themes, engagement insights, risks, "
-        "and actionable recommendations. Clearly state any limits caused by missing sources."
-    )
 
 
 def build_deep_analysis_prompt() -> str:
