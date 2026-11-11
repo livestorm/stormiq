@@ -268,6 +268,13 @@ export const api = {
   adminDeleteSession(sessionId) {
     return request(`/api/admin/sessions/${encodeURIComponent(String(sessionId ?? ""))}`, { method: "DELETE" });
   },
+  adminGetOrganizations() {
+    return request("/api/admin/organizations");
+  },
+  // Turns Surprise me on or off for one organization.
+  adminSetSurprise(organizationId, surpriseEnabled) {
+    return postJson("/api/admin/organizations/settings", { organizationId, surpriseEnabled });
+  },
   adminGetSettings() {
     return request("/api/admin/settings");
   },

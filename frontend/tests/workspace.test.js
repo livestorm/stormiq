@@ -334,3 +334,15 @@ describe("transcript poll and sign-out", () => {
     expect(store.state.workspaceSessions).toEqual([]);
   });
 });
+
+describe("the organization's switches", () => {
+  it("show Surprise me only once the server says it is on", () => {
+    expect(store.state.org.surpriseEnabled).toBe(false);
+    store.applyBootstrap({ auth: {}, org: { surpriseEnabled: true } });
+    expect(store.state.org.surpriseEnabled).toBe(true);
+    store.applyBootstrap({ auth: {}, org: { surpriseEnabled: "yes" } });
+    expect(store.state.org.surpriseEnabled).toBe(false);
+    store.applyBootstrap({ auth: {} });
+    expect(store.state.org.surpriseEnabled).toBe(false);
+  });
+});
