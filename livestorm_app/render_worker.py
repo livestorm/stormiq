@@ -9,7 +9,8 @@ under the id `surprise_video:{session_id}`. It reads what the show job saved
 (the timeline, the final shot list, the voice clips and the pictures),
 renders the video (`video/render.py`) and saves it whole
 (`db.save_surprise_video`). It calls no paid provider and needs no key:
-only `DATABASE_URL` and `REDIS_URL`. The web process and the main worker
+only `DATABASE_URL`, `REDIS_URL` and `ADMIN_EMAILS` (whose organization has
+Surprise me by default, `db.fetch_surprise_enabled`). The web process and the main worker
 never import it, nor the renderer.
 
 Run: `arq livestorm_app.render_worker.WorkerSettings`.
