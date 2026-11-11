@@ -153,7 +153,7 @@ def test_the_owner_gets_the_clock_the_roster_header_and_the_pulse(client):
     }
     record = body["record"]
     assert list(record) == ["version", "roster", "pulse", "transcriptHealth", "chatLabels", "metricsVersion", "measuresSource", "measures"]
-    assert record["version"] == assemble.RECORD_VERSION == 9
+    assert record["version"] == assemble.RECORD_VERSION == 10
     assert record["roster"] == {
         "source": "session_include",
         "complete": None,
@@ -197,6 +197,28 @@ def test_the_pulse_counts_every_event_once_on_the_session_clock(client):
     )
     assert pulse["minutes"][1]["audienceChat"] == 3, "the room answering the call to the chat"
     assert pulse["unplaced"] == 0
+
+
+def test_on_an_internal_session_the_pulse_counts_everyone_as_audience():
+    """Everyone is audience on an internal session, as the measures count it:
+    the team's messages go in `audienceChat` (the Report's ridge plots it)."""
+    from livestorm_app.record.inputs import load_record_inputs
+
+    inputs = load_record_inputs(synthetic.cached_row())
+    meta = dataclasses.replace(inputs.roster.meta, internal=True)
+    internal = dataclasses.replace(inputs, roster=dataclasses.replace(inputs.roster, meta=meta))
+
+    def totals(record_inputs):
+        pulse = assemble.assemble_record(record_inputs)["record"]["pulse"]
+        counted = {lane: sum(row[lane] for row in pulse["minutes"]) for lane in ("audienceChat", "teamChat")}
+        for edge in ("before", "after"):
+            for lane in counted:
+                counted[lane] += pulse["edges"][edge]["counts"][lane]
+        return counted
+
+    assert totals(inputs) == {"audienceChat": 15, "teamChat": 4}
+    assert totals(internal) == {"audienceChat": 19, "teamChat": 0}
+    assert not inputs.events["is_team"].eq(False).all(), "the inputs themselves are unchanged"
 
 
 def test_the_pulse_places_speech_with_the_verified_offset(client):
@@ -462,14 +484,15 @@ def test_the_internal_flag_matches_the_classic_workspace(variant, internal):
     assert record["record"]["roster"]["internal"] is internal
 
 
-def test_an_all_hands_keeps_its_lanes():
-    """Nobody is relabelled on an internal session: its chat is team chat,
-    and the roster header says the session is internal."""
+def test_an_all_hands_charts_its_chat_as_the_audiences():
+    """On an internal session everyone is audience, as the measures count
+    it: its chat is in `audienceChat` (the ridge and the Pulse show it), and
+    the roster header says the session is internal."""
     record = record_for(_all_hands(synthetic.cached_row()))["record"]
     pulse = record["pulse"]
     assert record["roster"]["internal"] is True
-    assert sum(row["audienceChat"] for row in pulse["minutes"]) == 0
-    assert sum(row["teamChat"] for row in pulse["minutes"]) == 14
+    assert sum(row["audienceChat"] for row in pulse["minutes"]) == 14
+    assert sum(row["teamChat"] for row in pulse["minutes"]) == 0
 
 
 def test_an_all_hands_counts_everyone_in_its_audience_measures():

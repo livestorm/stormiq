@@ -120,13 +120,13 @@ def test_find_question_names_a_desk_row_with_its_livestorm_id():
     assert find_question(inputs, "Q999") is None
 
 
-def test_authors_are_short_names_and_an_internal_session_names_nobody():
+def test_authors_are_short_names_on_every_session():
     inputs = _inputs()
     authors = {q["author"] for q in question_desk(inputs, {})["questions"]}
     assert all(author.endswith(".") or author in (TEAM, ATTENDEE) for author in authors)
     assert any(author not in (TEAM, ATTENDEE) for author in authors)
-    internal = question_desk(_internal(inputs), {})
-    assert all(q["author"] in (TEAM, ATTENDEE) for q in internal["questions"])
+    internal = {q["author"] for q in question_desk(_internal(inputs), {})["questions"]}
+    assert authors <= internal, "an internal session names its people too"
 
 
 # ── Answers located in the talk ──
@@ -215,7 +215,7 @@ def test_the_csv_lists_open_questions_with_full_names_and_no_email():
 def test_the_csv_names_askers_on_an_internal_session_too():
     public = _csv_rows(open_questions_csv(_inputs(), {}))
     internal = _csv_rows(open_questions_csv(_internal(_inputs()), {}))
-    assert all(row[1] for row in internal[1:]), "every asker named, though the desk names nobody there"
+    assert all(row[1] for row in internal[1:]), "every asker named"
     # Everyone is audience on an internal session, so the guest's chat question joins.
     assert [row for row in internal if row[0] != "Happy to cover pricing later"] == public
 

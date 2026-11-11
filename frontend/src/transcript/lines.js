@@ -5,6 +5,7 @@
 // (`clock.interleave`).
 
 import { clockLabel } from "../report/chartGeometry";
+import { gifUrl } from "../utils/gif";
 
 export const VIEWS = [
   { value: "all", label: "Everything" },
@@ -43,7 +44,9 @@ function speechLine(line, names) {
 }
 
 /** A chat, Q&A or answer line, worded: `{id, kind, t, time, who, source,
- * text, status, team}`. A time before the session's start reads "Before". */
+ * text, status, team, gif}`. A time before the session's start reads
+ * "Before"; `gif` is the GIF's URL when a chat message is only a GIF link
+ * (`utils/gif.js`), else "". */
 function roomLine(line) {
   const status =
     line.kind === "question" ? (line.answered ? "Answered in writing" : "") : line.kind === "answer" ? "Written answer" : "";
@@ -59,6 +62,7 @@ function roomLine(line) {
     parts: [{ text: line.text, unclear: false }],
     status,
     team: Boolean(line.team),
+    gif: line.kind === "chat" ? gifUrl(line.text) : "",
   };
 }
 

@@ -118,13 +118,14 @@ def test_authors_are_short_names_from_the_roster_and_nothing_else():
     assert not any(f'"{pid}"' in text for pid in people_ids), "no people id"
 
 
-def test_an_internal_session_names_nobody():
+def test_an_internal_session_names_its_people_too():
     row = synthetic.cached_row()
     inputs = load_record_inputs(row)
     meta = dataclasses.replace(inputs.roster.meta, internal=True)
     internal = dataclasses.replace(inputs, roster=dataclasses.replace(inputs.roster, meta=meta))
-    view = transcript_view(internal)
-    assert all(line["author"] == (TEAM if line["team"] else ATTENDEE) for line in view["room"])
+    public_authors = [line["author"] for line in transcript_view(inputs)["room"]]
+    assert [line["author"] for line in transcript_view(internal)["room"]] == public_authors
+    assert any(author not in (TEAM, ATTENDEE) for author in public_authors)
 
 
 def test_a_session_without_a_transcript_has_only_the_room():

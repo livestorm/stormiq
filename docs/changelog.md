@@ -4,6 +4,8 @@ What has shipped, newest first. What's next is in [roadmap.md](roadmap.md).
 
 ## November 2026: "StormIQ for Livestorm"
 
+- **Internal sessions read like any other.** The Transcript tab and the question desk show who wrote each message ("Priya S.") on internal sessions too, instead of "Team" everywhere (still never an email, and names never go to a model). The Report's ridge and the Pulse count everyone's chat as the audience's, as the measures already did, so an internal session's ridge is no longer flat.
+- **GIFs in the chat.** A message that is only a GIPHY or Tenor GIF link shows the GIF on the Transcript tab and in the Report's message lists (loaded when scrolled into view, with no referrer). Any other link stays text.
 - **A clearer "Analysing the session".** While the analysis runs, the Report shows its two steps (label the chat, read the transcript) with done, in progress and next marks, a progress bar, how long it has been running, and that it keeps going if you leave the page. The worker reports each step as it starts.
 - **The session's tabs stay in view.** Report · Transcript · Follow-up pin to the top of the window as you scroll, so another tab is one click away from anywhere on the page.
 - **Chapters.** Once "Analyse session" has read the session, the Transcript tab shows each chapter as a heading among the lines, and Follow-up has **Chapters and show notes**: "00:00 Title" lines on the recording's clock, ready to copy into a replay page or a YouTube description, with a note when YouTube wouldn't read them as chapters. No model call: they come from the analysis already stored ([product.md](product.md#the-follow-up-tab-v1)).

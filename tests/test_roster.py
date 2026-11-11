@@ -719,9 +719,16 @@ def test_display_people_keeps_unknown_attendance_unknown():
     assert shown["Dev Aud-3"] is False and shown["Bram Aud-1"] is True
 
 
-@pytest.mark.parametrize("profile", ["internal", None, "", "Public", " public", "unknown", "webinar"])
+@pytest.mark.parametrize("profile", [None, "", "Public", " public", "Internal", "unknown", "webinar"])
 def test_display_people_fails_closed(profile):
     assert display_people(roster_from_session_payload(public_session()), profile=profile) == []
+
+
+def test_display_people_names_an_internal_session_too():
+    """The owner's decision (November 2026): internal sessions are named on
+    screen, as public ones are."""
+    roster = roster_from_session_payload(public_session())
+    assert display_people(roster, profile="internal") == display_people(roster, profile="public") != []
 
 
 # ── The roster ──────────────────────────────────────────────────────────────
