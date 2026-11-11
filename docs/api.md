@@ -21,7 +21,7 @@ Every route is a FastAPI handler in [`livestorm_app/routes/`](../livestorm_app/r
 | `/api/admin/settings` | GET, POST | admin | Read or update allow-listed `system_settings` keys. A model id the job can't use gets 400 with the choices ([providers.md](providers.md#what-admin-may-save)) |
 | `/api/workspace-events` | POST | caller | Paginated list of events (at most 50 per page), filtered by title and status |
 | `/api/workspace-sessions` | GET | public¹ | Cached session cards for the caller's own org |
-| `/api/event-sessions` | POST | caller | List the finished sessions of an event, newest first: `options` of `{id, label, name, startedAt, attendees}` (`startedAt` in unix seconds and `attendees` are null when unknown) |
+| `/api/event-sessions` | POST | caller | One page (50) of an event's finished sessions (`filter[status]=past`), newest first: `{eventId, options, total, next}`. `options` are `{id, label, name, startedAt, attendees}` (`startedAt` in unix seconds and `attendees` null when unknown); `total` is Livestorm's count of the event's finished sessions (or null); `next` is the cursor `{page, step, pages}` to send back as `cursor` for the following page, or null. Livestorm can't sort them, so the first call also reads the last page and starts from the end with the newest sessions (`api_logic.fetch_event_sessions`) |
 | `/api/sessions/{id}/cover.png` | GET | caller | Cover image (`Cache-Control: private, max-age=86400`) |
 | `/api/sessions/{id}` | GET | caller | Cached workspace (404 if not cached) |
 | `/api/sessions/{id}/cached` | GET | caller | Same, but 204 instead of 404 when missing |

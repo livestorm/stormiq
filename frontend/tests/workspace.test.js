@@ -60,6 +60,40 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+describe("an event's sessions, a page at a time", () => {
+  it("keeps the total and the cursor, and Show more adds the next page under the first", async () => {
+    api.fetchEventSessions = vi.fn(async ({ cursor }) =>
+      cursor
+        ? { options: [{ id: "s2" }, { id: "s1" }], total: 3, next: null }
+        : { options: [{ id: "s3" }, { id: "s2" }], total: 3, next: { page: 0, step: -1, pages: 2 } },
+    );
+    store.state.eventId = "e1";
+    await store.loadEventSessions();
+    expect(store.state.eventSessionsTotal).toBe(3);
+    expect(store.state.eventSessionsNext).toEqual({ page: 0, step: -1, pages: 2 });
+    await store.loadMoreEventSessions();
+    expect(api.fetchEventSessions.mock.calls[1][0]).toMatchObject({ eventId: "e1", cursor: { page: 0, step: -1, pages: 2 } });
+    expect(store.state.eventSessions.map((s) => s.id)).toEqual(["s3", "s2", "s1"]);
+    expect(store.state.eventSessionsNext).toBeNull();
+    await store.loadMoreEventSessions();
+    expect(api.fetchEventSessions).toHaveBeenCalledTimes(2);
+  });
+
+  it("drops a page that arrives after another event was opened", async () => {
+    let release;
+    api.fetchEventSessions = vi.fn(({ cursor }) =>
+      cursor ? new Promise((resolve) => (release = resolve)) : Promise.resolve({ options: [{ id: "a1" }], total: 2, next: { page: 1, step: 1, pages: 2 } }),
+    );
+    store.state.eventId = "e1";
+    await store.loadEventSessions();
+    const more = store.loadMoreEventSessions();
+    store.state.loadedEventId = "e2";
+    release({ options: [{ id: "a2" }], next: null });
+    await more;
+    expect(store.state.eventSessions.map((s) => s.id)).toEqual(["a1"]);
+  });
+});
+
 describe("loading a session", () => {
   it("keeps the workspace out of Vue's deep reactivity", async () => {
     await store.loadSessionById("A");

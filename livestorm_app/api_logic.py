@@ -11,7 +11,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 import pandas as pd
 import requests
 
-from livestorm_app.config import OUTPUT_LANGUAGE_MAP, SMART_RECAP_TONES
+from livestorm_app.config import LIVESTORM_MAX_PAGE_SIZE, OUTPUT_LANGUAGE_MAP, SMART_RECAP_TONES, START_PAGE_NUMBER
 from livestorm_app.llm_client import get_llm_model
 from livestorm_app.db import (
     ALL_ORGS,
@@ -81,7 +81,7 @@ from livestorm_app.livestorm.client import (
     build_http_error_debug_details,
     fetch_chat_and_questions_bundle,
     fetch_event_details,
-    fetch_event_past_sessions,
+    fetch_event_sessions_page,
     fetch_workspace_events_page,
     fetch_session_details,
     format_generic_http_error,
@@ -90,6 +90,7 @@ from livestorm_app.livestorm.client import (
 from livestorm_app.livestorm.payloads import (
     build_event_session_options,
     build_workspace_event_options,
+    extract_record_count,
 )
 from livestorm_app.pdf import analysis_markdown_to_pdf_bytes
 from livestorm_app.analytics.session_overview import (
@@ -1045,14 +1046,43 @@ def list_workspace_sessions_data(organization_id: str) -> Dict[str, Any]:
     return {"sessions": sessions}
 
 
-def fetch_event_sessions(api_key: str, event_id: str) -> Dict[str, Any]:
-    payload = fetch_event_past_sessions(api_key, event_id.strip())
-    return {
-        "eventId": event_id.strip(),
-        "pagesFetched": payload.get("pages_fetched", 1),
-        "options": build_event_session_options(payload),
-        "payload": payload,
-    }
+def _newest_start(options: List[Dict[str, Any]]) -> int:
+    return max((option.get("startedAt") or 0 for option in options), default=0)
+
+
+def fetch_event_sessions(api_key: str, event_id: str, cursor: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+    """An event's finished sessions, one Livestorm page (50) at a time,
+    newest first, for the Add session page: `{eventId, options, total, next}`.
+
+    Livestorm can't sort an event's sessions. So the first call reads the
+    first page and, when there are more, the last one, and starts from the
+    end that holds the newest sessions; `next` is the cursor of the following
+    page (`{page, step, pages}`), or None when every page was read. The page
+    asks for it with "Show more". `total` is how many finished sessions the
+    event has (`meta.record_count`), or None when Livestorm doesn't say."""
+    event_id = event_id.strip()
+    first = START_PAGE_NUMBER
+    if cursor:
+        page, step, pages = int(cursor["page"]), int(cursor["step"]), int(cursor["pages"])
+        if step not in (1, -1) or pages < 1 or not first <= page < first + pages:
+            raise ValueError("Invalid page cursor.")
+        payload = fetch_event_sessions_page(api_key, event_id, page)
+        total = extract_record_count(payload)
+        options = build_event_session_options(payload)
+    else:
+        payload = fetch_event_sessions_page(api_key, event_id, first)
+        total = extract_record_count(payload)
+        options = build_event_session_options(payload)
+        pages = max(1, math.ceil(total / LIVESTORM_MAX_PAGE_SIZE)) if total is not None else 1
+        page, step = first, 1
+        if pages > 1:
+            last = first + pages - 1
+            last_options = build_event_session_options(fetch_event_sessions_page(api_key, event_id, last))
+            if _newest_start(last_options) > _newest_start(options):
+                options, page, step = last_options, last, -1
+    following = page + step
+    next_cursor = {"page": following, "step": step, "pages": pages} if first <= following < first + pages else None
+    return {"eventId": event_id, "options": options, "total": total, "next": next_cursor}
 
 
 def fetch_available_events(

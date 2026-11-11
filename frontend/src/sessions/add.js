@@ -40,6 +40,17 @@ export function statusLabel(value) {
 
 /** One event row: `{id, title, status, sessions}`. `sessions` is "" when
  * Livestorm's count is missing ("n/a"). */
+/** The line over an open event's sessions: how many of its sessions have
+ * finished (only those can be added), out of all it has. `total` is the
+ * finished count (null when Livestorm doesn't say), `all` the event's
+ * `sessions_count` (null when unknown). */
+export function finishedLine(total, all) {
+  if (total === null || total === undefined) return "";
+  const finished = plural(total, "finished session");
+  if (all === null || all === undefined || all <= total) return finished;
+  return `${finished} of ${all}: the others are still to come, never started, cancelled or drafts, and can't be added.`;
+}
+
 export function eventRow(option) {
   const count = /^\d+$/.test(text(option?.sessions_count)) ? Number(option.sessions_count) : null;
   return {
@@ -47,6 +58,7 @@ export function eventRow(option) {
     title: text(option?.title) || "Untitled event",
     status: statusLabel(option?.scheduling_status),
     sessions: count == null ? "" : plural(count, "session"),
+    count,
   };
 }
 

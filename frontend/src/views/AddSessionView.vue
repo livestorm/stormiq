@@ -7,7 +7,7 @@ import Collapsible from "../components/ui/Collapsible.vue";
 import Icon from "../components/ui/Icon.vue";
 import StatusWord from "../components/ui/StatusWord.vue";
 import UiButton from "../components/ui/UiButton.vue";
-import { EVENT_STATUSES, addedSessionIds, eventRow, idFromInput, sessionChoice } from "../sessions/add";
+import { EVENT_STATUSES, addedSessionIds, eventRow, finishedLine, idFromInput, sessionChoice } from "../sessions/add";
 import { useWorkspace } from "../store/workspace";
 
 // Add session: pick a finished session from one of the organization's
@@ -20,6 +20,7 @@ import { useWorkspace } from "../store/workspace";
 const {
   state,
   loadEventSessions,
+  loadMoreEventSessions,
   loadSessionById,
   loadWorkspaceEvents,
   loadMoreWorkspaceEvents,
@@ -205,7 +206,12 @@ function listPasted() {
 
           <div v-if="openEventId === event.id" :id="`a-sessions-${event.id}`" class="a-sessions">
             <p v-if="!sessionsReady" class="a-muted" role="status">Loading the event's sessions…</p>
-            <p v-else-if="!sessions.length" class="a-muted">This event has no finished session yet.</p>
+            <p v-else-if="!sessions.length" class="a-muted">
+              This event has no finished session yet{{ event.count ? `: its ${event.sessions} are still to come, never started, cancelled or drafts` : "" }}.
+            </p>
+            <p v-else-if="finishedLine(state.eventSessionsTotal, event.count)" class="a-muted a-count">
+              {{ finishedLine(state.eventSessionsTotal, event.count) }}
+            </p>
             <ul v-else class="a-session-list" :aria-label="`Finished sessions of ${event.title}`">
               <li v-for="session in sessions" :key="session.id" class="a-session">
                 <span class="a-session-day">{{ session.day || "—" }}</span>
@@ -244,6 +250,11 @@ function listPasted() {
                 </span>
               </li>
             </ul>
+            <div v-if="sessionsReady && state.eventSessionsNext" class="a-more">
+              <UiButton variant="secondary" small :disabled="state.loading.eventSessionsMore" @click="loadMoreEventSessions().catch(() => {})">
+                {{ state.loading.eventSessionsMore ? "Loading…" : `Show more (${sessions.length} of ${state.eventSessionsTotal ?? "?"})` }}
+              </UiButton>
+            </div>
           </div>
         </li>
       </ul>
@@ -508,6 +519,14 @@ function listPasted() {
 
 .a-sessions {
   padding: 0 var(--siq-space-6) var(--siq-space-4) calc(var(--siq-space-6) + var(--siq-space-4));
+}
+
+.a-count {
+  margin: 0 0 var(--siq-space-2);
+}
+
+.a-more {
+  padding-top: var(--siq-space-3);
 }
 
 .a-session {

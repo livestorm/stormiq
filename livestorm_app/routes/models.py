@@ -11,9 +11,18 @@ MAX_SPEAKER_ID_LENGTH = 64
 MAX_SPEAKER_LABEL_LENGTH = 120
 
 
+class EventSessionsCursor(BaseModel):
+    """Where "Show more" picks up an event's sessions (`api_logic.fetch_event_sessions`)."""
+
+    page: int = Field(..., ge=0, le=10_000)
+    step: int = Field(..., ge=-1, le=1)
+    pages: int = Field(..., ge=1, le=10_000)
+
+
 class EventSessionsRequest(BaseModel):
     api_key: str = Field("", alias="apiKey")
     event_id: str = Field(..., alias="eventId")
+    cursor: Optional[EventSessionsCursor] = None
 
 
 class WorkspaceEventsRequest(BaseModel):

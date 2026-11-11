@@ -29,6 +29,10 @@ const state = reactive({
   selectedWorkspaceEventId: "",
   loadedEventId: "",
   eventSessions: [],
+  // How many finished sessions the open event has (Livestorm's count, or
+  // null), and where "Show more" picks up (null when every page is read).
+  eventSessionsTotal: null,
+  eventSessionsNext: null,
   selectedEventSessionId: "",
   outputLanguage: "English",
   // The session on screen. Stored with markRaw (see setWorkspace): Vue
@@ -47,6 +51,7 @@ const state = reactive({
     workspaceEvents: false,
     workspaceSessions: false,
     eventSessions: false,
+    eventSessionsMore: false,
     sessionFetch: false,
     analysis: false,
     faq: false,
@@ -399,6 +404,8 @@ function resetWorkspace() {
   state.sessionId = "";
   state.eventId = "";
   state.eventSessions = [];
+  state.eventSessionsTotal = null;
+  state.eventSessionsNext = null;
   state.selectedEventSessionId = "";
   state.selectedWorkspaceEventId = "";
   state.loadedEventId = "";
@@ -429,6 +436,8 @@ async function loadEventSessions() {
   );
   if (!sameAccount(account)) return;
   state.eventSessions = data.options || [];
+  state.eventSessionsTotal = typeof data.total === "number" ? data.total : null;
+  state.eventSessionsNext = data.next || null;
   state.loadedEventId = normalizedEventId;
   const selectionStillExists = state.eventSessions.some((session) => session.id === currentSelection);
   state.selectedEventSessionId =
@@ -437,6 +446,21 @@ async function loadEventSessions() {
       : selectionStillExists
         ? currentSelection
         : "";
+}
+
+// The next page of the open event's finished sessions ("Show more"), added
+// under the ones shown. A response for another event, or after sign-out, is
+// dropped.
+async function loadMoreEventSessions() {
+  const cursor = state.eventSessionsNext;
+  const eventId = state.loadedEventId;
+  if (!cursor || !eventId || state.loading.eventSessionsMore) return;
+  const account = state.auth.connectedUser;
+  const data = await wrapCall("eventSessionsMore", () => api.fetchEventSessions({ apiKey: state.apiKey, eventId, cursor }));
+  if (!sameAccount(account) || state.loadedEventId !== eventId) return;
+  const seen = new Set(state.eventSessions.map((session) => session.id));
+  state.eventSessions = [...state.eventSessions, ...(data.options || []).filter((session) => !seen.has(session.id))];
+  state.eventSessionsNext = data.next || null;
 }
 
 async function loadWorkspaceSessions({ silent = false } = {}) {
@@ -529,6 +553,8 @@ async function loadSessionsForSelectedWorkspaceEvent() {
   state.eventId = state.selectedWorkspaceEventId.trim();
   state.loadedEventId = "";
   state.eventSessions = [];
+  state.eventSessionsTotal = null;
+  state.eventSessionsNext = null;
   state.selectedEventSessionId = "";
   await loadEventSessions();
 }
@@ -560,6 +586,8 @@ watch(
 
     if (inputMode === "event" && eventId !== previousEventId) {
       state.eventSessions = [];
+      state.eventSessionsTotal = null;
+      state.eventSessionsNext = null;
       state.loadedEventId = "";
       state.selectedEventSessionId = "";
       state.transcriptUnavailableReason = "";
@@ -567,6 +595,8 @@ watch(
 
     if (selectedWorkspaceEventId !== previousSelectedWorkspaceEventId && inputMode !== "event") {
       state.eventSessions = [];
+      state.eventSessionsTotal = null;
+      state.eventSessionsNext = null;
       state.loadedEventId = "";
       state.selectedEventSessionId = "";
       state.transcriptUnavailableReason = "";
@@ -577,6 +607,8 @@ watch(
       state.workspaceEventsNextPage = null;
       state.selectedWorkspaceEventId = "";
       state.eventSessions = [];
+      state.eventSessionsTotal = null;
+      state.eventSessionsNext = null;
       state.loadedEventId = "";
       state.selectedEventSessionId = "";
       state.transcriptUnavailableReason = "";
@@ -867,6 +899,7 @@ export function useWorkspace() {
     loadMoreWorkspaceEvents,
     loadSessionsForSelectedWorkspaceEvent,
     loadEventSessions,
+    loadMoreEventSessions,
     loadWorkspaceSessions,
     loadSessionById,
     retryTranscript,
