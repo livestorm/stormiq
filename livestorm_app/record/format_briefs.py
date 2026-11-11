@@ -29,6 +29,13 @@ answer for a leak after (`_require_no_leak`).
   in the desk's order (`answered_questions`). Never who asked, never the
   desk's ids.
 
+**The no-show follow-up** ("Here's what you missed";
+`build_no_show_followup_brief`), for people who registered and didn't
+attend, holds the same parts under its own heading: the session, the
+chapters as what they missed, the moments of content, and the same
+`MAX_ANSWERED` answered questions. Its writer tells them what they missed
+and gives them a reason to watch the replay (`REPLAY_LINK`).
+
 **The check** (`check_format`, shared by every public format): every clock
 time and number in the answer is in the brief, written the same way (a
 small count, 0 to `FREE_COUNT` without a "%", is free, as in
@@ -181,7 +188,9 @@ def _question_block(number: int, question: Mapping[str, Any]) -> str:
     )
 
 
-def attendee_followup_text(
+def _brief_text(
+    heading: str,
+    chapters_heading: str,
     *,
     title: Optional[str],
     date: Optional[str],
@@ -190,9 +199,6 @@ def attendee_followup_text(
     moments: Mapping[str, Any],
     questions: Sequence[Mapping[str, Any]],
 ) -> str:
-    """The attendee follow-up's brief as text. `questions` is
-    `answered_questions(...)`; `moments` is `room_moments(...)`, filtered
-    here to the moments of content."""
     try:
         minutes = round(float(length_s) / 60) if length_s is not None else None
     except (TypeError, ValueError):
@@ -202,7 +208,7 @@ def attendee_followup_text(
     sections = [
         "\n".join(
             [
-                "# Attendee follow-up brief",
+                heading,
                 f"version: {FORMAT_BRIEF_VERSION}",
                 f"title: {_one_line(title, 200) or 'untitled'}",
                 f"date: {date or 'unknown'}",
@@ -210,12 +216,33 @@ def attendee_followup_text(
                 "times: minutes:seconds from the start of the session",
             ]
         ),
-        "## What was covered (the chapters)\n" + ("\n".join(chapter_lines(chapters)) or "- none placed"),
+        chapters_heading + "\n" + ("\n".join(chapter_lines(chapters)) or "- none placed"),
         "## Key moments of the talk (when the room reacted, and what was being said)\n"
         + ("\n".join(moment_lines(content_moments(moments))) or "- none found"),
         "## Questions the audience asked, with their answers\n" + (asked or "- none answered"),
     ]
     return "\n\n".join(sections)
+
+
+def attendee_followup_text(**parts: Any) -> str:
+    """The attendee follow-up's brief as text. `parts` are `title`, `date`,
+    `length_s`, `chapters`, `moments` (`room_moments(...)`, filtered here to
+    the moments of content) and `questions` (`answered_questions(...)`)."""
+    return _brief_text("# Attendee follow-up brief", "## What was covered (the chapters)", **parts)
+
+
+def no_show_followup_text(**parts: Any) -> str:
+    """The no-show follow-up's brief as text: the attendee follow-up's
+    parts (`attendee_followup_text`) under its own heading, the chapters
+    as what was missed."""
+    return _brief_text("# No-show follow-up brief", "## What they missed (the chapters)", **parts)
+
+
+def build_no_show_followup_brief(*, redact: Callable[[str], str] = lambda text: text, **parts: Any) -> Dossier:
+    """The no-show follow-up's brief (`no_show_followup_text`), redacted
+    and sealed as `build_attendee_followup_brief` does."""
+    text = redact(no_show_followup_text(**parts))
+    return make_dossier(text, record_version=f"no-show-followup-brief-{FORMAT_BRIEF_VERSION}")
 
 
 def build_attendee_followup_brief(*, redact: Callable[[str], str] = lambda text: text, **parts: Any) -> Dossier:

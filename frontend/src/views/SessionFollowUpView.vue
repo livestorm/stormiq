@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import BeforeYouShare from "../components/report/BeforeYouShare.vue";
 import ChapterNotes from "../components/report/ChapterNotes.vue";
+import EmailFollowUp from "../components/report/EmailFollowUp.vue";
 import FaqEditor from "../components/report/FaqEditor.vue";
 import MarkdownBlocks from "../components/report/MarkdownBlocks.vue";
 import QuestionDesk from "../components/report/QuestionDesk.vue";
@@ -22,11 +23,13 @@ import {
   OUTPUTS,
   canMake,
   earlierVersions,
+  listKeyFor,
   making,
   outputFor,
   outputGroups,
   outputText,
   pdfUrl,
+  tabItems,
   toggleOptions,
   versionsQuery,
 } from "../followup/outputs";
@@ -146,7 +149,9 @@ function show(key, lang = language.value) {
 const groups = computed(() => outputGroups(outputs.value, language.value));
 // Formal and Hype (the Smart Recap): one item in the list, a toggle on the output.
 const toggles = computed(() => toggleOptions(output.value));
-const listKey = computed(() => toggles.value[0]?.key || output.value.key);
+const listKey = computed(() => listKeyFor(output.value));
+// The Follow-up email's tabs (Attended, Not attended, Generic): one output each.
+const emailTabs = computed(() => tabItems(output.value, outputs.value, state, language.value));
 // Surprise me shows only while the organization has it on (`state.org`,
 // set by a StormIQ admin; the server refuses a take when it is off).
 const surpriseOn = computed(() => state.org.surpriseEnabled);
@@ -274,6 +279,7 @@ function make() {
     decisions: () => store.runDecisions(lang),
     teamDigest: () => store.runTeamDigest(lang),
     attendeeFollowup: () => store.runAttendeeFollowup(lang),
+    noShowFollowup: () => store.runNoShowFollowup(lang),
     smartRecap: () => store.runSmartRecap(tone),
     contentRepurposing: () => store.runContentRepurposing(lang),
   }[flow];
@@ -283,7 +289,7 @@ function make() {
 const makeLabel = computed(() => {
   if (output.value.key === "decisions") return `List the decisions${language.value === "French" ? " in French" : ""}`;
   if (output.value.key === "team-digest") return `Write the team digest${language.value === "French" ? " in French" : ""}`;
-  if (output.value.key === "attendee-followup") return `Write the attendee follow-up${language.value === "French" ? " in French" : ""}`;
+  if (output.value.makeLabel) return `${output.value.makeLabel}${language.value === "French" ? " in French" : ""}`;
   if (output.value.flow === "contentRepurposing") return `Write the repurposed content${language.value === "French" ? " in French" : ""}`;
   return `Write the ${output.value.label.toLowerCase()}${output.value.by === "language" && language.value === "French" ? " in French" : ""}`;
 });
@@ -512,6 +518,7 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
             </div>
           </template>
         </CardHeader>
+        <EmailFollowUp v-if="emailTabs.length" :tabs="emailTabs" @pick="show" />
 
         <template v-if="body">
           <div class="f-actions">
@@ -608,12 +615,7 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
             from the Report's numbers, the key moments, the open questions and the decisions if you listed them. A digest
             with a number or a time StormIQ didn't measure is never saved. Nobody is named.
           </p>
-          <p v-else-if="output.key === 'attendee-followup'" class="f-text">
-            Not written yet. It runs only when you ask, with AI, from the session's chapters, the key moments of the talk
-            and two questions the audience asked that have an answer. Attendees are never named: their names, emails and
-            links are removed before anything is sent. An email with a number or a time the session doesn't have is never
-            saved.
-          </p>
+          <p v-else-if="output.notYet" class="f-text">{{ output.notYet }}</p>
           <p v-else class="f-text">Not written yet. It runs only when you ask, with AI, from the transcript and the chat.</p>
           <p v-if="output.flow === 'contentRepurposing'" class="f-muted">
             The summary, blog post, follow-up email and social posts are written together.

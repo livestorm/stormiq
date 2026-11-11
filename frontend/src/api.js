@@ -132,6 +132,9 @@ export const api = {
   runAttendeeFollowup(sessionId, payload, options) {
     return postJson(sessionPath(sessionId, "/attendee-followup"), payload, options);
   },
+  runNoShowFollowup(sessionId, payload, options) {
+    return postJson(sessionPath(sessionId, "/no-show-followup"), payload, options);
+  },
   runDeepAnalysis(sessionId, payload, options) {
     return postJson(sessionPath(sessionId, "/deep-analysis"), payload, options);
   },

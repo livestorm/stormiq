@@ -14,6 +14,10 @@ A full visual and UX overhaul that uses Livestorm's design language (colours, Ob
 
 The v1 design uses Sora (open licence) instead of Object Sans, which is licensed and isn't in the repo, and Lucide icons instead of Livestorm's proprietary icon font ([brand.md](brand.md#the-v1-design)).
 
+## 1b. v1.1 formats
+
+The formats for the audience, each a public format through `api_logic.run_public_format` ([ai-outputs.md](ai-outputs.md#attendee-follow-up)): ~~the attendee follow-up~~ and ~~the no-show email~~ (shipped, November 2026, as the Follow-up email's Attended and Not attended tabs), then the LinkedIn post, then the clip shortlist.
+
 ## 2. Card registry for Deep Analysis
 
 Replace the markdown blob and its regex section parser ([ai-outputs.md](ai-outputs.md#deep-analysis)) with a registry of cards.

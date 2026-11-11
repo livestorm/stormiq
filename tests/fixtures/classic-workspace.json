@@ -3841,7 +3841,8 @@
       "faqBundle": {},
       "decisionsBundle": {},
       "teamDigestBundle": {},
-      "attendeeFollowupBundle": {}
+      "attendeeFollowupBundle": {},
+      "noShowFollowupBundle": {}
     }
   }
 }

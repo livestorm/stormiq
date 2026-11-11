@@ -621,6 +621,22 @@ async def run_attendee_followup_job(
     )
 
 
+async def run_no_show_followup_job(
+    ctx: Dict[str, Any],
+    session_id: str,
+    output_language: str,
+) -> Dict[str, Any]:
+    from livestorm_app.api_logic import run_no_show_followup
+
+    llm_key = _read_llm_key_or_raise()
+    return await _run_ai_job(
+        "no_show_followup",
+        session_id,
+        run_no_show_followup,
+        llm_key, session_id, output_language,
+    )
+
+
 async def run_deep_analysis_job(
     ctx: Dict[str, Any],
     session_id: str,
@@ -1073,6 +1089,7 @@ class WorkerSettings:
         func(run_decisions_job, timeout=LLM_JOB_TIMEOUT_SECONDS),
         func(run_team_digest_job, timeout=LLM_JOB_TIMEOUT_SECONDS),
         func(run_attendee_followup_job, timeout=LLM_JOB_TIMEOUT_SECONDS),
+        func(run_no_show_followup_job, timeout=LLM_JOB_TIMEOUT_SECONDS),
         func(run_deep_analysis_job, timeout=LLM_JOB_TIMEOUT_SECONDS),
         func(run_smart_recap_job, timeout=LLM_JOB_TIMEOUT_SECONDS),
         func(run_content_repurposing_job, timeout=LLM_JOB_TIMEOUT_SECONDS),

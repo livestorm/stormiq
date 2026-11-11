@@ -304,7 +304,7 @@ def get_transcript_download(session_id: str, *, organization_id: OrgScope) -> Di
 _OUTPUT_FIELDS = [
     "analysis_bundle", "analysis_md", "deep_analysis_bundle", "deep_analysis_md",
     "content_repurpose_bundle", "smart_recap_bundle", "faq_bundle", "decisions_bundle",
-    "team_digest_bundle", "attendee_followup_bundle",
+    "team_digest_bundle", "attendee_followup_bundle", "no_show_followup_bundle",
 ]
 
 
@@ -319,6 +319,7 @@ def _serialize_outputs(cached_session: Dict[str, Any]) -> Dict[str, Any]:
         "decisionsBundle": _normalize_text_bundle(cached_session.get("decisions_bundle"), ""),
         "teamDigestBundle": _normalize_text_bundle(cached_session.get("team_digest_bundle"), ""),
         "attendeeFollowupBundle": _normalize_text_bundle(cached_session.get("attendee_followup_bundle"), ""),
+        "noShowFollowupBundle": _normalize_text_bundle(cached_session.get("no_show_followup_bundle"), ""),
     }
 
 
@@ -942,6 +943,7 @@ OUTPUT_VERSION_KINDS: Dict[str, Tuple[str, str]] = {
     "decisions": ("decisions_bundle", "language"),
     "team_digest": ("team_digest_bundle", "language"),
     "attendee_followup": ("attendee_followup_bundle", "language"),
+    "no_show_followup": ("no_show_followup_bundle", "language"),
 }
 
 
@@ -2377,18 +2379,13 @@ def _placed_chapters(stored: Any, inputs: Any) -> List[Dict[str, Any]]:
     return [{"title": chapter["title"], "t": mark["t"]} for chapter, mark in zip(chapters, marks["marks"], strict=True)]
 
 
-def _attendee_followup_brief(session_id: str, cached: Mapping[str, Any], inputs: Any, stored: Any, redactor: Any) -> Any:
-    """The attendee follow-up's brief (`record.format_briefs`): title, date
-    and length, the placed chapters, the moments of content with what was
-    being said, and two answered questions from the desk (the most upvoted
-    first) without who asked; redacted whole by `redactor`."""
+def _format_brief_parts(session_id: str, cached: Mapping[str, Any], inputs: Any, stored: Any) -> Dict[str, Any]:
+    """What the attendee and no-show follow-ups' briefs hold
+    (`record.format_briefs`): title, date and length, the placed chapters,
+    the moments of content with what was being said, and two answered
+    questions from the desk (the most upvoted first) without who asked."""
     from livestorm_app.record.assemble import clock_meta, session_meta
-    from livestorm_app.record.format_briefs import (
-        answered_questions,
-        build_attendee_followup_brief,
-        question_up_votes,
-        session_date,
-    )
+    from livestorm_app.record.format_briefs import answered_questions, question_up_votes, session_date
     from livestorm_app.record.moments import room_moments
     from livestorm_app.record.question_desk import question_desk
     from livestorm_app.record.understanding import current_reading, located_answers
@@ -2398,8 +2395,7 @@ def _attendee_followup_brief(session_id: str, cached: Mapping[str, Any], inputs:
     located, located_state = located_answers(stored, inputs)
     desk = question_desk(inputs, fetch_question_replies(session_id, ALL_ORGS), located, located_state)
     meta = clock_meta(inputs)
-    return build_attendee_followup_brief(
-        redact=redactor.redact,
+    return dict(
         title=session_meta(inputs)["title"],
         date=session_date(meta.get("startedAtUnix"), meta.get("timezone")),
         length_s=meta.get("endS"),
@@ -2417,12 +2413,34 @@ def _attendee_followup_brief(session_id: str, cached: Mapping[str, Any], inputs:
     )
 
 
+def _attendee_followup_brief(session_id: str, cached: Mapping[str, Any], inputs: Any, stored: Any, redactor: Any) -> Any:
+    """The attendee follow-up's brief (`_format_brief_parts`), redacted whole by `redactor`."""
+    from livestorm_app.record.format_briefs import build_attendee_followup_brief
+
+    return build_attendee_followup_brief(redact=redactor.redact, **_format_brief_parts(session_id, cached, inputs, stored))
+
+
+def _no_show_followup_brief(session_id: str, cached: Mapping[str, Any], inputs: Any, stored: Any, redactor: Any) -> Any:
+    """The no-show follow-up's brief (`_format_brief_parts`), redacted whole by `redactor`."""
+    from livestorm_app.record.format_briefs import build_no_show_followup_brief
+
+    return build_no_show_followup_brief(redact=redactor.redact, **_format_brief_parts(session_id, cached, inputs, stored))
+
+
 PUBLIC_FORMATS: Dict[str, _PublicFormat] = {
     "attendee_followup": _PublicFormat(
         "attendee follow-up",
         "attendee_followup_bundle",
         _attendee_followup_brief,
         max_words=300,
+        required_tokens=("{{replay_link}}",),
+        starts_with="Subject:",
+    ),
+    "no_show_followup": _PublicFormat(
+        "no-show follow-up",
+        "no_show_followup_bundle",
+        _no_show_followup_brief,
+        max_words=250,
         required_tokens=("{{replay_link}}",),
         starts_with="Subject:",
     ),
@@ -2505,6 +2523,12 @@ def run_attendee_followup(api_analysis_key: str, session_id: str, output_languag
     """The Follow-up's "Attendee follow-up" ("You asked, we answered") in one
     language (`run_public_format`), saved in `attendee_followup_bundle`."""
     return run_public_format("attendee_followup", api_analysis_key, session_id, output_language)
+
+
+def run_no_show_followup(api_analysis_key: str, session_id: str, output_language: str) -> Dict[str, Any]:
+    """The Follow-up's "No-show follow-up" ("Here's what you missed") in one
+    language (`run_public_format`), saved in `no_show_followup_bundle`."""
+    return run_public_format("no_show_followup", api_analysis_key, session_id, output_language)
 
 
 class NoQuestionsError(RuntimeError):
@@ -3275,6 +3299,7 @@ _ARQ_JOB_FUNCTION_BY_KIND: Dict[str, str] = {
     "decisions": "run_decisions_job",
     "team_digest": "run_team_digest_job",
     "attendee_followup": "run_attendee_followup_job",
+    "no_show_followup": "run_no_show_followup_job",
 }
 
 # The columns `_extract_cached_ai_body` reads for each kind: job starts and
@@ -3288,6 +3313,7 @@ _AI_BODY_FIELDS: Dict[str, List[str]] = {
     "decisions": ["decisions_bundle"],
     "team_digest": ["team_digest_bundle"],
     "attendee_followup": ["attendee_followup_bundle"],
+    "no_show_followup": ["no_show_followup_bundle"],
 }
 
 
@@ -3337,7 +3363,7 @@ def _start_ai_job(
     # English-first enforcement: French (and any non-English variant) must be
     # a translation of the existing English version so outputs stay consistent.
     # Reject if English hasn't been generated yet.
-    if kind in ("overall_analysis", "deep_analysis", "content_repurposing", "faq", "decisions", "team_digest", "attendee_followup") and str(language or "").strip() not in ("", "English"):
+    if kind in ("overall_analysis", "deep_analysis", "content_repurposing", "faq", "decisions", "team_digest", "attendee_followup", "no_show_followup") and str(language or "").strip() not in ("", "English"):
         if not _extract_cached_ai_body(cached, kind, language="English"):
             raise RuntimeError("Generate the English version first before translating to another language.")
 
@@ -3626,6 +3652,14 @@ def start_attendee_followup(session_id: str, output_language: str, *, organizati
 
 def get_attendee_followup_job_data(session_id: str, job_id: str, language: str, *, organization_id: OrgScope, outputs_only: bool = False) -> Dict[str, Any]:
     return _get_ai_job_data("attendee_followup", session_id, job_id, language=language, organization_id=organization_id, outputs_only=outputs_only)
+
+
+def start_no_show_followup(session_id: str, output_language: str, *, organization_id: OrgScope) -> Dict[str, Any]:
+    return _start_ai_job("no_show_followup", session_id, language=output_language, organization_id=organization_id)
+
+
+def get_no_show_followup_job_data(session_id: str, job_id: str, language: str, *, organization_id: OrgScope, outputs_only: bool = False) -> Dict[str, Any]:
+    return _get_ai_job_data("no_show_followup", session_id, job_id, language=language, organization_id=organization_id, outputs_only=outputs_only)
 
 
 def start_deep_analysis(session_id: str, output_language: str, *, organization_id: OrgScope) -> Dict[str, Any]:

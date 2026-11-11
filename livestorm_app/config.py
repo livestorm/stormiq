@@ -68,6 +68,7 @@ TEAM_DIGEST_PROMPT_PATH = PROMPTS_DIR / "team_digest.txt"  # v1: ai/team_digest.
 # v1.1 public formats (`ai/public_formats.py`): `prompts/<kind>.txt`.
 PUBLIC_FORMAT_PROMPT_PATHS = {
     "attendee_followup": PROMPTS_DIR / "attendee_followup.txt",
+    "no_show_followup": PROMPTS_DIR / "no_show_followup.txt",
 }
 
 ENV_PATH = Path(".env")
