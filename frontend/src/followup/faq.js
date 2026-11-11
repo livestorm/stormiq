@@ -87,6 +87,16 @@ export function removeEntry(entries, index) {
   return entries.filter((_, i) => i !== index);
 }
 
+/** `entries` with `entry` put back where it was (`index`, kept within the
+ * list): the undo of a removal. An entry already there is not added twice. */
+export function restoreEntry(entries, entry, index) {
+  if (!entry || entries.some((item) => item.id === entry.id)) return entries.slice();
+  const at = Math.max(0, Math.min(Number(index) || 0, entries.length));
+  const out = entries.slice();
+  out.splice(at, 0, entry);
+  return out;
+}
+
 /** What stops a save, the server's limits checked first here: a list of
  * `{index, message}` (index −1 for the whole FAQ). */
 export function entryProblems(entries) {

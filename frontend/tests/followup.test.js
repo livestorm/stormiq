@@ -127,7 +127,8 @@ describe("the Follow-up outputs", () => {
 
   it("list every output in its group, the recap's two tones as one item", () => {
     const groups = outputGroups(outputs, "English");
-    expect(groups.map((group) => group.name)).toEqual(["Analysis", "Repurposing", "For the audience"]);
+    // The FAQ is filed with the desk ("From the session"); the view puts that group first.
+    expect(groups.map((group) => group.name)).toEqual(["Analysis", "Repurposing", "From the session", "For the audience"]);
     // Surprise me sits in its own corner, not in a group.
     expect(CORNER_OUTPUTS.map((output) => output.key)).toEqual(["recap-surprise"]);
     expect(groups.flatMap((group) => group.items).some((item) => item.key === "recap-surprise")).toBe(false);
@@ -137,8 +138,9 @@ describe("the Follow-up outputs", () => {
       { key: "team-digest", label: "Team digest", ready: false, keys: ["team-digest"], toggle: "" },
       { key: "recap-professional", label: "Smart Recap", ready: true, keys: ["recap-professional", "recap-hype"], toggle: "recap" },
     ]);
-    expect(groups[1].items.map((item) => item.label)).toEqual(["Summary", "Blog post", "Follow-up email", "Social posts", "FAQ"]);
-    expect(groups[2].items).toEqual([
+    expect(groups[1].items.map((item) => item.label)).toEqual(["Summary", "Blog post", "Follow-up email", "Social posts"]);
+    expect(groups[2].items.map((item) => item.key)).toEqual(["faq"]);
+    expect(groups[3].items).toEqual([
       { key: "attendee-followup", label: "Attendee follow-up", ready: false, keys: ["attendee-followup"], toggle: "" },
     ]);
   });

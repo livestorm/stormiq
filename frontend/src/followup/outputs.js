@@ -128,7 +128,8 @@ export const OUTPUTS = [
   },
   {
     key: "faq",
-    group: "Repurposing",
+    // Next to the question desk it is drafted from.
+    group: "From the session",
     label: "FAQ",
     about: "The audience's questions and their answers, for the replay page or the follow-up email. Who asked is never named.",
     flow: "faq",
