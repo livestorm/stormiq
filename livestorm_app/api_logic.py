@@ -2032,6 +2032,60 @@ def _require_no_leak(redactor: Any, texts: Iterable[Any], what: str) -> None:
         raise PublicOutputLeak(f"The {what} contained {' and '.join(found)}. Nothing was saved; please try again.")
 
 
+class SurpriseCheckError(RuntimeError):
+    """A surprise take gave a figure the session doesn't have; nothing saved."""
+
+
+def _surprise_facts(session_id: str, cached: Mapping[str, Any]) -> Tuple[str, Any]:
+    """What StormIQ measured, for Surprise Me! (`record.surprise_brief`):
+    the vitals, the key moments with what was being said, and the placed
+    chapters, as text; and the session's roster, for the redaction. Read
+    from the same people source as the record. No model call."""
+    from livestorm_app.record.assemble import assemble_record, chapter_marks, clock_meta, session_meta
+    from livestorm_app.record.inputs import load_record_inputs
+    from livestorm_app.record.moments import room_moments
+    from livestorm_app.record.roster import stored_roster_rows
+    from livestorm_app.record.surprise_brief import build_surprise_brief
+    from livestorm_app.record.understanding import chapter_list, current_reading
+
+    roster_status = fetch_roster_status(session_id, ALL_ORGS) or {}
+    stored_roster = fetch_session_roster(session_id, ALL_ORGS) if roster_status.get("roster") is not None else None
+    inputs = load_record_inputs(
+        dict(cached),
+        roster_rows=stored_roster_rows(stored_roster) if stored_roster is not None else None,
+        stored_labels=fetch_chat_labels(session_id, ALL_ORGS),
+    )
+    stored = fetch_understanding(session_id, ALL_ORGS)
+    result, _state, _ = current_reading(stored, inputs)
+    names = cached.get("transcript_speaker_names") if isinstance(cached.get("transcript_speaker_names"), dict) else {}
+    chapters, _ = chapter_list(stored, inputs)
+    marks = chapter_marks(inputs, chapters)
+    placed = (
+        [{"title": chapter["title"], "t": mark["t"]} for chapter, mark in zip(chapters, marks["marks"], strict=True)]
+        if marks["placed"] else []
+    )
+    brief = build_surprise_brief(
+        title=session_meta(inputs)["title"],
+        length_s=clock_meta(inputs).get("endS"),
+        measures=assemble_record(inputs)["record"].get("measures") or {},
+        moments=room_moments(inputs, result or {}, names),
+        chapters=placed,
+    )
+    return brief, inputs.roster
+
+
+def _check_surprise(markdown: str, sent: str) -> None:
+    """Raises `SurpriseCheckError` when the take gives a time or a number
+    that isn't in what it was sent (`record.surprise_brief.check_surprise`),
+    naming only the kind of figure."""
+    from livestorm_app.record.surprise_brief import SurpriseRejected, check_surprise
+
+    try:
+        check_surprise(markdown, sent)
+    except SurpriseRejected as exc:
+        raise SurpriseCheckError(f"The surprise take {exc}. Nothing was saved; please try again.") from None
+
+
 class NoQuestionsError(RuntimeError):
     """The session has no audience question to make a FAQ from."""
 
@@ -2240,7 +2294,16 @@ def run_smart_recap(api_analysis_key: str, session_id: str, tone: str) -> Dict[s
     smart_bundle = _normalize_smart_recap_bundle(cached.get("smart_recap_bundle"))
     # A public format: the audience's names and contact details said on
     # stage are redacted before the call, and the recap checked after.
-    redactor = _public_redactor(session_id, cached)
+    # Surprise Me! also reads what StormIQ measured (proposal §10), and its
+    # take may give only the times and numbers it was sent.
+    speech = build_transcript_plain_text(transcript_payload)
+    if tone == "surprise":
+        facts, roster = _surprise_facts(session_id, cached)
+        redactor = _public_redactor(session_id, cached, roster)
+        sent = redactor.redact(f"{facts}\n\n# Transcript\n\n{speech}")
+    else:
+        redactor = _public_redactor(session_id, cached)
+        sent = redactor.redact(speech)
     markdown = analyze_with_openai(
         api_key=api_analysis_key,
         model=get_llm_model("smart_recap"),
@@ -2248,12 +2311,14 @@ def run_smart_recap(api_analysis_key: str, session_id: str, tone: str) -> Dict[s
         output_language="English",
         selected_sources=["transcript"],
         derived_stats={},
-        transcript_text=redactor.redact(build_transcript_plain_text(transcript_payload)),
+        transcript_text=sent,
         max_tokens=900,
         ctx=_llm_call_context("smart_recap", "smart_recap", session_id, tone, cached),
     )
     markdown = _require_generated_text(markdown, "smart recap")
     _require_no_leak(redactor, [markdown], "smart recap")
+    if tone == "surprise":
+        _check_surprise(markdown, sent)
     merge_cached_bundle_entry(session_id, "smart_recap_bundle", tone, markdown, provenance=run_provenance())
     smart_bundle[tone] = markdown
     return {"markdown": markdown, "bundle": smart_bundle}

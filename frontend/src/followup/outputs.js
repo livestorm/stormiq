@@ -76,7 +76,7 @@ export const OUTPUTS = [
     key: "recap-surprise",
     group: "Smart Recap",
     label: "Surprise me",
-    about: "An unexpected take on the session, still grounded in the transcript. Opt-in, just for fun.",
+    about: "An unexpected take on the session, grounded in what StormIQ measured and the transcript. Opt-in, just for fun.",
     flow: "smartRecap",
     bundle: "smartRecapBundle",
     by: "tone",
