@@ -449,6 +449,7 @@ def ensure_database_schema() -> None:
             _ensure_people_schema(cursor)
             _ensure_chat_labels_schema(cursor)
             _ensure_question_replies_schema(cursor)
+            _ensure_understanding_schema(cursor)
         connection.commit()
 
 
@@ -611,6 +612,25 @@ def _ensure_chat_labels_schema(cursor: Any) -> None:
             message_count INTEGER NOT NULL,
             labels        JSONB NOT NULL,
             created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
+
+
+def _ensure_understanding_schema(cursor: Any) -> None:
+    """One row per session: what the understanding job read in it, checked
+    (`record.understanding.check_understanding`), stored whole
+    (`replace_understanding`). References `session_cache` (deleted with it)
+    and has no org column: every read joins `session_cache` on its org."""
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS session_understanding (
+            session_id   TEXT PRIMARY KEY REFERENCES session_cache (session_id) ON DELETE CASCADE,
+            version      INTEGER NOT NULL,
+            dossier_hash TEXT NOT NULL,
+            model        TEXT NOT NULL,
+            result       JSONB NOT NULL,
+            created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
         """
     )
@@ -2254,6 +2274,82 @@ def livestorm_sync_is_first_initial(sync_id: str) -> bool:
             (sync_id_value,),
         ).fetchone()
     return bool(row and row["first_initial"])
+
+
+# ── The understanding job's result (record/understanding.py) ──────────────
+#
+# One row per session, replaced whole by the analysis the user starts. A
+# failed write keeps the previous one. Reads join `session_cache` on its org.
+
+
+def replace_understanding(session_id: str, result: Mapping[str, Any], *, dossier_hash: str, model: str) -> None:
+    """Store a session's checked understanding (`check_understanding`'s
+    result), replacing any earlier one. `dossier_hash` is the SHA-256 of the
+    dossier it was read from. Raises ValueError for a malformed call and
+    RuntimeError when the write fails or the session isn't cached; the
+    earlier result is kept."""
+    from livestorm_app.record.understanding import UNDERSTANDING_VERSION
+
+    session_id_value = str(session_id or "").strip()
+    if not session_id_value:
+        raise ValueError("replace_understanding requires a session_id.")
+    if not isinstance(dossier_hash, str) or not _CHAT_HASH.match(dossier_hash):
+        raise ValueError("dossier_hash is a lowercase SHA-256 hex digest.")
+    model_value = str(model or "").strip()
+    if not model_value:
+        raise ValueError("replace_understanding requires the model that read the session.")
+    if not isinstance(result, Mapping) or result.get("version") != UNDERSTANDING_VERSION:
+        raise ValueError("replace_understanding takes a checked result of the current version.")
+    if not database_enabled():
+        raise RuntimeError("Database is not configured.")
+    try:
+        with get_db_connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO session_understanding (session_id, version, dossier_hash, model, result, created_at)
+                VALUES (%s, %s, %s, %s, %s::jsonb, NOW())
+                ON CONFLICT (session_id) DO UPDATE SET
+                    version = EXCLUDED.version,
+                    dossier_hash = EXCLUDED.dossier_hash,
+                    model = EXCLUDED.model,
+                    result = EXCLUDED.result,
+                    created_at = NOW()
+                """,
+                (session_id_value, UNDERSTANDING_VERSION, dossier_hash, model_value, json.dumps(result, ensure_ascii=False)),
+            )
+            connection.commit()
+    except Exception as exc:
+        logger.error("Failed to save the understanding for session_id=%s (%s)", session_id_value, _error_label(exc))
+        raise RuntimeError("Could not save what was read in the session; the previous result is kept.") from exc
+
+
+def fetch_understanding(session_id: str, organization_id: OrgScope) -> Optional[Dict[str, Any]]:
+    """A session's stored understanding, scoped by org: `{version,
+    dossier_hash, model, result, created_at}`, or None when there is none,
+    the session isn't in the scope, or the scope is blank (never queries).
+    Returned as stored, whatever its version: the reader compares it with
+    the session it shows. Raises when the database can't be read."""
+    session_id_value = str(session_id or "").strip()
+    if not database_enabled() or not session_id_value:
+        return None
+    try:
+        org_filter = _org_filter(organization_id)
+    except ScopeMatchesNothing:
+        return None
+    where_clause = "u.session_id = %s" + (" AND c.organization_id = %s" if org_filter is not None else "")
+    params = (session_id_value,) + ((org_filter,) if org_filter is not None else ())
+    with get_db_connection() as connection:
+        row = connection.execute(
+            f"""
+            SELECT u.version, u.dossier_hash, u.model, u.result, u.created_at
+            FROM session_understanding u
+            JOIN session_cache c ON c.session_id = u.session_id
+            WHERE {where_clause}
+            LIMIT 1
+            """,
+            params,
+        ).fetchone()
+    return dict(row) if row else None
 
 
 # ── The question desk's saved replies (record/question_desk.py) ───────────

@@ -102,7 +102,7 @@ Smart Recap is on demand only: nothing generates it automatically.
 
 ### The session analysis (v1)
 
-The v1 Report's analysis, started by the user and never on its own. For now it labels the chat; later steps of the v1 analysis will join the same run.
+The v1 Report's analysis, started by the user ("Analyse session") and never on its own. One run, two steps: it labels the chat, then reads the session (the understanding job) when it has a transcript.
 
 | Start | Poll | Worker job | One job per |
 |---|---|---|---|
@@ -110,7 +110,7 @@ The v1 Report's analysis, started by the user and never on its own. For now it l
 
 - **Start** (`api_logic.start_session_analysis`): the caller must be able to read the session (404 otherwise). It queues the job with the session id only, under the fixed id `session_analysis:{session_id}:_`, and returns `{jobId, jobStatus, enqueued}`; a second click while it runs joins the same job. 503 when the queue is down.
 - **Poll** (`api_logic.get_session_analysis_job`): `{jobId, jobStatus, error?}`, with the statuses above. The job id is derived from the session; a `jobId` parameter is ignored.
-- **The run** (`api_logic.run_session_analysis`, in `asyncio.to_thread`; the key comes from the worker's env): it reads the cached chat through the record (`record.inputs.load_record_inputs`), and skips the model when the stored labels already describe this chat (same `chat_hash` and `LABEL_VERSION`). Otherwise it labels the chat (`ai/chat_labelling.label_chat`, [ai-outputs.md](ai-outputs.md#chat-labels-v1)) and stores the labels whole (`db.replace_chat_labels`). It returns `{chatLabels: "labelled" | "up_to_date", messages}`. A failure stores nothing and keeps the earlier labels. Each call records an `llm_usage` row with the job kind `chat_labels` and the run's job id. Not held to the daily budget: the user starts it.
+- **The run** (`api_logic.run_session_analysis`, in `asyncio.to_thread`; the key comes from the worker's env): it reads the cached chat through the record (`record.inputs.load_record_inputs`), and skips the model when the stored labels already describe this chat (same `chat_hash` and `LABEL_VERSION`). Otherwise it labels the chat (`ai/chat_labelling.label_chat`, [ai-outputs.md](ai-outputs.md#chat-labels-v1)) and stores the labels whole (`db.replace_chat_labels`). Then it reads the session (`api_logic._read_understanding`): it builds the session's dossier with the labels it just stored and the stored roster (`record.understanding.build_dossier`), skips the model when the stored result was read from the same dossier at the same `UNDERSTANDING_VERSION`, else makes one call (`ai/understanding.read_session`, [ai-outputs.md](ai-outputs.md#the-understanding-v1)), checks the answer (`check_understanding`) and stores it whole (`db.replace_understanding`). Without a transcript it reads nothing. It returns `{chatLabels: "labelled" | "up_to_date", messages, understanding: "read" | "up_to_date" | "no_transcript"}`. A failed step stores nothing of its own: labels made before a failed reading stay, and so does the earlier reading. Each call records an `llm_usage` row with its job kind (`chat_labels`, `understanding`) and the run's job id. Not held to the daily budget: the user starts it.
 
 ## Cover images
 
@@ -122,7 +122,8 @@ The v1 Report's analysis, started by the user and never on its own. For now it l
 |---|---|
 | Transcription | 120 min |
 | People sync | 15 min, the wait for the org's lock included |
-| AI flows, the session analysis included | 15 min |
+| AI flows | 15 min |
+| The session analysis | 25 min: the chat labels' batches, then the understanding call and its 10-minute stream deadline |
 | Cover image | 5 min |
 | `ping` | 5 min (arq default) |
 

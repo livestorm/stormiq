@@ -75,7 +75,7 @@ export function analysisSummary(chatLabels, analysis) {
   }
   return {
     title: "Not analysed yet",
-    detail: "The analysis reads the chat with AI and sorts every message: questions, reactions, tech issues. It runs only when you start it.",
+    detail: "The analysis reads the chat and the transcript with AI: it sorts every message (questions, reactions, tech issues) and notes the chapters, the answers given and the figures said. It runs only when you start it.",
     action: "Analyse session",
     busy: false,
     tone: "neutral",

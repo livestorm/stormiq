@@ -197,6 +197,9 @@ async def ping(ctx: Dict[str, Any]) -> str:
 
 TRANSCRIPTION_JOB_TIMEOUT_SECONDS = 60 * 120  # download + ffmpeg + upload + Gladia on a long recording
 LLM_JOB_TIMEOUT_SECONDS = 60 * 15  # up to two LLM calls (truncation or completeness retry), 5-min read timeout each
+# The session analysis: the chat labels' batches, then the understanding
+# call, streamed with its own 10-minute deadline (`JobSpec.call_deadline_s`).
+SESSION_ANALYSIS_TIMEOUT_SECONDS = 60 * 25
 COVER_IMAGE_JOB_TIMEOUT_SECONDS = 60 * 5  # one Images call, 3-min HTTP timeout
 
 # Transcriptions download the recording and run ffmpeg locally; more than a
@@ -471,7 +474,8 @@ async def _run_ai_job(
 
 
 async def run_session_analysis_job(ctx: Dict[str, Any], session_id: str) -> Dict[str, Any]:
-    """The v1 session analysis the user starts: the chat labels, for now
+    """The v1 session analysis the user starts: the chat labels, then the
+    understanding job when there is a transcript
     (`api_logic.run_session_analysis`). Gets the session id only; the model
     key comes from the worker's environment."""
     from livestorm_app.api_logic import run_session_analysis
@@ -483,7 +487,10 @@ async def run_session_analysis_job(ctx: Dict[str, Any], session_id: str) -> Dict
     except Exception as exc:
         logger.error("[session_analysis] session_id=%s failed (%s)", session_id, type(exc).__name__)
         raise
-    logger.info("[session_analysis] session_id=%s done (%s)", session_id, result.get("chatLabels"))
+    logger.info(
+        "[session_analysis] session_id=%s done (labels=%s understanding=%s)",
+        session_id, result.get("chatLabels"), result.get("understanding"),
+    )
     return result
 
 
@@ -899,7 +906,7 @@ class WorkerSettings:
     functions = [
         ping,
         func(run_transcription, timeout=TRANSCRIPTION_JOB_TIMEOUT_SECONDS),
-        func(run_session_analysis_job, timeout=LLM_JOB_TIMEOUT_SECONDS),
+        func(run_session_analysis_job, timeout=SESSION_ANALYSIS_TIMEOUT_SECONDS),
         func(run_overall_analysis_job, timeout=LLM_JOB_TIMEOUT_SECONDS),
         func(run_deep_analysis_job, timeout=LLM_JOB_TIMEOUT_SECONDS),
         func(run_smart_recap_job, timeout=LLM_JOB_TIMEOUT_SECONDS),

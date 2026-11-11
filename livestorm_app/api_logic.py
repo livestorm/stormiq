@@ -1929,12 +1929,17 @@ def get_session_analysis_job(session_id: str, job_id: str, *, organization_id: O
 
 
 def run_session_analysis(api_key: str, session_id: str) -> Dict[str, Any]:
-    """The worker side of the analysis: label the chat and store the labels.
+    """The worker side of the analysis the user starts, in two steps:
 
-    Skips the model when the stored labels already describe this chat
-    (same `chat_hash` and `LABEL_VERSION`). A failed step raises and stores
-    nothing; the earlier labels are kept. Returns `{chatLabels: "labelled" |
-    "up_to_date", messages}`.
+    1. Label the chat and store the labels. Skips the model when the stored
+       labels already describe this chat (same `chat_hash` and
+       `LABEL_VERSION`).
+    2. Read the session (the understanding job, `_read_understanding`), when
+       it has a transcript.
+
+    A failed step raises and stores nothing of its own; what earlier steps
+    and runs stored is kept. Returns `{chatLabels: "labelled" | "up_to_date",
+    messages, understanding: "read" | "up_to_date" | "no_transcript"}`.
     """
     # The record package is imported here, inside the worker's runner, so
     # loading api_logic never loads it (tests/test_roster.py).
@@ -1953,16 +1958,61 @@ def run_session_analysis(api_key: str, session_id: str) -> Dict[str, Any]:
     current_hash = chat_hash(messages)
     stored = fetch_chat_labels(session_id, ALL_ORGS)
     if stored and stored.get("chat_hash") == current_hash and stored.get("label_version") == LABEL_VERSION:
-        return {"chatLabels": "up_to_date", "messages": len(messages)}
+        labels, labels_state = stored, "up_to_date"
+    else:
+        ctx = CallContext(
+            job_kind="chat_labels",
+            session_id=str(session_id or "").strip(),
+            organization_id=str(cached.get("organization_id") or "").strip(),
+            job_id=session_analysis_job_id(session_id),
+        )
+        result = label_chat(messages, api_key=api_key, ctx=ctx)
+        replace_chat_labels(session_id, result.labels, chat_hash=result.chat_hash, model=result.model)
+        labels = {"label_version": LABEL_VERSION, "chat_hash": result.chat_hash, "model": result.model, "labels": result.labels}
+        labels_state = "labelled"
+    understanding = _read_understanding(api_key, session_id, cached, labels)
+    return {"chatLabels": labels_state, "messages": len(messages), "understanding": understanding}
+
+
+def _read_understanding(api_key: str, session_id: str, cached: Mapping[str, Any], labels: Optional[Mapping[str, Any]]) -> str:
+    """The understanding job's step of the analysis: build the session's
+    dossier (`record.understanding.build_dossier`, with the chat labels just
+    stored and the stored roster), skip the model when the stored result was
+    read from the same dossier at the same version, else read it
+    (`ai.understanding.read_session`), check it (`check_understanding`) and
+    store it whole (`db.replace_understanding`). Returns `read`,
+    `up_to_date` or `no_transcript`."""
+    from livestorm_app.ai import jobs
+    from livestorm_app.ai.understanding import KIND, read_session
+    from livestorm_app.db import fetch_understanding, replace_understanding
+    from livestorm_app.record.inputs import load_record_inputs
+    from livestorm_app.record.roster import stored_roster_rows
+    from livestorm_app.record.understanding import UNDERSTANDING_VERSION, build_dossier, check_understanding
+
+    roster_status = fetch_roster_status(session_id, ALL_ORGS) or {}
+    stored_roster = fetch_session_roster(session_id, ALL_ORGS) if roster_status.get("roster") is not None else None
+    inputs = load_record_inputs(
+        dict(cached),
+        roster_rows=stored_roster_rows(stored_roster) if stored_roster is not None else None,
+        stored_labels=labels,
+    )
+    dossier, utterances, questions = build_dossier(inputs)
+    if not utterances:
+        return "no_transcript"
+    stored = fetch_understanding(session_id, ALL_ORGS)
+    if stored and stored.get("dossier_hash") == dossier.sha256 and stored.get("version") == UNDERSTANDING_VERSION:
+        return "up_to_date"
     ctx = CallContext(
-        job_kind="chat_labels",
+        job_kind=KIND,
         session_id=str(session_id or "").strip(),
         organization_id=str(cached.get("organization_id") or "").strip(),
         job_id=session_analysis_job_id(session_id),
     )
-    result = label_chat(messages, api_key=api_key, ctx=ctx)
-    replace_chat_labels(session_id, result.labels, chat_hash=result.chat_hash, model=result.model)
-    return {"chatLabels": "labelled", "messages": len(messages)}
+    model = jobs.resolve_model(KIND).model_id
+    answer = read_session(dossier, api_key=api_key, ctx=ctx)
+    checked = check_understanding(answer.model_dump(), utterances, questions)
+    replace_understanding(session_id, checked, dossier_hash=dossier.sha256, model=model)
+    return "read"
 
 
 def start_overall_analysis(session_id: str, output_language: str, *, organization_id: OrgScope) -> Dict[str, Any]:

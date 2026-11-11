@@ -205,6 +205,26 @@ session_question_replies (
 - **One write per question.** `db.save_question_reply` upserts the row; a failed write raises.
 - **Scoped and deleted through the session**, like the chat labels: the read (`db.fetch_question_replies`) and the write both join `session_cache` and filter on its org, so another org's session reads and writes nothing (the write's insert selects the session row with the filter); a blank scope never queries; `ON DELETE CASCADE` removes the rows with the session.
 
+## `session_understanding`
+
+One row per session: what the understanding job read in it, checked (`record/understanding.py`), for the Follow-up tab and later findings ([ai-outputs.md](ai-outputs.md#the-understanding-v1)).
+
+```sql
+session_understanding (
+  session_id   TEXT PRIMARY KEY REFERENCES session_cache (session_id) ON DELETE CASCADE,
+  version      INTEGER NOT NULL,      -- record.understanding.UNDERSTANDING_VERSION when written
+  dossier_hash TEXT NOT NULL,         -- SHA-256 of the dossier it was read from
+  model        TEXT NOT NULL,
+  result       JSONB NOT NULL,        -- {version, onClock, chapters, answers, prompts, figures, groups, coverage}
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+```
+
+- **By id, never by name.** Items cite utterance ids (`U0001`), question ids (`Q001`, `C0001`) and the words said on stage; no name, email or people id.
+- **Replaced whole.** `db.replace_understanding` refuses a result of another version or a malformed hash before writing, then upserts the row. A failed write raises and keeps the previous result.
+- **Which session.** `dossier_hash` and `version` say what it was read from: the analysis reads the session again only when either differs.
+- **Scoped and deleted through the session**, like the chat labels: `db.fetch_understanding` joins `session_cache` and filters on its org (a blank scope never queries), and `ON DELETE CASCADE` removes the row with the session.
+
 ## `oauth_connections`
 
 ```sql
