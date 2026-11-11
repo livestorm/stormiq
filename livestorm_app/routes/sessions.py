@@ -15,10 +15,13 @@ from livestorm_app.api_logic import (
     fetch_session_base_data,
     fetch_session_transcript_data,
     get_cached_workspace,
+    FigureCheckNotFoundError,
     NothingLocatedError,
     QuestionNotFoundError,
     QuestionNotSavableError,
     decide_session_located_answer,
+    get_session_figure_checks,
+    save_session_figure_check,
     get_session_chapters,
     get_session_chat_messages,
     get_session_open_questions_csv,
@@ -45,7 +48,13 @@ from livestorm_app.people_sync import (
     request_people_sync,
 )
 from livestorm_app.routes.common import SessionId, logger, raise_http_error
-from livestorm_app.routes.models import FetchSessionRequest, LocatedDecisionRequest, QuestionReplyRequest, SpeakerLabelsRequest
+from livestorm_app.routes.models import (
+    FetchSessionRequest,
+    FigureCheckRequest,
+    LocatedDecisionRequest,
+    QuestionReplyRequest,
+    SpeakerLabelsRequest,
+)
 
 router = APIRouter()
 
@@ -130,6 +139,51 @@ def read_session_chat_messages(session_id: SessionId, caller: Caller = Depends(g
         raise HTTPException(
             status_code=500,
             detail={"resource": "Session chat", "message": "The session's chat could not be read."},
+        ) from exc
+
+
+FIGURES_RESOURCE = "Figure checks"
+
+
+@router.get("/api/sessions/{session_id}/record/figures")
+def read_session_figure_checks(session_id: SessionId, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
+    """Before you share: the figures said on stage to check, with the host's
+    answers (`api_logic.get_session_figure_checks`). No model call."""
+    try:
+        return get_session_figure_checks(session_id, organization_id=caller.read_scope)
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail={"resource": FIGURES_RESOURCE, "message": str(exc)}) from exc
+    except Exception as exc:
+        logger.exception("Figure checks read failed for session_id=%s", session_id)
+        raise HTTPException(
+            status_code=500, detail={"resource": FIGURES_RESOURCE, "message": "The figures to check could not be read."}
+        ) from exc
+
+
+@router.put("/api/sessions/{session_id}/record/figures")
+def update_session_figure_check(
+    session_id: SessionId, request: FigureCheckRequest, caller: Caller = Depends(get_caller)
+) -> Dict[str, Any]:
+    """Answer one figure check, or reopen it (`choice` null), and return the
+    checks (`api_logic.save_session_figure_check`). Scoped like every
+    session route: another org's session looks missing."""
+    connection = caller.connection if isinstance(caller.connection, dict) else {}
+    try:
+        return save_session_figure_check(
+            session_id,
+            request.key,
+            request.choice,
+            organization_id=caller.read_scope,
+            updated_by=str(connection.get("user_id") or "") or None,
+        )
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail={"resource": FIGURES_RESOURCE, "message": str(exc)}) from exc
+    except FigureCheckNotFoundError as exc:
+        raise HTTPException(status_code=409, detail={"resource": FIGURES_RESOURCE, "message": str(exc)}) from exc
+    except Exception as exc:
+        logger.exception("Figure check save failed for session_id=%s", session_id)
+        raise HTTPException(
+            status_code=500, detail={"resource": FIGURES_RESOURCE, "message": "The figure check could not be saved."}
         ) from exc
 
 

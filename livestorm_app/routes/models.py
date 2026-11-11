@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, Literal
+from typing import Dict, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -57,6 +57,14 @@ class QuestionReplyRequest(BaseModel):
     question_id: str = Field(..., alias="questionId", pattern=r"^[QC][0-9]{1,6}$")
     answered: bool = Field(..., alias="answered")
     reply: str = Field("", alias="reply", max_length=MAX_QUESTION_REPLY_LENGTH)
+
+
+class FigureCheckRequest(BaseModel):
+    """Before you share: the host's answer to one figure check (`key` from
+    `GET …/record/figures`), or `choice` null to reopen it."""
+
+    key: str = Field(..., alias="key", min_length=1, max_length=200)
+    choice: Optional[str] = Field(None, alias="choice", max_length=120)
 
 
 class LocatedDecisionRequest(BaseModel):

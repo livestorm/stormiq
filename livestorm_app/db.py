@@ -449,6 +449,7 @@ def ensure_database_schema() -> None:
             _ensure_people_schema(cursor)
             _ensure_chat_labels_schema(cursor)
             _ensure_question_replies_schema(cursor)
+            _ensure_figure_checks_schema(cursor)
             _ensure_understanding_schema(cursor)
         connection.commit()
 
@@ -631,6 +632,26 @@ def _ensure_understanding_schema(cursor: Any) -> None:
             model        TEXT NOT NULL,
             result       JSONB NOT NULL,
             created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
+
+
+def _ensure_figure_checks_schema(cursor: Any) -> None:
+    """Before you share (`record/figure_checks.py`): the host's answer to
+    each check on a figure said on stage, keyed by the check's key (what was
+    said, never a renumbered figure id). References `session_cache`
+    (deleted with it) and has no org column: every read and write joins
+    `session_cache` on its org."""
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS session_figure_checks (
+            session_id  TEXT NOT NULL REFERENCES session_cache (session_id) ON DELETE CASCADE,
+            check_key   TEXT NOT NULL,
+            choice      TEXT NOT NULL,
+            updated_by  TEXT,
+            updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (session_id, check_key)
         )
         """
     )
@@ -2360,6 +2381,96 @@ def fetch_understanding(session_id: str, organization_id: OrgScope) -> Optional[
             params,
         ).fetchone()
     return dict(row) if row else None
+
+
+# ── Before you share: the host's figure checks (record/figure_checks.py) ──
+#
+# One row per check the host answered. Reads and writes join `session_cache`
+# on its org, so an out-of-scope session reads nothing and writes nothing.
+
+
+def fetch_figure_checks(session_id: str, organization_id: OrgScope) -> Dict[str, Dict[str, Any]]:
+    """A session's answered figure checks by key: `{choice, updated_at}`.
+    Empty when there are none, the session isn't in the scope, or the scope
+    is blank (never queries). Raises when the database can't be read."""
+    session_id_value = str(session_id or "").strip()
+    if not database_enabled() or not session_id_value:
+        return {}
+    try:
+        org_filter = _org_filter(organization_id)
+    except ScopeMatchesNothing:
+        return {}
+    where_clause = "f.session_id = %s" + (" AND c.organization_id = %s" if org_filter is not None else "")
+    params = (session_id_value,) + ((org_filter,) if org_filter is not None else ())
+    with get_db_connection() as connection:
+        rows = connection.execute(
+            f"""
+            SELECT f.check_key, f.choice, f.updated_at
+            FROM session_figure_checks f
+            JOIN session_cache c ON c.session_id = f.session_id
+            WHERE {where_clause}
+            ORDER BY f.check_key
+            """,
+            params,
+        ).fetchall()
+    return {row["check_key"]: {"choice": row["choice"], "updated_at": row["updated_at"]} for row in rows}
+
+
+def save_figure_check(
+    session_id: str,
+    *,
+    organization_id: OrgScope,
+    check_key: str,
+    choice: Optional[str],
+    updated_by: Optional[str],
+) -> bool:
+    """Save the host's answer to one figure check, replacing the previous
+    one; `choice` None removes it (the check is open again). Written only
+    when the session is in the scope: False when it isn't, or the scope is
+    blank (never queries). `updated_by` is the Livestorm user id, never an
+    email. Raises RuntimeError when the write fails."""
+    session_id_value = str(session_id or "").strip()
+    key_value = str(check_key or "").strip()
+    if not session_id_value or not key_value:
+        raise ValueError("save_figure_check requires a session id and a check key.")
+    try:
+        org_filter = _org_filter(organization_id)
+    except ScopeMatchesNothing:
+        return False
+    if not database_enabled():
+        raise RuntimeError("Database is not configured.")
+    scope_clause = " AND c.organization_id = %s" if org_filter is not None else ""
+    scope_params = (org_filter,) if org_filter is not None else ()
+    try:
+        with get_db_connection() as connection:
+            visible = connection.execute(
+                f"SELECT 1 FROM session_cache c WHERE c.session_id = %s{scope_clause} LIMIT 1",
+                (session_id_value,) + scope_params,
+            ).fetchone()
+            if visible is None:
+                return False
+            if choice is None:
+                connection.execute(
+                    "DELETE FROM session_figure_checks WHERE session_id = %s AND check_key = %s",
+                    (session_id_value, key_value),
+                )
+            else:
+                connection.execute(
+                    """
+                    INSERT INTO session_figure_checks (session_id, check_key, choice, updated_by, updated_at)
+                    VALUES (%s, %s, %s, %s, NOW())
+                    ON CONFLICT (session_id, check_key) DO UPDATE SET
+                        choice = EXCLUDED.choice,
+                        updated_by = EXCLUDED.updated_by,
+                        updated_at = NOW()
+                    """,
+                    (session_id_value, key_value, str(choice), str(updated_by or "").strip() or None),
+                )
+            connection.commit()
+    except Exception as exc:
+        logger.error("Failed to save a figure check for session_id=%s (%s)", session_id_value, _error_label(exc))
+        raise RuntimeError("Could not save the figure check.") from exc
+    return True
 
 
 # ── The question desk's saved replies (record/question_desk.py) ───────────

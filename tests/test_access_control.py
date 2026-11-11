@@ -122,6 +122,12 @@ class FakeBackend:
         self.upserts.append((session_id, {"question_reply": fields}))
         return True
 
+    def save_figure_check(self, session_id, *, organization_id, **fields):
+        if session_id != SESSION_ID or not _visible(organization_id):
+            return False
+        self.upserts.append((session_id, {"figure_check": fields}))
+        return True
+
     def save_located_decision(self, session_id, *, organization_id, **fields):
         if session_id != SESSION_ID or not _visible(organization_id):
             return False
@@ -164,6 +170,17 @@ def backend(monkeypatch):
     monkeypatch.setattr(api_logic, "save_question_reply", fake.save_question_reply)
     monkeypatch.setattr(api_logic, "fetch_question_replies", lambda session_id, organization_id: {})
     monkeypatch.setattr(api_logic, "save_located_decision", fake.save_located_decision)
+    monkeypatch.setattr(api_logic, "save_figure_check", fake.save_figure_check)
+    monkeypatch.setattr(api_logic, "fetch_figure_checks", lambda session_id, organization_id: {})
+    # One figure to check, so a figure check has something to answer.
+    monkeypatch.setattr(
+        api_logic,
+        "_figure_check_list",
+        lambda session_id, inputs, *, organization_id: (
+            [{"key": "k1", "kind": "acronym", "question": "Was it NPS or NRR?", "moments": [], "options": [{"value": "NPS", "label": "NPS"}], "choice": None}],
+            "ready",
+        ),
+    )
     # `Q001` was found answered in the talk, so "Not this" has a passage to set aside.
     monkeypatch.setattr(
         api_logic,
@@ -220,6 +237,8 @@ BODY = {
     "answered": True,
     "reply": "",
     "decision": "reject",
+    "key": "k1",
+    "choice": "NPS",
 }
 
 

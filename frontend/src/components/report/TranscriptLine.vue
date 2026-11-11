@@ -36,13 +36,13 @@ defineProps({
         <span v-if="line.kind !== 'speech'" class="tl-source"> · {{ line.source }}</span>
         <StatusWord v-if="line.status === 'Answered in writing'" status="measured" :label="line.status" class="tl-status" />
       </p>
-      <ChatGif v-if="line.gif" :src="line.gif" />
-      <p v-else class="tl-text">
+      <p v-if="!line.gif || line.parts.some((part) => part.text)" class="tl-text">
         <template v-for="(part, index) in line.parts" :key="index">
           <span v-if="part.unclear" class="tl-unclear">{{ part.text }}<span class="siq-sr-only"> (low confidence)</span></span>
           <template v-else>{{ part.text }}</template>
         </template>
       </p>
+      <ChatGif v-if="line.gif" :src="line.gif" />
     </div>
   </li>
 </template>

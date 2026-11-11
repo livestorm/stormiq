@@ -20,6 +20,7 @@ from livestorm_app.db import (
     fetch_cached_session,
     fetch_chat_labels,
     fetch_chat_labels_stamp,
+    fetch_figure_checks,
     fetch_question_replies,
     fetch_roster_status,
     fetch_session_fields,
@@ -28,6 +29,7 @@ from livestorm_app.db import (
     get_transcript_job_for_session,
     list_workspace_sessions,
     merge_cached_bundle_entry,
+    save_figure_check,
     save_located_decision,
     save_question_reply,
     update_transcript_job_status,
@@ -777,6 +779,61 @@ def save_session_question_reply(
     return get_session_question_desk(session_id, organization_id=organization_id)
 
 
+class FigureCheckNotFoundError(RuntimeError):
+    """No check with this key for the session as it is now, or the answer
+    isn't one of its options."""
+
+
+def _figure_check_list(session_id: str, inputs: Any, *, organization_id: OrgScope) -> Tuple[List[Dict[str, Any]], str]:
+    """Before you share: the figure checks of the stored understanding, while
+    read from the session as it is now, with the host's saved answers
+    (`record.figure_checks.figure_checks`), and the understanding's state."""
+    from livestorm_app.record.figure_checks import figure_checks
+    from livestorm_app.record.understanding import current_reading
+
+    result, state, _ = current_reading(fetch_understanding(session_id, organization_id), inputs)
+    return figure_checks(result, fetch_figure_checks(session_id, organization_id)), state
+
+
+def get_session_figure_checks(session_id: str, *, organization_id: OrgScope) -> Dict[str, Any]:
+    """Before you share, for the Follow-up tab: `{sessionId, updatedAt,
+    state, unchecked, checks}`. No model call: the understanding job flagged
+    the figures; the host answers here."""
+    inputs, row = _question_desk_inputs(session_id, organization_id=organization_id)
+    from livestorm_app.record.figure_checks import unchecked_count
+
+    checks, state = _figure_check_list(session_id, inputs, organization_id=organization_id)
+    body = {"state": state, "unchecked": unchecked_count(checks), "checks": checks}
+    return {"sessionId": session_id, "updatedAt": row.get("updated_at"), **_sanitize_json_value(body)}
+
+
+def save_session_figure_check(
+    session_id: str,
+    check_key: str,
+    choice: Optional[str],
+    *,
+    organization_id: OrgScope,
+    updated_by: Optional[str],
+) -> Dict[str, Any]:
+    """Answer one figure check (or reopen it with `choice` None), then return
+    the checks as `get_session_figure_checks` does. The check must exist for
+    the session as it is now and the answer be one of its options
+    (`FigureCheckNotFoundError`); the session must be in the scope
+    (`SessionNotFoundError`)."""
+    inputs, _ = _question_desk_inputs(session_id, organization_id=organization_id)
+    from livestorm_app.record.figure_checks import find_check
+
+    checks, _ = _figure_check_list(session_id, inputs, organization_id=organization_id)
+    check = find_check(checks, str(check_key or ""))
+    if check is None or (choice is not None and choice not in {option["value"] for option in check["options"]}):
+        raise FigureCheckNotFoundError("No such check, or no such answer, for this session's figures.")
+    if not save_figure_check(
+        session_id, organization_id=organization_id, check_key=check["key"], choice=choice, updated_by=updated_by
+    ):
+        raise SessionNotFoundError()
+    return get_session_figure_checks(session_id, organization_id=organization_id)
+
+
 def get_session_open_questions_csv(session_id: str, *, organization_id: OrgScope, scope: str = "open") -> str:
     """The desk's questions as CSV, with who asked each one (name and
     company, on every session; never an email): `scope` `open`, `all` or
@@ -1511,6 +1568,7 @@ def _write_session_analysis(api_key: str, session_id: str, cached: Mapping[str, 
     from livestorm_app.ai.session_analysis import write_analysis
     from livestorm_app.db import fetch_understanding
     from livestorm_app.record.assemble import assemble_record, clock_meta, session_meta
+    from livestorm_app.record.figure_checks import figure_notes
     from livestorm_app.record.inputs import load_record_inputs
     from livestorm_app.record.question_desk import question_desk
     from livestorm_app.record.roster import stored_roster_rows
@@ -1542,6 +1600,8 @@ def _write_session_analysis(api_key: str, session_id: str, cached: Mapping[str, 
         record=assemble_record(inputs)["record"],
         understanding=result,
         utterances=utterances,
+        # What the host answered in "Before you share", per flagged figure.
+        figure_notes=figure_notes(result, fetch_figure_checks(session_id, ALL_ORGS)),
         # The desk's rows without their authors: names never reach a model.
         questions=[
             {"t": q["t"], "source": q["source"], "text": q["text"], "answered_as": q["status"], "located": q["located"]}

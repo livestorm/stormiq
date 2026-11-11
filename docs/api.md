@@ -27,6 +27,8 @@ Every route is a FastAPI handler in [`livestorm_app/routes/`](../livestorm_app/r
 | `/api/sessions/{id}/cached` | GET | caller | Same, but 204 instead of 404 when missing |
 | `/api/sessions/{id}/record` | GET | caller | v1 Report only: the session clock and the recording's alignment, the roster header, the Pulse, the transcript's health and the measures ([below](#the-v1-record)). 404 if not cached |
 | `/api/sessions/{id}/record/chat` | GET | caller | v1 Report only: the chat's text by evidence id (`C0001`), with each message's session time and team flag, for the counts that open their messages ([below](#the-v1-record)). No author. 404 if not cached |
+| `/api/sessions/{id}/record/figures` | GET | caller | Before you share: the figures said on stage to check, with the host's answers ([below](#before-you-share)). No model call. 404 if not cached |
+| `/api/sessions/{id}/record/figures` | PUT | caller | Answer one figure check: `{key, choice}` (`choice` one of the check's `options[].value`, or null to reopen it). Returns the checks. 404 if not cached, 409 for an unknown check or answer, 422 for a malformed body |
 | `/api/sessions/{id}/record/chapters` | GET | caller | The chapters the session analysis found and their show notes ([below](#chapters)). No model call. 404 if not cached |
 | `/api/sessions/{id}/record/transcript` | GET | caller | The Transcript tab's room view: the speech, the chat, the questions and the written answers as text by id, with speakers' names and authors' short names ([below](#the-v1-record)). 404 if not cached |
 | `/api/sessions/{id}/record/questions` | GET | caller | The Follow-up tab's question desk: every audience question with its status and what the host saved ([below](#the-question-desk)). 404 if not cached |
@@ -93,6 +95,20 @@ The record carries no message text: a count of chat messages lists their evidenc
 ```
 {sessionId, updatedAt, messages: [{id: "C0001", t: 125.5, text, team}]}
 ```
+
+### Before you share
+
+`GET /api/sessions/{id}/record/figures` (`api_logic.get_session_figure_checks`, built by `record/figure_checks.py`'s `figure_checks`) turns the figures the understanding job flagged into questions, while the stored reading is current:
+
+```
+{sessionId, updatedAt, state, unchecked, checks: [{key, kind, question, moments: [{utterance, t, quote}], options: [{value, label}], choice}]}
+```
+
+- `kind` `acronym`: a confusable acronym (NPS/NRR, ARR/MRR, CSAT/CSM) in words the transcript is unsure of, one check per figure: "Was it NRR or NPS?", options the two acronyms and `neither`.
+- `kind` `two_values`: the same metric said with two values, one check per metric, its moments every time it was said: options each value, `both` (they measure different things) and `neither`.
+- `key` names a check by what was said (`acronym:<U id>:<span>`, `values:<metric>`), never by a figure's id, which is renumbered on every reading. The host's answer is saved under it in `session_figure_checks` (`db.save_figure_check`); `choice` is the saved value while it is still one of the options, else null. `unchecked` counts the open checks.
+- `state`: the understanding's (`ready`, `none`, `stale`); no checks unless `ready`.
+- The Session analysis's brief notes each flagged figure with the host's answer, or "not checked by the host: do not state it as a fact" (`figure_checks.figure_notes`).
 
 ### Chapters
 

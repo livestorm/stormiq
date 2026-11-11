@@ -5,7 +5,7 @@
 // (`clock.interleave`).
 
 import { clockLabel } from "../report/chartGeometry";
-import { gifUrl } from "../utils/gif";
+import { gifParts } from "../utils/gif";
 
 export const VIEWS = [
   { value: "all", label: "Everything" },
@@ -72,10 +72,11 @@ function roomLine(line) {
     who: text(line.author) || "Attendee",
     source: KIND_WORDS[line.kind] || "Chat",
     text: line.text,
-    parts: [{ text: line.text, unclear: false }],
+    // A GIF's link is shown as the GIF, under the message's other words.
+    parts: [{ text: line.kind === "chat" ? gifParts(line.text).text : line.text, unclear: false }],
     status,
     team: Boolean(line.team),
-    gif: line.kind === "chat" ? gifUrl(line.text) : "",
+    gif: line.kind === "chat" ? gifParts(line.text).gif : "",
   };
 }
 

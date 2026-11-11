@@ -1,0 +1,71 @@
+{
+  "sessionId": "synthetic-webinar",
+  "updatedAt": "2026-10-02T08:30:00Z",
+  "state": "ready",
+  "unchecked": 2,
+  "checks": [
+    {
+      "key": "values:seats per team",
+      "kind": "two_values",
+      "question": "Seats per team: which value is right?",
+      "moments": [
+        {
+          "utterance": "U0028",
+          "t": 306.9,
+          "quote": "several hundred seats"
+        },
+        {
+          "utterance": "U0074",
+          "t": 778.9,
+          "quote": "export everything"
+        }
+      ],
+      "options": [
+        {
+          "value": "300 seats",
+          "label": "300 seats"
+        },
+        {
+          "value": "500 seats",
+          "label": "500 seats"
+        },
+        {
+          "value": "both",
+          "label": "Both: they measure different things"
+        },
+        {
+          "value": "neither",
+          "label": "Neither: leave it out"
+        }
+      ],
+      "choice": null
+    },
+    {
+      "key": "acronym:U0029:pricing works per team",
+      "kind": "acronym",
+      "question": "Was it NRR or NPS?",
+      "moments": [
+        {
+          "utterance": "U0029",
+          "t": 318.9,
+          "quote": "pricing works per team"
+        }
+      ],
+      "options": [
+        {
+          "value": "NRR",
+          "label": "NRR"
+        },
+        {
+          "value": "NPS",
+          "label": "NPS"
+        },
+        {
+          "value": "neither",
+          "label": "Neither: leave it out"
+        }
+      ],
+      "choice": null
+    }
+  ]
+}
