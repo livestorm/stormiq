@@ -446,7 +446,7 @@ def test_cover_image_is_not_shared_cacheable(client):
 @pytest.mark.parametrize("method,path", ADMIN_ROUTES)
 def test_admin_routes_reject_anonymous_and_non_admins(client, method, path):
     url = path.replace("{session_id}", SESSION_ID)
-    body = {"email": "x@example.com", "key": "llm_provider", "value": "anthropic"}
+    body = {"email": "x@example.com", "key": "image_model", "value": "gpt-image-2"}
     client.cookies.clear()
     anonymous = client.request(method, url, json=body if method == "POST" else None)
     assert anonymous.status_code == 401
@@ -478,7 +478,10 @@ def _save_setting(client, key: str, value: str):
         ("llm_default_model", "not-a-model", "Unknown model id 'not-a-model'"),
         ("llm_smart_recap_model", "claude-sonnet-5-5", "Claude Sonnet 5.5 is not offered for Smart Recap"),
         ("llm_model.anthropic.understanding", "claude-haiku-4-5-20251001", "is not an Anthropic model offered for Session understanding"),
-        ("llm_model.openai.profile", "gpt-4o", "No OpenAI model is offered for Session profile yet"),
+        # Every text job runs on Claude: the legacy keys take Claude models only.
+        ("llm_default_model", "gpt-4.1", "Unknown model id 'gpt-4.1'"),
+        ("llm_smart_recap_model", "gpt-5.4-mini", "Unknown model id 'gpt-5.4-mini'"),
+        ("llm_model.anthropic.smart_recap", "gpt-4o", "'gpt-4o' is not an Anthropic model offered for Smart Recap"),
     ],
 )
 def test_admin_settings_refuse_a_model_outside_the_catalog(client, saved_settings, key, value, message):
@@ -493,12 +496,10 @@ def test_admin_settings_refuse_a_model_outside_the_catalog(client, saved_setting
     ("key", "value"),
     [
         ("llm_default_model", "claude-opus-4-8"),
-        ("llm_default_model", "gpt-4.1"),  # legacy keys take either provider's models
-        ("llm_smart_recap_model", "gpt-5.4-mini"),
+        ("llm_smart_recap_model", "claude-sonnet-4-6"),
         ("llm_model.anthropic.understanding", "claude-opus-5-5"),
-        ("llm_model.openai.smart_recap", "gpt-4o"),
-        # Checked where they are read, as before.
-        ("llm_provider", "openai"),
+        ("llm_model.anthropic.smart_recap", "claude-haiku-4-5-20251001"),
+        # Checked where it is read (cover_image.resolve_image_model).
         ("image_model", "gpt-image-2"),
     ],
 )
@@ -513,6 +514,9 @@ def test_admin_settings_save_allowed_values(client, saved_settings, key, value):
     [
         ("llm_model.anthropic.not_a_job", "claude-opus-5-5", "Unknown setting key"),
         ("llm_model.mistral.profile", "claude-opus-5-5", "Unknown setting key"),
+        # OpenAI is no longer a text provider: neither its per-job keys nor a provider setting exist.
+        ("llm_model.openai.profile", "gpt-4o", "Unknown setting key"),
+        ("llm_model.openai.smart_recap", "gpt-4o", "Unknown setting key"),
         ("something_else", "x", "Unknown setting key"),
         ("llm_default_model", "   ", "Value cannot be empty"),
         ("image_model", "", "Value cannot be empty"),
@@ -522,6 +526,15 @@ def test_admin_settings_refuse_unknown_keys_and_empty_values(client, saved_setti
     response = _save_setting(client, key, value)
     assert response.status_code == 400
     assert message in response.json()["detail"]["message"]
+    assert saved_settings == []
+
+
+@pytest.mark.parametrize("value", ["openai", "anthropic"])
+def test_admin_settings_refuse_the_retired_llm_provider_setting(client, saved_settings, value):
+    # Every text job runs on Claude, so there is no provider to choose.
+    response = _save_setting(client, "llm_provider", value)
+    assert response.status_code == 400
+    assert response.json()["detail"] == {"resource": "Setting", "message": "Unknown setting key: llm_provider"}
     assert saved_settings == []
 
 

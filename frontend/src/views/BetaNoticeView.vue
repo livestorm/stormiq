@@ -46,7 +46,7 @@ const MODELS = [
         <ul class="b-list">
           <li><strong>Livestorm</strong> for the session, the event, the chat, the questions and the recording.</li>
           <li><strong>Gladia</strong> for transcription, speakers, sentences and named entities.</li>
-          <li><strong>Anthropic Claude</strong>, by default, for the analyses, Smart Recap and repurposed content (an admin can choose OpenAI instead).</li>
+          <li><strong>Anthropic Claude</strong> for every piece of text: the analyses, Smart Recap and repurposed content.</li>
           <li><strong>OpenAI Images API</strong> only for session cover images.</li>
         </ul>
       </Card>

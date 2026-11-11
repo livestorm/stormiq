@@ -16,11 +16,10 @@ Status says where a model may be chosen:
 - `hidden`: known, so its parameters are right, but never offered. A saved
   setting may still name it, and it is still used (`ai.jobs.resolve_model`).
 
-Anthropic rows follow the claude-api reference (2026-10), prices included
-(`PRICES_AS_OF`). OpenAI rows are unverified until a live check; their
-temperature and token parameter match what today's adapter sends, and they
-have no price yet, so their usage rows carry no cost. `gpt-4o*` and
-`gpt-4.1*` shut down on 2027-01-14.
+Rows follow the claude-api reference (2026-10), prices included
+(`PRICES_AS_OF`). StormIQ calls Claude for every text job since the owner's
+decision of 2026-11-11: the OpenAI text models are gone (OpenAI is used for
+cover images only, `ai/cover_image.py`).
 """
 
 from __future__ import annotations
@@ -28,10 +27,10 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Dict, Literal, Optional, Tuple
 
-Provider = Literal["anthropic", "openai"]
+Provider = Literal["anthropic"]
 Status = Literal["offered", "legacy", "hidden"]
 
-PROVIDERS: Tuple[str, ...] = ("anthropic", "openai")
+PROVIDERS: Tuple[str, ...] = ("anthropic",)
 
 ALL_EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
@@ -93,7 +92,6 @@ class ModelCaps:
     server_fallback: bool  # accepts fallbacks "default" (Anthropic only)
     min_cache_tokens: int  # shortest prefix that caches
     structured_outputs: bool  # accepts a JSON schema for the answer
-    token_param: str = "max_tokens"  # OpenAI's newer models take max_completion_tokens
     price: Optional[Price] = None  # None: unknown, so usage rows carry no cost
 
 
@@ -130,25 +128,6 @@ def _claude(
     )
 
 
-def _openai(id: str, label: str, *, max_output: int, thinks: bool = False, token_param: str = "max_tokens") -> ModelCaps:
-    return ModelCaps(
-        id=id,
-        provider="openai",
-        label=label,
-        status="legacy",
-        max_output=max_output,
-        thinks=thinks,
-        adaptive_thinking=False,
-        effort_levels=(),
-        temperature_ok=True,  # the adapter always sends it today; unverified for gpt-5.4-mini
-        mid_conversation_system=True,
-        server_fallback=False,
-        min_cache_tokens=1024,  # automatic prefix caching
-        structured_outputs=True,
-        token_param=token_param,
-    )
-
-
 CATALOG: Tuple[ModelCaps, ...] = (
     # Claude 5.5: think by default (Opus always), no sampling parameters.
     _claude("claude-haiku-5-5", "Claude Haiku 5.5", "offered", thinks=True,
@@ -172,12 +151,6 @@ CATALOG: Tuple[ModelCaps, ...] = (
     # Admin offered Opus 4.7 until Opus 4.8 replaced it; a saved setting may name it.
     _claude("claude-opus-4-7", "Claude Opus 4.7", "hidden", thinks=False,
             mid_conversation_system=False, min_cache_tokens=2048, price=_anthropic_price(5.00, 25.00)),
-    _openai("gpt-4o-mini", "GPT-4o mini", max_output=16_384),
-    _openai("gpt-4o", "GPT-4o", max_output=16_384),
-    _openai("gpt-4.1-mini", "GPT-4.1 mini", max_output=32_768),
-    _openai("gpt-4.1", "GPT-4.1", max_output=32_768),
-    # The OpenAI Smart Recap default. A reasoning model; its limits are unverified.
-    _openai("gpt-5.4-mini", "GPT-5.4 mini", max_output=16_384, thinks=True, token_param="max_completion_tokens"),
 )
 
 _BY_ID: Dict[str, ModelCaps] = {model.id: model for model in CATALOG}

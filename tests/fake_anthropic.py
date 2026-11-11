@@ -295,13 +295,12 @@ def json_response(body: Dict[str, Any], *, status: int = 200, headers: Optional[
 
 
 def scripted_providers(monkeypatch, script: list, sent: list) -> FakeAnthropic:
-    """Both providers answering from one script of `FakeResponse`-like objects
-    (`.json()` and `.headers`), as the tests' `http` fixtures did through
-    `_post_with_retry` before the SDK. OpenAI still goes through
-    `_post_with_retry`; Anthropic through a `FakeAnthropic`, which turns a
-    response into the SDK's message (its body and `request-id`). Each call
-    appends `{url, headers, payload, provider, stream}` to `sent`; an
-    Anthropic call's payload is the JSON the SDK would send."""
+    """Anthropic answering from one script of `FakeResponse`-like objects
+    (`.json()` and `.headers`), as the tests' `http` fixtures did before the
+    SDK, through a `FakeAnthropic`, which turns a response into the SDK's
+    message (its body and `request-id`). Each call appends
+    `{url, headers, payload, provider, stream, betas}` to `sent`; the payload
+    is the JSON the SDK would send."""
 
     def next_step():
         step = script.pop(0)
@@ -319,10 +318,4 @@ def scripted_providers(monkeypatch, script: list, sent: list) -> FakeAnthropic:
         "betas": betas_of(fake, index),
     })
     install(monkeypatch, fake)
-
-    def fake_post(url, headers, payload, provider):
-        sent.append({"url": url, "headers": headers, "payload": payload, "provider": provider, "stream": False})
-        return script.pop(0)
-
-    monkeypatch.setattr(llm_client, "_post_with_retry", fake_post)
     return fake

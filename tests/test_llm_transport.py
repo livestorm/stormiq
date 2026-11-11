@@ -188,7 +188,7 @@ def test_the_pinned_sdks_error_classes():
         assert isinstance(status_error(status), anthropic.APIStatusError)
 
 
-# ── The retry policy (today's `_post_with_retry`, on the SDK's errors) ─────
+# ── The retry policy (`_with_transport_retry`, on the SDK's errors) ────────
 
 
 def test_rate_limits_overload_and_server_errors_are_retried(fake, sleeps):
@@ -813,15 +813,6 @@ class SmokeClient:
         self.beta = SimpleNamespace(messages=self.messages)
 
 
-class SmokeResponse:
-    def __init__(self, status, body):
-        self.status_code = status
-        self._body = body
-
-    def json(self):
-        return self._body
-
-
 def test_the_smoke_script_refuses_to_run_without_the_flag():
     script = _smoke_script()
 
@@ -829,7 +820,7 @@ def test_the_smoke_script_refuses_to_run_without_the_flag():
         raise AssertionError("no paid call without the flag")
 
     out = io.StringIO()
-    code = script.main([], environ={"CLAUDE_API_KEY": SECRET}, anthropic_factory=must_not_call, openai_post=must_not_call, out=out)
+    code = script.main([], environ={"CLAUDE_API_KEY": SECRET}, anthropic_factory=must_not_call, out=out)
     assert code == 2 and "--i-understand-this-costs" in out.getvalue()
 
 
@@ -840,7 +831,7 @@ def test_the_smoke_script_uses_the_apps_client():
 
 def test_the_smoke_plan_follows_the_catalog():
     script = _smoke_script()
-    probes = script.plan(legacy=True, only=[], dossier_model="claude-haiku-5-5", anthropic_on=True, openai_on=True)
+    probes = script.plan(legacy=True, only=[], dossier_model="claude-haiku-5-5", anthropic_on=True)
     by_model: dict = {}
     for probe in probes:
         by_model.setdefault((probe.provider, probe.model), []).append(probe)
@@ -876,8 +867,7 @@ def test_the_smoke_plan_follows_the_catalog():
     legacy = {probe.model: probe for probe in probes if probe.name.startswith("temperature=") and probe.provider == "anthropic"}
     assert set(legacy) == {caps.id for caps in models.catalog_models("anthropic", "legacy") if caps.temperature_ok}
     assert all(probe.params["extra_body"] == {"temperature": 0.2} for probe in legacy.values())
-    openai_rows = models.catalog_models("openai", "legacy")
-    assert len([probe for probe in probes if probe.provider == "openai"]) == 5 * len(openai_rows)
+    assert {probe.provider for probe in probes} == {"anthropic"}, "every text job runs on Claude"
 
 
 def test_the_smoke_script_prints_acceptance_stops_and_cache_reads_only(monkeypatch):
@@ -888,9 +878,8 @@ def test_the_smoke_script_prints_acceptance_stops_and_cache_reads_only(monkeypat
 
     monkeypatch.setattr(db, "get_db_connection", no_database)
     monkeypatch.setattr(db, "get_setting", no_database)
-    probes = script.plan(legacy=False, only=[], dossier_model="claude-haiku-5-5", anthropic_on=True, openai_on=True)
-    anthropic_probes = [probe for probe in probes if probe.provider == "anthropic"]
-    fallback_index = next(index for index, probe in enumerate(anthropic_probes) if probe.name == "fallbacks=default")
+    probes = script.plan(legacy=False, only=[], dossier_model="claude-haiku-5-5", anthropic_on=True)
+    fallback_index = next(index for index, probe in enumerate(probes) if probe.name == "fallbacks=default")
     client = SmokeClient({fallback_index: status_error(400, error_type="invalid_request_error")})
     keys: list = []
 
@@ -898,43 +887,35 @@ def test_the_smoke_script_prints_acceptance_stops_and_cache_reads_only(monkeypat
         keys.append(key)
         return client
 
-    def openai_post(url, *, headers, json, timeout):
-        assert timeout == script.OPENAI_TIMEOUT and headers["Authorization"] == "Bearer sk-test-OPENAI"
-        if "temperature" in json:
-            return SmokeResponse(400, {"error": {"type": "invalid_request_error", "param": "temperature", "message": CONFIDENTIAL}})
-        return SmokeResponse(200, {"choices": [{"finish_reason": "stop", "message": {"content": CONFIDENTIAL}}]})
-
     out = io.StringIO()
     code = script.main(
         ["--i-understand-this-costs"],
-        environ={"CLAUDE_API_KEY": SECRET, "OPENAI_API_KEY": "sk-test-OPENAI"},
-        anthropic_factory=factory, openai_post=openai_post, out=out,
+        environ={"CLAUDE_API_KEY": SECRET},
+        anthropic_factory=factory, out=out,
     )
     lines = out.getvalue().splitlines()
     assert code == 1, "a call was not accepted"
     assert keys == [SECRET]
     assert len(lines) == len(probes) + 1
-    assert lines[-1] == f"calls={len(probes)} not_accepted={1 + len(models.catalog_models('openai', 'legacy'))} cache_misses=0"
+    assert lines[-1] == f"calls={len(probes)} not_accepted=1 cache_misses=0"
     assert "anthropic claude-haiku-5-5 effort=low accepted stop=end_turn" in lines
     assert "anthropic claude-haiku-5-5 dossier-repeat accepted stop=end_turn cache_read=2911" in lines
     assert any(line.endswith("fallbacks=default rejected HTTP 400 invalid_request_error") for line in lines)
-    assert "openai gpt-4o-mini temperature=0.2 rejected HTTP 400 invalid_request_error param=temperature" in lines
-    for leaked in (CONFIDENTIAL, SECRET, "sk-test-OPENAI", "synthetic session", "Reply with"):
+    for leaked in (CONFIDENTIAL, SECRET, "synthetic session", "Reply with"):
         assert leaked not in out.getvalue()
 
 
-def test_the_smoke_script_skips_a_provider_without_a_key():
+def test_the_smoke_script_calls_nothing_without_a_key():
     script = _smoke_script()
 
     def must_not_call(*args, **kwargs):
         raise AssertionError("no key, no call")
 
     out = io.StringIO()
-    code = script.main(["--i-understand-this-costs"], environ={}, anthropic_factory=must_not_call, openai_post=must_not_call, out=out)
+    code = script.main(["--i-understand-this-costs"], environ={}, anthropic_factory=must_not_call, out=out)
     assert code == 0
     assert out.getvalue().splitlines() == [
         "anthropic skipped: CLAUDE_API_KEY is not set",
-        "openai skipped: OPENAI_API_KEY is not set",
         "calls=0 not_accepted=0 cache_misses=0",
     ]
 
@@ -946,7 +927,7 @@ def test_the_smoke_script_counts_a_repeat_that_reads_no_cache():
     out = io.StringIO()
     code = script.main(
         ["--i-understand-this-costs", "--model", "claude-haiku-5-5"],
-        environ={"CLAUDE_API_KEY": SECRET}, anthropic_factory=lambda key: client, openai_post=None, out=out,
+        environ={"CLAUDE_API_KEY": SECRET}, anthropic_factory=lambda key: client, out=out,
     )
     lines = out.getvalue().splitlines()
     assert code == 1

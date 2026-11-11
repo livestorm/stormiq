@@ -10,7 +10,7 @@ Browser ── Vue SPA ──/api──▶ web: FastAPI (app.py) ─────
                                 ▼                                 │  connections, jobs
                              Redis: arq queue + progress ◀──── worker: arq
                                                                   │
-                                       Livestorm API, Gladia, Anthropic / OpenAI
+                                       Livestorm API, Gladia, Anthropic, OpenAI Images
 ```
 
 - **web** serves the API and the built SPA. Handlers are plain `def` functions, run in FastAPI's threadpool. It calls the Livestorm API directly (fetching sessions is quick) and hands everything slow or paid to the worker.
@@ -36,7 +36,7 @@ Browser ── Vue SPA ──/api──▶ web: FastAPI (app.py) ─────
 | `livestorm_app/queue.py` | arq job ids, enqueue and status from sync code (`_QueueBridge`) |
 | `livestorm_app/worker.py` | arq job handlers (the people sync's per-org lock included), the stuck-job sweeper, `WorkerSettings` |
 | `livestorm_app/progress.py` | Stage-floor progress in Redis |
-| `livestorm_app/llm_client.py` | Anthropic / OpenAI abstraction: Anthropic through the official SDK (one client per process, the SDK's retries off, StormIQ's retry policy, streaming with a deadline), OpenAI through `requests`; one `LLMResult` per answered call, retries, refusals and truncation, `call_llm` for the classic outputs and `generate_text` / `generate_json` (structured outputs) for the v1 jobs, a usage row per call |
+| `livestorm_app/llm_client.py` | The text client, Claude only: Anthropic through the official SDK (one client per process, the SDK's retries off, StormIQ's retry policy, streaming with a deadline); one `LLMResult` per answered call, retries, refusals and truncation, `call_llm` for the classic outputs and `generate_text` / `generate_json` (structured outputs) for the v1 jobs, a usage row per call |
 | `livestorm_app/oauth_client.py` | Livestorm OAuth (PKCE), token refresh, profile parsing |
 | `livestorm_app/gladia/` | Gladia transcription client (`transcriber.py`) and a debugging CLI |
 | `livestorm_app/transcript_client.py` | The worker's entry point into Gladia (keeps the web process from importing it) |

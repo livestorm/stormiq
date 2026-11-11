@@ -444,7 +444,7 @@ async def _chain_analysis_after(ctx: Dict[str, Any], job_id: str, session_id: st
 # The LLM API key is read from the worker's own env rather than passed
 # through the queue. Two reasons: (1) avoids putting secrets into Redis,
 # (2) one source of truth for the key on the worker host.
-# Active provider is selected via LLM_PROVIDER (defaults to "anthropic").
+# Every text job runs on Claude (CLAUDE_API_KEY).
 #
 # Progress mapping is coarse: we publish 'loading_sources' → 'building_prompt'
 # → 'analyzing' before the (single, blocking) LLM call, then 'persisting'

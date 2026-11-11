@@ -283,7 +283,7 @@ Admins are this table plus the `ADMIN_EMAILS` env var (bootstrap admins, who can
 
 ```sql
 system_settings (
-  key        TEXT PRIMARY KEY,                 -- allow-listed in routes/admin.py: llm_provider, image_model, llm_default_model, llm_smart_recap_model, llm_model.<provider>.<kind>
+  key        TEXT PRIMARY KEY,                 -- allow-listed in routes/admin.py: image_model, llm_default_model, llm_smart_recap_model, llm_model.anthropic.<kind> (an older llm_provider row is ignored)
   value      TEXT NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )
@@ -304,7 +304,7 @@ llm_usage (
   job_kind              TEXT NOT NULL,    -- the ai/jobs.py kind: 'overall_analysis', 'translation', …
   job_id                TEXT,             -- the deterministic arq id, e.g. 'overall_analysis:{session}:French'; never a connection id
   purpose               TEXT NOT NULL,    -- 'main' | 'truncation_retry' | 'completeness_retry' | 'language_retry'
-  provider              TEXT NOT NULL,    -- 'anthropic' | 'openai'
+  provider              TEXT NOT NULL,    -- 'anthropic' ('openai' on rows from before 2026-11-11)
   model_requested       TEXT NOT NULL,
   model_served          TEXT,             -- the model the provider says answered
   effort                TEXT,             -- the effort a v1 call sent; NULL for a classic output, or a model that takes none
@@ -318,7 +318,7 @@ llm_usage (
   cache_read_tokens     INTEGER NOT NULL DEFAULT 0,
   cache_write_tokens    INTEGER NOT NULL DEFAULT 0,  -- all cache writes, 1-hour ones included
   cache_write_1h_tokens INTEGER NOT NULL DEFAULT 0,
-  reasoning_tokens      INTEGER,          -- OpenAI only
+  reasoning_tokens      INTEGER,          -- OpenAI only, rows from before 2026-11-11
   cost_usd_micros       BIGINT,           -- estimated cost in millionths of a dollar; NULL for a model with no price
   duration_ms           INTEGER,          -- transport retries included
   request_id            TEXT,             -- the provider's request id

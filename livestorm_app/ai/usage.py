@@ -62,7 +62,7 @@ class LLMUsage:
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0  # every cache write, 1-hour ones included
     cache_write_1h_tokens: int = 0
-    reasoning_tokens: Optional[int] = None  # OpenAI only, part of output_tokens
+    reasoning_tokens: Optional[int] = None  # kept for rows written by OpenAI calls before 2026-11-11
     raw: Dict[str, Any] = field(default_factory=dict)  # the provider's usage object, counts and tags only
 
 
@@ -132,22 +132,6 @@ def anthropic_usage(usage: Any) -> LLMUsage:
         cache_read_tokens=_count(usage.get("cache_read_input_tokens")),
         cache_write_tokens=_count(usage.get("cache_creation_input_tokens")),
         cache_write_1h_tokens=_count(creation.get("ephemeral_1h_input_tokens")),
-        raw=sanitize_usage(usage) or {},
-    )
-
-
-def openai_usage(usage: Any) -> LLMUsage:
-    """OpenAI's `usage`: `prompt_tokens` includes the cached ones, and
-    `completion_tokens` includes reasoning."""
-    usage = _mapping(usage)
-    prompt = _count(usage.get("prompt_tokens"))
-    cached = _count(_mapping(usage.get("prompt_tokens_details")).get("cached_tokens"))
-    reasoning = _mapping(usage.get("completion_tokens_details")).get("reasoning_tokens")
-    return LLMUsage(
-        input_tokens=max(prompt - cached, 0),
-        output_tokens=_count(usage.get("completion_tokens")),
-        cache_read_tokens=cached,
-        reasoning_tokens=None if reasoning is None else _count(reasoning),
         raw=sanitize_usage(usage) or {},
     )
 

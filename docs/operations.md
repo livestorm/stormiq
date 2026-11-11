@@ -62,22 +62,21 @@ Render, configured in [`render.yaml`](../render.yaml):
 
 ### Worker environment
 
-The worker resolves every credential itself, because job arguments never carry secrets. It needs `DATABASE_URL`, `REDIS_URL`, `GLADIA_KEY`, the LLM key (`CLAUDE_API_KEY` or `OPENAI_API_KEY`), `OPENAI_API_KEY` for covers, and `LIVESTORM_OAUTH_CLIENT_ID` / `LIVESTORM_OAUTH_CLIENT_SECRET` to refresh a user's token when a queued transcription or people sync starts close to its expiry. It logs a warning at startup when `GLADIA_KEY` is missing.
+The worker resolves every credential itself, because job arguments never carry secrets. It needs `DATABASE_URL`, `REDIS_URL`, `GLADIA_KEY`, `CLAUDE_API_KEY` for every text job, `OPENAI_API_KEY` for covers only, and `LIVESTORM_OAUTH_CLIENT_ID` / `LIVESTORM_OAUTH_CLIENT_SECRET` to refresh a user's token when a queued transcription or people sync starts close to its expiry. It logs a warning at startup when `GLADIA_KEY` is missing.
 
 ## Environment variables
 
 [`.env.example`](../.env.example) has the variables you're likely to set locally, with placeholders. This is the full list:
 
 ```bash
-# LLM provider (text generation)
-LLM_PROVIDER                  # Optional: "anthropic" (default) or "openai". The admin setting overrides it.
-CLAUDE_API_KEY                # Required when the provider is anthropic
+# Text generation: Claude for every job (LLM_PROVIDER is no longer read)
+CLAUDE_API_KEY                # Required
 ANTHROPIC_LOG                 # Leave unset. When set, the Anthropic SDK logs each request's options, prompts included.
 ANTHROPIC_CUSTOM_HEADERS      # Leave unset. The SDK would add its headers to every Anthropic request, so while it is set
                               # every Anthropic call fails before it is sent.
                               # ANTHROPIC_API_KEY and ANTHROPIC_BASE_URL are ignored: llm_client passes the key and
                               # the host to the SDK explicitly.
-OPENAI_API_KEY                # Required when the provider is openai; always required for cover images
+OPENAI_API_KEY                # Required for cover images (the only OpenAI call)
 ORG_DAILY_LLM_BUDGET_USD      # Optional, worker. Daily spend cap per org for automatic text jobs (none exists yet), in
                               # dollars, per UTC day. Unset: no limit. Never applies to jobs a user starts or to covers.
 

@@ -2,7 +2,6 @@ import os
 from pathlib import Path
 
 API_BASE = "https://api.livestorm.co/v1"
-OPENAI_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions"
 LIVESTORM_OAUTH_AUTHORIZE_URL = "https://app.livestorm.co/oauth/authorize"
 LIVESTORM_OAUTH_TOKEN_URL = "https://app.livestorm.co/oauth/token"
 LIVESTORM_OAUTH_ME_URL = f"{API_BASE}/me"
@@ -15,7 +14,7 @@ DEFAULT_PAGE_SIZE = LIVESTORM_MAX_PAGE_SIZE
 MAX_PAGES = 1000
 START_PAGE_NUMBER = 0
 
-# Anthropic (Claude) — used when LLM_PROVIDER=anthropic (the default).
+# Anthropic (Claude): every text job (the owner's decision, 2026-11-11).
 # Text model ids live in ai/models.py, each job's default in ai/jobs.py.
 # The SDK client (llm_client) is given this base URL, so ANTHROPIC_BASE_URL in
 # the environment can't send the key elsewhere.
