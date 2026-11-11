@@ -1,0 +1,78 @@
+{
+  "sessionId": "synthetic-webinar",
+  "updatedAt": "2026-10-02T08:30:00Z",
+  "version": 1,
+  "internal": false,
+  "total": {
+    "people": 5,
+    "messages": 15,
+    "questions": 4
+  },
+  "people": [
+    {
+      "name": "Mila F.",
+      "company": null,
+      "messages": 5,
+      "questions": 1,
+      "share": 0.3158,
+      "sample": {
+        "id": "Q002",
+        "t": 300.0,
+        "text": "How does pricing work for larger teams with several hundred seats?"
+      }
+    },
+    {
+      "name": "Theo P.",
+      "company": "Sample Labs",
+      "messages": 4,
+      "questions": 1,
+      "share": 0.2632,
+      "sample": {
+        "id": "Q001",
+        "t": -45.0,
+        "text": "Will the slides be shared?"
+      }
+    },
+    {
+      "name": "Sam R.",
+      "company": null,
+      "messages": 3,
+      "questions": 1,
+      "share": 0.2105,
+      "sample": {
+        "id": "Q003",
+        "t": 720.0,
+        "text": "Can we export to CSV?"
+      }
+    },
+    {
+      "name": "Lena H.",
+      "company": null,
+      "messages": 3,
+      "questions": 0,
+      "share": 0.1579,
+      "sample": {
+        "id": "C0012",
+        "t": 600.0,
+        "text": "This dashboard looks useful"
+      }
+    },
+    {
+      "name": "Omar Q.",
+      "company": "Sample Labs",
+      "messages": 0,
+      "questions": 1,
+      "share": 0.0526,
+      "sample": {
+        "id": "Q004",
+        "t": 1650.0,
+        "text": "Is there an API?"
+      }
+    }
+  ],
+  "others": {
+    "people": 0,
+    "messages": 0,
+    "questions": 0
+  }
+}

@@ -18,7 +18,8 @@ import UiButton from "../components/ui/UiButton.vue";
 import { analysisSummary, elapsedLabel, formatLength, formatSessionStart, preparationView } from "../report/format";
 import { createSessionReport } from "../report/useSessionReport";
 import { createChapters } from "../followup/useChapters";
-import { createFindings } from "../report/useFindings";
+import { createFindings, createVoices } from "../report/useFindings";
+import { createQuestionDesk } from "../followup/useQuestionDesk";
 import { pulseMarks } from "../report/findings";
 import FindingsSection from "../components/report/FindingsSection.vue";
 
@@ -37,6 +38,10 @@ const { state } = report;
 const chapters = createChapters();
 // The findings (`GET /record/findings`): "What stood out".
 const findings = createFindings();
+// "The questions" (Follow-up's desk, `GET /record/questions`, read-only here)
+// and "Who spoke up" (`GET /record/voices`).
+const desk = createQuestionDesk();
+const voices = createVoices();
 
 const route = useRoute();
 const router = useRouter();
@@ -48,6 +53,8 @@ watch(
     report.open(id, { prepare: route.query.prepare === "1" });
     chapters.open(id);
     findings.open(id);
+    desk.open(id);
+    voices.open(id);
   },
   { immediate: true },
 );
@@ -55,6 +62,8 @@ onBeforeUnmount(() => {
   report.close();
   chapters.close();
   findings.close();
+  desk.close();
+  voices.close();
 });
 
 // Printing: a closed card prints only its header, so every closed section
@@ -124,7 +133,21 @@ watch(
     if (wasBusy && !busy) {
       chapters.reload();
       findings.reload();
+      desk.reload();
+      voices.reload();
     }
+  },
+);
+
+// The session fetched again from Livestorm (a new `updatedAt` on the same
+// session): what is read beside the record is read again too.
+watch(
+  () => [state.record?.sessionId, state.record?.updatedAt],
+  ([id, updated], [wasId, wasUpdated] = []) => {
+    if (!id || id !== wasId || !wasUpdated || updated === wasUpdated) return;
+    findings.reload();
+    desk.reload();
+    voices.reload();
   },
 );
 
@@ -157,6 +180,8 @@ watch(
       router.replace({ query: { ...route.query, prepare: undefined } });
       chapters.reload();
       findings.reload();
+      desk.reload();
+      voices.reload();
     }
   },
 );
@@ -312,9 +337,9 @@ const short = computed(() => inShort(record.value?.measures || {}));
 
       <RoomSection :measures="record.measures || {}" :chat="state.chat" @load-chat="report.loadChat()" />
 
-      <QuestionsSection :measures="record.measures || {}" :chat="state.chat" @load-chat="report.loadChat()" />
+      <QuestionsSection :desk="desk.state" :measures="record.measures || {}" :session-id="sessionId" @retry="desk.reload()" />
 
-      <AudienceSection :measures="record.measures || {}" />
+      <AudienceSection :measures="record.measures || {}" :voices="voices.state" @retry-voices="voices.reload()" />
 
       <MethodSection :body="body" />
       </template>

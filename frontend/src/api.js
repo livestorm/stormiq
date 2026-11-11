@@ -181,6 +181,10 @@ export const api = {
   getSessionFindings(sessionId, { signal } = {}) {
     return request(sessionPath(sessionId, "/record/findings"), { signal });
   },
+  // The Report's "Who spoke up": the audience members who wrote, with one message each.
+  getSessionVoices(sessionId, { signal } = {}) {
+    return request(sessionPath(sessionId, "/record/voices"), { signal });
+  },
   // Marks one desk question answered (or not), with an optional reply; returns the desk.
   saveSessionQuestion(sessionId, { questionId, answered, reply = "" }, { signal } = {}) {
     return request(sessionPath(sessionId, "/record/questions"), {

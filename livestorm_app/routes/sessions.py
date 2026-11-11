@@ -28,6 +28,7 @@ from livestorm_app.api_logic import (
     get_session_open_questions_csv,
     get_session_question_desk,
     get_session_transcript_view,
+    get_session_voices,
     get_session_record,
     get_transcript_download,
     get_transcript_job_status_data,
@@ -234,6 +235,23 @@ def read_session_transcript_view(session_id: SessionId, caller: Caller = Depends
         raise HTTPException(
             status_code=500,
             detail={"resource": "Session transcript", "message": "The session's transcript could not be read."},
+        ) from exc
+
+
+@router.get("/api/sessions/{session_id}/record/voices")
+def read_session_voices(session_id: SessionId, caller: Caller = Depends(get_caller)) -> Dict[str, Any]:
+    """The Report's "Who spoke up": the audience members who wrote, with
+    short names that fail closed and one message each
+    (`api_logic.get_session_voices`). The classic app doesn't call it."""
+    try:
+        return get_session_voices(session_id, organization_id=caller.read_scope)
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail={"resource": "Who spoke up", "message": str(exc)}) from exc
+    except Exception as exc:
+        logger.exception("Session voices failed for session_id=%s", session_id)
+        raise HTTPException(
+            status_code=500,
+            detail={"resource": "Who spoke up", "message": "The list of who wrote could not be read."},
         ) from exc
 
 
