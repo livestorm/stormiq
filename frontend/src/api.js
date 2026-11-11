@@ -177,6 +177,10 @@ export const api = {
   getSessionChapters(sessionId, { signal } = {}) {
     return request(sessionPath(sessionId, "/record/chapters"), { signal });
   },
+  // The Report's findings: what stood out, what was checked, what couldn't be.
+  getSessionFindings(sessionId, { signal } = {}) {
+    return request(sessionPath(sessionId, "/record/findings"), { signal });
+  },
   // Marks one desk question answered (or not), with an optional reply; returns the desk.
   saveSessionQuestion(sessionId, { questionId, answered, reply = "" }, { signal } = {}) {
     return request(sessionPath(sessionId, "/record/questions"), {

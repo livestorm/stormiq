@@ -1,0 +1,30 @@
+{
+  "sessionId": "synthetic-webinar",
+  "updatedAt": "2026-10-02T08:30:00Z",
+  "state": "ready",
+  "version": 1,
+  "found": [],
+  "nothing": [
+    {
+      "id": "friction",
+      "state": "nothing",
+      "confidence": "estimated",
+      "values": {
+        "incidents": [],
+        "lateStart": null,
+        "speech": true
+      }
+    }
+  ],
+  "notChecked": [
+    {
+      "id": "chapters",
+      "confidence": "estimated",
+      "state": "not_checked",
+      "reason": "few_messages",
+      "values": {
+        "messages": 2
+      }
+    }
+  ]
+}
