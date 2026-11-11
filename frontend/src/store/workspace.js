@@ -387,6 +387,16 @@ function applyBootstrap(payload) {
   }
 }
 
+/** Drops the store's copy of a session that was fetched again elsewhere
+ * (`report/sessionRefresh.js`), so the next page that needs it reads it
+ * again. Another session on screen is left alone. */
+export function forgetSession(sessionId) {
+  if (!sessionId || state.workspace?.sessionId !== sessionId) return;
+  openSessionScope("");
+  setWorkspace(null);
+  state.sessionId = "";
+}
+
 function resetWorkspace() {
   // Wipe every per-org/per-user slice. Called when the user disconnects
   // (or their session expires) so in-memory state never outlives the auth

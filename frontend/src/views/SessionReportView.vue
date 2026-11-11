@@ -196,26 +196,26 @@ const short = computed(() => inShort(record.value?.measures || {}));
           <span v-if="length"> · {{ length }}</span>
           <span v-if="teamExcluded" class="r-muted"> · excludes your team: {{ teamExcluded }}</span>
         </p>
-        <p v-if="sources.length" class="r-sources">
-          <span>{{ sources.join(" · ") }}</span>
-          <UiButton
-            variant="ghost"
-            small
-            icon="refresh-cw"
-            :disabled="state.refetch.status === 'running'"
-            @click="report.refetch()"
-          >
-            {{ state.refetch.status === "running" ? "Fetching…" : "Fetch again from Livestorm" }}
-          </UiButton>
-        </p>
-        <p v-if="authorsUnknown && state.refetch.status !== 'running'" class="r-hint">
+        <p v-if="sources.length" class="r-sources">{{ sources.join(" · ") }}</p>
+        <div v-if="authorsUnknown || state.refetch.status === 'running'" class="r-hint">
           <Icon name="info" :size="16" />
           <span>
-            The chat's authors couldn't be matched to people, so the chat shows "Team" or "Attendee". This session's chat was
-            saved before StormIQ read who wrote each message: fetch it again from Livestorm to name them (free, the transcript
-            stays).
+            {{
+              state.refetch.status === "running"
+                ? "Fetching the session again from Livestorm…"
+                : "The chat's authors couldn't be matched to people: this chat was saved before StormIQ read who wrote each message."
+            }}
           </span>
-        </p>
+          <UiButton
+            v-if="state.refetch.status !== 'running'"
+            variant="secondary"
+            small
+            icon="refresh-cw"
+            @click="report.refetch()"
+          >
+            Fetch the chat again (free)
+          </UiButton>
+        </div>
         <p v-if="state.refetch.status === 'error'" class="r-hint" role="alert">{{ state.refetch.error }}</p>
       </header>
 
@@ -387,8 +387,9 @@ const short = computed(() => inShort(record.value?.measures || {}));
 
 .r-hint {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--siq-space-2);
-  align-items: flex-start;
+  align-items: center;
   max-width: 72ch;
   margin: var(--siq-space-2) 0 0;
   font-size: var(--siq-text-small);

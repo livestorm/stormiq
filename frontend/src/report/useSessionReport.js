@@ -21,8 +21,9 @@
 // with backoff, and `MAX_FAILURES` in a row stop it; any other error stops
 // it at once. The page computes nothing: it shows what the record says.
 
-import { reactive } from "vue";
+import { reactive, watch } from "vue";
 import { api as defaultApi } from "../api";
+import { refetchSession, refreshOf } from "./sessionRefresh";
 
 export const POLL_MS = 2000;
 export const MAX_POLL_MS = 30000;
@@ -79,6 +80,15 @@ export function createSessionReport({ api = defaultApi } = {}) {
       own.transcriptTimer = null;
     }
   }
+
+  // A "Fetch again" from any page of this session: read the record again.
+  const stopRefresh = watch(
+    () => (state.sessionId ? refreshOf(state.sessionId) : null),
+    (refresh, before) => {
+      if (scope && refresh) state.refetch = { status: refresh.status, error: refresh.error || "" };
+      if (scope && refresh && before && refresh.version > before.version) loadRecord(scope, { quiet: true });
+    },
+  );
 
   function close() {
     if (scope) {
@@ -233,7 +243,9 @@ export function createSessionReport({ api = defaultApi } = {}) {
     // preparation until the transcript and the first analysis are done.
     state.preparing = prepare;
     state.chat = emptyChat();
-    state.refetch = { status: "idle", error: "" };
+    // A "Fetch again" started on another page of this session shows here too.
+    const running = refreshOf(id);
+    state.refetch = { status: running.status === "running" ? "running" : "idle", error: "" };
     if (!id) return;
     await loadRecord(own);
     if (!isCurrent(own) || !state.record) return;
@@ -282,21 +294,16 @@ export function createSessionReport({ api = defaultApi } = {}) {
    * authors' people links names nobody until this runs. */
   async function refetch() {
     const own = scope;
-    if (!own || state.refetch.status === "running") return false;
-    state.refetch = { status: "running", error: "" };
-    try {
-      await api.fetchSessionBase(own.sessionId, { apiKey: "", forceRefresh: true }, { signal: own.controller.signal });
-      if (!isCurrent(own)) return false;
-      await loadRecord(own, { quiet: true });
-      if (!isCurrent(own)) return false;
-      state.refetch = { status: "done", error: "" };
-      return true;
-    } catch (error) {
-      if (!isCurrent(own) || isAbort(error)) return false;
-      state.refetch = { status: "error", error: error?.message || "The session could not be fetched again." };
-      return false;
-    }
+    if (!own) return false;
+    // Shared: leaving the page never cancels it, and every open page of the
+    // session reloads when it ends (the watch above reloads this record).
+    return refetchSession(own.sessionId, { api });
   }
 
-  return { state, open, close, startAnalysis, loadChat, refetch };
+  function dispose() {
+    close();
+    stopRefresh();
+  }
+
+  return { state, open, close: dispose, startAnalysis, loadChat, refetch };
 }

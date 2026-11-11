@@ -13,6 +13,7 @@ import { formatLength, formatSessionStart } from "../report/format";
 import { createSessionReport } from "../report/useSessionReport";
 import { VIEWS, authorsOf, speakersOf, subtitles, transcriptLines } from "../transcript/lines";
 import { createTranscriptView } from "../transcript/useTranscript";
+import { refreshOf } from "../report/sessionRefresh";
 
 // The Transcript tab: what was said and what the room wrote, on one clock
 // when the server could place the speech on it (`clock.interleave`), apart
@@ -46,6 +47,19 @@ onBeforeUnmount(() => {
   transcript.close();
   report.close();
 });
+
+// "Fetch again from Livestorm" (here or on another tab): read the lines
+// again once it lands. Offered on the chat when it has nothing to show, or
+// when its authors couldn't be matched to people.
+watch(
+  () => refreshOf(props.sessionId).version,
+  (version, before) => {
+    if (version > before) transcript.reload();
+  },
+);
+const refetchStatus = computed(() => report.state.refetch.status);
+const authorsUnknown = computed(() => record.value?.measures?.["m.author_resolution"]?.state === "unresolved");
+const chatNeedsFetch = computed(() => Boolean(state.body) && (!(state.body.room || []).length || authorsUnknown.value));
 
 // ── The header ──
 const record = computed(() => report.state.record);
@@ -325,6 +339,23 @@ const jobBusy = computed(() => ["pending", "running", "starting", "checking"].in
         </span>
       </p>
 
+      <div v-if="chatNeedsFetch" class="t-refetch" role="status">
+        <Icon name="message-circle" :size="16" />
+        <span>
+          {{
+            refetchStatus === "running"
+              ? "Fetching the chat again from Livestorm…"
+              : !(state.body.room || []).length
+                ? "No chat or questions saved for this session. If it had some, fetch them again from Livestorm."
+                : "The chat's authors couldn't be matched to people: this chat was saved before StormIQ read who wrote each message."
+          }}
+        </span>
+        <UiButton v-if="refetchStatus !== 'running'" variant="secondary" small icon="refresh-cw" @click="report.refetch()">
+          Fetch the chat again (free)
+        </UiButton>
+        <span v-if="refetchStatus === 'error'" role="alert">{{ report.state.refetch.error }}</span>
+      </div>
+
       <p v-if="nothingMatches && !split" class="t-muted">Nothing matches.</p>
 
       <Card v-if="shown.interleaved && shown.lines.length" padding="flush">
@@ -367,7 +398,7 @@ const jobBusy = computed(() => ["pending", "running", "starting", "checking"].in
             <ol v-if="shown.room.length" class="t-lines t-room-lines">
               <TranscriptLine v-for="line in shown.room" :key="line.id" :line="line" flat />
             </ol>
-            <p v-else class="t-muted t-empty">
+            <p v-else-if="(state.body?.room || []).length" class="t-muted t-empty">
               {{ speaker !== undefined ? "A speaker is picked: their speech only." : "Nothing matches." }}
             </p>
           </Card>
@@ -393,6 +424,19 @@ const jobBusy = computed(() => ["pending", "running", "starting", "checking"].in
 </template>
 
 <style scoped>
+.t-refetch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--siq-space-2) var(--siq-space-3);
+  padding: var(--siq-space-3) var(--siq-space-4);
+  border-radius: var(--siq-radius-tile);
+  background: var(--siq-surface-2);
+  font-size: var(--siq-text-small);
+  line-height: var(--siq-text-small-lh);
+  color: var(--siq-ink-2);
+}
+
 .t-page {
   display: flex;
   flex-direction: column;
