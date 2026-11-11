@@ -380,3 +380,59 @@ describe("loadChat", () => {
     vi.useRealTimers();
   });
 });
+
+describe("a session just added, still being fetched", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("waits for its record while the fetch runs, then goes on", async () => {
+    const answers = [httpError(404), httpError(404)];
+    const api = fakeApi({
+      getSessionRecord: vi.fn(async () => {
+        const next = answers.shift();
+        if (next) throw next;
+        return record;
+      }),
+    });
+    const report = createSessionReport({ api });
+    const opening = report.open("sess-1", { prepare: true });
+    await tick(0);
+    expect(report.state.fetching).toBe(true);
+    expect(report.state.error).toBe("", "no error while it waits");
+    await tick(POLL_MS * 2);
+    await opening;
+    expect(report.state.fetching).toBe(false);
+    expect(report.state.record).toEqual(record);
+    expect(report.state.preparing).toBe(true);
+    report.close();
+  });
+
+  it("stops waiting and says why when the fetch fails", async () => {
+    const api = fakeApi({ getSessionRecord: vi.fn(async () => Promise.reject(httpError(404))) });
+    const report = createSessionReport({ api });
+    const opening = report.open("sess-1", { prepare: true });
+    await tick(0);
+    report.fetchFailed("This session hasn't taken place yet, so there is nothing to analyse.");
+    await tick(POLL_MS);
+    await opening;
+    const calls = api.getSessionRecord.mock.calls.length;
+    await tick(POLL_MS * 3);
+    expect(api.getSessionRecord.mock.calls.length).toBe(calls);
+    expect(report.state).toMatchObject({
+      fetching: false,
+      preparing: false,
+      error: "This session hasn't taken place yet, so there is nothing to analyse.",
+    });
+    report.close();
+  });
+
+  it("shows the fetch as the current step, and how far it is", () => {
+    const fetching = preparationView({ status: "idle" }, { status: "idle" }, { fetching: true });
+    expect(fetching.steps.map((step) => step.state)).toEqual(["current", "todo", "todo", "todo"]);
+    expect(fetching.percent).toBe(3);
+    expect(preparationView({ status: "running", progress: { percent: 45 } }, { status: "idle" }).percent).toBe(37);
+    expect(preparationView({ status: "done" }, { status: "running", progress: { percent: 40 } }).percent).toBe(80);
+    expect(preparationView({ status: "done" }, { status: "completed" }).percent).toBe(100);
+    expect(preparationView({ status: "running", progress: { percent: "x" } }, { status: "idle" }).percent).toBe(10);
+  });
+});

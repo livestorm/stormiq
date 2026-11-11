@@ -17,6 +17,7 @@ import SessionTabs from "../components/report/SessionTabs.vue";
 import UiButton from "../components/ui/UiButton.vue";
 import { analysisSummary, elapsedLabel, formatLength, formatSessionStart, preparationView } from "../report/format";
 import { createSessionReport } from "../report/useSessionReport";
+import { useWorkspace } from "../store/workspace";
 import { createChapters } from "../followup/useChapters";
 import { createFindings, createMoments, createTranscriptLines, createVoices } from "../report/useFindings";
 import { momentPins } from "../report/moments";
@@ -36,6 +37,15 @@ const props = defineProps({
 
 const report = createSessionReport();
 const { state } = report;
+// "Add" opens this page as it starts fetching the session (the store's
+// `loadSessionById`): when that fetch fails, the page stops waiting and says why.
+const workspaceStore = useWorkspace();
+watch(
+  () => [workspaceStore.state.sessionId, workspaceStore.state.loading.sessionFetch, workspaceStore.state.error],
+  ([id, fetching, error]) => {
+    if (id === props.sessionId && !fetching && error) report.fetchFailed(error);
+  },
+);
 // The chapters (`GET /record/chapters`): the cover chart draws them, and
 // their state says whether the session itself has been read.
 const chapters = createChapters();
@@ -183,9 +193,12 @@ const elapsed = computed(() => (summary.value.busy ? elapsedLabel(summary.value.
 // Just added: the transcript and the first analysis are being made. The
 // page shows their progress in place of the Report until they are done,
 // then drops `?prepare=1` so a reload opens the Report at once.
-const preparation = computed(() => preparationView(state.transcript, state.analysis));
+const preparation = computed(() => preparationView(state.transcript, state.analysis, { fetching: state.fetching }));
 const prepStarted = Date.now();
 const prepElapsed = computed(() => (state.preparing ? elapsedLabel(prepStarted, now.value) : ""));
+let prepTicker = null;
+// Immediate: `report.open` sets `preparing` before this watch exists, and
+// without it the clock never started ("Running for 0:00" forever).
 watch(
   () => state.preparing,
   (preparing, was) => {
@@ -201,8 +214,8 @@ watch(
       lines.reload();
     }
   },
+  { immediate: true },
 );
-let prepTicker = null;
 onBeforeUnmount(() => clearInterval(prepTicker));
 // The analysis card: only when there is something to do, a run in flight or
 // a failure; an analysed session shows none.
@@ -287,7 +300,16 @@ const points = computed(() =>
             <span class="siq-sr-only">{{ { done: ": done", current: ": in progress", todo: ": next", skipped: ": skipped" }[step.state] }}</span>
           </li>
         </ol>
-        <div class="r-bar is-waiting" role="progressbar" aria-label="Preparing the report"><span class="r-bar-fill" /></div>
+        <div
+          class="r-bar"
+          role="progressbar"
+          aria-label="Preparing the report"
+          :aria-valuenow="preparation.percent"
+          aria-valuemin="0"
+          aria-valuemax="100"
+        >
+          <span class="r-bar-fill" :style="{ width: `${preparation.percent}%` }" />
+        </div>
         <p v-if="prepElapsed" class="r-muted r-small">Running for {{ prepElapsed }}.</p>
       </Card>
 

@@ -141,11 +141,32 @@ export function analysisSummary(chatLabels, analysis, { transcript = true, readi
   };
 }
 
+function percentOf(progress) {
+  const value = Number(progress?.percent);
+  return Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : 0;
+}
+
 /** The preparation of a session just added ("Add"): what the page shows
  * until its transcript and first analysis are done. `transcript` and
- * `analysis` are the Report's states. Returns `{title, detail, steps}`, each
- * step `{label, state, detail}` (done | current | todo | skipped). */
-export function preparationView(transcript, analysis) {
+ * `analysis` are the Report's states; `fetching` while the session is still
+ * being fetched from Livestorm. Returns `{title, detail, steps, percent}`,
+ * each step `{label, state, detail}` (done | current | todo | skipped);
+ * `percent` (0–100) is how far it is: the fetch up to 10, the transcript
+ * 10 to 70 (its own stage's percent), the analysis 70 to 95, then 100. */
+export function preparationView(transcript, analysis, { fetching = false } = {}) {
+  if (fetching) {
+    return {
+      title: "Preparing your report",
+      detail: "Fetching the session from Livestorm. A large session's chat and people take a moment.",
+      steps: [
+        { label: "Fetching from Livestorm", state: "current", detail: "The session, its chat, questions and people." },
+        { label: "Transcribing the recording", state: "todo", detail: "" },
+        { label: "Reading the chat and the talk with AI", state: "todo", detail: "" },
+        { label: "Your report", state: "todo", detail: "" },
+      ],
+      percent: 3,
+    };
+  }
   const t = transcript?.status || "idle";
   const a = analysis?.status || "idle";
   const analysing = a === "pending" || a === "running" || a === "starting";
@@ -167,6 +188,14 @@ export function preparationView(transcript, analysis) {
     { label: "Reading the chat and the talk with AI", ...analysisStep },
     { label: "Your report", state: a === "completed" ? "current" : "todo", detail: "" },
   ];
+  const percent =
+    a === "completed"
+      ? 100
+      : analysing
+        ? 70 + Math.round(percentOf(analysis?.progress) * 0.25)
+        : t === "running"
+          ? 10 + Math.round(percentOf(transcript?.progress) * 0.6)
+          : 70;
   return {
     title: "Preparing your report",
     detail:
@@ -174,5 +203,6 @@ export function preparationView(transcript, analysis) {
         ? "A long recording takes a few minutes to transcribe. It keeps going if you leave this page."
         : "Almost there. It keeps going if you leave this page.",
     steps,
+    percent,
   };
 }
